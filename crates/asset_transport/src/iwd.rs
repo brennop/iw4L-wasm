@@ -118,10 +118,10 @@ impl IwdIndex {
     }
 
     fn open_uncached(directory: &Path) -> Result<Self, String> {
-        let mut archives = std::fs::read_dir(directory)
+        let mut archives = gamefs::read_dir(directory)
             .map_err(|error| format!("cannot read IWD directory {}: {error}", directory.display()))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
+            .into_iter()
+            .map(|entry| entry.path)
             .filter(|path| {
                 path.extension()
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("iwd"))
@@ -172,8 +172,8 @@ impl IwdIndex {
 }
 
 fn index_image_entries(path: &Path) -> Result<Vec<(String, IwdFile)>, String> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let file =
+        gamefs::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|error| format!("cannot index {}: {error}", path.display()))?;
     let mut entries = Vec::new();
@@ -205,7 +205,7 @@ fn index_image_entries(path: &Path) -> Result<Vec<(String, IwdFile)>, String> {
     Ok(entries)
 }
 
-type OpenArchive = zip::ZipArchive<std::io::BufReader<std::fs::File>>;
+type OpenArchive = zip::ZipArchive<Box<dyn gamefs::ReadSeek>>;
 
 static PARKED: OnceLock<Mutex<HashMap<PathBuf, Vec<OpenArchive>>>> = OnceLock::new();
 
@@ -248,9 +248,9 @@ impl ArchiveLease {
             });
         }
         let opened_at = web_time::Instant::now();
-        let disk = std::fs::File::open(path)
+        let disk = gamefs::open(path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-        let archive = zip::ZipArchive::new(std::io::BufReader::new(disk))
+        let archive = zip::ZipArchive::new(disk)
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
         IWD_DIRECTORY_NS.fetch_add(opened_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
         IWD_DIRECTORY_OPENS.fetch_add(1, Ordering::Relaxed);
@@ -349,7 +349,7 @@ pub fn iwd_read_cost() -> (f64, u64, f64) {
 pub fn game_main_for_zone(zone_ff: &Path) -> Result<PathBuf, String> {
     for ancestor in zone_ff.ancestors() {
         let main = ancestor.join("main");
-        if main.is_dir() {
+        if gamefs::is_dir(&main) {
             return Ok(main);
         }
     }
@@ -364,14 +364,13 @@ pub fn game_mains_under(games_root: &Path) -> Vec<PathBuf> {
     let mut stack = crate::discover::search_roots(games_root);
     while let Some(dir) = stack.pop() {
         let main = dir.join("main");
-        if main.is_dir() {
+        if gamefs::is_dir(&main) {
             mains.push(main);
         }
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
+        if let Ok(entries) = gamefs::read_dir(&dir) {
+            for entry in entries {
+                if entry.meta.is_dir {
+                    stack.push(entry.path);
                 }
             }
         }
@@ -384,16 +383,16 @@ pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
     let want = want.replace('\\', "/");
     let mut stack = crate::discover::search_roots(games_root);
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = gamefs::read_dir(&dir) else {
             continue;
         };
         let mut paths = entries
-            .flatten()
-            .map(|entry| entry.path())
+            .into_iter()
+            .map(|entry| (entry.path, entry.meta.is_dir))
             .collect::<Vec<_>>();
         paths.sort();
-        for path in paths {
-            if path.is_dir() {
+        for (path, is_dir) in paths {
+            if is_dir {
                 stack.push(path);
                 continue;
             }
@@ -403,7 +402,7 @@ pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
             {
                 continue;
             }
-            let Ok(file) = std::fs::File::open(&path) else {
+            let Ok(file) = gamefs::open(&path) else {
                 continue;
             };
             let Ok(mut archive) = zip::ZipArchive::new(file) else {
@@ -426,7 +425,7 @@ pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
 }
 
 pub fn read_text(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))
+    gamefs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))
 }
 
 pub fn inflate_zlib(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -457,10 +456,10 @@ fn sound_rel_from_zip_name(name: &str) -> Option<String> {
 impl IwdSoundIndex {
     pub fn open(directory: impl AsRef<Path>) -> Result<Self, String> {
         let directory = directory.as_ref();
-        let mut archives = std::fs::read_dir(directory)
+        let mut archives = gamefs::read_dir(directory)
             .map_err(|e| format!("cannot read {}: {e}", directory.display()))?
-            .filter_map(std::result::Result::ok)
-            .map(|e| e.path())
+            .into_iter()
+            .map(|e| e.path)
             .filter(|p| {
                 p.extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("iwd"))
@@ -470,11 +469,11 @@ impl IwdSoundIndex {
 
         let mut sounds = HashMap::new();
         for path in archives {
-            let file = std::fs::File::open(&path)
-                .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+            let file =
+                gamefs::open(&path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
 
-            let archive = zip::ZipArchive::new(std::io::BufReader::new(file))
-                .map_err(|e| format!("zip {}: {e}", path.display()))?;
+            let archive =
+                zip::ZipArchive::new(file).map_err(|e| format!("zip {}: {e}", path.display()))?;
             for name in archive.file_names() {
                 let Some(rel) = sound_rel_from_zip_name(name) else {
                     continue;

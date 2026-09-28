@@ -189,7 +189,7 @@ fn store() -> &'static Store {
 }
 
 fn store_key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    gamefs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 struct Claim {

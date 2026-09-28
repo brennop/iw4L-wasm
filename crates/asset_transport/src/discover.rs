@@ -23,7 +23,7 @@ pub fn load_dotenv() {
         && let Some(dir) = exe.parent()
     {
         let candidate = dir.join(".env");
-        if candidate.is_file() {
+        if gamefs::is_file(&candidate) {
             let _ = dotenvy::from_path(&candidate);
             return;
         }
@@ -33,7 +33,7 @@ pub fn load_dotenv() {
     };
     loop {
         let candidate = dir.join(".env");
-        if candidate.is_file() {
+        if gamefs::is_file(&candidate) {
             let _ = dotenvy::from_path(&candidate);
             return;
         }
@@ -49,7 +49,7 @@ pub fn games_root_from_env() -> Result<GamesRoot, String> {
         Some(raw) => PathBuf::from(raw),
         None => default_games_root()?,
     };
-    if !path.is_dir() {
+    if !gamefs::is_dir(&path) {
         return Err(format!("IW4L_GAMES is not a directory: {}", path.display()));
     }
     Ok(GamesRoot(path))
@@ -147,7 +147,7 @@ pub fn peek_zone_version(path: &Path) -> Option<u32> {
 }
 
 fn read_zone_version(path: &Path) -> Result<u32, String> {
-    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut file = gamefs::open(path).map_err(|error| error.to_string())?;
     let mut header = [0u8; 12];
     use std::io::Read;
     file.read_exact(&mut header)
@@ -171,7 +171,7 @@ fn files_under(roots: Vec<PathBuf>) -> impl Iterator<Item = Result<PathBuf, Stri
                 Ok(path) => path,
                 Err(error) => return Some(Err(error)),
             };
-            let canonical = match std::fs::canonicalize(&path) {
+            let canonical = match gamefs::canonicalize(&path) {
                 Ok(path) => path,
                 Err(error) => {
                     return Some(Err(format!("cannot access {}: {error}", path.display())));
@@ -180,27 +180,24 @@ fn files_under(roots: Vec<PathBuf>) -> impl Iterator<Item = Result<PathBuf, Stri
             if !visited.insert(canonical) {
                 continue;
             }
-            let metadata = match std::fs::metadata(&path) {
+            let metadata = match gamefs::metadata(&path) {
                 Ok(metadata) => metadata,
                 Err(error) => return Some(Err(format!("cannot stat {}: {error}", path.display()))),
             };
             if metadata.is_file() {
                 return Some(Ok(path));
             }
-            if !metadata.is_dir() {
+            if !metadata.is_dir {
                 continue;
             }
-            let entries = match std::fs::read_dir(&path) {
+            let entries = match gamefs::read_dir(&path) {
                 Ok(entries) => entries,
                 Err(error) => return Some(Err(format!("cannot read {}: {error}", path.display()))),
             };
             let mut children = entries
-                .map(|entry| {
-                    entry.map(|entry| entry.path()).map_err(|error| {
-                        format!("cannot read entry in {}: {error}", path.display())
-                    })
-                })
-                .collect::<Vec<_>>();
+                .into_iter()
+                .map(|entry| Ok(entry.path))
+                .collect::<Vec<Result<PathBuf, String>>>();
             children.sort();
             pending.extend(children);
         }
@@ -419,8 +416,8 @@ fn find_zone_stem(
                 "zone alias: `{stem}` → `{prefixed}` (MP stem preferred over bare `{stem}.ff`)"
             );
             found.alias_note = Some(note.clone());
-            match std::fs::metadata(&found.path) {
-                Ok(meta) => diag::info!(Zone, "{note} ({} bytes)", meta.len()),
+            match gamefs::metadata(&found.path) {
+                Ok(meta) => diag::info!(Zone, "{note} ({} bytes)", meta.len),
                 Err(_) => diag::info!(Zone, "{note}"),
             }
             Ok(found)
@@ -487,7 +484,7 @@ fn find_named_zone_for_tree(zone_ff: &Path, zone: &str) -> Result<ZoneFile, Stri
 pub fn game_root_for_zone(zone_ff: &Path) -> Result<PathBuf, String> {
     let mut cursor = zone_ff.parent();
     while let Some(dir) = cursor {
-        if dir.join("zone").is_dir() {
+        if gamefs::is_dir(dir.join("zone")) {
             return Ok(dir.to_path_buf());
         }
         cursor = dir.parent();
@@ -674,7 +671,7 @@ pub fn find_t5_localized_zones(
         .filter_map(|stem| {
             let zone_name = format!("{prefix}{stem}");
             let path = dir.join(format!("{zone_name}.ff"));
-            path.is_file().then_some(ZoneFile {
+            gamefs::is_file(&path).then_some(ZoneFile {
                 path,
                 zone_name,
                 alias_note: None,

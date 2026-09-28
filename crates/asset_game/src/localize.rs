@@ -244,15 +244,14 @@ const LOCALIZE_CACHE_FORMAT: u32 = 1;
 const LOCALIZE_CACHE_MAGIC: u32 = 0x4c_4f_43_31;
 
 fn localize_cache_key(path: &Path) -> Option<String> {
-    let meta = std::fs::metadata(path).ok()?;
+    let meta = gamefs::metadata(path).ok()?;
     let modified = meta
-        .modified()
-        .ok()?
+        .modified?
         .duration_since(web_time::UNIX_EPOCH)
         .ok()?
         .as_nanos() as u64;
     let mut hash = asset_transport::fnv1a64(path.to_string_lossy().as_bytes());
-    hash = asset_transport::fnv1a64_more(hash, &meta.len().to_le_bytes());
+    hash = asset_transport::fnv1a64_more(hash, &meta.len.to_le_bytes());
     hash = asset_transport::fnv1a64_more(hash, &modified.to_le_bytes());
     Some(format!("{LOCALIZE_CACHE_FORMAT:08x}-{hash:016x}"))
 }

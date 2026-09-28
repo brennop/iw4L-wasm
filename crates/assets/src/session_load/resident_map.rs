@@ -9,11 +9,11 @@ struct ZoneStamp {
 
 impl ZoneStamp {
     pub(super) fn of(path: &Path) -> Option<Self> {
-        let meta = std::fs::metadata(path).ok()?;
+        let meta = gamefs::metadata(path).ok()?;
         Some(Self {
             path: path.to_path_buf(),
-            len: meta.len(),
-            modified: meta.modified().ok(),
+            len: meta.len,
+            modified: meta.modified,
         })
     }
 }

@@ -19,11 +19,17 @@ fn cache_budget_bytes() -> u64 {
 }
 
 pub fn cache_get(kind: &str, key: &str) -> Option<Vec<u8>> {
+    if !gamefs::is_native() {
+        return None;
+    }
     let path = cache_path(kind, key).ok()?;
     fs::read(path).ok()
 }
 
 pub fn cache_put(kind: &str, key: &str, bytes: &[u8]) -> Result<(), String> {
+    if !gamefs::is_native() {
+        return Ok(());
+    }
     let path = cache_path(kind, key)?;
     let Some(parent) = path.parent() else {
         return Err(format!("cache path has no directory: {}", path.display()));

@@ -306,6 +306,7 @@ dependencies = [
  "fastfile_iw4",
  "fastfile_iw5",
  "fastfile_t5",
+ "gamefs",
  "web-time",
 ]
 
@@ -332,6 +333,7 @@ dependencies = [
  "fastfile_iw5",
  "fastfile_t5",
  "fx_iw4",
+ "gamefs",
  "weapon_iw4",
  "web-time",
  "xmodel_runtime",
@@ -393,6 +395,7 @@ dependencies = [
  "fastfile_iw5",
  "fastfile_t5",
  "flate2",
+ "gamefs",
  "lnk",
  "miniz_oxide",
  "web-time",
@@ -447,6 +450,7 @@ dependencies = [
  "fastfile_t5",
  "frame",
  "fx_iw4",
+ "gamefs",
  "libc",
  "lighting_iw4",
  "png",
@@ -2950,6 +2954,13 @@ name = "fx_iw4"
 version = "0.1.0"
 dependencies = [
  "libm",
+]
+
+[[package]]
+name = "gamefs"
+version = "0.1.0"
+dependencies = [
+ "web-time",
 ]
 
 [[package]]

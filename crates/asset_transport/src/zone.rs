@@ -190,8 +190,8 @@ static SHARED_MISS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 type ZoneSourceKey = (std::path::PathBuf, u64, Option<web_time::SystemTime>);
 
 fn source_key(path: &Path) -> Option<ZoneSourceKey> {
-    let meta = std::fs::metadata(path).ok()?;
-    Some((path.to_owned(), meta.len(), meta.modified().ok()))
+    let meta = gamefs::metadata(path).ok()?;
+    Some((path.to_owned(), meta.len, meta.modified))
 }
 
 fn shared_map() -> &'static Mutex<HashMap<ZoneSourceKey, Weak<ZoneImage>>> {
@@ -223,7 +223,7 @@ fn flight_for(key: &ZoneSourceKey) -> Arc<Mutex<()>> {
 
 pub fn open_zone(path: impl AsRef<Path>) -> Result<ZoneImage, ZoneOpenError> {
     let path = path.as_ref();
-    let result = std::fs::read(path)
+    let result = gamefs::read(path)
         .map_err(ZoneOpenError::Io)
         .and_then(|bytes| parse_zone_image(&bytes));
     let image = result.map_err(|source| ZoneOpenError::AtPath {
