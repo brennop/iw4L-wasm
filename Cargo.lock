@@ -3612,6 +3612,7 @@ dependencies = [
  "assets",
  "bootstrap",
  "diag",
+ "gamefs",
 ]
 
 [[package]]
@@ -7187,6 +7188,7 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "gamefs",
  "master_protocol",
  "serde_json",
  "sha2",

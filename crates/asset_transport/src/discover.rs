@@ -23,7 +23,7 @@ pub fn load_dotenv() {
         && let Some(dir) = exe.parent()
     {
         let candidate = dir.join(".env");
-        if gamefs::is_file(&candidate) {
+        if candidate.is_file() {
             let _ = dotenvy::from_path(&candidate);
             return;
         }
@@ -33,7 +33,7 @@ pub fn load_dotenv() {
     };
     loop {
         let candidate = dir.join(".env");
-        if gamefs::is_file(&candidate) {
+        if candidate.is_file() {
             let _ = dotenvy::from_path(&candidate);
             return;
         }

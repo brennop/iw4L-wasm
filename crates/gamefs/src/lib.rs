@@ -8,6 +8,9 @@ use std::sync::{Arc, RwLock};
 
 use web_time::SystemTime;
 
+pub mod pack;
+pub mod record;
+
 pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}
 
@@ -41,7 +44,7 @@ pub trait Backend: Send + Sync {
     }
 }
 
-struct Native;
+pub(crate) struct Native;
 
 fn meta_of(meta: &std::fs::Metadata) -> Meta {
     Meta {
@@ -147,4 +150,25 @@ pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
     } else {
         Ok(path.to_path_buf())
     }
+}
+
+/// `IW4L_FS=pack:<file>` serves reads from a pack; `IW4L_FS_RECORD=<file>` logs
+/// the ranges a normal run reads. Neither set: plain `std::fs`.
+pub fn install_from_env() -> Result<(), String> {
+    if let Some(spec) = std::env::var_os("IW4L_FS") {
+        let spec = spec.to_string_lossy().into_owned();
+        let Some(file) = spec.strip_prefix("pack:") else {
+            return Err(format!("IW4L_FS={spec}: expected pack:<file>"));
+        };
+        let source = pack::FileSource::open(Path::new(file))
+            .map_err(|error| format!("open pack {file}: {error}"))?;
+        let pack = pack::Pack::open(Arc::new(source))
+            .map_err(|error| format!("read pack {file}: {error}"))?;
+        install(Arc::new(pack));
+    } else if let Some(log) = std::env::var_os("IW4L_FS_RECORD") {
+        let recording = record::Recording::create(Path::new(&log))
+            .map_err(|error| format!("create {}: {error}", Path::new(&log).display()))?;
+        install(Arc::new(recording));
+    }
+    Ok(())
 }

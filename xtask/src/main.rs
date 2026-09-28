@@ -29,6 +29,7 @@ const REPO_TOOLS: &[&str] = &[
     "mr ls",
     "mr fmt FILE.rs...",
     "publish-check",
+    "web-pack RECORD OUT.pack",
 ];
 
 /// Everything that leaves this machine. These read `.env` for the host, the
@@ -112,6 +113,7 @@ fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
     match cmd {
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),
+        "web-pack" => Some(xtask::web_pack::run(rest)),
         _ => None,
     }
 }

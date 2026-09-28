@@ -15,6 +15,7 @@ bevy-trace = ["bootstrap/bevy-trace"]
 
 [dependencies]
 diag.workspace = true
+gamefs.workspace = true
 assets.workspace = true
 bootstrap = { path = "../bootstrap" }
 

@@ -6,6 +6,7 @@ use assets::{ensure_artifacts_dir, games_root_from_env};
 static PROCESS_ALLOCATOR: diag::ProcessCountingAllocator = diag::ProcessCountingAllocator;
 
 fn main() {
+    gamefs::install_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
     bootstrap::bench::arm();
     prepare_process_root().unwrap_or_else(|e| {
         diag::exit_launch_error(&e);
