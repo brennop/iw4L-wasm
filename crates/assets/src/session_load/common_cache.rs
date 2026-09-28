@@ -124,6 +124,17 @@ impl CommonSet {
             .expect("common products were taken by a one-shot load")
     }
 
+    /// A copy of the weapons alone; the shell needs nothing else.
+    fn weapons(&self) -> WeaponBuild {
+        self.products
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+            .expect("common products were taken by a one-shot load")
+            .weapons
+            .clone()
+    }
+
     /// The products themselves; the set is spent, so it also leaves the process slot.
     pub(super) fn take_products(&self) -> CommonProducts {
         let products = self
@@ -264,7 +275,7 @@ pub async fn load_shell_common(games: crate::GamesRoot) -> ShellCommon {
     let mut report = Vec::new();
     let key = CommonKey::shell(&games, &mut report);
     let (common, reach) = ensure_common(key).await;
-    let weapons = common.products().weapons.publish();
+    let weapons = common.weapons().publish();
     report.push(format!(
         "CAC: {reach} common set {}; weapons={} (iw4={} iw5={} t5={}) tables={}",
         common.key,

@@ -150,7 +150,7 @@ impl IwdIndex {
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::scope(|scope| {
             for _ in 0..archives.len().min(index_lane_width()) {
-                scope.spawn(&work);
+                scope.spawn(work);
             }
         });
         let mut done = done

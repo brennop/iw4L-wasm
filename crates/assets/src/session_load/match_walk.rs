@@ -177,7 +177,7 @@ pub(super) async fn walk_prepared_match(
     // the same hints, keeps them out of memory while the images decode. A T5
     // donor could add hints later, so that case waits.
     let common_fx_model_full = common_fx_models.len();
-    if t5_fx.len() == 0 {
+    if t5_fx.is_empty() {
         let mut hints = world.fx.model_hints();
         hints.extend(common_fx.model_hints());
         common_fx_models.keep_referenced(&hints);

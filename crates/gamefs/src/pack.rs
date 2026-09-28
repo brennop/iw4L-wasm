@@ -22,13 +22,13 @@ pub const MAGIC: &[u8; 8] = b"IW4LPCK1";
 
 /// Random access to the pack bytes: a file natively, a JS buffer in the browser.
 pub trait Source: Send + Sync {
-    fn len(&self) -> u64;
+    fn size(&self) -> u64;
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()>;
 }
 
 impl Source for Vec<u8> {
-    fn len(&self) -> u64 {
-        self.as_slice().len() as u64
+    fn size(&self) -> u64 {
+        self.len() as u64
     }
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
@@ -59,7 +59,7 @@ impl FileSource {
 }
 
 impl Source for FileSource {
-    fn len(&self) -> u64 {
+    fn size(&self) -> u64 {
         self.len
     }
 
@@ -123,7 +123,7 @@ fn components(path: &Path) -> Vec<String> {
 
 impl Pack {
     pub fn open(source: Arc<dyn Source>) -> io::Result<Self> {
-        let total = source.len();
+        let total = source.size();
         if total < 16 {
             return Err(bad("pack too small"));
         }

@@ -13,7 +13,7 @@ unsafe impl Send for JsSource {}
 unsafe impl Sync for JsSource {}
 
 impl gamefs::pack::Source for JsSource {
-    fn len(&self) -> u64 {
+    fn size(&self) -> u64 {
         u64::from(self.bytes.length())
     }
 
