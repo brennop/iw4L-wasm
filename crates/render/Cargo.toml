@@ -6,6 +6,7 @@ license.workspace = true
 description = "Snapshot to pixels: scene, viewmodel, effects. No game logic."
 
 [dependencies]
+web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
 anim_iw4.workspace = true

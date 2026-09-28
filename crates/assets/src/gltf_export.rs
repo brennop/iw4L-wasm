@@ -3,8 +3,8 @@ use std::{
     fs,
     io::BufWriter,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use bevy::{
     prelude::{Mat3, Quat, Vec3},

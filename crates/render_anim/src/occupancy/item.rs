@@ -93,7 +93,7 @@ fn prepare_item_compositions(
     if prepared.owned_by(&weapons, &world) {
         return;
     }
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let mut by_weapon = std::collections::HashMap::new();
     if !world.0.is_empty() {
         for weapon in 1..=weapons.0.len() as u32 {

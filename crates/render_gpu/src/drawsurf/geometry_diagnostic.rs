@@ -1,7 +1,7 @@
 use crate::drawsurf::scene_depth::{SCENE_DEPTH_FORMAT, SceneDepthTexture};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use web_time::Instant;
 
 use bevy::core_pipeline::core_3d::main_opaque_pass_3d;
 use bevy::core_pipeline::{Core3d, Core3dSystems};

@@ -124,11 +124,11 @@ pub struct WorldSpawnJob {
 
     pub spawn: WorldGeneration,
 
-    last_slice_at: Option<std::time::Instant>,
+    last_slice_at: Option<web_time::Instant>,
 }
 
 impl WorldSpawnJob {
-    pub(crate) fn slice_gap_ms(&mut self, now: std::time::Instant) -> f32 {
+    pub(crate) fn slice_gap_ms(&mut self, now: web_time::Instant) -> f32 {
         let gap = self
             .last_slice_at
             .map(|at| now.duration_since(at).as_secs_f32() * 1000.0)
@@ -202,7 +202,7 @@ pub(crate) fn spawn_world(
             finish_world_spawn(&mut scene, &mut job, &mut commands);
             return;
         }
-        let gap_ms = job.slice_gap_ms(std::time::Instant::now());
+        let gap_ms = job.slice_gap_ms(web_time::Instant::now());
         let spawn = job.spawn;
         let gpu_ready = gpu.as_deref();
         let gpu_done = super::world_gpu::poll(&mut job.gpu_wait, spawn, gpu_ready, gap_ms);
@@ -264,7 +264,7 @@ pub(crate) fn spawn_world(
         job.phase = WorldSpawnPhase::Programs;
     }
 
-    let frame_started = std::time::Instant::now();
+    let frame_started = web_time::Instant::now();
     let deadline = paced.then(|| frame_started + SPAWN_FRAME_BUDGET);
 
     if job.needs_programs() {
@@ -330,7 +330,7 @@ pub(crate) fn spawn_world(
         }
         let compile_finished = job.compile.until(&scene.runtime_material_catalog, deadline);
         job.last_work_ms = frame_started.elapsed().as_secs_f32() * 1000.0;
-        let gap_ms = job.slice_gap_ms(std::time::Instant::now());
+        let gap_ms = job.slice_gap_ms(web_time::Instant::now());
         if compile_finished || job.last_work_ms >= 20.0 || job.compile.done() % 32 == 0 {
             let (wgsl_hit, wgsl_miss, wgsl_io_ms) = crate::assemble::drawsurf::wgsl_cache_stats();
             diag::info!(
@@ -355,7 +355,7 @@ pub(crate) fn spawn_world(
             stage.done();
         }
         job.phase = WorldSpawnPhase::Admit;
-        if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+        if deadline.is_some_and(|end| web_time::Instant::now() >= end) {
             return;
         }
     }
@@ -382,7 +382,7 @@ pub(crate) fn spawn_world(
                 job.admit.port_count(),
                 job.last_work_ms
             );
-            if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+            if deadline.is_some_and(|end| web_time::Instant::now() >= end) {
                 return;
             }
         }
@@ -664,7 +664,7 @@ pub(crate) fn spawn_world(
             "world spawn slice: phase=admit install {:.1}ms (budget 40ms)",
             job.last_work_ms
         );
-        if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+        if deadline.is_some_and(|end| web_time::Instant::now() >= end) {
             return;
         }
     }
@@ -674,7 +674,7 @@ pub(crate) fn spawn_world(
             return;
         }
         job.phase = WorldSpawnPhase::Plan;
-        if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+        if deadline.is_some_and(|end| web_time::Instant::now() >= end) {
             return;
         }
     }
@@ -728,7 +728,7 @@ pub(crate) fn spawn_world_finish(
         .filter(|process| !process.is_complete())
         .map(|process| process.progress.clone());
     let paced = progress.is_some();
-    let frame_started = std::time::Instant::now();
+    let frame_started = web_time::Instant::now();
     super::world_occupancy::place(
         &mut commands,
         &mut scene,
@@ -798,10 +798,10 @@ fn record_first_world_frame(
 }
 
 #[derive(Resource, Clone, Default)]
-pub(crate) struct WorldPresentAck(Arc<Mutex<Option<(WorldGeneration, std::time::Instant)>>>);
+pub(crate) struct WorldPresentAck(Arc<Mutex<Option<(WorldGeneration, web_time::Instant)>>>);
 
 impl WorldPresentAck {
-    fn presented_at(&self, generation: WorldGeneration) -> Option<std::time::Instant> {
+    fn presented_at(&self, generation: WorldGeneration) -> Option<web_time::Instant> {
         self.0.lock().ok().and_then(|ack| {
             ack.as_ref()
                 .filter(|(seen, _)| *seen == generation)
@@ -1015,7 +1015,7 @@ fn acknowledge_world_present(extracted: Res<ExtractedWorldPresent>, ack: Res<Wor
         return;
     };
     if let Ok(mut slot) = ack.0.lock() {
-        *slot = Some((generation, std::time::Instant::now()));
+        *slot = Some((generation, web_time::Instant::now()));
     }
 }
 

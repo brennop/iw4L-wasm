@@ -212,7 +212,7 @@ fn binary(sha256: Option<&str>) -> Value {
         "modified_unix_s": metadata
             .as_ref()
             .and_then(|metadata| metadata.modified().ok())
-            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|at| at.duration_since(web_time::UNIX_EPOCH).ok())
             .map(|since| since.as_secs()),
     })
 }

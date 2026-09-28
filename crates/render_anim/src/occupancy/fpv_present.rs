@@ -210,7 +210,7 @@ pub fn spawn_pending_fpv(
         pending.0 = Some(request);
         return;
     };
-    let instance_started = std::time::Instant::now();
+    let instance_started = web_time::Instant::now();
     cursor.0.forget_weap_anim();
     for entity in &existing_fpv {
         commands.entity(entity).try_despawn();

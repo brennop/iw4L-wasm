@@ -1463,7 +1463,7 @@ pub fn census_image_working_set(
     }
 }
 
-fn read_cached_mips(key: &str, io_at: std::time::Instant) -> Option<DecodedMips> {
+fn read_cached_mips(key: &str, io_at: web_time::Instant) -> Option<DecodedMips> {
     let hit = crate::cache_get("mips", key)?;
     MIP_IO_NS.fetch_add(io_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
     let mips = DecodedMips::cache_decode(&hit)?;
@@ -1480,19 +1480,19 @@ fn mip_cache_key(crc: u32, size: u64, entry: &str) -> String {
 
 fn load_or_decode_mips(candidate: &asset_transport::IwdFile) -> Result<DecodedMips, String> {
     let key = mip_cache_key(candidate.crc32(), candidate.size(), candidate.entry());
-    let io_at = std::time::Instant::now();
+    let io_at = web_time::Instant::now();
     if let Some(mips) = read_cached_mips(&key, io_at) {
         return Ok(mips);
     }
 
     let _flight = crate::cache_flight("mips", &key);
-    if let Some(mips) = read_cached_mips(&key, std::time::Instant::now()) {
+    if let Some(mips) = read_cached_mips(&key, web_time::Instant::now()) {
         return Ok(mips);
     }
     let bytes = candidate.read()?;
     let mips = decode_iwi_mips(&bytes)?;
     let blob = mips.cache_encode();
-    let store_at = std::time::Instant::now();
+    let store_at = web_time::Instant::now();
     if let Err(error) = crate::cache_put("mips", &key, &blob) {
         diag::warn!(Zone, "mip cache store {key}: {error}");
     }
@@ -2359,7 +2359,7 @@ pub fn unapplied_decoded_bytes() -> u64 {
 /// which of the two the time went to.
 fn wait_for_decode_budget() -> (u64, bool) {
     let budget = decode_budget_bytes();
-    let since = std::time::Instant::now();
+    let since = web_time::Instant::now();
     let mut waited = false;
     while UNAPPLIED_BATCHES.load(Ordering::Relaxed) > 0 && gated_payload_bytes() >= budget {
         if since.elapsed() >= BUDGET_WAIT_LIMIT {

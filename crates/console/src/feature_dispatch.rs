@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -656,8 +656,8 @@ fn leave_master(bridge: &MasterBridge) {
         return;
     }
     bridge.leave();
-    let until = std::time::Instant::now() + LEAVE_BUDGET;
-    while std::time::Instant::now() < until {
+    let until = web_time::Instant::now() + LEAVE_BUDGET;
+    while web_time::Instant::now() < until {
         if bridge.state().is_terminal() {
             return;
         }

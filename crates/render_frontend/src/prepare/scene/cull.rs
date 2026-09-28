@@ -54,7 +54,7 @@ pub struct DpvsFrameStats {
     pub aspect: f32,
     pub fov_deg: f32,
 
-    pub cell_static_started: Option<std::time::Instant>,
+    pub cell_static_started: Option<web_time::Instant>,
 
     pub submitted_batches: u32,
 

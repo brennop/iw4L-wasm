@@ -6,6 +6,7 @@ license.workspace = true
 description = "wgpu resources, pipelines, upload, render graph, and submit."
 
 [dependencies]
+web-time = { workspace = true }
 asset_iw4.workspace = true
 assets.workspace = true
 bytemuck = { version = "1", features = ["derive"] }

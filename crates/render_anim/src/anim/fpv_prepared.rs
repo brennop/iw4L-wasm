@@ -155,7 +155,7 @@ type RigKey = (usize, bool, Vec<Option<usize>>, Vec<Option<usize>>);
 struct FpvPreparationJob {
     owner: FpvPreparationOwner,
     stage: FpvPreparationStage,
-    started: std::time::Instant,
+    started: web_time::Instant,
     progress: Option<assets::StageHandle>,
     work_total: u64,
     work_done: u64,
@@ -400,7 +400,7 @@ impl FpvPreparationJob {
         Self {
             owner,
             stage: FpvPreparationStage::Admit,
-            started: std::time::Instant::now(),
+            started: web_time::Instant::now(),
             progress,
             work_total,
             work_done: 0,
@@ -439,14 +439,14 @@ impl FpvPreparationJob {
 
     fn advance(
         &mut self,
-        deadline: std::time::Instant,
+        deadline: web_time::Instant,
         fpv: &FpvMeshCatalog,
         xanims: &XAnimCatalog,
         tess: &TessMaterials,
         lighting: &WorldModelLightingAtlas,
     ) {
         while self.stage != FpvPreparationStage::Done {
-            if std::time::Instant::now() >= deadline {
+            if web_time::Instant::now() >= deadline {
                 return;
             }
             match self.stage {
@@ -957,7 +957,7 @@ pub fn prepare_fpv_compositions(inputs: PrepareFpvInputs, mut prepared: ResMut<P
     let Some(lighting) = lighting.as_deref() else {
         return;
     };
-    let deadline = std::time::Instant::now() + PREPARE_FRAME_BUDGET;
+    let deadline = web_time::Instant::now() + PREPARE_FRAME_BUDGET;
     let done = {
         let Some(job) = prepared.job.as_mut() else {
             return;

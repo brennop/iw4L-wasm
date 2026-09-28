@@ -338,7 +338,7 @@ impl core::fmt::Display for ActionEnqueueError {
 #[derive(Resource, Debug, Default)]
 pub struct ClientActionInbox {
     pending: Vec<(ClientId, sim::ClientAction)>,
-    started: HashMap<(ClientId, sim::ActionRequestId), std::time::Instant>,
+    started: HashMap<(ClientId, sim::ActionRequestId), web_time::Instant>,
 
     received: Vec<(ClientId, sim::ClientAction)>,
     overflowed: std::collections::HashSet<ClientId>,
@@ -380,7 +380,7 @@ impl ClientActionInbox {
         {
             self.started
                 .entry((id, request_id))
-                .or_insert_with(std::time::Instant::now);
+                .or_insert_with(web_time::Instant::now);
         }
     }
 

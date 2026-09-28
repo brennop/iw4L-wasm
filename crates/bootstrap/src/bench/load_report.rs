@@ -14,7 +14,8 @@
 //! load was doing. What deleting it would save is a question for
 //! `load_jobs.csv` and its dependency edges.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use assets::LoadLaneTiming;
 

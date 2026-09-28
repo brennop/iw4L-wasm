@@ -422,7 +422,7 @@ impl WorldImageUpload {
         &mut self,
         images: &mut Assets<Image>,
         common: &mut ResidentGpuImages,
-        deadline: Option<std::time::Instant>,
+        deadline: Option<web_time::Instant>,
         max_this_frame: u32,
         paced_byte_budget: u64,
     ) -> bool {
@@ -438,7 +438,7 @@ impl WorldImageUpload {
             paced_byte_budget
         };
         let capped = |done: u32, bytes: u64| {
-            deadline.is_some_and(|end| std::time::Instant::now() >= end)
+            deadline.is_some_and(|end| web_time::Instant::now() >= end)
                 || overlay_count_byte_capped(
                     done.saturating_sub(start_done),
                     bytes.saturating_sub(start_bytes),
@@ -462,7 +462,7 @@ impl WorldImageUpload {
                 continue;
             }
             let bytes = image.as_ref().map(|image| image_bytes(image)).unwrap_or(0);
-            let step = std::time::Instant::now();
+            let step = web_time::Instant::now();
             let mut handed = bytes;
             let variant = self.exact_variants[self.exact_at];
             let common_owned = self.exact_common[self.exact_at];
@@ -517,7 +517,7 @@ impl WorldImageUpload {
             let image = self.probes[self.probe_at].take();
             let bytes = image.as_ref().map(image_bytes).unwrap_or(0);
             self.handed_bytes += bytes;
-            let step = std::time::Instant::now();
+            let step = web_time::Instant::now();
             self.probe_handles[self.probe_at] = image.map(|mut image| {
                 if let Some(mode) = probe_debug_mode() {
                     paint_probe_debug(&mut image, mode);
@@ -536,7 +536,7 @@ impl WorldImageUpload {
             }
             let page = self.lightmaps[self.lightmap_at].take();
             let bytes = page.as_ref().map_or(0, lightmap_page_bytes);
-            let step = std::time::Instant::now();
+            let step = web_time::Instant::now();
             self.lightmap_handles[self.lightmap_at] = page.map(|lightmap| {
                 diag::info!(
                     World,

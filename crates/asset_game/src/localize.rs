@@ -248,7 +248,7 @@ fn localize_cache_key(path: &Path) -> Option<String> {
     let modified = meta
         .modified()
         .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(web_time::UNIX_EPOCH)
         .ok()?
         .as_nanos() as u64;
     let mut hash = asset_transport::fnv1a64(path.to_string_lossy().as_bytes());

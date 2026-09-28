@@ -187,7 +187,7 @@ pub fn zone_share_counts() -> (u64, u64) {
 static SHARED_HIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SHARED_MISS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-type ZoneSourceKey = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+type ZoneSourceKey = (std::path::PathBuf, u64, Option<web_time::SystemTime>);
 
 fn source_key(path: &Path) -> Option<ZoneSourceKey> {
     let meta = std::fs::metadata(path).ok()?;

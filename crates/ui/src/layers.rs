@@ -1,4 +1,4 @@
-use std::time::Instant;
+use web_time::Instant;
 
 use bevy::{camera::visibility::VisibilitySystems, prelude::*, ui::UiSystems};
 

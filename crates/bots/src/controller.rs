@@ -320,7 +320,7 @@ impl HostController {
         nav: Option<&NavGraph>,
         astar_budget: &mut u32,
     ) {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let events = self.memory.ingest(obs);
         let touching_use = obs
             .objectives

@@ -13,8 +13,8 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
-    time::{Instant, SystemTime, UNIX_EPOCH},
 };
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 static SINK: OnceLock<Mutex<DiagState>> = OnceLock::new();
 static START: OnceLock<Instant> = OnceLock::new();

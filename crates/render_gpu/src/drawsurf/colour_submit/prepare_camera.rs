@@ -1529,7 +1529,7 @@ fn prepare_camera_rows(
     let mut arena_ms = 0.0f32;
     let (mut arena_share, mut arena_vertex_n, mut arena_pixel_n) = (0u32, 0usize, 0usize);
     if !prepared.is_empty() || !pending_viewmodel_prepared.is_empty() {
-        let arena_started = std::time::Instant::now();
+        let arena_started = web_time::Instant::now();
         let split = prepared.len();
         prepared.append(&mut pending_viewmodel_prepared);
         (arena_share, arena_vertex_n, arena_pixel_n) = upload_constant_arena(

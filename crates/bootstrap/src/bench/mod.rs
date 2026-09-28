@@ -27,7 +27,7 @@ mod tables;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use web_time::Instant;
 
 use assets::LoadProgress;
 use bevy::prelude::*;
@@ -71,8 +71,8 @@ pub fn arm() {
 
 fn shell_start(stamp: &str, now: Instant) -> Option<Instant> {
     let stamp = stamp.parse::<u128>().ok()?;
-    let elapsed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let elapsed = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .ok()?
         .as_nanos()
         .checked_sub(stamp)?;
@@ -368,8 +368,8 @@ fn write_run_package(artifacts: &Path, lines: &[String]) -> Vec<String> {
 /// Seconds since the epoch, zero-padded: the reports sort by name in the order
 /// they were run, on every platform, with no date library.
 fn stamp() -> String {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let seconds = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or(0);
     format!("{seconds:012}")

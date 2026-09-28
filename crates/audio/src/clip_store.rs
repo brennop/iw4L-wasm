@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use web_time::Instant;
 
 use assets::{AssetNamespace, NamespaceSoundIwd, SoundCatalog};
 use bevy::prelude::*;

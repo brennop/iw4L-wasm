@@ -6,6 +6,7 @@ license.workspace = true
 description = "R_* construction: pack drawsurf lists, worker-cmd ring, GfxScene occupancy."
 
 [dependencies]
+web-time = { workspace = true }
 asset_iw4.workspace = true
 asset_world.workspace = true
 assets.workspace = true

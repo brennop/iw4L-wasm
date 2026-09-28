@@ -53,7 +53,7 @@ pub(super) async fn walk_prepared_match(
         return (MatchLoadOutcome::Canceled, None);
     }
 
-    let cloning = std::time::Instant::now();
+    let cloning = web_time::Instant::now();
     let CommonProducts {
         material_seed,
         shared_surfaces,
@@ -223,7 +223,7 @@ pub(super) async fn walk_prepared_match(
     xanims.absorb_local(map_xanims);
     weapons.resolve_sz_xanim_edges(&xanims);
     let weapon_clip_indices = weapons.bound_weapon_xanim_indices();
-    let clip_prewarm_started = std::time::Instant::now();
+    let clip_prewarm_started = web_time::Instant::now();
     let failed_weapon_clips: Vec<_> = weapon_clip_indices
         .iter()
         .copied()
@@ -272,7 +272,7 @@ pub(super) async fn walk_prepared_match(
     fpv_meshes.set_map_namespace(map_namespace);
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     weapons.resolve_fpv_hands(&fpv_meshes, &bodies);
-    let assembly_started = std::time::Instant::now();
+    let assembly_started = web_time::Instant::now();
     let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
     report.push(format!(
         "FPV assemblies: built={} kit sides linked={} refused={} clip track tables={} elapsed_ms={:.1}",

@@ -470,7 +470,7 @@ pub fn apply_prepared_match(
         return;
     }
     let install_stage = install_stage.take();
-    let install_started = std::time::Instant::now();
+    let install_started = web_time::Instant::now();
     let request_id = ready.request_id;
     let load_key = ready.load_key;
     let zone = std::mem::take(&mut ready.zone);

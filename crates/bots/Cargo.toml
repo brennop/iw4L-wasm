@@ -6,6 +6,7 @@ license.workspace = true
 description = "Host-only bot controllers: sensor observations into UserCmd."
 
 [dependencies]
+web-time = { workspace = true }
 assets.workspace = true
 diag.workspace = true
 bevy.workspace = true

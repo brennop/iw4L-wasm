@@ -488,7 +488,7 @@ impl HeldImagePlan {
         progress: &LoadProgress,
         report: &mut Vec<String>,
     ) -> Option<PendingImages> {
-        let resolving = std::time::Instant::now();
+        let resolving = web_time::Instant::now();
         self.plan.prune_to(catalog);
         let resolved_ms = resolving.elapsed().as_secs_f32() * 1000.0;
         let (variants, rows) = self.plan.pruned();

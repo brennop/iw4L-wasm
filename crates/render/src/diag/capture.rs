@@ -129,7 +129,7 @@ pub fn capture_wait(facts: CaptureFrameFacts, settled_frames: u32) -> Option<Cap
 struct PendingCapture {
     request: CaptureRequest,
     waited_frames: u32,
-    queued_at: std::time::Instant,
+    queued_at: web_time::Instant,
 
     reported: Option<std::mem::Discriminant<CaptureWait>>,
 }
@@ -177,8 +177,8 @@ fn arm_write_drain_at_exit() {
         fn atexit(callback: extern "C" fn()) -> i32;
     }
     extern "C" fn drain_writes() {
-        let until = std::time::Instant::now() + exit_drain_budget();
-        while WRITES_IN_FLIGHT.load(Ordering::Relaxed) > 0 && std::time::Instant::now() < until {
+        let until = web_time::Instant::now() + exit_drain_budget();
+        while WRITES_IN_FLIGHT.load(Ordering::Relaxed) > 0 && web_time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
@@ -215,7 +215,7 @@ impl CaptureQueue {
         self.pending.push_back(PendingCapture {
             request,
             waited_frames: 0,
-            queued_at: std::time::Instant::now(),
+            queued_at: web_time::Instant::now(),
             reported: None,
         });
     }
@@ -440,8 +440,8 @@ pub(crate) fn report_unwritten_captures(
         return;
     }
     let budget = exit_drain_budget();
-    let until = std::time::Instant::now() + budget;
-    while queue.writing > 0 && std::time::Instant::now() < until {
+    let until = web_time::Instant::now() + budget;
+    while queue.writing > 0 && web_time::Instant::now() < until {
         std::thread::sleep(std::time::Duration::from_millis(2));
         queue.collect_writes();
     }

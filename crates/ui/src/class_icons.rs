@@ -57,7 +57,7 @@ pub fn warm_class_select_icons(
 }
 
 fn decode_class_select_icons(games: &std::path::Path) -> DecodedClassIcons {
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let mut stems = Vec::new();
     for preset in default_presets() {
         if let Some(stem) = cac_weapon_image(preset.primary) {

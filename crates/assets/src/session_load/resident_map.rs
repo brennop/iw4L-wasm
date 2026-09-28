@@ -4,7 +4,7 @@ use super::*;
 struct ZoneStamp {
     pub(super) path: PathBuf,
     pub(super) len: u64,
-    modified: Option<std::time::SystemTime>,
+    modified: Option<web_time::SystemTime>,
 }
 
 impl ZoneStamp {
@@ -48,7 +48,7 @@ pub async fn load_prepared_match(
             common_mp.as_deref().ok(),
             &mut Vec::new(),
         );
-        let copying = std::time::Instant::now();
+        let copying = web_time::Instant::now();
         if let Some(mut prepared) = resident_copy(stamp, &key) {
             progress.record_reused_scoped(StageId::CommonAssets, "shared common");
             progress.record_reused_scoped(StageId::MapAssets, "resident");
@@ -82,7 +82,7 @@ pub async fn load_prepared_match(
         return outcome;
     };
     if let (Some(zone), Some(common)) = (stamp, common) {
-        let keeping = std::time::Instant::now();
+        let keeping = web_time::Instant::now();
         let resident = prepared.clone();
         prepared.report.push(format!(
             "resident map: kept `{}` walk #{} for a same-map load ({:.0}ms)",

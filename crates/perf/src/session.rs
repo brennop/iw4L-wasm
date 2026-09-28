@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use perfetto_sdk::heap_buffer::HeapBuffer;
 use perfetto_sdk::pb_msg::{PbMsg, PbMsgWriter};

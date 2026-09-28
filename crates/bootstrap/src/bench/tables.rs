@@ -12,7 +12,7 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
-use std::time::Instant;
+use web_time::Instant;
 
 use assets::load_jobs::{JobRow, Jobs};
 use perf::frames::{FrameRow, Frames, flag};

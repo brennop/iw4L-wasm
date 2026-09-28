@@ -247,7 +247,7 @@ impl ArchiveLease {
                 archive: Some(archive),
             });
         }
-        let opened_at = std::time::Instant::now();
+        let opened_at = web_time::Instant::now();
         let disk = std::fs::File::open(path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
         let archive = zip::ZipArchive::new(std::io::BufReader::new(disk))
@@ -301,7 +301,7 @@ fn read_pooled_entry(
         .archive
         .as_mut()
         .expect("lease holds its reader until drop");
-    let inflate_at = std::time::Instant::now();
+    let inflate_at = web_time::Instant::now();
     let mut entry = archive
         .by_name(entry_name)
         .map_err(|error| format!("cannot read {entry_name}: {error}"))?;

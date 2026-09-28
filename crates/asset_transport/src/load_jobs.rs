@@ -41,7 +41,7 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
+use web_time::Instant;
 
 /// Rows kept in the default (per-class) mode.
 const CLASS_CAPACITY: usize = 4_096;

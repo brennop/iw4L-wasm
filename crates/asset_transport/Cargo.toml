@@ -6,6 +6,7 @@ license.workspace = true
 description = "Filesystem transport: discover games, inflate FastFiles, index IWDs, cache blobs."
 
 [dependencies]
+web-time = { workspace = true }
 asset_core.workspace = true
 diag.workspace = true
 fastfile_iw4.workspace = true

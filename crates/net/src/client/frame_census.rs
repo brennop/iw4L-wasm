@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use std::time::Instant;
+use web_time::Instant;
 
 use bevy::prelude::*;
 

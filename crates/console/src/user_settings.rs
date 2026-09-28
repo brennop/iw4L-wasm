@@ -314,4 +314,3 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
         binds.set(BindButton::Key(KeyCode::Digit4), 21);
     }
 }
-

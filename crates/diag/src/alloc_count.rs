@@ -104,7 +104,7 @@ unsafe extern "C" {
 }
 
 pub fn release_freed_heap() -> std::time::Duration {
-    let at = std::time::Instant::now();
+    let at = web_time::Instant::now();
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         unsafe { malloc_trim(0) };

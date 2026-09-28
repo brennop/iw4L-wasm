@@ -7,7 +7,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 static RSS_PEAK: AtomicU64 = AtomicU64::new(0);
 

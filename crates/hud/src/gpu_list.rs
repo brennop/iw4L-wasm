@@ -193,11 +193,11 @@ static JOBS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0)
 
 /// Charge the scope it is held in to the frame's HUD tess total.
 #[must_use = "the body is timed until this is dropped"]
-pub struct TessBody(std::time::Instant);
+pub struct TessBody(web_time::Instant);
 
 impl TessBody {
     pub fn open() -> Self {
-        Self(std::time::Instant::now())
+        Self(web_time::Instant::now())
     }
 }
 

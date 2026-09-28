@@ -6,6 +6,7 @@ license.workspace = true
 description = "Draws what hud_iw4 computes / Snapshot presents."
 
 [dependencies]
+web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
 assets.workspace = true

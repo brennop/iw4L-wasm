@@ -6,6 +6,7 @@ license.workspace = true
 description = "Domain `session`: installing and tearing down a match, and which phase the client is in."
 
 [dependencies]
+web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
 frame.workspace = true

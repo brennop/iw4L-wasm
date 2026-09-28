@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 pub const FRAGMENT_HEADER_BYTES: usize = 16;
 const FRAGMENT_MAGIC: [u8; 2] = *b"RF";

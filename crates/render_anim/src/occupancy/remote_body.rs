@@ -145,7 +145,7 @@ fn prepare_remote_kits(
     if kits.owned_by(&bodies, &weapons, &world) {
         return;
     }
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     *kits = PreparedRemoteKits::prepare(&bodies, &weapons, &world);
     diag::info!(
         World,

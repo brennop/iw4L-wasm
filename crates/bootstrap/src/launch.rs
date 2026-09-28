@@ -59,7 +59,7 @@ fn launch_report(
 struct ShellCommonTask {
     task: bevy::tasks::Task<assets::ShellCommon>,
     perk_table: Option<assets::CapturedStringTable>,
-    started: std::time::Instant,
+    started: web_time::Instant,
 }
 
 fn install_class_catalog(mut commands: Commands, shell: Option<ResMut<ShellCommonTask>>) {
@@ -269,7 +269,7 @@ fn run_menu(games: assets::GamesRoot, artifacts: PathBuf) {
     app.insert_resource(ShellCommonTask {
         task: shell_common,
         perk_table: menus.string_table("mp/perkTable.csv").cloned(),
-        started: std::time::Instant::now(),
+        started: web_time::Instant::now(),
     })
     .add_systems(Update, install_class_catalog);
     match load_mp_localized_strings(&ui_games, "iw4:code_post_gfx_mp") {

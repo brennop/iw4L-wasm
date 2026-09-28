@@ -144,7 +144,7 @@ fn request_sweep() {
 fn sweep(cache: &Path, budget: u64) {
     let mut entries = Vec::new();
     let mut total = 0u64;
-    let stale_temp = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let stale_temp = web_time::SystemTime::now() - std::time::Duration::from_secs(3600);
     let mut stack = vec![cache.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(listing) = fs::read_dir(&dir) else {
@@ -157,7 +157,7 @@ fn sweep(cache: &Path, budget: u64) {
                 stack.push(path);
                 continue;
             }
-            let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            let modified = meta.modified().unwrap_or(web_time::UNIX_EPOCH);
 
             if path.extension().is_some_and(|ext| ext == "tmp") {
                 if modified < stale_temp {

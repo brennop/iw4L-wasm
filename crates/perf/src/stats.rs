@@ -21,7 +21,7 @@
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
+use web_time::Instant;
 
 use crate::vocabulary_types::{Counter, Origin, Span, Unit};
 

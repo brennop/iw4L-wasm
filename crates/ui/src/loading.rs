@@ -371,7 +371,7 @@ pub(crate) fn update_loading_screen(
     font: Option<Res<GameUiFont>>,
     mut screen: Option<ResMut<LoadingScreen>>,
     load: Option<Res<assets::MapLoadProcess>>,
-    mut next_table: Local<Option<std::time::Instant>>,
+    mut next_table: Local<Option<web_time::Instant>>,
     mut shown: Local<StatusTable>,
     mut letters: Query<(&LoadingLetter, &mut TextColor), Without<LoadingStatusCell>>,
     list: Query<(Entity, Option<&Children>), With<LoadingStatusList>>,
@@ -406,7 +406,7 @@ pub(crate) fn update_loading_screen(
         return;
     }
 
-    let now = std::time::Instant::now();
+    let now = web_time::Instant::now();
     if next_table.is_some_and(|due| now < due) {
         return;
     }

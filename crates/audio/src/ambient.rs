@@ -58,7 +58,7 @@ pub(crate) struct SoundBankCompose {
     bank: Option<Task<ComposedBank>>,
     common_profile_id: u64,
     products_id: u64,
-    started: std::time::Instant,
+    started: web_time::Instant,
     stall_reported: bool,
 }
 
@@ -207,7 +207,7 @@ pub(crate) fn start_sound_bank_compose(
         bank: None,
         common_profile_id: 0,
         products_id: 0,
-        started: std::time::Instant::now(),
+        started: web_time::Instant::now(),
         stall_reported: false,
     });
 }

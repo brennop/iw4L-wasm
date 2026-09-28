@@ -22,7 +22,7 @@ pub fn stats() -> (u64, u64, f64) {
 
 pub fn load(pair: RuntimeShaderPair, abi: &PassLoweringAbi) -> Option<PassWgsl> {
     let key = cache_key(pair, abi);
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let bytes = assets::cache_get("wgsl", &key)?;
     IO_NS.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
     let module = decode(&bytes)?;
@@ -34,7 +34,7 @@ pub fn store(pair: RuntimeShaderPair, abi: &PassLoweringAbi, module: &PassWgsl) 
     MISS.fetch_add(1, Ordering::Relaxed);
     let key = cache_key(pair, abi);
     let bytes = encode(module);
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     if let Err(error) = assets::cache_put("wgsl", &key, &bytes) {
         diag::warn!(World, "wgsl cache store {key}: {error}");
     }

@@ -207,7 +207,7 @@ pub struct MaterialProgramCompile {
     jobs: Vec<CompileJob>,
     task: Option<Task<Vec<PassOutcome>>>,
     progress: Option<Arc<AtomicU32>>,
-    started: Option<std::time::Instant>,
+    started: Option<web_time::Instant>,
     load: Option<assets::LoadProgress>,
     /// What the pool workers have computed. It ends when the last job is
     /// computed, which is not when the result is published.
@@ -309,11 +309,11 @@ impl MaterialProgramCompile {
         }
     }
 
-    fn absorb_pending(&mut self, deadline: Option<std::time::Instant>) -> bool {
+    fn absorb_pending(&mut self, deadline: Option<web_time::Instant>) -> bool {
         const CHUNK: usize = 64;
-        let slice_started = std::time::Instant::now();
+        let slice_started = web_time::Instant::now();
         while self.absorb_at < self.pending.len() {
-            if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+            if deadline.is_some_and(|end| web_time::Instant::now() >= end) {
                 diag::info!(
                     World,
                     "world spawn compile absorb: {}/{} {:.1}ms (budget)",
@@ -386,7 +386,7 @@ impl MaterialProgramCompile {
     pub fn until(
         &mut self,
         catalog: &Arc<RuntimeMaterialCatalog>,
-        deadline: Option<std::time::Instant>,
+        deadline: Option<web_time::Instant>,
     ) -> bool {
         let paced = deadline.is_some();
         if self.task.is_none() && self.pending.is_empty() && self.done >= self.total && self.armed {
@@ -408,7 +408,7 @@ impl MaterialProgramCompile {
             let catalog = Arc::clone(self.catalog.as_ref().unwrap_or(catalog));
             let progress = Arc::new(AtomicU32::new(0));
             self.progress = Some(Arc::clone(&progress));
-            self.started = Some(std::time::Instant::now());
+            self.started = Some(web_time::Instant::now());
             diag::info!(
                 World,
                 "world spawn compile pool: jobs={} workers={}",

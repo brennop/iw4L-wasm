@@ -6,6 +6,7 @@ license.workspace = true
 description = "Sound aliases and mixing."
 
 [dependencies]
+web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
 assets.workspace = true

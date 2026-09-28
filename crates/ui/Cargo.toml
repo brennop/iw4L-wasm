@@ -6,6 +6,7 @@ license.workspace = true
 description = "Our menus, lobby and overlays. Retail menu files are not supported."
 
 [dependencies]
+web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
 assets.workspace = true

@@ -13,7 +13,7 @@ pub(crate) fn overlay_is_quiet(ready: bool, quiet: u32) -> bool {
 
 #[derive(Default)]
 pub struct WorldGpuWait {
-    started: Option<std::time::Instant>,
+    started: Option<web_time::Instant>,
     quiet: u32,
     pipelines_at_arm: Option<u32>,
     stage: Option<assets::StageHandle>,
@@ -23,7 +23,7 @@ pub struct WorldGpuWait {
 
 impl WorldGpuWait {
     pub fn arm(&mut self, progress: Option<&assets::LoadProgress>) {
-        self.started = Some(std::time::Instant::now());
+        self.started = Some(web_time::Instant::now());
         self.quiet = 0;
         self.pipelines_at_arm = None;
         // A wait that never reached its gate before the world changed under it

@@ -560,4 +560,3 @@ fn display_key(key: KeyCode) -> String {
     }
     .to_owned()
 }
-

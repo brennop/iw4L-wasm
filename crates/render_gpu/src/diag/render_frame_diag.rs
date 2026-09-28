@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use web_time::Instant;
 
 use bevy::diagnostic::{DiagnosticPath, DiagnosticsStore};
 use bevy::ecs::schedule::MainThreadExecutor;

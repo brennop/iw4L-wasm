@@ -306,6 +306,7 @@ dependencies = [
  "fastfile_iw4",
  "fastfile_iw5",
  "fastfile_t5",
+ "web-time",
 ]
 
 [[package]]
@@ -332,6 +333,7 @@ dependencies = [
  "fastfile_t5",
  "fx_iw4",
  "weapon_iw4",
+ "web-time",
  "xmodel_runtime",
 ]
 
@@ -359,6 +361,7 @@ dependencies = [
  "fastfile_t5",
  "lighting_iw4",
  "render_material",
+ "web-time",
 ]
 
 [[package]]
@@ -392,6 +395,7 @@ dependencies = [
  "flate2",
  "lnk",
  "miniz_oxide",
+ "web-time",
  "zip",
 ]
 
@@ -450,6 +454,7 @@ dependencies = [
  "serde_json",
  "trace_iw4",
  "weapon_iw4",
+ "web-time",
  "xmodel_runtime",
 ]
 
@@ -579,6 +584,7 @@ dependencies = [
  "sound_iw4",
  "symphonia",
  "weapon_iw4",
+ "web-time",
 ]
 
 [[package]]
@@ -1951,6 +1957,7 @@ dependencies = [
  "sha2",
  "sim",
  "ui",
+ "web-time",
 ]
 
 [[package]]
@@ -1970,6 +1977,7 @@ dependencies = [
  "playerstate_iw4",
  "sim",
  "weapon_iw4",
+ "web-time",
 ]
 
 [[package]]
@@ -2181,6 +2189,7 @@ dependencies = [
  "session",
  "sim",
  "ui",
+ "web-time",
 ]
 
 [[package]]
@@ -2500,6 +2509,7 @@ dependencies = [
  "mimalloc",
  "serde",
  "serde_json",
+ "web-time",
 ]
 
 [[package]]
@@ -3235,6 +3245,7 @@ dependencies = [
  "playerstate_iw4",
  "sim",
  "weapon_iw4",
+ "web-time",
 ]
 
 [[package]]
@@ -3936,6 +3947,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "weapon_iw4",
+ "web-time",
  "zstd",
 ]
 
@@ -4545,6 +4557,7 @@ dependencies = [
  "perfetto-sdk",
  "serde_json",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -5014,6 +5027,7 @@ dependencies = [
  "serde_json",
  "sim",
  "weapon_iw4",
+ "web-time",
 ]
 
 [[package]]
@@ -5044,6 +5058,7 @@ dependencies = [
  "render_scene",
  "sim",
  "weapon_iw4",
+ "web-time",
  "xmodel_runtime",
 ]
 
@@ -5111,6 +5126,7 @@ dependencies = [
  "render_scene",
  "sim",
  "weapon_iw4",
+ "web-time",
 ]
 
 [[package]]
@@ -5159,6 +5175,7 @@ dependencies = [
  "render_backend",
  "render_frame",
  "render_material",
+ "web-time",
 ]
 
 [[package]]
@@ -5209,6 +5226,7 @@ dependencies = [
  "perf",
  "playerstate_iw4",
  "sim",
+ "web-time",
 ]
 
 [[package]]
@@ -5526,6 +5544,7 @@ dependencies = [
  "render_frontend",
  "render_fx",
  "sim",
+ "web-time",
 ]
 
 [[package]]
@@ -6239,6 +6258,7 @@ dependencies = [
  "net",
  "session",
  "sim",
+ "web-time",
 ]
 
 [[package]]

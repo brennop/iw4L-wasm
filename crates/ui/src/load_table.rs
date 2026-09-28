@@ -209,7 +209,7 @@ fn fold_state(slots: &[&StageSnapshot]) -> RowState {
 
 /// From the first start to the last end. Parallel stages overlap, so this is
 /// never the sum of their spans.
-fn fold_elapsed(slots: &[&StageSnapshot], now: std::time::Instant) -> Option<std::time::Duration> {
+fn fold_elapsed(slots: &[&StageSnapshot], now: web_time::Instant) -> Option<std::time::Duration> {
     let started = slots
         .iter()
         .filter_map(|slot| slot.started_at)
@@ -242,8 +242,8 @@ pub(crate) fn project(snapshot: &LoadSnapshot) -> LoadTable {
         }
     }
 
-    let mut running: Vec<(std::time::Instant, LoadRow)> = Vec::new();
-    let mut ended: Vec<(std::time::Instant, LoadRow)> = Vec::new();
+    let mut running: Vec<(web_time::Instant, LoadRow)> = Vec::new();
+    let mut ended: Vec<(web_time::Instant, LoadRow)> = Vec::new();
     for id in opened {
         let slots: Vec<&StageSnapshot> = snapshot
             .stages

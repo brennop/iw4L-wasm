@@ -6,7 +6,7 @@
 //! so a task still finishing the map before it writes into state nobody reads
 //! rather than into the rows of the map that replaced it.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use bevy::prelude::Resource;
 

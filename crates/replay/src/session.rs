@@ -20,8 +20,8 @@ pub fn next_free_demo_name(artifacts_root: &Path) -> String {
 
     format!(
         "demo{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or_default()
     )

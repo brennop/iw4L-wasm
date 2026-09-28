@@ -6,6 +6,7 @@ license.workspace = true
 description = "Our console: input, parsing, execution, cvar storage, coverage report."
 
 [dependencies]
+web-time = { workspace = true }
 diag.workspace = true
 math_iw4.workspace = true
 dpvs_iw4.workspace = true

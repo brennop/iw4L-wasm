@@ -88,7 +88,7 @@ pub(crate) struct ClassStoreFile {
     path: Option<std::path::PathBuf>,
     loaded: bool,
     written: Option<String>,
-    retry_at: Option<std::time::Instant>,
+    retry_at: Option<web_time::Instant>,
 }
 
 fn clean_field(value: &str) -> String {
@@ -243,7 +243,7 @@ pub(crate) fn save_class_store(store: Res<SessionClassStore>, mut file: ResMut<C
     if !file.loaded
         || file
             .retry_at
-            .is_some_and(|at| std::time::Instant::now() < at)
+            .is_some_and(|at| web_time::Instant::now() < at)
     {
         return;
     }
@@ -264,7 +264,7 @@ pub(crate) fn save_class_store(store: Res<SessionClassStore>, mut file: ResMut<C
         }
         Err(error) => {
             diag::warn!(Ui, "classes: cannot write {}: {error}", path.display());
-            file.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            file.retry_at = Some(web_time::Instant::now() + std::time::Duration::from_secs(5));
         }
     }
 }

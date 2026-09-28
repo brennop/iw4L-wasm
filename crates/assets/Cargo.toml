@@ -6,6 +6,7 @@ license.workspace = true
 description = "Asset lane orchestration, linking and conversion into engine objects."
 
 [dependencies]
+web-time = { workspace = true }
 render_material.workspace = true
 diag.workspace = true
 anim_iw4.workspace = true

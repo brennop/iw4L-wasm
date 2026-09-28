@@ -399,8 +399,8 @@ pub fn advance_cg_frame_clock(
 
 #[derive(Default)]
 pub struct JoinLinkWatch {
-    first_offer: Option<std::time::Instant>,
-    last_line: Option<std::time::Instant>,
+    first_offer: Option<web_time::Instant>,
+    last_line: Option<web_time::Instant>,
     offers: u32,
     connected: bool,
 }
@@ -425,9 +425,7 @@ pub fn receive_ticks(
                 diag::warn!(Net, "udp connect: {e}");
             } else if link.should_offer_connect() {
                 watch.offers += 1;
-                watch
-                    .first_offer
-                    .get_or_insert_with(std::time::Instant::now);
+                watch.first_offer.get_or_insert_with(web_time::Instant::now);
             }
         }
         match link.recv_ticks() {
@@ -501,7 +499,7 @@ fn note_join_link(watch: &mut JoinLinkWatch, link: &crate::transport::udp_sessio
     ) {
         return;
     }
-    let now = std::time::Instant::now();
+    let now = web_time::Instant::now();
     if watch
         .last_line
         .is_some_and(|last| last.elapsed().as_secs_f32() < JOIN_WAIT_LINE_SECS)
@@ -1219,9 +1217,9 @@ pub fn publish_presented(
     phase: Option<ResMut<crate::UpdatePhaseCensus>>,
     trace: Option<ResMut<ClientPhaseTrace>>,
 ) {
-    let publish_started = std::time::Instant::now();
+    let publish_started = web_time::Instant::now();
     struct PublishStamp<'a> {
-        started: std::time::Instant,
+        started: web_time::Instant,
         phase: Option<ResMut<'a, crate::UpdatePhaseCensus>>,
     }
     impl Drop for PublishStamp<'_> {

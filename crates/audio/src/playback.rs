@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use asset_iw4::{SND_CURVE_MAX_KNOTS, snd_attenuate, snd_has_free_voice};
 use assets::{AssetNamespace, NamespaceSoundIwd, SoundCatalog, lerp_range, snd_unit_random};

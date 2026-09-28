@@ -190,7 +190,7 @@ pub fn prepare_model_materials(
         };
         return;
     };
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let mut by_name = HashMap::new();
     let mut refused = Vec::new();
     for name in bodies.0.names() {

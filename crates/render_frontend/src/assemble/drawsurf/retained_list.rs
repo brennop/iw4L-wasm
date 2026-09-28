@@ -7,7 +7,7 @@ use dpvs_iw4::{
 };
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use super::list::DrawSurfList;
 use super::tess::fx::FxCodeMeshPlan;
