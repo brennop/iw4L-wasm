@@ -104,7 +104,8 @@ pub(super) struct KeptImages {
 pub struct CommonSet {
     pub(super) id: u64,
     pub(super) key: CommonKey,
-    pub(super) products: CommonProducts,
+    /// Taken, not cloned, when no next map will reuse the set.
+    products: std::sync::Mutex<Option<CommonProducts>>,
     donor_images: async_lock::OnceCell<Vec<KeptImages>>,
     pub(super) fpv_plan: Option<ImageDemandPlan>,
     pub(super) retained: std::sync::Mutex<crate::material_images::PayloadRetention>,
@@ -114,6 +115,27 @@ pub struct CommonSet {
 }
 
 impl CommonSet {
+    /// A copy of the products, for a set that a later map will use again.
+    pub(super) fn products(&self) -> CommonProducts {
+        self.products
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+            .expect("common products were taken by a one-shot load")
+    }
+
+    /// The products themselves; the set is spent, so it also leaves the process slot.
+    pub(super) fn take_products(&self) -> CommonProducts {
+        let products = self
+            .products
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+            .expect("common products were already taken");
+        release_common();
+        products
+    }
+
     pub(super) async fn donor_images(&self) -> &[KeptImages] {
         self.donor_images.wait().await
     }
@@ -123,6 +145,10 @@ impl CommonSet {
     }
 
     pub(super) fn retain(&self, batch: &crate::material_images::DecodedImageBatch) -> u64 {
+        // Retention only serves a next map; without one it forces a copy per image.
+        if !super::resident_map::keeps_resident_map() {
+            return 0;
+        }
         self.retained
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -166,8 +192,19 @@ impl Drop for FlightGuard {
             *slot = None;
         }
         drop(slot);
+        #[cfg(not(target_arch = "wasm32"))]
         let _ = flight.set.set_blocking(None);
+        // No blocking wait in the browser; the cell is uncontended here, so one poll settles it.
+        #[cfg(target_arch = "wasm32")]
+        let _ = bevy::tasks::futures_lite::future::block_on(
+            bevy::tasks::futures_lite::future::poll_once(flight.set.set(None)),
+        );
     }
+}
+
+/// Drops the process-wide common set; a one-shot load has no next map to give it to.
+pub fn release_common() {
+    *COMMON.lock().unwrap_or_else(|poison| poison.into_inner()) = None;
 }
 
 pub(super) fn landed_common(key: &CommonKey) -> Option<Arc<CommonSet>> {
@@ -227,7 +264,7 @@ pub async fn load_shell_common(games: crate::GamesRoot) -> ShellCommon {
     let mut report = Vec::new();
     let key = CommonKey::shell(&games, &mut report);
     let (common, reach) = ensure_common(key).await;
-    let weapons = common.products.weapons.clone().publish();
+    let weapons = common.products().weapons.publish();
     report.push(format!(
         "CAC: {reach} common set {}; weapons={} (iw4={} iw5={} t5={}) tables={}",
         common.key,
@@ -634,7 +671,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let set = Arc::new(CommonSet {
         id: NEXT_COMMON_PROFILE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         key,
-        products: CommonProducts {
+        products: std::sync::Mutex::new(Some(CommonProducts {
             material_seed,
             shared_surfaces,
             scene_models: common_scene_models,
@@ -673,7 +710,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             },
             report: common_report,
             localize_report,
-        },
+        })),
         donor_images: async_lock::OnceCell::new(),
         fpv_plan,
         retained: std::sync::Mutex::new(Default::default()),

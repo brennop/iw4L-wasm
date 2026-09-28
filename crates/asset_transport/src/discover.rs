@@ -43,7 +43,17 @@ pub fn load_dotenv() {
     }
 }
 
+static GAMES_ROOT_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// A build with no environment (the browser) names its games root here.
+pub fn set_games_root_override(root: PathBuf) {
+    let _ = GAMES_ROOT_OVERRIDE.set(root);
+}
+
 pub fn games_root_from_env() -> Result<GamesRoot, String> {
+    if let Some(root) = GAMES_ROOT_OVERRIDE.get() {
+        return Ok(GamesRoot(root.clone()));
+    }
     load_dotenv();
     let path = match std::env::var_os("IW4L_GAMES") {
         Some(raw) => PathBuf::from(raw),

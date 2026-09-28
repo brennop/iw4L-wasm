@@ -245,11 +245,7 @@ const LOCALIZE_CACHE_MAGIC: u32 = 0x4c_4f_43_31;
 
 fn localize_cache_key(path: &Path) -> Option<String> {
     let meta = gamefs::metadata(path).ok()?;
-    let modified = meta
-        .modified?
-        .duration_since(web_time::UNIX_EPOCH)
-        .ok()?
-        .as_nanos() as u64;
+    let modified = meta.modified?.as_nanos() as u64;
     let mut hash = asset_transport::fnv1a64(path.to_string_lossy().as_bytes());
     hash = asset_transport::fnv1a64_more(hash, &meta.len.to_le_bytes());
     hash = asset_transport::fnv1a64_more(hash, &modified.to_le_bytes());

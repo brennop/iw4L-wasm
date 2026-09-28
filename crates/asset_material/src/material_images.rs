@@ -2358,6 +2358,15 @@ pub fn unapplied_decoded_bytes() -> u64 {
 /// had to wait at all, so the decode timer can start here and the row can say
 /// which of the two the time went to.
 fn wait_for_decode_budget() -> (u64, bool) {
+    // One thread in the browser: nothing could drain the budget while we spin.
+    #[cfg(target_arch = "wasm32")]
+    return (RESIDENT_PAYLOAD_BYTES.load(Ordering::Relaxed), false);
+    #[cfg(not(target_arch = "wasm32"))]
+    wait_for_decode_budget_native()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_decode_budget_native() -> (u64, bool) {
     let budget = decode_budget_bytes();
     let since = web_time::Instant::now();
     let mut waited = false;

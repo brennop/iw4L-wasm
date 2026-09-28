@@ -74,7 +74,7 @@ pub(super) async fn walk_prepared_match(
         mut xanims,
         mut player_anim_sources,
         fx: common_fx,
-        fx_models: common_fx_models,
+        fx_models: mut common_fx_models,
         impact_fx: common_impact,
         t5_xanims,
         t5_fx,
@@ -94,7 +94,11 @@ pub(super) async fn walk_prepared_match(
             },
         report: mut common_report,
         localize_report,
-    } = common.products.clone();
+    } = if super::resident_map::keeps_resident_map() {
+        common.products()
+    } else {
+        common.take_products()
+    };
     let clone_ms = cloning.elapsed().as_secs_f32() * 1000.0;
     let iw5_mat_n = iw5_materials.materials.len();
     common_report.append(&mut donor_report);
@@ -168,6 +172,17 @@ pub(super) async fn walk_prepared_match(
     world
         .map_xmodel_scene_assets
         .absorb_captured(common_scene_models);
+    // The common FX models are decoded meshes, most of which no effect here
+    // uses; they are pruned after the absorb below anyway. Pruning them now, from
+    // the same hints, keeps them out of memory while the images decode. A T5
+    // donor could add hints later, so that case waits.
+    let common_fx_model_full = common_fx_models.len();
+    if t5_fx.len() == 0 {
+        let mut hints = world.fx.model_hints();
+        hints.extend(common_fx.model_hints());
+        common_fx_models.keep_referenced(&hints);
+    }
+    let common_fx_model_early_pruned = common_fx_model_full - common_fx_models.len();
     report.append(&mut common_report);
 
     if facts.team_settings.allies.is_none() && facts.team_settings.axis.is_none() {
@@ -639,9 +654,10 @@ pub(super) async fn walk_prepared_match(
     ));
 
     world.fx.absorb(common_fx);
-    let common_fx_model_n = common_fx_models.len();
+    let common_fx_model_n = common_fx_model_full;
     let map_fx_model_n = world.fx_models.len();
-    let common_fx_model_added = world.fx_models.absorb(common_fx_models);
+    let common_fx_model_added =
+        world.fx_models.absorb(common_fx_models) + common_fx_model_early_pruned;
     let leftover_t5_fx_n = t5_fx.len();
     let leftover_t5_fx_gaps = t5_fx.capture_gaps;
     world.fx.absorb_missing(t5_fx);
@@ -649,7 +665,7 @@ pub(super) async fn walk_prepared_match(
         "leftover t5 fx absorb_missing: donor={leftover_t5_fx_n} gaps={leftover_t5_fx_gaps} host now {}",
         world.fx.len()
     ));
-    let fx_model_walked_n = world.fx_models.len();
+    let fx_model_walked_n = world.fx_models.len() + common_fx_model_early_pruned;
     world.fx_models.keep_referenced(&world.fx.model_hints());
     world.fx.resolve_model_edges(&world.fx_models);
     let fx_model_edges = world.fx.model_edge_census();

@@ -4,7 +4,7 @@ use super::*;
 struct ZoneStamp {
     pub(super) path: PathBuf,
     pub(super) len: u64,
-    modified: Option<web_time::SystemTime>,
+    modified: Option<std::time::Duration>,
 }
 
 impl ZoneStamp {
@@ -34,6 +34,12 @@ fn resident_copy(zone: &ZoneStamp, key: &CommonKey) -> Option<PreparedMatch> {
     let resident = slot.as_ref()?;
     (resident.zone == *zone && Arc::ptr_eq(&resident.common, &common))
         .then(|| resident.prepared.clone())
+}
+
+/// The kept copy doubles the map's memory. The browser loads once and has no
+/// room for it; `IW4L_NO_RESIDENT_MAP=1` turns it off natively for measuring.
+pub(super) fn keeps_resident_map() -> bool {
+    !cfg!(target_arch = "wasm32") && std::env::var_os("IW4L_NO_RESIDENT_MAP").is_none()
 }
 
 pub async fn load_prepared_match(
@@ -81,7 +87,7 @@ pub async fn load_prepared_match(
     let MatchLoadOutcome::Ready(mut prepared) = outcome else {
         return outcome;
     };
-    if let (Some(zone), Some(common)) = (stamp, common) {
+    if let (Some(zone), Some(common)) = (stamp, common.filter(|_| keeps_resident_map())) {
         let keeping = web_time::Instant::now();
         let resident = prepared.clone();
         prepared.report.push(format!(

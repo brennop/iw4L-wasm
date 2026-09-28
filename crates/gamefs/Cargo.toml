@@ -6,7 +6,6 @@ license.workspace = true
 description = "Read-only game-file seam: std::fs natively, a pack or browser buffer elsewhere."
 
 [dependencies]
-web-time = { workspace = true }
 
 [lints]
 workspace = true

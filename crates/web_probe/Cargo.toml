@@ -1,0 +1,24 @@
+[package]
+name = "web_probe"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "G4 probe: runs only load_prepared_match, natively or in a browser, and prints a comparable report."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+assets.workspace = true
+diag.workspace = true
+gamefs.workspace = true
+web-time = { workspace = true }
+bevy.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[lints]
+workspace = true

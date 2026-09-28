@@ -132,21 +132,25 @@ impl IwdIndex {
         type IndexedArchive = (usize, Result<Vec<(String, IwdFile)>, String>);
         let next = std::sync::atomic::AtomicUsize::new(0);
         let done: Mutex<Vec<IndexedArchive>> = Mutex::new(Vec::with_capacity(archives.len()));
-        let lanes = archives.len().min(index_lane_width());
+        let work = || {
+            loop {
+                let slot = next.fetch_add(1, Ordering::Relaxed);
+                let Some(path) = archives.get(slot) else {
+                    return;
+                };
+                let indexed = index_image_entries(path);
+                done.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((slot, indexed));
+            }
+        };
+        // The browser has one thread: index inline.
+        #[cfg(target_arch = "wasm32")]
+        work();
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::scope(|scope| {
-            for _ in 0..lanes {
-                scope.spawn(|| {
-                    loop {
-                        let slot = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(path) = archives.get(slot) else {
-                            return;
-                        };
-                        let indexed = index_image_entries(path);
-                        done.lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push((slot, indexed));
-                    }
-                });
+            for _ in 0..archives.len().min(index_lane_width()) {
+                scope.spawn(&work);
             }
         });
         let mut done = done

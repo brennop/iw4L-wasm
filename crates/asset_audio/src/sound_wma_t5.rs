@@ -7,7 +7,8 @@ use std::process::{Command, Stdio};
 use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use web_time::{Instant, SystemTime};
+use std::time::SystemTime;
+use web_time::Instant;
 
 use asset_transport::{
     cache_flight, cache_get, cache_put, ensure_artifacts_dir, fnv1a64, fnv1a64_more,

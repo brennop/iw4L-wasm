@@ -30,7 +30,7 @@ use common_cache::*;
 use common_walks::*;
 use match_walk::*;
 
-pub use common_cache::{CommonKey, CommonSet, ShellCommon, load_shell_common};
+pub use common_cache::{CommonKey, CommonSet, ShellCommon, load_shell_common, release_common};
 pub use common_walks::{
     MatchMaterialSeed, apply_match_material_map, load_match_material_catalog,
     load_match_material_seed,

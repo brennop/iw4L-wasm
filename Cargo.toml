@@ -69,6 +69,7 @@ members = [
     "crates/ui",
     "crates/updater",
     "crates/weapon_iw4",
+    "crates/web_probe",
     "crates/xmodel_runtime",
     "xtask",
 ]

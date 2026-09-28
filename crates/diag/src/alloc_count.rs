@@ -92,12 +92,19 @@ pub fn counting_enabled() -> bool {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn env_key_present(_key_nul: &[u8]) -> bool {
+    false
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn env_key_present(key_nul: &[u8]) -> bool {
     debug_assert_eq!(key_nul.last().copied(), Some(0));
     !unsafe { getenv(key_nul.as_ptr().cast()) }.is_null()
 }
 
 unsafe extern "C" {
+    #[cfg(not(target_arch = "wasm32"))]
     fn getenv(name: *const core::ffi::c_char) -> *mut core::ffi::c_char;
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     fn malloc_trim(pad: usize) -> core::ffi::c_int;

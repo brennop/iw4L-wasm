@@ -249,7 +249,8 @@ pub use discover::{
     find_common_mp_for_zone, find_localized_common_mp_for_zone, find_runtime_common_mp,
     find_runtime_zone, find_zone_file, find_zone_file_version, find_zone_for_tree,
     games_content_report, games_root_from_env, games_root_report, group_mp_maps, list_mp_maps,
-    load_dotenv, map_load_title, peek_zone_version, split_zone_key, zone_game_for_path,
+    load_dotenv, map_load_title, peek_zone_version, set_games_root_override, split_zone_key,
+    zone_game_for_path,
 };
 pub use dobj::{
     AIM_PITCH_CLAMP_RAD, AnimInstance, Attach, DObj, DObjError, ModelPoseSrc, TP_HEAD_ATTACH_TAG,
@@ -412,7 +413,7 @@ pub use session_load::{
     MatchLoadOutcome, MatchMaterialSeed, PreparedMatch, PreparedWorld, ShellCommon,
     WorldDrawPolicy, apply_match_material_map, load_match_material_catalog,
     load_match_material_seed, load_pool, load_prepared_match, load_shell_common, load_workers,
-    publish_process_cpus,
+    publish_process_cpus, release_common,
 };
 pub use soldiers::{
     SoldierKit, SoldierKits, arms_for_body, body_has_tp_attach_bones, ffa_assignment_is_axis,

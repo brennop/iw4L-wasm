@@ -6,7 +6,7 @@ use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use web_time::SystemTime;
+use std::time::Duration;
 
 pub mod pack;
 pub mod record;
@@ -18,7 +18,8 @@ impl<T: Read + Seek + Send> ReadSeek for T {}
 pub struct Meta {
     pub is_dir: bool,
     pub len: u64,
-    pub modified: Option<SystemTime>,
+    /// Time since the Unix epoch, when the backend knows it.
+    pub modified: Option<Duration>,
 }
 
 impl Meta {
@@ -50,7 +51,10 @@ fn meta_of(meta: &std::fs::Metadata) -> Meta {
     Meta {
         is_dir: meta.is_dir(),
         len: meta.len(),
-        modified: meta.modified().ok(),
+        modified: meta
+            .modified()
+            .ok()
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok()),
     }
 }
 
