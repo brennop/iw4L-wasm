@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WGSL validator</title>
+<pre id="out">running…</pre>
+<script type="module">
+// Feeds every .wgsl listed in manifest.json to the browser's WGSL compiler (Tint in Chrome)
+// and groups the errors by message. Result: window.wgslResult, also shown as JSON below.
+const dir = new URL('wgsl/', location.href);
+const files = await (await fetch(new URL('manifest.json', location.href))).json();
+const adapter = await navigator.gpu?.requestAdapter();
+if (!adapter) throw new Error('no WebGPU adapter');
+const device = await adapter.requestDevice();
+const groups = new Map();
+let ok = 0, failed = 0;
+const norm = (m) => m.replace(/\b\d+\b/g, 'N').replace(/`[^`]*`/g, '`_`').replace(/'[^']*'/g, "'_'");
+for (const name of files) {
+  const src = await (await fetch(new URL(name, dir))).text();
+  const module = device.createShaderModule({ code: src, label: name });
+  const info = await module.getCompilationInfo();
+  const errors = info.messages.filter((m) => m.type === 'error');
+  if (!errors.length) { ok++; continue; }
+  failed++;
+  for (const m of errors) {
+    const key = norm(m.message.split('\n')[0]);
+    const g = groups.get(key) ?? { message: key, count: 0, files: new Set(), example: null };
+    g.count++; g.files.add(name);
+    g.example ??= { file: name, line: m.lineNum, message: m.message, snippet: src.split('\n')[m.lineNum - 1] };
+    groups.set(key, g);
+  }
+}
+const result = {
+  total: files.length, ok, failed,
+  groups: [...groups.values()].map((g) => ({ ...g, files: g.files.size })).sort((a, b) => b.count - a.count),
+};
+window.wgslResult = result;
+document.getElementById('out').textContent = JSON.stringify(result, null, 2);
+</script>
