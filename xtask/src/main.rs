@@ -29,7 +29,7 @@ const REPO_TOOLS: &[&str] = &[
     "mr ls",
     "mr fmt FILE.rs...",
     "publish-check",
-    "web-pack [--root GAMES_ROOT] RECORD OUT.pack",
+    "web-pack [--root GAMES_ROOT] [--cache-record FILE] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
 ];
 

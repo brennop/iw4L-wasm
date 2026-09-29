@@ -18,12 +18,59 @@ fn cache_budget_bytes() -> u64 {
     })
 }
 
-pub fn cache_get(kind: &str, key: &str) -> Option<Vec<u8>> {
-    if !gamefs::is_native() {
+/// Where a pack keeps baked cache entries, relative to the games root. Each
+/// is a zlib stream of the entry (`cargo xtask web-pack --cache-record`).
+pub const PACK_CACHE_DIR: &str = ".iw4l-cache";
+
+/// `IW4L_CACHE_RECORD=<file>` logs `kind<TAB>key` for every entry a native run
+/// reads or stores, which `web-pack` turns into pack entries.
+fn record_use(kind: &str, key: &str) {
+    static LOG: OnceLock<Option<Mutex<fs::File>>> = OnceLock::new();
+    let log = LOG.get_or_init(|| {
+        let path = std::env::var_os("IW4L_CACHE_RECORD")?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(Mutex::new(file))
+    });
+    if let Some(log) = log {
+        let mut file = log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = writeln!(file, "{kind}\t{key}");
+    }
+}
+
+/// Without a disk (the browser, or `IW4L_FS=pack:`) the entry comes from the
+/// pack. Missing or undecodable reads as a miss.
+fn pack_get(kind: &str, key: &str) -> Option<Vec<u8>> {
+    if !kind_ok(kind) || !key_ok(key) {
         return None;
     }
+    static ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let root = ROOT
+        .get_or_init(|| {
+            crate::discover::games_root_from_env()
+                .ok()
+                .map(|root| root.0)
+        })
+        .as_ref()?;
+    let packed = gamefs::read(root.join(PACK_CACHE_DIR).join(kind).join(key)).ok()?;
+    miniz_oxide::inflate::decompress_to_vec_zlib(&packed).ok()
+}
+
+pub fn cache_get(kind: &str, key: &str) -> Option<Vec<u8>> {
+    if !gamefs::is_native() {
+        return pack_get(kind, key);
+    }
     let path = cache_path(kind, key).ok()?;
-    fs::read(path).ok()
+    let hit = fs::read(path).ok();
+    if hit.is_some() {
+        record_use(kind, key);
+    }
+    hit
 }
 
 pub fn cache_put(kind: &str, key: &str, bytes: &[u8]) -> Result<(), String> {
@@ -31,6 +78,7 @@ pub fn cache_put(kind: &str, key: &str, bytes: &[u8]) -> Result<(), String> {
         return Ok(());
     }
     let path = cache_path(kind, key)?;
+    record_use(kind, key);
     let Some(parent) = path.parent() else {
         return Err(format!("cache path has no directory: {}", path.display()));
     };

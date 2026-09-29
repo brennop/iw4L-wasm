@@ -7331,6 +7331,7 @@ version = "0.1.0"
 dependencies = [
  "gamefs",
  "master_protocol",
+ "miniz_oxide",
  "serde_json",
  "sha2",
  "zip",

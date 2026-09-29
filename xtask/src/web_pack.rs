@@ -1,8 +1,11 @@
-//! `web-pack [--root DIR] <record> <out.pack>`: turn an `IW4L_FS_RECORD` log into
-//! a pack. Paths are stored relative to the games root (`--root`, default
-//! `IW4L_GAMES`), so the pack works wherever the app mounts it.
+//! `web-pack [--root DIR] [--cache-record FILE] <record> <out.pack>`: turn an
+//! `IW4L_FS_RECORD` log into a pack. Paths are stored relative to the games root
+//! (`--root`, default `IW4L_GAMES`), so the pack works wherever the app mounts it.
+//! `--cache-record` is an `IW4L_CACHE_RECORD` log; the artifact-cache entries it
+//! names (wgsl, nav, localize) are stored zlib-compressed as ordinary pack files
+//! under `.iw4l-cache/<kind>/<key>`, read back by `asset_transport::cache_get`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -31,15 +34,23 @@ fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 
 pub fn run(env: &Env, args: &[String]) -> Res<()> {
     let usage = "usage: web-pack [--root GAMES_ROOT] <record> <out.pack>";
-    let (root, args) = match args {
-        [flag, root, rest @ ..] if flag == "--root" => (root.clone(), rest),
-        _ => (
-            env.get("IW4L_GAMES")
-                .ok_or("web-pack: pass --root or set IW4L_GAMES")?,
-            args,
-        ),
-    };
-    let root = PathBuf::from(root);
+    let mut args = args;
+    let mut root = None;
+    let mut cache_record = None;
+    while let [flag, value, rest @ ..] = args {
+        match flag.as_str() {
+            "--root" => root = Some(value.clone()),
+            "--cache-record" => cache_record = Some(value.clone()),
+            _ => break,
+        }
+        args = rest;
+    }
+    let root = PathBuf::from(match root {
+        Some(root) => root,
+        None => env
+            .get("IW4L_GAMES")
+            .ok_or("web-pack: pass --root or set IW4L_GAMES")?,
+    });
     let [record, out] = args else {
         return Err(usage.to_owned());
     };
@@ -77,7 +88,7 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
             outside[0]
         ));
     }
-    let files = seen
+    let mut files = seen
         .into_iter()
         .map(|(path, seen)| WriteFile {
             path,
@@ -85,10 +96,26 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
             ranges: merge(seen.ranges),
         })
         .collect::<Vec<_>>();
+    let baked = match &cache_record {
+        Some(record) => bake_cache(record)?,
+        None => BTreeMap::new(),
+    };
+    let baked_bytes: u64 = baked.values().map(|b| b.len() as u64).sum();
+    for (path, bytes) in &baked {
+        files.push(WriteFile {
+            path: path.clone(),
+            len: bytes.len() as u64,
+            ranges: vec![(0, bytes.len() as u64)],
+        });
+    }
     let mut file = std::io::BufWriter::new(
         std::fs::File::create(out).map_err(|e| format!("create {out}: {e}"))?,
     );
     let total = pack::write(&mut file, &files, |path: &Path, start, buf: &mut [u8]| {
+        if let Some(bytes) = baked.get(path) {
+            buf.copy_from_slice(&bytes[start as usize..start as usize + buf.len()]);
+            return Ok(());
+        }
         let mut source = std::fs::File::open(root.join(path))?;
         source.seek(SeekFrom::Start(start))?;
         source.read_exact(buf)
@@ -96,16 +123,54 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
     .map_err(|e| format!("write {out}: {e}"))?;
     let kept: u64 = files
         .iter()
+        .filter(|f| !baked.contains_key(&f.path))
         .flat_map(|f| &f.ranges)
         .map(|(s, e)| e - s)
         .sum();
-    let whole: u64 = files.iter().map(|f| f.len).sum();
+    let whole: u64 = files
+        .iter()
+        .filter(|f| !baked.contains_key(&f.path))
+        .map(|f| f.len)
+        .sum();
     println!(
-        "web-pack: {} files, {} MiB of {} MiB, pack {} MiB -> {out}",
-        files.len(),
+        "web-pack: {} files, {} MiB of {} MiB, {} cache entries ({} MiB compressed), pack {} MiB -> {out}",
+        files.len() - baked.len(),
         kept >> 20,
         whole >> 20,
+        baked.len(),
+        baked_bytes >> 20,
         total >> 20
     );
     Ok(())
+}
+
+/// Kinds worth shipping: mips are ~650 MiB decoded for mp_rust and save seconds.
+/// Mirrors `asset_transport::PACK_CACHE_DIR` (xtask links no engine crates).
+const PACK_CACHE_DIR: &str = ".iw4l-cache";
+
+const PACKED_KINDS: [&str; 3] = ["wgsl", "nav", "localize"];
+
+/// Reads the native cache entries an `IW4L_CACHE_RECORD` log names and returns
+/// them compressed, keyed by their pack path. An entry the record names but the
+/// cache lacks is an error: the recording run must leave every entry on disk.
+fn bake_cache(record: &str) -> Res<BTreeMap<PathBuf, Vec<u8>>> {
+    let log = std::fs::read_to_string(record).map_err(|e| format!("read {record}: {e}"))?;
+    let wanted: BTreeSet<(&str, &str)> = log
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(kind, _)| PACKED_KINDS.contains(kind))
+        .collect();
+    let mut baked = BTreeMap::new();
+    for (kind, key) in wanted {
+        let source = Path::new("iw4l-artifacts")
+            .join("cache")
+            .join(kind)
+            .join(&key[..2.min(key.len())])
+            .join(key);
+        let bytes =
+            std::fs::read(&source).map_err(|e| format!("cache entry {}: {e}", source.display()))?;
+        let packed = miniz_oxide::deflate::compress_to_vec_zlib(&bytes, 6);
+        baked.insert(Path::new(PACK_CACHE_DIR).join(kind).join(key), packed);
+    }
+    Ok(baked)
 }
