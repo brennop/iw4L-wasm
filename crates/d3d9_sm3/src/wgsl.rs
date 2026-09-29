@@ -7,7 +7,7 @@ use core::fmt::Write;
 
 use crate::abi::{
     ALPHA_REF_SCALE, AlphaTest, CompareFunc, DeclType, PassLoweringAbi, SamplerTextureDimension,
-    missing_vertex_element,
+    TextureBinding, missing_vertex_element,
 };
 use crate::bytecode::ShaderStage;
 use crate::ir::{
@@ -24,6 +24,16 @@ pub const TEXTURE_TABLE_BINDING_2D: u32 = 0;
 pub const TEXTURE_TABLE_BINDING_CUBE: u32 = 1;
 pub const TEXTURE_TABLE_BINDING_3D: u32 = 2;
 pub const TEXTURE_TABLE_BINDING_SAMPLERS: u32 = 3;
+
+/// Fixed-slot lowering: sampler register `r` uses texture binding `r` and sampler binding
+/// `FIXED_SAMPLER_BINDING_BASE + r`.
+pub const FIXED_SAMPLER_BINDING_BASE: u32 = 16;
+
+/// The pass's sampler registers as the instruction emitters see them.
+struct SamplerTable<'a> {
+    dims: &'a BTreeMap<u16, SamplerTextureDimension>,
+    fixed: bool,
+}
 
 pub const fn texture_slot_word(texture: u16, sampler: u16) -> u32 {
     (texture as u32) | ((sampler as u32) << 16)
@@ -485,7 +495,10 @@ pub fn lower_sm3_to_wgsl(program: &Sm3ProgramIr) -> Result<Sm3Wgsl, Sm3WgslError
         &mut source,
         &program.instructions,
         &plan.external,
-        &plan.samplers,
+        &SamplerTable {
+            dims: &plan.samplers,
+            fixed: false,
+        },
         &mut defined,
         None,
     )?;
@@ -556,7 +569,12 @@ pub fn lower_pass_to_wgsl(
     if vertex_plan.uses_relative_float {
         emit_vs_relative_const_loader(&mut source, vertex_constant_len);
     }
-    write_texture_table_bindings(&mut source, abi);
+    let fixed = abi.texture_binding == TextureBinding::FixedSlots;
+    if fixed {
+        write_fixed_slot_bindings(&mut source, abi, &[&vertex_plan, &pixel_plan])?;
+    } else {
+        write_texture_table_bindings(&mut source, abi);
+    }
     let slot_row_base = vertex_constant_len + pixel_constant_len;
 
     source.push_str("\nstruct Sm3Varyings {\n    @builtin(position) position: vec4<f32>,\n");
@@ -615,13 +633,15 @@ pub fn lower_pass_to_wgsl(
         Stage::Vertex,
         "sm3_constant_base",
     )?;
-    emit_texture_slot_prologue(
-        &mut source,
-        abi,
-        &vertex_plan,
-        "sm3_constant_base",
-        slot_row_base,
-    )?;
+    if !fixed {
+        emit_texture_slot_prologue(
+            &mut source,
+            abi,
+            &vertex_plan,
+            "sm3_constant_base",
+            slot_row_base,
+        )?;
+    }
     let mut defined = BTreeMap::new();
     emit_prologue(&mut source, &vertex_plan, &mut defined);
     let vertex_relative = vertex_plan.uses_relative_float.then_some("sm3_vs_c");
@@ -629,7 +649,10 @@ pub fn lower_pass_to_wgsl(
         &mut source,
         &vertex.instructions,
         &vertex_plan.external,
-        &vertex_plan.samplers,
+        &SamplerTable {
+            dims: &vertex_plan.samplers,
+            fixed,
+        },
         &mut defined,
         vertex_relative,
     )?;
@@ -719,20 +742,25 @@ pub fn lower_pass_to_wgsl(
             Stage::Pixel,
             &format!("varyings.sm3_constant_base + {}u", vertex_constant_len),
         )?;
-        emit_texture_slot_prologue(
-            &mut source,
-            abi,
-            &pixel_plan,
-            "varyings.sm3_constant_base",
-            slot_row_base,
-        )?;
+        if !fixed {
+            emit_texture_slot_prologue(
+                &mut source,
+                abi,
+                &pixel_plan,
+                "varyings.sm3_constant_base",
+                slot_row_base,
+            )?;
+        }
         let mut defined = BTreeMap::new();
         emit_prologue(&mut source, &pixel_plan, &mut defined);
         emit_body(
             &mut source,
             &pixel.instructions,
             &pixel_plan.external,
-            &pixel_plan.samplers,
+            &SamplerTable {
+                dims: &pixel_plan.samplers,
+                fixed,
+            },
             &mut defined,
             None,
         )?;
@@ -948,6 +976,45 @@ fn write_texture_table_bindings(wgsl: &mut String, abi: &PassLoweringAbi) {
     .unwrap();
 }
 
+fn write_fixed_slot_bindings(
+    wgsl: &mut String,
+    abi: &PassLoweringAbi,
+    plans: &[&LoweringPlan],
+) -> Result<(), Sm3WgslError> {
+    let mut used = BTreeMap::new();
+    for plan in plans {
+        for register in plan.samplers.keys() {
+            let slot = abi
+                .samplers
+                .iter()
+                .find(|bound| bound.register == *register)
+                .ok_or(Sm3WgslError::UnboundSamplerRegister {
+                    register: *register,
+                })?;
+            used.insert(*register, slot.dimension);
+        }
+    }
+    for (register, dimension) in used {
+        let texture_type = match dimension {
+            SamplerTextureDimension::D2 => "texture_2d<f32>",
+            SamplerTextureDimension::Cube => "texture_cube<f32>",
+            SamplerTextureDimension::D3 => "texture_3d<f32>",
+        };
+        writeln!(
+            wgsl,
+            "@group({TEXTURE_TABLE_GROUP}) @binding({register}) var sm3_tex_s{register}: {texture_type};"
+        )
+        .unwrap();
+        writeln!(
+            wgsl,
+            "@group({TEXTURE_TABLE_GROUP}) @binding({}) var sm3_smp_s{register}: sampler;",
+            FIXED_SAMPLER_BINDING_BASE + u32::from(register)
+        )
+        .unwrap();
+    }
+    Ok(())
+}
+
 fn emit_texture_slot_prologue(
     wgsl: &mut String,
     abi: &PassLoweringAbi,
@@ -1127,7 +1194,7 @@ fn emit_body(
     wgsl: &mut String,
     instructions: &[Sm3Instruction],
     external: &BTreeSet<Sm3Register>,
-    samplers: &BTreeMap<u16, SamplerTextureDimension>,
+    samplers: &SamplerTable,
     defined: &mut BTreeMap<Sm3Register, u8>,
     relative_c: Option<&str>,
 ) -> Result<(), Sm3WgslError> {
@@ -1182,7 +1249,7 @@ fn emit_instruction(
     wgsl: &mut String,
     instruction: &Sm3Instruction,
     external: &BTreeSet<Sm3Register>,
-    samplers: &BTreeMap<u16, SamplerTextureDimension>,
+    samplers: &SamplerTable,
     defined: &mut BTreeMap<Sm3Register, u8>,
     flow: &mut Vec<FlowFrame>,
     relative_c: Option<&str>,
@@ -1423,7 +1490,7 @@ fn operation_component(
     sources: &[Sm3Source],
     component: u8,
     external: &BTreeSet<Sm3Register>,
-    samplers: &BTreeMap<u16, SamplerTextureDimension>,
+    samplers: &SamplerTable,
     defined: &BTreeMap<Sm3Register, u8>,
     relative_c: Option<&str>,
 ) -> Result<String, Sm3WgslError> {
@@ -1613,7 +1680,7 @@ fn texture_component(
     sources: &[Sm3Source],
     component: u8,
     external: &BTreeSet<Sm3Register>,
-    samplers: &BTreeMap<u16, SamplerTextureDimension>,
+    samplers: &SamplerTable,
     defined: &BTreeMap<Sm3Register, u8>,
     relative_c: Option<&str>,
 ) -> Result<String, Sm3WgslError> {
@@ -1627,7 +1694,7 @@ fn texture_component(
     let projected = opcode == Sm3Opcode::TexLd && controls == TEXLD_PROJECT;
     let x = source_component(at_word, &sources[0], 0, external, defined, relative_c)?;
     let y = source_component(at_word, &sources[0], 1, external, defined, relative_c)?;
-    let dimension = samplers.get(&sampler.register.index).copied().ok_or(
+    let dimension = samplers.dims.get(&sampler.register.index).copied().ok_or(
         Sm3WgslError::SamplerDeclarationMissing {
             register: sampler.register.index,
         },
@@ -1664,9 +1731,18 @@ fn texture_component(
             }
         }
     };
-    let slot = format!("sm3_slot_s{}", sampler.register.index);
-    let texture = format!("{}[{slot} & 0xffffu]", texture_array_name(dimension));
-    let sampler_expr = format!("sm3_samplers[{slot} >> 16u]");
+    let (texture, sampler_expr) = if samplers.fixed {
+        (
+            format!("sm3_tex_s{}", sampler.register.index),
+            format!("sm3_smp_s{}", sampler.register.index),
+        )
+    } else {
+        let slot = format!("sm3_slot_s{}", sampler.register.index);
+        (
+            format!("{}[{slot} & 0xffffu]", texture_array_name(dimension)),
+            format!("sm3_samplers[{slot} >> 16u]"),
+        )
+    };
     let sample = if opcode == Sm3Opcode::TexLdL {
         let level = source_component(at_word, &sources[0], 3, external, defined, relative_c)?;
         format!("textureSampleLevel({texture}, {sampler_expr}, {coordinate}, {level})")

@@ -48,8 +48,20 @@ pub struct SamplerSlot {
     pub dimension: SamplerTextureDimension,
 }
 
+/// How a pass reaches its textures.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextureBinding {
+    /// Slot words in the constant arena index `binding_array`s (needs bindless).
+    #[default]
+    Bindless,
+    /// One `texture_*` at binding `register` and one sampler at binding
+    /// `FIXED_SAMPLER_BINDING_BASE + register` in group 1, per sampler register used.
+    FixedSlots,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassLoweringAbi {
+    pub texture_binding: TextureBinding,
     pub vertex_inputs: Vec<VertexInput>,
     pub position: VaryingLink,
     pub varyings: Vec<VaryingLink>,

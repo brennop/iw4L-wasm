@@ -1,6 +1,6 @@
 use d3d9_sm3::{
     ConstantSlot, DeclType, PassLoweringAbi, PassWgsl, SamplerSlot, Sm3ProgramIr, Sm3Wgsl,
-    VaryingLink, VertexInput, lower_pass_to_wgsl, pass_fragment_alpha_test_entry,
+    TextureBinding, VaryingLink, VertexInput, lower_pass_to_wgsl, pass_fragment_alpha_test_entry,
 };
 use d3d9_state::AlphaTest;
 
@@ -32,8 +32,20 @@ fn known_decl_type(decl_type: DeclType) -> DeclType {
     }
 }
 
-pub fn pass_lowering_abi(abi: &PassProgramAbi) -> PassLoweringAbi {
+/// The texture binding scheme passes are lowered for. `IW4L_SM3_FIXED_SLOTS=1` selects the
+/// fixed-slot (WebGPU) form; the renderer only has the bindless layout until R3, so that form
+/// is for WGSL dumps and validation.
+pub fn texture_binding() -> TextureBinding {
+    static BINDING: std::sync::OnceLock<TextureBinding> = std::sync::OnceLock::new();
+    *BINDING.get_or_init(|| match std::env::var("IW4L_SM3_FIXED_SLOTS").as_deref() {
+        Ok("1") => TextureBinding::FixedSlots,
+        _ => TextureBinding::Bindless,
+    })
+}
+
+pub fn pass_lowering_abi(abi: &PassProgramAbi, texture_binding: TextureBinding) -> PassLoweringAbi {
     PassLoweringAbi {
+        texture_binding,
         vertex_inputs: abi
             .vertex_inputs
             .iter()
@@ -122,11 +134,11 @@ pub(crate) fn validate_wgsl(source: &str) -> Result<(), Sm3WgslError> {
 }
 
 pub fn lower_pass_to_validated_wgsl(
-    abi: &PassProgramAbi,
+    lowering: &PassLoweringAbi,
     vertex: &Sm3ProgramIr,
     pixel: &Sm3ProgramIr,
 ) -> Result<ValidatedPassWgsl, Sm3WgslError> {
-    let lowered = lower_pass_to_wgsl(&pass_lowering_abi(abi), vertex, pixel)?;
+    let lowered = lower_pass_to_wgsl(lowering, vertex, pixel)?;
     validate_wgsl(&lowered.source)?;
     Ok(lowered)
 }

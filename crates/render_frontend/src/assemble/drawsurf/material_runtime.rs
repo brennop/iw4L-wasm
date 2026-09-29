@@ -102,11 +102,11 @@ impl RuntimeProgramPort {
         vertex_name: &str,
         pixel_name: &str,
     ) -> Result<Self, ProgramRegistryError> {
-        let lowering = super::sm3_wgsl::pass_lowering_abi(&abi);
+        let lowering = super::sm3_wgsl::pass_lowering_abi(&abi, super::sm3_wgsl::texture_binding());
         let module = if let Some(cached) = super::wgsl_disk_cache::load(pair, &lowering) {
             cached
         } else {
-            let module = super::sm3_wgsl::lower_pass_to_validated_wgsl(&abi, &vertex, &pixel)
+            let module = super::sm3_wgsl::lower_pass_to_validated_wgsl(&lowering, &vertex, &pixel)
                 .map_err(ProgramRegistryError::Wgsl)?;
             super::wgsl_disk_cache::store(pair, &lowering, &module);
             module
