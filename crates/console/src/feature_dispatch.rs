@@ -643,6 +643,8 @@ pub(crate) fn exit_process(mut exit: MessageReader<AppExit>, bridge: Option<Res<
     diag::lifecycle_boundary("process_exit", &format!(" code={code}"));
     diag::flush();
     let _ = std::io::stdout().flush();
+    // A page has no process to end; the winit loop stops on the `AppExit` itself.
+    #[cfg(not(target_arch = "wasm32"))]
     std::process::exit(code);
 }
 

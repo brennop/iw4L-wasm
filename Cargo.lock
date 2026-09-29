@@ -3711,8 +3711,11 @@ dependencies = [
  "assets",
  "bevy",
  "bootstrap",
+ "console",
  "diag",
  "gamefs",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

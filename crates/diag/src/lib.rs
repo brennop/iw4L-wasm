@@ -18,6 +18,21 @@ use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 static SINK: OnceLock<Mutex<DiagState>> = OnceLock::new();
 static START: OnceLock<Instant> = OnceLock::new();
+static CONSOLE: OnceLock<fn(Level, &str)> = OnceLock::new();
+
+/// Where log lines go when there is no stderr or log file (the browser console).
+/// Once set, it takes every line the log file would get, and stdout announcements.
+pub fn set_console(sink: fn(Level, &str)) {
+    let _ = CONSOLE.set(sink);
+}
+
+/// The process id, or 0 where the target has none (wasm32 panics in `std::process::id`).
+pub fn pid() -> u32 {
+    #[cfg(target_arch = "wasm32")]
+    return 0;
+    #[cfg(not(target_arch = "wasm32"))]
+    std::process::id()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Channel {
@@ -227,6 +242,10 @@ pub fn exit_launch_error(message: &str) -> ! {
             let _ = std::io::stdin().read_line(&mut String::new());
         }
     }
+    // A page has no process to end; the panic hook shows the message instead.
+    #[cfg(target_arch = "wasm32")]
+    panic!("{message}");
+    #[cfg(not(target_arch = "wasm32"))]
     std::process::exit(2);
 }
 
@@ -269,7 +288,11 @@ fn emit_raw(
         format!("{}  {}  {msg}", ch.as_str(), lvl.as_str())
     };
 
-    if lvl <= state.stderr_threshold {
+    if let Some(console) = CONSOLE.get() {
+        if lvl <= state.file_threshold {
+            console(lvl, &text);
+        }
+    } else if lvl <= state.stderr_threshold {
         eprintln!("{text}");
     }
     if lvl <= state.file_threshold
@@ -312,7 +335,11 @@ pub fn write_event(
     fields: Option<&serde_json::Value>,
 ) {
     let Some(sink) = SINK.get() else {
-        eprintln!("{}  {}  {msg}", ch.as_str(), lvl.as_str());
+        let text = format!("{}  {}  {msg}", ch.as_str(), lvl.as_str());
+        match CONSOLE.get() {
+            Some(console) => console(lvl, &text),
+            None => eprintln!("{text}"),
+        }
         return;
     };
     let Ok(mut state) = sink.lock() else {
@@ -372,7 +399,7 @@ pub fn process_elapsed_ns() -> u128 {
 pub fn lifecycle_boundary(name: &str, detail: &str) {
     let line = format!(
         "lifecycle: {name} pid={} ns={}{detail}",
-        std::process::id(),
+        pid(),
         process_elapsed_ns()
     );
     write_event(Channel::Launch, Level::Info, &line, None, None);
@@ -380,6 +407,10 @@ pub fn lifecycle_boundary(name: &str, detail: &str) {
 }
 
 pub fn announce_stdout(line: &str) {
+    if let Some(console) = CONSOLE.get() {
+        console(Level::Info, line);
+        return;
+    }
     let _ = writeln!(std::io::stdout(), "{line}");
     let _ = std::io::stdout().flush();
 }

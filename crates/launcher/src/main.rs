@@ -1,10 +1,21 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
 use assets::{ensure_artifacts_dir, games_root_from_env};
+
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 #[global_allocator]
 static PROCESS_ALLOCATOR: diag::ProcessCountingAllocator = diag::ProcessCountingAllocator;
 
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::main();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     gamefs::install_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
     bootstrap::bench::arm();
@@ -19,6 +30,7 @@ fn main() {
     bootstrap::launch(games, artifacts, mode, acceptance);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn prepare_process_root() -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -37,6 +49,7 @@ fn prepare_process_root() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn announce_log(path: PathBuf) {
     diag::announce_log_stdout(&path, diag::latest_log_path().as_deref());
     diag::info!(Launch, "log: {}", path.display());

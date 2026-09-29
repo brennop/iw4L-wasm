@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iw4l</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; }
+  canvas { display: block; outline: none; }
+</style>
+</head>
+<body>
+<script type="module">
+// Launch args come from this page's query string: ?map=<zone>&cmds=<script>, see launcher/src/web.rs.
+import init from './iw4l.js';
+try {
+  await init();
+} catch (error) {
+  // winit leaves its event loop by throwing; that one is not a failure.
+  if (!String(error).includes('Using exceptions for control flow')) {
+    console.error(error);
+  }
+}
+</script>
+</body>
+</html>

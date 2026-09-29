@@ -2105,7 +2105,7 @@ fn dispatch_console_command(
             );
             let line = format!(
                 "benchmark-mark: pid={} seq={} ns={ns} label={label}{rss}{heap}{facts}",
-                std::process::id(),
+                diag::pid(),
                 *mark_sequence
             );
             perf::benchmark_mark(label, *mark_sequence, ns as u64);

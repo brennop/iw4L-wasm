@@ -118,9 +118,10 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
             render_creation: RenderCreation::Automatic(Box::new(wgpu)),
             ..default()
         });
-    // Bevy has no pipelined rendering on wasm32.
+    // Bevy has no pipelined rendering on wasm32. The web entry installs its own panic
+    // hook (console + on-page overlay), which Bevy's would replace.
     #[cfg(target_arch = "wasm32")]
-    return plugins;
+    return plugins.disable::<bevy::app::PanicHandlerPlugin>();
     #[cfg(not(target_arch = "wasm32"))]
     if pipelined_rendering() {
         plugins
