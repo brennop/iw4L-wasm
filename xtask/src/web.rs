@@ -1,7 +1,7 @@
 //! `web [--profile NAME] [--no-opt]`: build the browser entry into `dist/web/`.
 //!
 //! cargo build (wasm32, `launcher`'s `iw4l` bin) -> wasm-bindgen -> optional
-//! wasm-opt -> `index.html` next to the glue. The `wasm-bindgen` CLI has to
+//! wasm-opt -> `index.html` next to the glue, its URLs tagged with the wasm's hash. The `wasm-bindgen` CLI has to
 //! match the crate version in `Cargo.lock` exactly, so that version is read
 //! from the lockfile; a matching binary on PATH or under `target/tools/` is
 //! used, otherwise it is installed into `target/tools/` (repo-local, ignored
@@ -96,8 +96,12 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
     }
 
     let page = root.join("crates/launcher/web/index.html");
-    std::fs::copy(&page, out.join("index.html"))
-        .map_err(|e| format!("copy {}: {e}", page.display()))?;
+    let html =
+        std::fs::read_to_string(&page).map_err(|e| format!("read {}: {e}", page.display()))?;
+    let tag = &crate::release::file_sha256(&wasm)?[..12];
+    let html = versioned_page(&html, tag)?;
+    std::fs::write(out.join("index.html"), html)
+        .map_err(|e| format!("write {}/index.html: {e}", out.display()))?;
 
     let fin = file_len(&wasm)?;
     let mb = |bytes: u64| bytes as f64 / 1_000_000.0;
@@ -110,6 +114,26 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
     }
     println!("web: serve with `make web-serve`");
     Ok(())
+}
+
+/// The glue's internal export names change with every build, so a cached
+/// `iw4l.js` from one build fails against another build's wasm (a CDN such as a
+/// Cloudflare tunnel caches `.js` by default). Both URLs carry the wasm's hash.
+fn versioned_page(html: &str, tag: &str) -> Res<String> {
+    let glue = format!("./{BIN}.js");
+    let import = format!("from '{glue}';");
+    let init = "await init();";
+    if !html.contains(&import) || !html.contains(init) {
+        return Err(format!(
+            "index.html: expected `{import}` and `{init}` to version the build"
+        ));
+    }
+    Ok(html
+        .replace(&import, &format!("from '{glue}?v={tag}';"))
+        .replace(
+            init,
+            &format!("await init({{ module_or_path: './{BIN}_bg.wasm?v={tag}' }});"),
+        ))
 }
 
 fn file_len(path: &Path) -> Res<u64> {

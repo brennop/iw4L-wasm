@@ -23,7 +23,7 @@ pub const ACCEPTANCE_SAMPLE_FRAMES: u32 = 600;
 
 pub const ACCEPTANCE_PRESENT_MODE: PresentMode = PresentMode::AutoNoVsync;
 
-pub const ACCEPTANCE_MAPS: &[&str] = &["mp_boneyard", "mp_favela", "mp_rust", "mp_highrise"];
+pub const ACCEPTANCE_MAPS: &[&str] = &["mp_rust"];
 
 pub const ACCEPTANCE_ENV: &str = "IW4L_RENDER_ACCEPTANCE";
 
