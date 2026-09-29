@@ -538,6 +538,38 @@ impl ClientPacket {
     }
 }
 
+// zstd is native-only (`online`). Without it snapshots go out raw, which every
+// receiver accepts, and a compressed one from a native peer is refused.
+#[cfg(online)]
+fn compress_snapshot(payload: &[u8]) -> Option<Vec<u8>> {
+    match zstd::bulk::compress(payload, 1) {
+        Ok(bytes) if bytes.len() + 4 < payload.len() => Some(bytes),
+        Ok(_) => None,
+        Err(error) => {
+            diag::warn!(Net, "snapshot compression failed: {error}");
+            None
+        }
+    }
+}
+
+#[cfg(not(online))]
+fn compress_snapshot(_payload: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(online)]
+fn decompress_snapshot(payload: &[u8], decoded_len: usize) -> Result<Vec<u8>, WireError> {
+    zstd::bulk::decompress(payload, decoded_len)
+        .map_err(|_| WireError::Malformed("invalid compressed snapshot"))
+}
+
+#[cfg(not(online))]
+fn decompress_snapshot(_payload: &[u8], _decoded_len: usize) -> Result<Vec<u8>, WireError> {
+    Err(WireError::Malformed(
+        "compressed snapshot needs the online build",
+    ))
+}
+
 impl ServerPacket {
     pub fn encode(&self, out: &mut WireWriter) {
         match self {
@@ -572,14 +604,7 @@ impl ServerPacket {
                 snapshot_seq,
                 payload,
             } => {
-                let compressed = match zstd::bulk::compress(payload, 1) {
-                    Ok(bytes) if bytes.len() + 4 < payload.len() => Some(bytes),
-                    Ok(_) => None,
-                    Err(error) => {
-                        diag::warn!(Net, "snapshot compression failed: {error}");
-                        None
-                    }
-                };
+                let compressed = compress_snapshot(payload);
                 out.put_u8(if compressed.is_some() {
                     TAG_SERVER_COMPRESSED_SNAPSHOT
                 } else {
@@ -636,8 +661,7 @@ impl ServerPacket {
                 let mut payload = vec![0u8; payload_len];
                 input.get_bytes(&mut payload)?;
                 if let Some(decoded_len) = decoded_len {
-                    payload = zstd::bulk::decompress(&payload, decoded_len)
-                        .map_err(|_| WireError::Malformed("invalid compressed snapshot"))?;
+                    payload = decompress_snapshot(&payload, decoded_len)?;
                     if payload.len() != decoded_len {
                         return Err(WireError::Malformed("snapshot decoded length mismatch"));
                     }

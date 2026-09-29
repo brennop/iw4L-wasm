@@ -9,6 +9,7 @@ pub const DEFAULT_RECV_BUDGET_PER_TICK: usize = 128;
 
 pub const DATAGRAM_BYTES: usize = 1200;
 
+#[cfg(online)]
 const SOCKET_BUFFER_BYTES: usize = 4 * crate::transport::protocol::MAX_PACKET_BYTES as usize;
 
 const MAX_REASSEMBLY_PEERS: usize = 64;
@@ -55,6 +56,7 @@ impl std::error::Error for UdpSendError {
     }
 }
 
+#[cfg(online)]
 fn size_socket_buffers(sock: &UdpSocket) {
     let sock = socket2::SockRef::from(sock);
 
@@ -80,6 +82,7 @@ impl UdpDatagramSocket {
     pub fn bind<A: ToSocketAddrs>(addr: A, limits: &ProtocolLimits) -> io::Result<Self> {
         let sock = UdpSocket::bind(addr)?;
         sock.set_nonblocking(true)?;
+        #[cfg(online)]
         size_socket_buffers(&sock);
         let max_packet_bytes = limits.max_packet_bytes as usize;
         Ok(Self {

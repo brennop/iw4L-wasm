@@ -22,14 +22,32 @@ hud_iw4.workspace = true
 perf.workspace = true
 bevy.workspace = true
 master_protocol.workspace = true
-quinn = { version = "0.11.11", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
-rustls = { version = "0.23.31", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2.2.0"
-rustls-platform-verifier = "0.7.0"
-tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
-socket2 = "0.6.5"
-zstd = { version = "0.13", default-features = false }
+
+# Online transport (master relay over QUIC, UDP socket sizing, snapshot zstd).
+# None of it builds for wasm32, so the crates are target-specific and the
+# `online` cfg (build.rs) is only set when the feature is on and the target
+# is not wasm32.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+quinn = { version = "0.11.11", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"], optional = true }
+rustls = { version = "0.23.31", default-features = false, features = ["ring", "std"], optional = true }
+rustls-pemfile = { version = "2.2.0", optional = true }
+rustls-platform-verifier = { version = "0.7.0", optional = true }
+tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "sync", "time"], optional = true }
+socket2 = { version = "0.6.5", optional = true }
+zstd = { version = "0.13", default-features = false, optional = true }
+
+[features]
+default = ["online"]
+online = [
+    "dep:quinn",
+    "dep:rustls",
+    "dep:rustls-pemfile",
+    "dep:rustls-platform-verifier",
+    "dep:tokio",
+    "dep:socket2",
+    "dep:zstd",
+]
 
 [lints]
 workspace = true
