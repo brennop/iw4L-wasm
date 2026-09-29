@@ -29,9 +29,9 @@ impl crate::pack::Source for JsSource {
     }
 }
 
-/// Serves game files from the pack in `bytes` from now on.
-pub fn install_pack(bytes: js_sys::Uint8Array) -> io::Result<()> {
-    let pack = crate::pack::Pack::open(Arc::new(JsSource { bytes }))?;
+/// Serves game files from the pack in `bytes`, mounted at `root`, from now on.
+pub fn install_pack(bytes: js_sys::Uint8Array, root: &std::path::Path) -> io::Result<()> {
+    let pack = crate::pack::Pack::open(Arc::new(JsSource { bytes }), root)?;
     crate::install(Arc::new(pack));
     Ok(())
 }

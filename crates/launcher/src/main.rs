@@ -17,6 +17,7 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    assets::load_dotenv();
     gamefs::install_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
     bootstrap::bench::arm();
     prepare_process_root().unwrap_or_else(|e| {

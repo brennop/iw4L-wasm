@@ -29,7 +29,7 @@ const REPO_TOOLS: &[&str] = &[
     "mr ls",
     "mr fmt FILE.rs...",
     "publish-check",
-    "web-pack RECORD OUT.pack",
+    "web-pack [--root GAMES_ROOT] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
 ];
 
@@ -114,7 +114,7 @@ fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
     match cmd {
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),
-        "web-pack" => Some(xtask::web_pack::run(rest)),
+        "web-pack" => Some(Env::load(&root).and_then(|env| xtask::web_pack::run(&env, rest))),
         "web" => Some(xtask::web::run(&root, rest)),
         _ => None,
     }

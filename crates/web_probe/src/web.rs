@@ -14,8 +14,8 @@ extern "C" {
 }
 
 #[wasm_bindgen]
-pub fn install_pack(bytes: js_sys::Uint8Array) -> Result<(), JsValue> {
-    gamefs::web::install_pack(bytes)
+pub fn install_pack(bytes: js_sys::Uint8Array, games_root: String) -> Result<(), JsValue> {
+    gamefs::web::install_pack(bytes, std::path::Path::new(&games_root))
         .map_err(|error| JsValue::from_str(&format!("open pack: {error}")))
 }
 

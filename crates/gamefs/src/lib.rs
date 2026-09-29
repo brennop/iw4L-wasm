@@ -159,16 +159,19 @@ pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
 }
 
 /// `IW4L_FS=pack:<file>` serves reads from a pack; `IW4L_FS_RECORD=<file>` logs
-/// the ranges a normal run reads. Neither set: plain `std::fs`.
+/// the ranges a normal run reads. Neither set: plain `std::fs`. A pack is
+/// mounted at `IW4L_GAMES`, so that must be set (the launcher reads `.env` first).
 pub fn install_from_env() -> Result<(), String> {
     if let Some(spec) = std::env::var_os("IW4L_FS") {
         let spec = spec.to_string_lossy().into_owned();
         let Some(file) = spec.strip_prefix("pack:") else {
             return Err(format!("IW4L_FS={spec}: expected pack:<file>"));
         };
+        let root = std::env::var_os("IW4L_GAMES")
+            .ok_or("IW4L_FS=pack: needs IW4L_GAMES, the games root the pack is mounted at")?;
         let source = pack::FileSource::open(Path::new(file))
             .map_err(|error| format!("open pack {file}: {error}"))?;
-        let pack = pack::Pack::open(Arc::new(source))
+        let pack = pack::Pack::open(Arc::new(source), Path::new(&root))
             .map_err(|error| format!("read pack {file}: {error}"))?;
         install(Arc::new(pack));
     } else if let Some(log) = std::env::var_os("IW4L_FS_RECORD") {

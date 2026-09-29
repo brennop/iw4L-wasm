@@ -2,13 +2,15 @@
 //! only the byte ranges it read. Layout:
 //!
 //! ```text
-//! "IW4LPCK1"  chunk bytes ...  index  u64(index offset)
+//! "IW4LPCK2"  chunk bytes ...  index  u64(index offset)
 //! index = u32 file count, then per file:
-//!   u16 path len, path, u64 file len, u32 chunk count,
+//!   u16 path len, path (relative to the games root), u64 file len, u32 chunk count,
 //!   per chunk: u64 file offset, u64 pack offset, u64 len
 //! ```
 //!
-//! Chunks are sorted and non-overlapping. Reading a range outside them is an
+//! Paths are stored relative to the games root and mounted under whatever root
+//! the app uses ([`Pack::open`]), so a pack does not depend on where it was
+//! recorded. Chunks are sorted and non-overlapping. Reading a range outside them is an
 //! error naming the file and offset, which is how a missing range shows up.
 
 use std::collections::BTreeMap;
@@ -18,7 +20,8 @@ use std::sync::Arc;
 
 use crate::{Backend, DirEntry, Meta, ReadSeek};
 
-pub const MAGIC: &[u8; 8] = b"IW4LPCK1";
+pub const MAGIC: &[u8; 8] = b"IW4LPCK2";
+const MAGIC_V1: &[u8; 8] = b"IW4LPCK1";
 
 /// Random access to the pack bytes: a file natively, a JS buffer in the browser.
 pub trait Source: Send + Sync {
@@ -122,13 +125,19 @@ fn components(path: &Path) -> Vec<String> {
 }
 
 impl Pack {
-    pub fn open(source: Arc<dyn Source>) -> io::Result<Self> {
+    /// Mounts the pack's files under `mount`: entry `a/b` is served as `<mount>/a/b`.
+    pub fn open(source: Arc<dyn Source>, mount: &Path) -> io::Result<Self> {
         let total = source.size();
         if total < 16 {
             return Err(bad("pack too small"));
         }
         let mut head = [0u8; 8];
         source.read_at(0, &mut head)?;
+        if &head == MAGIC_V1 {
+            return Err(bad(
+                "pack format 1 stores absolute paths; rebuild it with `cargo xtask web-pack`",
+            ));
+        }
         if &head != MAGIC {
             return Err(bad("not an IW4L pack"));
         }
@@ -142,7 +151,7 @@ impl Pack {
         let mut root = Node::Dir(BTreeMap::new());
         for _ in 0..count {
             let path_len = u16::from_le_bytes(take(&mut cursor, 2)?.try_into().unwrap());
-            let path = PathBuf::from(
+            let path = mount.join(
                 std::str::from_utf8(take(&mut cursor, path_len as usize)?)
                     .map_err(|_| bad("pack path is not utf-8"))?,
             );

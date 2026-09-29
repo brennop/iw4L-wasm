@@ -40,7 +40,7 @@ extern "C" {
 /// The page fetches the pack into a `Uint8Array` at `window.iw4l_pack` before
 /// starting the app (`main` runs inside `init()`, so it can't be handed over by
 /// a call). The bytes stay in the JS buffer; reads copy ranges in.
-fn install_pack_from_page() {
+fn install_pack_from_page(root: &Path) {
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -52,7 +52,7 @@ fn install_pack_from_page() {
         );
         return;
     };
-    match gamefs::web::install_pack(bytes.clone()) {
+    match gamefs::web::install_pack(bytes.clone(), root) {
         Ok(()) => diag::info!(Launch, "pack installed: {} bytes", bytes.length()),
         Err(error) => diag::exit_launch_error(&format!("open pack: {error}")),
     }
@@ -73,12 +73,11 @@ pub fn main() {
     let query = UrlQuery::from_page();
     let args = launch_args(&query);
     console::set_startup_args(args.clone());
-    assets::set_games_root_override(PathBuf::from(
-        query.get("games").unwrap_or(DEFAULT_GAMES_ROOT.into()),
-    ));
+    let games_root = PathBuf::from(query.get("games").unwrap_or(DEFAULT_GAMES_ROOT.into()));
+    assets::set_games_root_override(games_root.clone());
 
     install_artifact_sink();
-    install_pack_from_page();
+    install_pack_from_page(&games_root);
     bootstrap::bench::arm();
     let artifacts = PathBuf::from(ARTIFACTS_ROOT);
     diag::init_log(&artifacts);
