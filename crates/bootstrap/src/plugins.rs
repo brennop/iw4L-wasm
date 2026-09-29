@@ -95,10 +95,11 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
     }
     let mut wgpu = WgpuSettings::default();
     if render::web_profile() {
-        // What a browser's WebGPU offers: default limits, BC textures, nothing else.
+        // What a desktop browser's WebGPU offers: default limits, BC textures and filterable
+        // R32Float (the shadow maps and floatz are sampled through filtering samplers).
         wgpu.priority = WgpuSettingsPriority::WebGPU;
         wgpu.limits = WgpuLimits::default();
-        wgpu.features |= WgpuFeatures::TEXTURE_COMPRESSION_BC;
+        wgpu.features |= WgpuFeatures::TEXTURE_COMPRESSION_BC | WgpuFeatures::FLOAT32_FILTERABLE;
     } else {
         wgpu.features |= WgpuFeatures::TEXTURE_FORMAT_16BIT_NORM
             | WgpuFeatures::TEXTURE_COMPRESSION_BC
