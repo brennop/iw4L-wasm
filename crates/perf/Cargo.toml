@@ -14,6 +14,9 @@ web-time = { workspace = true }
 serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["js"] }
+
 [target.'cfg(unix)'.dependencies]
 perfetto-sdk = { version = "1", optional = true }
 
