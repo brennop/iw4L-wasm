@@ -12,7 +12,7 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
 .PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
 .PHONY: build-windows setup-windows release publish provision
-.PHONY: mr publish-check approved
+.PHONY: mr publish-check approved web web-serve
 .PHONY: $(ARGS)
 
 $(ARGS):
@@ -297,6 +297,18 @@ mr:
 	@test -n "$(ARGS)" || { echo "usage: make mr <new|ship|ls|fmt> …   e.g. make mr new fps-retail-machines"; exit 1; }
 	@$(XTASK) mr $(ARGS) $(FILES)
 
+# Browser build: cargo (wasm32) -> wasm-bindgen -> optional wasm-opt -> dist/web/.
+# PROFILE= as for the native recipes (play default). Serve it with web-serve;
+# python's http.server sends application/wasm for .wasm.
+WEB_PORT ?= 8080
+web:
+	@$(XTASK) web --profile $(PROFILE)
+
+web-serve:
+	@test -f $(ROOT)/dist/web/index.html || { echo "dist/web is empty; run make web first"; exit 1; }
+	@echo "http://127.0.0.1:$(WEB_PORT)/"
+	@cd $(ROOT)/dist/web && python3 -m http.server $(WEB_PORT) --bind 127.0.0.1
+
 # Workspace Rust footprint: per-crate files / lines / bytes, group totals,
 # and the heaviest source files. Counts only crates/ + xtask.
 loc:
@@ -361,6 +373,9 @@ help:
 	@echo "make mr ship <name>  rebase → rustfmt touched .rs → FF onto master → rm clone"
 	@echo "make mr ls           the clones on disk and whose move each one is"
 	@echo "make mr fmt FILES='a.rs b.rs'  rustfmt exactly those files, nothing else"
+	@echo "make web          browser build into dist/web/ (wasm-bindgen matched to Cargo.lock,"
+	@echo "                  wasm-opt when on PATH); PROFILE=play unless set; prints sizes"
+	@echo "make web-serve    serve dist/web on http://127.0.0.1:8080/ (WEB_PORT=)"
 	@echo "make loc          Rust LOC / file counts / sizes per crate"
 	@echo "make clean        wipe target/debug (keep play + release); no rebuild"
 	@echo "IW4L_GAMES=$(IW4L_GAMES)"

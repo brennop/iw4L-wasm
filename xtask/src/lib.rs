@@ -17,6 +17,7 @@ pub mod publish_check;
 pub mod release;
 pub mod scenario;
 pub mod shell;
+pub mod web;
 pub mod web_pack;
 pub mod windows;
 

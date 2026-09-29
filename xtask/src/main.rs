@@ -30,6 +30,7 @@ const REPO_TOOLS: &[&str] = &[
     "mr fmt FILE.rs...",
     "publish-check",
     "web-pack RECORD OUT.pack",
+    "web [--profile NAME] [--no-opt]",
 ];
 
 /// Everything that leaves this machine. These read `.env` for the host, the
@@ -114,6 +115,7 @@ fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),
         "web-pack" => Some(xtask::web_pack::run(rest)),
+        "web" => Some(xtask::web::run(&root, rest)),
         _ => None,
     }
 }
