@@ -2,12 +2,15 @@ use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
 use bevy::diagnostic::{DiagnosticPath, DiagnosticsStore};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::ecs::schedule::MainThreadExecutor;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::render::pipelined_rendering::{RenderAppChannels, RenderExtractApp};
 use bevy::render::renderer::{PendingCommandBuffers, RenderGraph, RenderGraphSystems};
 use bevy::render::{Render, RenderApp, RenderSystems};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::ComputeTaskPool;
 
 const RENDER_FRAME_LOG_EVERY: u32 = 64;
@@ -876,6 +879,7 @@ pub fn register_render_frame_diag(app: &mut App) {
     app.insert_resource(slot.clone())
         .init_resource::<RenderFrameDiag>();
 
+    #[cfg(not(target_arch = "wasm32"))]
     instrument_pipelined_extract(app);
 
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -1013,7 +1017,9 @@ pub fn register_render_frame_diag(app: &mut App) {
 }
 
 // Mirrors Bevy 0.19 `renderer_extract` to time the ownership boundaries; keep
-// its executor servicing and shutdown semantics when upgrading Bevy.
+// its executor servicing and shutdown semantics when upgrading Bevy. Bevy has
+// no pipelined rendering on wasm32.
+#[cfg(not(target_arch = "wasm32"))]
 fn instrument_pipelined_extract(app: &mut App) {
     let Some(extract_app) = app.get_sub_app_mut(RenderExtractApp) else {
         return;

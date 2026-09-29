@@ -5,7 +5,6 @@ use bevy::{
     prelude::*,
     render::{
         RenderPlugin as BevyRenderPlugin,
-        pipelined_rendering::PipelinedRenderingPlugin,
         settings::{RenderCreation, WgpuFeatures, WgpuLimits, WgpuSettings, WgpuSettingsPriority},
     },
 };
@@ -119,13 +118,18 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
             render_creation: RenderCreation::Automatic(Box::new(wgpu)),
             ..default()
         });
+    // Bevy has no pipelined rendering on wasm32.
+    #[cfg(target_arch = "wasm32")]
+    return plugins;
+    #[cfg(not(target_arch = "wasm32"))]
     if pipelined_rendering() {
         plugins
     } else {
-        plugins.disable::<PipelinedRenderingPlugin>()
+        plugins.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const PIPELINED_RENDERING_ENV: &str = "IW4L_PIPELINED_RENDERING";
 
 /// Overlap rendering with the next main frame. Extraction remains the ownership
@@ -137,6 +141,7 @@ const PIPELINED_RENDERING_ENV: &str = "IW4L_PIPELINED_RENDERING";
 /// thread through the multi-threaded executor, which the single-threaded
 /// `Render` schedule above bypasses, so the render thread would create it and
 /// panic in `raw-window-metal`.
+#[cfg(not(target_arch = "wasm32"))]
 fn pipelined_rendering() -> bool {
     match std::env::var_os(PIPELINED_RENDERING_ENV) {
         None => !cfg!(target_os = "macos"),

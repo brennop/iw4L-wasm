@@ -33,8 +33,16 @@ pub(crate) fn workload(zone: &str, demo: Option<&str>, role: &str) {
 static PIPELINED: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn scheduling(app: &App) {
-    let _ = PIPELINED
-        .set(app.is_plugin_added::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>());
+    #[cfg(not(target_arch = "wasm32"))]
+    let pipelined =
+        app.is_plugin_added::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    // Bevy has no pipelined rendering on wasm32.
+    #[cfg(target_arch = "wasm32")]
+    let pipelined = {
+        let _ = app;
+        false
+    };
+    let _ = PIPELINED.set(pipelined);
 }
 
 /// What was collected, or an empty set if the run never reached a frame. Every
