@@ -19,5 +19,10 @@ gamefs.workspace = true
 assets.workspace = true
 bootstrap = { path = "../bootstrap" }
 
+# Web build: WebGPU backend for wgpu. Cargo unifies features per target, so this
+# adds `webgpu` on wasm32 only and leaves native feature sets untouched.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { workspace = true, features = ["webgpu"] }
+
 [lints]
 workspace = true
