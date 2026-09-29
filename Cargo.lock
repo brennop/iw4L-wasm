@@ -3070,6 +3070,9 @@ dependencies = [
 [[package]]
 name = "gamefs"
 version = "0.1.0"
+dependencies = [
+ "js-sys",
+]
 
 [[package]]
 name = "gamemode_iw4"

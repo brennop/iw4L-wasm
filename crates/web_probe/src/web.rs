@@ -1,32 +1,4 @@
-use std::io;
-use std::sync::Arc;
-
 use wasm_bindgen::prelude::*;
-
-/// The pack lives in a JS buffer, outside wasm memory; reads copy ranges in.
-struct JsSource {
-    bytes: js_sys::Uint8Array,
-}
-
-// The wasm build has one thread, so the buffer is never shared.
-unsafe impl Send for JsSource {}
-unsafe impl Sync for JsSource {}
-
-impl gamefs::pack::Source for JsSource {
-    fn size(&self) -> u64 {
-        u64::from(self.bytes.length())
-    }
-
-    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
-        let start = u32::try_from(offset).map_err(|_| io::Error::other("pack offset > 4 GiB"))?;
-        let end = start
-            .checked_add(buf.len() as u32)
-            .filter(|end| *end <= self.bytes.length())
-            .ok_or_else(|| io::Error::from(io::ErrorKind::UnexpectedEof))?;
-        self.bytes.subarray(start, end).copy_to(buf);
-        Ok(())
-    }
-}
 
 #[wasm_bindgen(start)]
 fn start() {
@@ -43,10 +15,8 @@ extern "C" {
 
 #[wasm_bindgen]
 pub fn install_pack(bytes: js_sys::Uint8Array) -> Result<(), JsValue> {
-    let pack = gamefs::pack::Pack::open(Arc::new(JsSource { bytes }))
-        .map_err(|error| JsValue::from_str(&format!("open pack: {error}")))?;
-    gamefs::install(Arc::new(pack));
-    Ok(())
+    gamefs::web::install_pack(bytes)
+        .map_err(|error| JsValue::from_str(&format!("open pack: {error}")))
 }
 
 #[wasm_bindgen]

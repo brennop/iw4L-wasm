@@ -10,6 +10,8 @@ use std::time::Duration;
 
 pub mod pack;
 pub mod record;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 
 pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}

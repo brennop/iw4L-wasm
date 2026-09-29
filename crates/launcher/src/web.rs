@@ -37,6 +37,27 @@ extern "C" {
     fn console_log(message: &str);
 }
 
+/// The page fetches the pack into a `Uint8Array` at `window.iw4l_pack` before
+/// starting the app (`main` runs inside `init()`, so it can't be handed over by
+/// a call). The bytes stay in the JS buffer; reads copy ranges in.
+fn install_pack_from_page() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let value = js_sys::Reflect::get(&window, &"iw4l_pack".into()).unwrap_or(JsValue::UNDEFINED);
+    let Ok(bytes) = value.dyn_into::<js_sys::Uint8Array>() else {
+        diag::warn!(
+            Launch,
+            "no pack on the page (window.iw4l_pack); game files will be missing"
+        );
+        return;
+    };
+    match gamefs::web::install_pack(bytes.clone()) {
+        Ok(()) => diag::info!(Launch, "pack installed: {} bytes", bytes.length()),
+        Err(error) => diag::exit_launch_error(&format!("open pack: {error}")),
+    }
+}
+
 pub fn main() {
     std::panic::set_hook(Box::new(|info| {
         let message = format!("panic: {info}");
@@ -57,6 +78,7 @@ pub fn main() {
     ));
 
     install_artifact_sink();
+    install_pack_from_page();
     bootstrap::bench::arm();
     let artifacts = PathBuf::from(ARTIFACTS_ROOT);
     diag::init_log(&artifacts);
