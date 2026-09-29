@@ -8,13 +8,16 @@ use super::gpu_resources::{DecodedSampler, UploadedTextureBind, UploadedTextureI
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntry, BindGroupLayoutDescriptor, BindingResource, Extent3d, Sampler,
-    SamplerDescriptor, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    TextureView, TextureViewDescriptor, TextureViewDimension, TextureViewId, WgpuSampler,
-    WgpuTextureView,
+    BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutId,
+    BindingResource, Extent3d, Sampler, SamplerDescriptor, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    TextureViewId, WgpuSampler, WgpuTextureView,
 };
 use bevy::render::renderer::RenderDevice;
-use d3d9_sm3::{TEXTURE_TABLE_BINDING_2D, TEXTURE_TABLE_BINDING_3D, TEXTURE_TABLE_BINDING_CUBE};
+use d3d9_sm3::{
+    FIXED_SAMPLER_BINDING_BASE, TEXTURE_TABLE_BINDING_2D, TEXTURE_TABLE_BINDING_3D,
+    TEXTURE_TABLE_BINDING_CUBE,
+};
 use render_material::{MaterialGenerationId, SamplerTextureDimension};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -52,6 +55,31 @@ pub(super) struct TextureTableBinds {
     pub sun_caster: BindGroup,
 }
 
+/// A fixed-slot draw's group 1. `sun_caster` replaces the sun shadow map with a placeholder,
+/// for the pass that renders that map; it exists only when the draw samples the map.
+#[derive(Clone)]
+pub(super) struct FixedTextureGroup {
+    pub scene: BindGroup,
+    pub sun_caster: Option<BindGroup>,
+}
+
+impl FixedTextureGroup {
+    pub fn for_pass(&self, sun_caster: bool) -> &BindGroup {
+        match &self.sun_caster {
+            Some(masked) if sun_caster => masked,
+            _ => &self.scene,
+        }
+    }
+}
+
+/// A fixed-slot group is fully named by its layout and, per sampler register, the slot word
+/// (table view index and sampler index) bound there.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct FixedGroupKey {
+    layout: BindGroupLayoutId,
+    slots: Box<[(u16, u32)]>,
+}
+
 struct Placeholders {
     views: [TextureView; 3],
     sampler: Sampler,
@@ -85,6 +113,7 @@ pub(super) struct ExactTextureTable {
     sampler_index: HashMap<SamplerKey, u16>,
     placeholders: Option<Placeholders>,
     binds: Option<TextureTableBinds>,
+    fixed_groups: HashMap<FixedGroupKey, FixedTextureGroup>,
 
     pub rebuild_n: u32,
 }
@@ -123,6 +152,7 @@ impl ExactTextureTable {
         self.samplers.clear();
         self.sampler_index.clear();
         self.binds = None;
+        self.fixed_groups.clear();
     }
 
     pub fn slot_word(
@@ -173,6 +203,67 @@ impl ExactTextureTable {
             }
         };
         Ok(d3d9_sm3::texture_slot_word(texture, sampler))
+    }
+
+    /// The fixed-slot group for `textures` (one per sampler register, in the port's order), whose
+    /// slot words `slots` came from this table.
+    pub fn fixed_group(
+        &mut self,
+        device: &RenderDevice,
+        layout: &BindGroupLayout,
+        textures: &[UploadedTextureBind],
+        slots: &[u32],
+        with_sun_caster: bool,
+    ) -> FixedTextureGroup {
+        let key = FixedGroupKey {
+            layout: layout.id(),
+            slots: textures
+                .iter()
+                .zip(slots)
+                .map(|(lane, &slot)| (lane.register, slot))
+                .collect(),
+        };
+        if let Some(group) = self.fixed_groups.get(&key) {
+            return group.clone();
+        }
+        self.ensure_placeholders(device);
+        let bound = |mask_sun_shadow: bool| -> Vec<(u16, &TextureView, &Sampler)> {
+            textures
+                .iter()
+                .zip(slots)
+                .map(|(lane, &slot)| {
+                    let view = if mask_sun_shadow
+                        && lane.identity
+                            == UploadedTextureIdentity::Code(super::CODE_TEXTURE_SHADOWMAP_SUN)
+                    {
+                        &self.views[0][0]
+                    } else {
+                        &lane.view
+                    };
+                    (lane.register, view, &self.samplers[(slot >> 16) as usize])
+                })
+                .collect()
+        };
+        let samples_sun_shadow = textures.iter().any(|lane| {
+            lane.identity == UploadedTextureIdentity::Code(super::CODE_TEXTURE_SHADOWMAP_SUN)
+        });
+        let group = FixedTextureGroup {
+            scene: fixed_slot_bind_group(device, layout, "iw4_fixed_textures", &bound(false)),
+            sun_caster: (with_sun_caster && samples_sun_shadow).then(|| {
+                fixed_slot_bind_group(
+                    device,
+                    layout,
+                    "iw4_fixed_textures_sun_caster",
+                    &bound(true),
+                )
+            }),
+        };
+        self.fixed_groups.insert(key, group.clone());
+        group
+    }
+
+    pub fn fixed_group_n(&self) -> usize {
+        self.fixed_groups.len()
     }
 
     pub fn census(&self) -> (usize, usize, usize, usize) {
@@ -347,6 +438,32 @@ impl ExactTextureTable {
             self.samplers.push(placeholders.sampler.clone());
         }
     }
+}
+
+/// Group 1 of a fixed-slot pass: per sampler register `r`, the view at binding `r` and the
+/// sampler at binding `FIXED_SAMPLER_BINDING_BASE + r`.
+pub(super) fn fixed_slot_bind_group(
+    device: &RenderDevice,
+    layout: &BindGroupLayout,
+    label: &'static str,
+    bound: &[(u16, &TextureView, &Sampler)],
+) -> BindGroup {
+    let entries: Vec<BindGroupEntry> = bound
+        .iter()
+        .flat_map(|&(register, view, sampler)| {
+            [
+                BindGroupEntry {
+                    binding: u32::from(register),
+                    resource: BindingResource::TextureView(view),
+                },
+                BindGroupEntry {
+                    binding: FIXED_SAMPLER_BINDING_BASE + u32::from(register),
+                    resource: BindingResource::Sampler(sampler),
+                },
+            ]
+        })
+        .collect();
+    device.create_bind_group(label, layout, &entries)
 }
 
 pub(super) fn array_count(count: u32) -> NonZeroU32 {

@@ -193,7 +193,7 @@ pub(super) fn kick_admitted_pipelines(
         ready: kicked
             .current
             .iter()
-            .filter(|slot| registry.is_settled(**slot))
+            .filter(|slot| registry.is_ready(**slot))
             .count() as u32,
     };
 }

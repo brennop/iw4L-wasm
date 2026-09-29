@@ -69,7 +69,7 @@ use super::smodel_cached::{
 };
 use super::state::{ChangeState0Host, ChangeState1Host, GfxPassState};
 use super::texture_table::{
-    self, ExactTextureTable, SceneTextureTables, ShadowTextureTable, TableEpoch,
+    self, ExactTextureTable, FixedTextureGroup, SceneTextureTables, ShadowTextureTable, TableEpoch,
     TextureTableRefusal,
 };
 use crate::diag::render_frame_diag::{
@@ -330,14 +330,22 @@ struct ExactColourPortGpu {
 struct ExactColourBindingCache {
     generation: MaterialGenerationId,
     views_revision: u64,
-    textures: [HashMap<BoundTextureKey, Arc<[u32]>>; 4],
+    textures: [HashMap<BoundTextureKey, BoundTextures>; 4],
 }
 
 #[derive(Resource, Default)]
 struct ExactShadowBindingCache {
     generation: MaterialGenerationId,
     views_revision: u64,
-    textures: HashMap<BoundTextureKey, Arc<[u32]>>,
+    textures: HashMap<BoundTextureKey, BoundTextures>,
+}
+
+/// A draw's textures: slot words into its texture table and, in fixed-slot form, the group 1
+/// built from them.
+#[derive(Clone)]
+struct BoundTextures {
+    slots: Arc<[u32]>,
+    group: Option<FixedTextureGroup>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -631,9 +639,6 @@ fn request_exact_pipeline(
     if let Some(slot) = registry.slot(&key) {
         return slot;
     }
-    if crate::web_profile() {
-        return registry.request_refused(key);
-    }
     let (source, plan) = exact_pipeline_plan(ports, registry, device, key);
     registry.request(key, source, plan)
 }
@@ -762,8 +767,7 @@ enum GpuSubmitRefusal {
         draw: u32,
     },
     PipelineNotReady,
-    /// Web device profile: no bindless texture table, exact pipelines are refused until R3.
-    BindlessUnavailable,
+    TextureGroupMissing,
     SmodelCacheIndexEmpty {
         placement: u32,
     },
@@ -1463,6 +1467,18 @@ pub fn bind_group_layout_from_entries(
             WgpuBindingKind::SamplerArray { count } => sampler(SamplerBindingType::Filtering)
                 .visibility(visibility)
                 .count(texture_table::array_count(count)),
+            WgpuBindingKind::Texture { dimension } => {
+                let sample = TextureSampleType::Float { filterable: true };
+                match dimension {
+                    super::SamplerTextureDimension::D2 => texture_2d(sample),
+                    super::SamplerTextureDimension::Cube => texture_cube(sample),
+                    super::SamplerTextureDimension::D3 => texture_3d(sample),
+                }
+                .visibility(visibility)
+            }
+            WgpuBindingKind::Sampler => {
+                sampler(SamplerBindingType::Filtering).visibility(visibility)
+            }
         };
         built.push(builder.build(u32::from(entry.binding), visibility));
     }
@@ -1972,6 +1988,7 @@ struct PreparedExactDraw {
     constant_base: Option<u32>,
 
     texture_slots: Arc<[u32]>,
+    texture_group: Option<FixedTextureGroup>,
     start: u32,
     count: u32,
     tess: ExactTessBind,
@@ -2070,7 +2087,7 @@ fn submit_refusal_class(cause: &GpuSubmitRefusal) -> &'static str {
         GpuSubmitRefusal::EmptyMarkMeshIndexRange { .. } => "EmptyMarkMeshIndexRange",
         GpuSubmitRefusal::EmptyGlassMeshIndexRange { .. } => "EmptyGlassMeshIndexRange",
         GpuSubmitRefusal::PipelineNotReady => "PipelineNotReady",
-        GpuSubmitRefusal::BindlessUnavailable => "BindlessUnavailable",
+        GpuSubmitRefusal::TextureGroupMissing => "TextureGroupMissing",
         GpuSubmitRefusal::SmodelCacheIndexEmpty { .. } => "SmodelCacheIndexEmpty",
         GpuSubmitRefusal::SmodelCacheIndicesMissing { .. } => "SmodelCacheIndicesMissing",
         GpuSubmitRefusal::SmodelXSurfacePathUnread { .. } => "SmodelXSurfacePathUnread",
@@ -2420,7 +2437,7 @@ impl ExactPrepare<'_> {
         executable: ExecutablePassView<'_>,
         surface: super::SurfaceSamplerInputs,
         after_scene_resolve: bool,
-    ) -> Result<Arc<[u32]>, GpuSubmitRefusal> {
+    ) -> Result<BoundTextures, GpuSubmitRefusal> {
         let port_gpu = self
             .pipeline_res
             .get(executable.port)
@@ -2446,7 +2463,9 @@ impl ExactPrepare<'_> {
         let sampler_table = self.sampler_table;
         let spot_shadow_select = self.spot_shadow_select;
         let device = self.device;
-        let resolve = |table: &mut ExactTextureTable| -> Result<Arc<[u32]>, GpuSubmitRefusal> {
+        let registry = self.registry;
+        let shadow = matches!(self.textures, PrepareTextureTables::Shadow { .. });
+        let resolve = |table: &mut ExactTextureTable| -> Result<BoundTextures, GpuSubmitRefusal> {
             let textures = port_gpu
                 .port
                 .resolve_uploaded_texture_binds(
@@ -2459,7 +2478,12 @@ impl ExactPrepare<'_> {
                     spot_shadow_select,
                 )
                 .map_err(GpuSubmitRefusal::TextureBind)?;
-            texture_slot_words(device, table, &textures)
+            let slots = texture_slot_words(device, table, &textures)?;
+            let group = (!texture_table_bindless()).then(|| {
+                let layout = registry.bind_group_layout(device, &port_gpu.textures_layout);
+                table.fixed_group(device, &layout, &textures, &slots, shadow)
+            });
+            Ok(BoundTextures { slots, group })
         };
         let mut shared_guard;
         let (texture_slots, table) = match &mut self.textures {
@@ -2472,14 +2496,14 @@ impl ExactPrepare<'_> {
             }
             PrepareTextureTables::Shadow { slots, table } => (&mut **slots, &mut **table),
         };
-        if let Some(slots) = texture_slots.get(&key) {
+        if let Some(bound) = texture_slots.get(&key) {
             self.cost.tex_bind_hit_n = self.cost.tex_bind_hit_n.saturating_add(1);
-            return Ok(Arc::clone(slots));
+            return Ok(bound.clone());
         }
         self.cost.tex_bind_miss_n = self.cost.tex_bind_miss_n.saturating_add(1);
-        let slots = resolve(table)?;
-        texture_slots.insert(key, Arc::clone(&slots));
-        Ok(slots)
+        let bound = resolve(table)?;
+        texture_slots.insert(key, bound.clone());
+        Ok(bound)
     }
 }
 
@@ -2511,14 +2535,14 @@ struct PrepareCost {
 
 #[derive(Default)]
 struct SceneTextureState {
-    slots: [HashMap<BoundTextureKey, Arc<[u32]>>; 4],
+    slots: [HashMap<BoundTextureKey, BoundTextures>; 4],
     tables: [ExactTextureTable; 4],
 }
 
 enum PrepareTextureTables<'a> {
     SceneShared(&'a std::sync::Mutex<SceneTextureState>),
     Shadow {
-        slots: &'a mut HashMap<BoundTextureKey, Arc<[u32]>>,
+        slots: &'a mut HashMap<BoundTextureKey, BoundTextures>,
         table: &'a mut ExactTextureTable,
     },
 }
@@ -3265,7 +3289,7 @@ fn submit_exact_draws<'a>(
     indirect: &indirect::ExactIndirectDraws,
     registry: &ExactPipelineRegistry,
     constant_arena: &ExactConstantArena,
-    textures_bind: [&BindGroup; 2],
+    textures_bind: [Option<&BindGroup>; 2],
     draws: impl IntoIterator<Item = &'a PreparedExactDraw>,
     label: &'static str,
     refused_draws: &mut u32,
@@ -3372,7 +3396,7 @@ fn submit_exact_draw_run<'a>(
     indirect: &indirect::ExactIndirectDraws,
     registry: &ExactPipelineRegistry,
     constant_arena: &ExactConstantArena,
-    textures_bind: &BindGroup,
+    textures_bind: Option<&BindGroup>,
     draws: impl IntoIterator<Item = &'a PreparedExactDraw>,
     label: &'static str,
     refused_draws: &mut u32,
@@ -3397,7 +3421,7 @@ fn submit_exact_draw_run<'a>(
     let mut bound_smc_off = None;
     let mut bound_depth = None;
     let mut bound_arena = None;
-    let mut textures_bound = false;
+    let mut bound_textures = None;
 
     let indirect_args = indirect.buffer();
     let mut batch = indirect::IndirectBatch::default();
@@ -3424,11 +3448,7 @@ fn submit_exact_draw_run<'a>(
         let Some(gpu_pipeline) = registry.ready(draw.pipeline) else {
             *refused_draws = refused_draws.saturating_add(1);
             *encode_not_ready = encode_not_ready.saturating_add(1);
-            *last_refusal = Some(if registry.is_refused(draw.pipeline) {
-                GpuSubmitRefusal::BindlessUnavailable
-            } else {
-                GpuSubmitRefusal::PipelineNotReady
-            });
+            *last_refusal = Some(GpuSubmitRefusal::PipelineNotReady);
             if draw.bsp_counted
                 && let Some(kind) = draw.bsp_kind
             {
@@ -3480,6 +3500,16 @@ fn submit_exact_draw_run<'a>(
                 geometry.glass_mesh.vertex.buffer(),
                 geometry.glass_mesh.index.buffer(),
             ),
+        };
+        let Some(textures) = draw
+            .texture_group
+            .as_ref()
+            .map(|group| &group.scene)
+            .or(textures_bind)
+        else {
+            *refused_draws = refused_draws.saturating_add(1);
+            *last_refusal = Some(GpuSubmitRefusal::TextureGroupMissing);
+            continue;
         };
         let (Some(vertex), Some(index)) = (vertex, index) else {
             *refused_draws = refused_draws.saturating_add(1);
@@ -3543,9 +3573,10 @@ fn submit_exact_draw_run<'a>(
             bound_arena = Some(draw.arena_lane);
             record_n.group0 = record_n.group0.saturating_add(1);
         }
-        if !textures_bound {
-            pass.set_bind_group(1, textures_bind, &[]);
-            textures_bound = true;
+        if bound_textures != Some(textures.id()) {
+            issue_indirect_batch!();
+            pass.set_bind_group(1, textures, &[]);
+            bound_textures = Some(textures.id());
             record_n.group1 = record_n.group1.saturating_add(1);
         }
         if draw.tess == ExactTessBind::World {
@@ -4354,7 +4385,8 @@ fn record_shadowmap_draws<'a>(
     smodel_skinned_vertex: Option<&Buffer>,
     smodel_skinned_index: Option<&Buffer>,
     constants_bind: Option<&BindGroup>,
-    textures_bind: &BindGroup,
+    textures_bind: Option<&BindGroup>,
+    sun_caster: bool,
     draws: impl IntoIterator<Item = &'a PreparedExactDraw>,
     color_view: &bevy::render::render_resource::TextureView,
     depth_view: &bevy::render::render_resource::TextureView,
@@ -4421,6 +4453,7 @@ fn record_shadowmap_draws<'a>(
     let mut bound_epoch = None;
     let mut bound_depth = None;
     let mut constants_bound = false;
+    let mut bound_textures = None;
     let mut indexed = 0u32;
     for draw in draws {
         let Some(gpu_pipeline) = registry.ready(draw.pipeline) else {
@@ -4432,6 +4465,16 @@ fn record_shadowmap_draws<'a>(
         else {
             *miss = miss.saturating_add(1);
             *miss_rows.entry("ConstantArenaMissing".into()).or_default() += 1;
+            continue;
+        };
+        let Some(textures) = draw
+            .texture_group
+            .as_ref()
+            .map(|group| group.for_pass(sun_caster))
+            .or(textures_bind)
+        else {
+            *miss = miss.saturating_add(1);
+            *miss_rows.entry("TextureGroupMissing".into()).or_default() += 1;
             continue;
         };
         let (vertex, index) = match draw.tess {
@@ -4494,9 +4537,12 @@ fn record_shadowmap_draws<'a>(
         }
         if !constants_bound {
             pass.set_bind_group(0, constants_bind, &[]);
-            pass.set_bind_group(1, textures_bind, &[]);
             constants_bound = true;
             record_n.group0 = record_n.group0.saturating_add(1);
+        }
+        if bound_textures != Some(textures.id()) {
+            pass.set_bind_group(1, textures, &[]);
+            bound_textures = Some(textures.id());
             record_n.group1 = record_n.group1.saturating_add(1);
         }
         pass.draw_indexed(
@@ -5012,7 +5058,11 @@ fn record_shadowmap_spot(
             ..SpotShadowSubmit::default()
         };
     };
-    let table_binds = texture_table.binds(device, registry, table_layout);
+    let table_bind = if texture_table_bindless() {
+        Some(&texture_table.binds(device, registry, table_layout).scene)
+    } else {
+        None
+    };
     let diagnostics = context.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
     let encoder = context.command_encoder();
@@ -5036,7 +5086,8 @@ fn record_shadowmap_spot(
             smodel_skinned_vertex,
             smodel_skinned_index,
             shadow_arena.gpu.bind_group.as_ref(),
-            &table_binds.scene,
+            table_bind,
+            false,
             &draws[..live],
             &slot.color_view,
             &slot.depth_view,
@@ -5660,7 +5711,15 @@ fn record_shadowmap_sun(
             gpu_span.end(encoder);
             return SunShadowSubmit::refused("TextureTableLayoutMissing");
         };
-        let table_binds = texture_table.binds(device, registry, table_layout);
+        let table_bind = if texture_table_bindless() {
+            Some(
+                &texture_table
+                    .binds(device, registry, table_layout)
+                    .sun_caster,
+            )
+        } else {
+            None
+        };
         let world_index = geometry.world_index.as_ref();
         for part in &work.partitions {
             let plan = &static_draws.commands[part.pi];
@@ -5682,7 +5741,8 @@ fn record_shadowmap_sun(
                 smodel_skinned_vertex,
                 smodel_skinned_index,
                 shadow_arena.gpu[part.pi].bind_group.as_ref(),
-                &table_binds.sun_caster,
+                table_bind,
+                true,
                 plan.world_draws
                     .iter()
                     .chain(part.xmodel_draws.iter())
@@ -6039,9 +6099,6 @@ impl ExactPrepare<'_> {
                             self.registry.discover(key);
                             return Err(GpuSubmitRefusal::PipelineNotReady);
                         };
-                        if self.registry.is_refused(pipeline) {
-                            return Err(GpuSubmitRefusal::BindlessUnavailable);
-                        }
                         if !self.registry.is_ready(pipeline) {
                             return Err(GpuSubmitRefusal::PipelineNotReady);
                         }
@@ -6052,8 +6109,10 @@ impl ExactPrepare<'_> {
                     }
                 };
                 let port_gpu = &pipeline_res.ports[port_index];
-                let texture_slots =
-                    self.bind_hit_textures(executable, surface, after_scene_resolve)?;
+                let BoundTextures {
+                    slots: texture_slots,
+                    group: texture_group,
+                } = self.bind_hit_textures(executable, surface, after_scene_resolve)?;
                 // Shadow placement is applied after preparation, independently for each
                 // light and object. Its unplaced banks belong to the material run.
                 let unplaced_shadow = matches!(self.textures, PrepareTextureTables::Shadow { .. })
@@ -6115,6 +6174,7 @@ impl ExactPrepare<'_> {
                     constants,
                     constant_base,
                     texture_slots,
+                    texture_group,
                     start,
                     count,
                     tess,
@@ -6680,6 +6740,11 @@ fn append_slot_rows(bytes: &mut Vec<u8>, slots: &[u32]) {
 
 fn texture_table_layout(pipeline: &ExactColourPipeline) -> Option<&BindGroupLayoutDescriptor> {
     pipeline.ports.first().map(|port| &port.textures_layout)
+}
+
+/// Whether draws bind the whole texture table as group 1; fixed-slot draws carry their own.
+fn texture_table_bindless() -> bool {
+    render_frame::texture_binding() == d3d9_sm3::TextureBinding::Bindless
 }
 
 fn arena_capacity(required: usize) -> u64 {

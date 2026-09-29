@@ -1,8 +1,32 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use asset_iw4::vertex_decl::D3dDeclType;
-use d3d9_sm3::PassWgsl;
+use d3d9_sm3::TextureBinding;
 use render_material::{PassProgramAbi, SamplerTextureDimension};
+
+/// Whether the renderer targets what a desktop browser's WebGPU offers: default limits, BC
+/// textures, filterable R32Float, no bindless. Always on for wasm32; natively
+/// `IW4L_GPU_PROFILE=webgpu`.
+pub fn web_profile() -> bool {
+    static WEB: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WEB.get_or_init(|| {
+        cfg!(target_arch = "wasm32")
+            || std::env::var("IW4L_GPU_PROFILE").is_ok_and(|v| v.eq_ignore_ascii_case("webgpu"))
+    })
+}
+
+/// How every pass reaches its textures: fixed slots in the web profile, or on a full device
+/// with `IW4L_SM3_FIXED_SLOTS=1`; the bindless texture table otherwise.
+pub fn texture_binding() -> TextureBinding {
+    static BINDING: std::sync::OnceLock<TextureBinding> = std::sync::OnceLock::new();
+    *BINDING.get_or_init(|| {
+        if web_profile() || std::env::var("IW4L_SM3_FIXED_SLOTS").as_deref() == Ok("1") {
+            TextureBinding::FixedSlots
+        } else {
+            TextureBinding::Bindless
+        }
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WgpuVertexFormat {
@@ -49,6 +73,12 @@ pub enum WgpuBindingKind {
     SamplerArray {
         count: u32,
     },
+
+    Texture {
+        dimension: SamplerTextureDimension,
+    },
+
+    Sampler,
 }
 
 pub const TEXTURE_TABLE_2D_CAPACITY: u32 = 8192;
@@ -95,6 +125,36 @@ pub fn texture_table_bind_entries() -> [WgpuBindLayoutEntry; 4] {
     ]
 }
 
+/// Group 1 in fixed-slot form: per sampler register, in the ABI's order, the texture at binding
+/// `register` and its sampler at `FIXED_SAMPLER_BINDING_BASE + register`.
+fn fixed_slot_bind_entries(abi: &PassProgramAbi) -> Vec<WgpuBindLayoutEntry> {
+    let group = u8::try_from(d3d9_sm3::TEXTURE_TABLE_GROUP).expect("group 1");
+    abi.samplers
+        .iter()
+        .flat_map(|slot| {
+            let entry = |binding: u32, kind| WgpuBindLayoutEntry {
+                group,
+                binding: u16::try_from(binding).expect("fixed slot binding fits u16"),
+                visibility: WgpuShaderVisibility::VertexFragment,
+                kind,
+                retail_register: Some(slot.register),
+            };
+            [
+                entry(
+                    u32::from(slot.register),
+                    WgpuBindingKind::Texture {
+                        dimension: slot.dimension,
+                    },
+                ),
+                entry(
+                    d3d9_sm3::FIXED_SAMPLER_BINDING_BASE + u32::from(slot.register),
+                    WgpuBindingKind::Sampler,
+                ),
+            ]
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WgpuBindLayoutEntry {
     pub group: u8,
@@ -134,7 +194,7 @@ pub enum WgpuLayoutRefusal {
 
 pub fn derive_wgpu_pass_layout(
     abi: &PassProgramAbi,
-    _module: &PassWgsl,
+    texture_binding: TextureBinding,
 ) -> Result<WgpuPassLayout, WgpuLayoutRefusal> {
     let mut by_stream = BTreeMap::<u8, Vec<WgpuVertexAttribute>>::new();
     let mut locations = BTreeSet::new();
@@ -195,7 +255,10 @@ pub fn derive_wgpu_pass_layout(
         retail_register: None,
     });
 
-    bind_entries.extend(texture_table_bind_entries());
+    match texture_binding {
+        TextureBinding::Bindless => bind_entries.extend(texture_table_bind_entries()),
+        TextureBinding::FixedSlots => bind_entries.extend(fixed_slot_bind_entries(abi)),
+    }
 
     Ok(WgpuPassLayout {
         vertex_buffers,

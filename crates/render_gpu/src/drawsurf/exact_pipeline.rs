@@ -54,8 +54,6 @@ pub(super) struct ExactPipelineSlot(u32);
 enum SlotState {
     Building,
     Ready(RenderPipeline),
-    /// The device profile has no bindless textures, so this pipeline is never built (until R3).
-    Refused,
 }
 
 struct PortBuild {
@@ -130,36 +128,8 @@ impl ExactPipelineRegistry {
         }
     }
 
-    pub(super) fn is_refused(&self, slot: ExactPipelineSlot) -> bool {
-        matches!(self.slots.get(slot.0 as usize), Some(SlotState::Refused))
-    }
-
-    /// Built, or never going to be: what the load screen waits on.
-    pub(super) fn is_settled(&self, slot: ExactPipelineSlot) -> bool {
-        matches!(
-            self.slots.get(slot.0 as usize),
-            Some(SlotState::Ready(_) | SlotState::Refused)
-        )
-    }
-
     pub(super) fn is_ready(&self, slot: ExactPipelineSlot) -> bool {
         matches!(self.slots.get(slot.0 as usize), Some(SlotState::Ready(_)))
-    }
-
-    /// Records `key` as refused: the device profile cannot build it (no bindless, until R3).
-    pub(super) fn request_refused(
-        &mut self,
-        key: super::colour_submit::ExactColourPipelineKey,
-    ) -> ExactPipelineSlot {
-        if let Some(slot) = self.by_key.get(&key).copied() {
-            return slot;
-        }
-        let slot = ExactPipelineSlot(
-            u32::try_from(self.slots.len()).expect("exact pipeline slot count fits u32"),
-        );
-        self.slots.push(SlotState::Refused);
-        self.by_key.insert(key, slot);
-        slot
     }
 
     pub(super) fn request(

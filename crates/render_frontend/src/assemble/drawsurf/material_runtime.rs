@@ -102,7 +102,7 @@ impl RuntimeProgramPort {
         vertex_name: &str,
         pixel_name: &str,
     ) -> Result<Self, ProgramRegistryError> {
-        let lowering = super::sm3_wgsl::pass_lowering_abi(&abi, super::sm3_wgsl::texture_binding());
+        let lowering = super::sm3_wgsl::pass_lowering_abi(&abi, render_frame::texture_binding());
         let module = if let Some(cached) = super::wgsl_disk_cache::load(pair, &lowering) {
             cached
         } else {
@@ -112,8 +112,9 @@ impl RuntimeProgramPort {
             module
         };
         diag::wgsl_dump::dump_pass_wgsl(vertex_name, pixel_name, &module.source);
-        let wgpu_layout = super::gpu_contract::derive_wgpu_pass_layout(&abi, &module)
-            .map_err(ProgramRegistryError::WgpuLayout)?;
+        let wgpu_layout =
+            super::gpu_contract::derive_wgpu_pass_layout(&abi, lowering.texture_binding)
+                .map_err(ProgramRegistryError::WgpuLayout)?;
         let id = PortId::from_pass(pass, vertex_type)
             .ok_or(ProgramRegistryError::PassShaderPairMissing)?;
         Ok(Self {

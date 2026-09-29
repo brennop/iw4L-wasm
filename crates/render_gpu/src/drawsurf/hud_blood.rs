@@ -11,8 +11,6 @@ use super::sm3_wgsl::{PASS_FRAGMENT_ENTRY, PASS_VERTEX_ENTRY};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum BloodGpuRefusal {
-    /// Web device profile: no bindless texture table until R3.
-    BindlessUnavailable,
     VertexLayout,
     UnsupportedState {
         fields: super::state::UnsupportedStateFields,
@@ -47,9 +45,6 @@ impl BloodPortGpu {
         device: &RenderDevice,
         cache: &PipelineCache,
     ) -> Result<Self, BloodGpuRefusal> {
-        if crate::web_profile() {
-            return Err(BloodGpuRefusal::BindlessUnavailable);
-        }
         let port = &blood.film.port;
         let state = super::state::GfxPassState::from_bits(blood.film.shell.passes[0].state);
         if let Some(fields) = state.unsupported_host_fields() {
@@ -183,13 +178,38 @@ impl BloodPortGpu {
             .as_ref()
             .is_none_or(|(cached, _)| *cached != key)
         {
-            let group = table.views_bind_group(
-                device,
-                &cache.get_bind_group_layout(&self.textures_layout),
-                "iw4_blood_textures",
-                &[&color.texture_view, &mask.texture_view],
-                &[&color.sampler, &mask.sampler],
-            );
+            let layout = cache.get_bind_group_layout(&self.textures_layout);
+            let group = match render_frame::texture_binding() {
+                d3d9_sm3::TextureBinding::FixedSlots => {
+                    let images = [color, mask];
+                    let bound: Vec<_> = self
+                        .blood
+                        .film
+                        .port
+                        .abi()
+                        .samplers
+                        .iter()
+                        .zip(&self.blood.texture_slots)
+                        .map(|(binding, &slot)| {
+                            let image = images[usize::from(slot)];
+                            (binding.register, &image.texture_view, &image.sampler)
+                        })
+                        .collect();
+                    super::texture_table::fixed_slot_bind_group(
+                        device,
+                        &layout,
+                        "iw4_blood_textures",
+                        &bound,
+                    )
+                }
+                d3d9_sm3::TextureBinding::Bindless => table.views_bind_group(
+                    device,
+                    &layout,
+                    "iw4_blood_textures",
+                    &[&color.texture_view, &mask.texture_view],
+                    &[&color.sampler, &mask.sampler],
+                ),
+            };
             self.textures = Some((key, group));
         }
         self.textures.as_ref().expect("built above").1.clone()

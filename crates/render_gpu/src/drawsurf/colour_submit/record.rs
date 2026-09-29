@@ -386,10 +386,14 @@ pub(super) fn draw_exact_colour(
         let has_late_scene = prepared.iter().any(|draw| draw.after_scene_resolve);
         let table_layout =
             texture_table_layout(pipeline.as_ref()).expect("ports are non-empty above");
-        let table_binds = texture_table
-            .0
-            .each_mut()
-            .map(|table| &table.binds(&device, &registry, table_layout).scene);
+        let bindless = texture_table_bindless();
+        let table_binds = texture_table.0.each_mut().map(|table| {
+            if bindless {
+                Some(&table.binds(&device, &registry, table_layout).scene)
+            } else {
+                None
+            }
+        });
 
         let diagnostics = context.diagnostic_recorder();
         let diagnostics = diagnostics.as_deref();
@@ -642,7 +646,7 @@ pub(super) fn draw_exact_colour(
             }
             diag::warn!(
                 World,
-                "drawsurf production gpu submit: material_runs={} pass_setups={} obj_binds={} shell_hits={} shell_misses={} overlay_const_writes={} overlay_need_known={} ready_draws={ready_draws} refused_draws={refused_draws} exec_refused={exec_refused} authored_state={authored_state:?} unsupported_state={unsupported_state:?} exec_causes={} submit_cause={} submit_cause2={} prepared={} xmodel_prepared={xmodel_draws} codemesh_prepared={codemesh_draws} markmesh_prepared={markmesh_draws} glassmesh_prepared={glassmesh_draws} floatz_blit={floatz_blit} resolved_scene_copy={resolved_scene_copy} viewmodel_held={viewmodel_held} scene_tables(before_linear,before_srgb,after_linear,after_srgb)(2d,cube,3d,samplers)={:?} texture_table_rebuilds={} shadow_table={:?} cached_slot_words={} tex_bind(hit,miss)=({},{}) constant_bind_groups={} indirect(folded,batches,uploaded_words)=({},{},{}) last={last_refusal:?}",
+                "drawsurf production gpu submit: material_runs={} pass_setups={} obj_binds={} shell_hits={} shell_misses={} overlay_const_writes={} overlay_need_known={} ready_draws={ready_draws} refused_draws={refused_draws} exec_refused={exec_refused} authored_state={authored_state:?} unsupported_state={unsupported_state:?} exec_causes={} submit_cause={} submit_cause2={} prepared={} xmodel_prepared={xmodel_draws} codemesh_prepared={codemesh_draws} markmesh_prepared={markmesh_draws} glassmesh_prepared={glassmesh_draws} floatz_blit={floatz_blit} resolved_scene_copy={resolved_scene_copy} viewmodel_held={viewmodel_held} scene_tables(before_linear,before_srgb,after_linear,after_srgb)(2d,cube,3d,samplers)={:?} texture_table_rebuilds={} shadow_table={:?} cached_slot_words={} tex_bind(hit,miss)=({},{}) fixed_texture_groups={} set_bind_group(0,1)=({},{}) constant_bind_groups={} indirect(folded,batches,uploaded_words)=({},{},{}) last={last_refusal:?}",
                 colour_run_census.material_runs,
                 colour_run_census.pass_setups,
                 colour_run_census.obj_binds,
@@ -665,6 +669,13 @@ pub(super) fn draw_exact_colour(
                 binding_cache.interned_n() + shadow_binding.textures.len(),
                 prepare_cost.tex_bind_hit_n,
                 prepare_cost.tex_bind_miss_n,
+                texture_table
+                    .iter()
+                    .map(ExactTextureTable::fixed_group_n)
+                    .sum::<usize>()
+                    + shadow_table.fixed_group_n(),
+                record_n.group0,
+                record_n.group1,
                 constant_arena
                     .gpu
                     .iter()

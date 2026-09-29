@@ -32,17 +32,6 @@ fn known_decl_type(decl_type: DeclType) -> DeclType {
     }
 }
 
-/// The texture binding scheme passes are lowered for. `IW4L_SM3_FIXED_SLOTS=1` selects the
-/// fixed-slot (WebGPU) form; the renderer only has the bindless layout until R3, so that form
-/// is for WGSL dumps and validation.
-pub fn texture_binding() -> TextureBinding {
-    static BINDING: std::sync::OnceLock<TextureBinding> = std::sync::OnceLock::new();
-    *BINDING.get_or_init(|| match std::env::var("IW4L_SM3_FIXED_SLOTS").as_deref() {
-        Ok("1") => TextureBinding::FixedSlots,
-        _ => TextureBinding::Bindless,
-    })
-}
-
 pub fn pass_lowering_abi(abi: &PassProgramAbi, texture_binding: TextureBinding) -> PassLoweringAbi {
     PassLoweringAbi {
         texture_binding,
