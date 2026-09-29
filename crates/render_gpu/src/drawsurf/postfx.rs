@@ -243,6 +243,8 @@ struct ExactPostFxGpu {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PostFxGpuRefusal {
+    /// Web device profile: no bindless texture table until R3.
+    BindlessUnavailable,
     VertexLayout,
     EmptyConstantBlock,
     UnsupportedState {
@@ -369,6 +371,9 @@ fn create_postfx_gpu(
     device: &RenderDevice,
     cache: &PipelineCache,
 ) -> Result<PreparedPostFxGpu, PostFxGpuRefusal> {
+    if crate::web_profile() {
+        return Err(PostFxGpuRefusal::BindlessUnavailable);
+    }
     let state = super::state::GfxPassState::from_bits(film.shell.passes[0].state);
     if let Some(fields) = state.unsupported_host_fields() {
         return Err(PostFxGpuRefusal::UnsupportedState {

@@ -11,6 +11,8 @@ use super::sm3_wgsl::{PASS_FRAGMENT_ENTRY, PASS_VERTEX_ENTRY};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum BloodGpuRefusal {
+    /// Web device profile: no bindless texture table until R3.
+    BindlessUnavailable,
     VertexLayout,
     UnsupportedState {
         fields: super::state::UnsupportedStateFields,
@@ -45,6 +47,9 @@ impl BloodPortGpu {
         device: &RenderDevice,
         cache: &PipelineCache,
     ) -> Result<Self, BloodGpuRefusal> {
+        if crate::web_profile() {
+            return Err(BloodGpuRefusal::BindlessUnavailable);
+        }
         let port = &blood.film.port;
         let state = super::state::GfxPassState::from_bits(blood.film.shell.passes[0].state);
         if let Some(fields) = state.unsupported_host_fields() {

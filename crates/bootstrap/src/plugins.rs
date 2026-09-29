@@ -6,7 +6,7 @@ use bevy::{
     render::{
         RenderPlugin as BevyRenderPlugin,
         pipelined_rendering::PipelinedRenderingPlugin,
-        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
+        settings::{RenderCreation, WgpuFeatures, WgpuLimits, WgpuSettings, WgpuSettingsPriority},
     },
 };
 use bots::BotsPlugin;
@@ -94,12 +94,19 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
         primary.desired_maximum_frame_latency = core::num::NonZeroU32::new(frame_latency());
     }
     let mut wgpu = WgpuSettings::default();
-    wgpu.features |= WgpuFeatures::TEXTURE_FORMAT_16BIT_NORM
-        | WgpuFeatures::TEXTURE_COMPRESSION_BC
-        | WgpuFeatures::POLYGON_MODE_LINE
-        | WgpuFeatures::TEXTURE_BINDING_ARRAY
-        | WgpuFeatures::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-        | WgpuFeatures::PARTIALLY_BOUND_BINDING_ARRAY;
+    if render::web_profile() {
+        // What a browser's WebGPU offers: default limits, BC textures, nothing else.
+        wgpu.priority = WgpuSettingsPriority::WebGPU;
+        wgpu.limits = WgpuLimits::default();
+        wgpu.features |= WgpuFeatures::TEXTURE_COMPRESSION_BC;
+    } else {
+        wgpu.features |= WgpuFeatures::TEXTURE_FORMAT_16BIT_NORM
+            | WgpuFeatures::TEXTURE_COMPRESSION_BC
+            | WgpuFeatures::POLYGON_MODE_LINE
+            | WgpuFeatures::TEXTURE_BINDING_ARRAY
+            | WgpuFeatures::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | WgpuFeatures::PARTIALLY_BOUND_BINDING_ARRAY;
+    }
     let plugins = DefaultPlugins
         .set(window)
         .set(LogPlugin {

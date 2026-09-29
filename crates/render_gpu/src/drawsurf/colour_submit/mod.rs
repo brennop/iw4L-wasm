@@ -631,6 +631,9 @@ fn request_exact_pipeline(
     if let Some(slot) = registry.slot(&key) {
         return slot;
     }
+    if crate::web_profile() {
+        return registry.request_refused(key);
+    }
     let (source, plan) = exact_pipeline_plan(ports, registry, device, key);
     registry.request(key, source, plan)
 }
@@ -759,6 +762,8 @@ enum GpuSubmitRefusal {
         draw: u32,
     },
     PipelineNotReady,
+    /// Web device profile: no bindless texture table, exact pipelines are refused until R3.
+    BindlessUnavailable,
     SmodelCacheIndexEmpty {
         placement: u32,
     },
@@ -2065,6 +2070,7 @@ fn submit_refusal_class(cause: &GpuSubmitRefusal) -> &'static str {
         GpuSubmitRefusal::EmptyMarkMeshIndexRange { .. } => "EmptyMarkMeshIndexRange",
         GpuSubmitRefusal::EmptyGlassMeshIndexRange { .. } => "EmptyGlassMeshIndexRange",
         GpuSubmitRefusal::PipelineNotReady => "PipelineNotReady",
+        GpuSubmitRefusal::BindlessUnavailable => "BindlessUnavailable",
         GpuSubmitRefusal::SmodelCacheIndexEmpty { .. } => "SmodelCacheIndexEmpty",
         GpuSubmitRefusal::SmodelCacheIndicesMissing { .. } => "SmodelCacheIndicesMissing",
         GpuSubmitRefusal::SmodelXSurfacePathUnread { .. } => "SmodelXSurfacePathUnread",
@@ -3418,7 +3424,11 @@ fn submit_exact_draw_run<'a>(
         let Some(gpu_pipeline) = registry.ready(draw.pipeline) else {
             *refused_draws = refused_draws.saturating_add(1);
             *encode_not_ready = encode_not_ready.saturating_add(1);
-            *last_refusal = Some(GpuSubmitRefusal::PipelineNotReady);
+            *last_refusal = Some(if registry.is_refused(draw.pipeline) {
+                GpuSubmitRefusal::BindlessUnavailable
+            } else {
+                GpuSubmitRefusal::PipelineNotReady
+            });
             if draw.bsp_counted
                 && let Some(kind) = draw.bsp_kind
             {
@@ -6029,6 +6039,9 @@ impl ExactPrepare<'_> {
                             self.registry.discover(key);
                             return Err(GpuSubmitRefusal::PipelineNotReady);
                         };
+                        if self.registry.is_refused(pipeline) {
+                            return Err(GpuSubmitRefusal::BindlessUnavailable);
+                        }
                         if !self.registry.is_ready(pipeline) {
                             return Err(GpuSubmitRefusal::PipelineNotReady);
                         }
