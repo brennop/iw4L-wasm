@@ -631,7 +631,7 @@ pub fn list_mp_maps(root: &GamesRoot) -> Vec<String> {
 
 pub fn ensure_artifacts_dir() -> Result<PathBuf, String> {
     let dir = Path::new("iw4l-artifacts");
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    artifactfs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir.to_path_buf())
 }
 

@@ -23,7 +23,7 @@ pub(crate) fn write(path: &Path, facts: &RuntimeFacts) -> Result<(), String> {
     let value = build(facts);
     let bytes =
         serde_json::to_vec_pretty(&value).map_err(|error| format!("encode summary: {error}"))?;
-    std::fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
+    artifactfs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 fn build(facts: &RuntimeFacts) -> Value {

@@ -12,7 +12,32 @@
 <body>
 <script type="module">
 // Launch args come from this page's query string: ?map=<zone>&cmds=<script>, see launcher/src/web.rs.
-import init from './iw4l.js';
+import init, { artifacts, artifact } from './iw4l.js';
+
+// What the run wrote (log, acceptance summary, captures, reports), kept in memory:
+//   iw4l.artifacts()        -> [{ path, bytes }]
+//   iw4l.artifact(path)     -> Uint8Array | undefined
+//   iw4l.text(path)         -> string | undefined
+//   iw4l.download(path)     -> saves it through the browser
+window.iw4l = {
+  artifacts,
+  artifact,
+  text(path) {
+    const bytes = artifact(path);
+    return bytes && new TextDecoder().decode(bytes);
+  },
+  download(path) {
+    const bytes = artifact(path);
+    if (!bytes) throw new Error(`no artifact ${path}`);
+    const url = URL.createObjectURL(new Blob([bytes]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = path.split('/').pop();
+    link.click();
+    URL.revokeObjectURL(url);
+  },
+};
+
 try {
   await init();
 } catch (error) {

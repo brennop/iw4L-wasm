@@ -18,7 +18,7 @@ fn slot() -> &'static Result<(PathBuf, String), String> {
     RUN.get_or_init(|| {
         let id = uuid::Uuid::new_v4().to_string();
         let dir = PathBuf::from("iw4l-artifacts/runs").join(&id);
-        std::fs::create_dir_all(&dir)
+        artifactfs::create_dir_all(&dir)
             .map_err(|error| format!("create {}: {error}", dir.display()))?;
         Ok((dir, id))
     })

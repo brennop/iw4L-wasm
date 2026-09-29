@@ -40,7 +40,7 @@ pub(crate) fn write_frames(path: &Path, frames: &Frames) -> Result<(), String> {
     for row in &frames.rows {
         write_frame(&mut out, row);
     }
-    std::fs::write(path, out).map_err(|error| format!("write {}: {error}", path.display()))
+    artifactfs::write(path, out).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 fn write_frame(out: &mut String, row: &FrameRow) {
@@ -132,7 +132,7 @@ pub(crate) fn write_jobs(path: &Path, jobs: &Jobs, origin: Instant) -> Result<()
     for row in &jobs.rows {
         write_job(&mut out, row, origin);
     }
-    std::fs::write(path, out).map_err(|error| format!("write {}: {error}", path.display()))
+    artifactfs::write(path, out).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 fn write_job(out: &mut String, row: &JobRow, origin: Instant) {

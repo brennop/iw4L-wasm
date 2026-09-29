@@ -11,7 +11,7 @@ pub fn dump_pass_wgsl(vertex_name: &str, pixel_name: &str, source: &str) {
             .collect::<String>()
     };
     let directory = std::path::Path::new("iw4l-artifacts/wgsl");
-    if let Err(error) = std::fs::create_dir_all(directory) {
+    if let Err(error) = artifactfs::create_dir_all(directory) {
         crate::warn!(
             World,
             "IW4L_WGSL_DUMP: cannot create {directory:?}: {error}"
@@ -23,7 +23,7 @@ pub fn dump_pass_wgsl(vertex_name: &str, pixel_name: &str, source: &str) {
         sanitize(vertex_name),
         sanitize(pixel_name)
     ));
-    match std::fs::write(&path, source) {
+    match artifactfs::write(&path, source) {
         Ok(()) => crate::warn!(
             World,
             "IW4L_WGSL_DUMP: wrote {} bytes of {vertex_name} / {pixel_name} to {path:?}",

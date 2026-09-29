@@ -115,12 +115,12 @@ pub fn insert(
     );
     let screenshot = milestones::screenshot_path(artifacts, zone);
     if let Some(parent) = screenshot.parent()
-        && let Err(error) = std::fs::create_dir_all(parent)
+        && let Err(error) = artifactfs::create_dir_all(parent)
     {
         diag::error!(Launch, "bench: create {}: {error}", parent.display());
         return;
     }
-    let _ = std::fs::remove_file(&screenshot);
+    let _ = artifactfs::remove_file(&screenshot);
     app.world_mut()
         .get_resource_mut::<CaptureQueue>()
         .expect("CaptureQueue: RenderPlugin must be added before the bench capture")
@@ -263,11 +263,12 @@ fn heading(zone: &str, trace: Option<&Path>, out: &mut Vec<String>) {
 
 fn write_report(artifacts: &Path, lines: &[String]) -> Result<PathBuf, String> {
     let dir = artifacts.join("bench");
-    std::fs::create_dir_all(&dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+    artifactfs::create_dir_all(&dir)
+        .map_err(|error| format!("create {}: {error}", dir.display()))?;
     let path = dir.join(format!("{}.txt", stamp()));
     let mut body = lines.join("\n");
     body.push('\n');
-    std::fs::write(&path, body).map_err(|error| format!("write {}: {error}", path.display()))?;
+    artifactfs::write(&path, body).map_err(|error| format!("write {}: {error}", path.display()))?;
     Ok(path)
 }
 
@@ -288,7 +289,7 @@ fn write_run_package(artifacts: &Path, lines: &[String]) -> Vec<String> {
     let mut body = lines.join("\n");
     body.push('\n');
     let report = dir.join("report.txt");
-    if let Err(error) = std::fs::write(&report, body) {
+    if let Err(error) = artifactfs::write(&report, body) {
         out.push(format!(
             "run package: {} not written ({error})",
             report.display()

@@ -375,5 +375,5 @@ fn walk(dir: &Path) -> (u64, u64) {
 pub(crate) fn write(path: &PathBuf, manifest: &Value) -> Result<(), String> {
     let bytes =
         serde_json::to_vec_pretty(manifest).map_err(|error| format!("encode manifest: {error}"))?;
-    std::fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
+    artifactfs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
 }

@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use bevy::{
     audio::{AudioSink, AudioSinkPlayback, GlobalVolume, Volume},
@@ -38,7 +38,7 @@ pub(crate) fn load_user_settings(
         return;
     };
     persistence.path = Some(path.clone());
-    match fs::read_to_string(&path) {
+    match artifactfs::read_to_string(&path) {
         Ok(source) => parse_settings(&source, &mut settings, &mut binds),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => warn!("could not read {}: {error}", path.display()),
@@ -191,13 +191,13 @@ pub(crate) fn save_user_settings(
         return;
     };
     let Some(parent) = path.parent() else { return };
-    if let Err(error) = fs::create_dir_all(parent) {
+    if let Err(error) = artifactfs::create_dir_all(parent) {
         warn!("could not create {}: {error}", parent.display());
         return;
     }
     let temporary = path.with_extension("cfg.tmp");
-    if let Err(error) =
-        fs::write(&temporary, payload.as_bytes()).and_then(|()| fs::rename(&temporary, &path))
+    if let Err(error) = artifactfs::write(&temporary, payload.as_bytes())
+        .and_then(|()| artifactfs::rename(&temporary, &path))
     {
         warn!("could not atomically save {}: {error}", path.display());
         return;
@@ -209,7 +209,8 @@ fn settings_path(artifacts: &std::path::Path) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("IW4L_SETTINGS_PATH") {
         return Some(PathBuf::from(path));
     }
-    if cfg!(windows) {
+    // The browser keeps it with the other artifacts; the page mirrors it to localStorage.
+    if cfg!(any(windows, target_arch = "wasm32")) {
         return Some(artifacts.join("settings.cfg"));
     }
     std::env::var_os("XDG_CONFIG_HOME")

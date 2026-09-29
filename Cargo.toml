@@ -35,6 +35,7 @@ members = [
     "crates/fastfile_iw5",
     "crates/frame",
     "crates/gamefs",
+    "crates/artifactfs",
     "crates/fx",
     "crates/fx_iw4",
     "crates/gamemode_iw4",
@@ -117,6 +118,7 @@ anim_iw4 = { path = "crates/anim_iw4" }
 asset_iw4 = { path = "crates/asset_iw4" }
 asset_core = { path = "crates/asset_core" }
 gamefs = { path = "crates/gamefs" }
+artifactfs = { path = "crates/artifactfs" }
 asset_anim = { path = "crates/asset_anim" }
 asset_audio = { path = "crates/asset_audio" }
 asset_game = { path = "crates/asset_game" }

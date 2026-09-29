@@ -5,14 +5,27 @@
 //! (`menu`, `map`, `play`, `export-gltf`) when it isn't implied. `cmds`,
 //! `acceptance` and `games` map to `--cmds`, `--render-acceptance` and the games
 //! root.
+//!
+//! Artifacts (log, acceptance ledger, captures, reports) are kept in memory;
+//! the page reads them through `window.iw4l` (see `web/index.html`). Settings
+//! and classes are also mirrored to `localStorage` so they survive a reload.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use wasm_bindgen::prelude::*;
 
 /// Where the game files appear in the virtual file system unless `?games=` says otherwise.
 const DEFAULT_GAMES_ROOT: &str = "/games";
 const ERROR_OVERLAY_ID: &str = "iw4l-error";
+const ARTIFACTS_ROOT: &str = "iw4l-artifacts";
+/// Artifacts that outlive the page, stored under `localStorage["iw4l:<path>"]`.
+const PERSISTED: [&str; 2] = [
+    "iw4l-artifacts/settings.cfg",
+    "iw4l-artifacts/profile/classes.txt",
+];
+
+static ARTIFACTS: OnceLock<Arc<artifactfs::Memory>> = OnceLock::new();
 
 #[wasm_bindgen]
 extern "C" {
@@ -43,15 +56,73 @@ pub fn main() {
         query.get("games").unwrap_or(DEFAULT_GAMES_ROOT.into()),
     ));
 
+    install_artifact_sink();
     bootstrap::bench::arm();
-    // Nothing is written yet: the web artifact sink (S5) replaces this directory.
-    let artifacts = PathBuf::from("iw4l-artifacts");
+    let artifacts = PathBuf::from(ARTIFACTS_ROOT);
     diag::init_log(&artifacts);
     diag::info!(Launch, "web launch args: {args:?}");
     let (mode, acceptance) =
         bootstrap::parse_cli(args.into_iter()).unwrap_or_else(|e| diag::exit_launch_error(&e));
     let games = assets::games_root_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
     bootstrap::launch(games, artifacts, mode, acceptance);
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+fn storage_key(path: &Path) -> String {
+    format!("iw4l:{}", path.display())
+}
+
+fn install_artifact_sink() {
+    let memory = Arc::new(artifactfs::Memory::with_mirror(|path, bytes| {
+        if !PERSISTED.iter().any(|kept| Path::new(kept) == path) {
+            return;
+        }
+        let Some(storage) = local_storage() else {
+            return;
+        };
+        let text = String::from_utf8_lossy(bytes);
+        if let Err(error) = storage.set_item(&storage_key(path), &text) {
+            console_warn(&format!(
+                "localStorage: {} not saved: {error:?}",
+                path.display()
+            ));
+        }
+    }));
+    if let Some(storage) = local_storage() {
+        for kept in PERSISTED {
+            if let Ok(Some(text)) = storage.get_item(&storage_key(Path::new(kept))) {
+                memory.insert(Path::new(kept), text.into_bytes());
+            }
+        }
+    }
+    artifactfs::install(Arc::clone(&memory) as Arc<dyn artifactfs::Backend>);
+    let _ = ARTIFACTS.set(memory);
+}
+
+/// Every artifact this page has written, as `[{ path, bytes }]` in path order.
+#[wasm_bindgen]
+pub fn artifacts() -> js_sys::Array {
+    let list = js_sys::Array::new();
+    for (path, bytes) in ARTIFACTS
+        .get()
+        .map(|memory| memory.list())
+        .unwrap_or_default()
+    {
+        let entry = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&entry, &"path".into(), &path.display().to_string().into());
+        let _ = js_sys::Reflect::set(&entry, &"bytes".into(), &(bytes as f64).into());
+        list.push(&entry);
+    }
+    list
+}
+
+/// One artifact's bytes, or `undefined` if there is none at `path`.
+#[wasm_bindgen]
+pub fn artifact(path: &str) -> Option<Vec<u8>> {
+    ARTIFACTS.get()?.get(Path::new(path))
 }
 
 struct UrlQuery(Option<web_sys::UrlSearchParams>);

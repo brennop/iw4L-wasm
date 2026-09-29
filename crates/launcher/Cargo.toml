@@ -14,6 +14,7 @@ bevy-debug = ["bootstrap/bevy-debug"]
 bevy-trace = ["bootstrap/bevy-trace"]
 
 [dependencies]
+artifactfs.workspace = true
 diag.workspace = true
 gamefs.workspace = true
 assets.workspace = true
@@ -25,12 +26,14 @@ bootstrap = { path = "../bootstrap" }
 bevy = { workspace = true, features = ["webgpu"] }
 console.workspace = true
 wasm-bindgen = "=0.2.129"
+js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Document",
     "Element",
     "HtmlElement",
     "Location",
     "Node",
+    "Storage",
     "UrlSearchParams",
     "Window",
 ] }

@@ -19,6 +19,7 @@ bevy-debug = ["bevy/debug", "bevy/track_location"]
 bevy-trace = ["bevy/trace", "bevy/trace_chrome"]
 
 [dependencies]
+artifactfs.workspace = true
 web-time = { workspace = true }
 bevy.workspace = true
 assets.workspace = true

@@ -189,7 +189,7 @@ pub(crate) fn load_class_store(
     }
     let path = identity.artifacts.join("profile").join("classes.txt");
     file.loaded = true;
-    match std::fs::read_to_string(&path) {
+    match artifactfs::read_to_string(&path) {
         Ok(text) => match decode_slots(&text) {
             Some(slots) => {
                 diag::info!(Ui, "classes: {} read from {}", slots.len(), path.display());
@@ -220,21 +220,14 @@ pub(crate) fn load_class_store(
 }
 
 fn write_class_file(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
-    use std::io::Write;
-
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        artifactfs::create_dir_all(parent)?;
     }
-    let pending = path.with_extension(format!("{}.tmp", std::process::id()));
-    let result = (|| {
-        let mut output = std::fs::File::create(&pending)?;
-        output.write_all(contents.as_bytes())?;
-        output.sync_all()?;
-        drop(output);
-        std::fs::rename(&pending, path)
-    })();
+    let pending = path.with_extension(format!("{}.tmp", diag::pid()));
+    let result = artifactfs::write_durable(&pending, contents.as_bytes())
+        .and_then(|()| artifactfs::rename(&pending, path));
     if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
+        let _ = artifactfs::remove_file(&pending);
     }
     result
 }

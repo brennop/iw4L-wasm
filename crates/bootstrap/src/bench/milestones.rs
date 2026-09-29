@@ -90,9 +90,8 @@ impl Milestones {
     }
 
     pub(crate) fn screenshot_bytes(&self) -> Option<u64> {
-        std::fs::metadata(&self.screenshot)
+        artifactfs::len(&self.screenshot)
             .ok()
-            .map(|meta| meta.len())
             .filter(|len| *len > 0)
     }
 }

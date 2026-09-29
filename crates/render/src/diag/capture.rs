@@ -271,13 +271,25 @@ impl CaptureQueue {
 /// The alpha channel carries brightness when HDR is on, so it is dropped
 /// rather than saved as opacity.
 fn write_capture(path: &Path, image: Image) -> Result<(), String> {
-    let dynamic = image
+    let rgb = image
         .try_into_dynamic()
-        .map_err(|error| format!("readback is not a saveable format: {error}"))?;
-    dynamic
-        .to_rgb8()
-        .save(path)
+        .map_err(|error| format!("readback is not a saveable format: {error}"))?
+        .to_rgb8();
+    artifactfs::write_png_rgb8(path, rgb.width(), rgb.height(), rgb.as_raw())
         .map_err(|error| error.to_string())
+}
+
+/// A screenshot observer that writes the PNG through the artifact sink, where
+/// Bevy's `save_to_disk` would start a browser download on the web.
+pub fn save_png(path: PathBuf) -> impl FnMut(On<ScreenshotCaptured>) {
+    move |captured| match write_capture(&path, captured.image.clone()) {
+        Ok(()) => diag::info!(Launch, "screenshot: wrote {}", path.display()),
+        Err(error) => diag::error!(
+            Launch,
+            "screenshot: {} was not written: {error}",
+            path.display()
+        ),
+    }
 }
 
 /// What the observer leaves behind in the event once the pixels have been

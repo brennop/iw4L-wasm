@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 use web_time::{SystemTime, UNIX_EPOCH};
@@ -556,7 +555,7 @@ pub(crate) fn route_capture_commands(
                     }
                 };
                 if let Some(parent) = path.parent()
-                    && let Err(error) = std::fs::create_dir_all(parent)
+                    && let Err(error) = artifactfs::create_dir_all(parent)
                 {
                     echo(
                         format!("screenshot: create {}: {error}", parent.display()),
@@ -1239,7 +1238,7 @@ fn persist_state_dump(
     body: &str,
 ) -> Result<PathBuf, String> {
     let directory = artifacts.join("dumps");
-    std::fs::create_dir_all(&directory)
+    artifactfs::create_dir_all(&directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     let file_name = format!("{captured_unix_ns}-{name}.txt");
     let path = directory.join(&file_name);
@@ -1251,39 +1250,9 @@ fn persist_bytes_atomic(path: &Path, body: &str) -> Result<(), String> {
     let directory = path
         .parent()
         .ok_or_else(|| format!("{} has no parent", path.display()))?;
-    std::fs::create_dir_all(directory)
+    artifactfs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("{} has no file name", path.display()))?
-        .to_string_lossy();
-    let temporary = directory.join(format!(".{file_name}.tmp"));
-    let result = (|| -> Result<(), String> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|error| format!("create {}: {error}", temporary.display()))?;
-        file.write_all(body.as_bytes())
-            .map_err(|error| format!("write {}: {error}", temporary.display()))?;
-        file.flush()
-            .map_err(|error| format!("flush {}: {error}", temporary.display()))?;
-        drop(file);
-        std::fs::hard_link(&temporary, path).map_err(|error| {
-            format!(
-                "link {} to {}: {error}",
-                temporary.display(),
-                path.display()
-            )
-        })?;
-        std::fs::remove_file(&temporary)
-            .map_err(|error| format!("remove {}: {error}", temporary.display()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
+    artifactfs::write_new(path, body).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[String]) {

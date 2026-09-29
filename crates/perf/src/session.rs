@@ -115,7 +115,7 @@ pub fn flush() -> Result<Option<PathBuf>, String> {
         .into_inner()
         .unwrap_or_else(|poison| poison.into_inner());
     let trace_path = state.dir.join("trace.pftrace");
-    std::fs::write(&trace_path, &bytes)
+    artifactfs::write(&trace_path, &bytes)
         .map_err(|error| format!("write {}: {error}", trace_path.display()))?;
     write_manifest(state)?;
     announce(&format!(
@@ -147,7 +147,7 @@ fn write_manifest(state: &SessionState) -> Result<(), String> {
     let path = state.dir.join("manifest.json");
     let bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("encode manifest: {error}"))?;
-    std::fs::write(&path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
+    artifactfs::write(&path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 fn trace_config() -> Vec<u8> {

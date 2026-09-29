@@ -9,7 +9,6 @@ pub use alloc_count::{
 };
 
 use std::{
-    fs::{File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -95,11 +94,11 @@ impl Level {
 }
 
 struct DiagState {
-    file: Option<File>,
+    file: Option<Box<dyn Write + Send>>,
     file_path: PathBuf,
 
     latest: Option<PathBuf>,
-    traces: Option<File>,
+    traces: Option<Box<dyn Write + Send>>,
     traces_path: Option<PathBuf>,
     stderr_threshold: Level,
     file_threshold: Level,
@@ -147,20 +146,16 @@ pub fn init_log(artifacts_root: &Path) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| artifacts_root.join("logs").join(format!("{stamp}.log")));
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = artifactfs::create_dir_all(parent);
     }
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .ok();
+    let file = artifactfs::append(&path).ok();
 
     let (traces, traces_path) = match std::env::var_os("IW4L_TRACES_DIR") {
         Some(dir) => {
             let dir = PathBuf::from(dir);
-            let _ = std::fs::create_dir_all(&dir);
+            let _ = artifactfs::create_dir_all(&dir);
             let tp = dir.join(format!("{stamp}.jsonl"));
-            let f = OpenOptions::new().create(true).append(true).open(&tp).ok();
+            let f = artifactfs::append(&tp).ok();
             (f, Some(tp))
         }
         None => (None, None),

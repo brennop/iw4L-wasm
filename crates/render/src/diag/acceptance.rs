@@ -1,9 +1,8 @@
-use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::fmt::Write;
 use std::path::PathBuf;
 
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::screenshot::Screenshot;
 use bevy::time::Real;
 use bevy::window::PresentMode;
 use frame::HasWorld;
@@ -211,7 +210,7 @@ fn acceptance_prepare(
         cam.freeze_fly = true;
         cam.enabled = false;
     }
-    let _ = std::fs::create_dir_all(&run.artifact_dir);
+    let _ = artifactfs::create_dir_all(&run.artifact_dir);
     diag::info!(
         World,
         "acceptance: world ready on {}; warm {} then sample {}",
@@ -293,7 +292,7 @@ fn acceptance_capture_and_exit(
     if state.phase == Phase::Failed {
         if let Some(reason) = &state.fail_reason {
             let path = run.artifact_dir.join("FAILURE.txt");
-            let _ = std::fs::write(&path, format!("{reason}\n"));
+            let _ = artifactfs::write(&path, format!("{reason}\n"));
         }
         exit.write(AppExit::from_code(2));
         state.phase = Phase::Done;
@@ -313,7 +312,7 @@ fn acceptance_capture_and_exit(
         diag::info!(World, "acceptance: screenshot {}", png.display());
         commands
             .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(png));
+            .observe(crate::diag::capture::save_png(png));
         state.capture_armed = true;
         state.capture_wait = 0;
         return;
@@ -338,17 +337,12 @@ fn write_trace_and_summary(
         ));
     }
     let trace_path = run.artifact_dir.join("acceptance.jsonl");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&trace_path)
-        .map_err(|e| format!("open jsonl: {e}"))?;
+    let mut jsonl = String::new();
     for sample in samples {
         let line = serde_json::to_string(sample).map_err(|e| format!("jsonl: {e}"))?;
-        writeln!(file, "{line}").map_err(|e| format!("jsonl write: {e}"))?;
+        let _ = writeln!(jsonl, "{line}");
     }
-    file.flush().map_err(|e| format!("jsonl flush: {e}"))?;
+    artifactfs::write(&trace_path, jsonl).map_err(|e| format!("jsonl write: {e}"))?;
 
     let wall: Vec<f64> = samples.iter().map(|s| s.wall_frame_ms).collect();
     let alloc_end = samples.last().map(|s| s.process_allocations).unwrap_or(0);
@@ -370,8 +364,8 @@ fn write_trace_and_summary(
     };
     let summary_path = run.artifact_dir.join("summary.json");
     let body = serde_json::to_string_pretty(&summary).map_err(|e| format!("summary: {e}"))?;
-    let mut out = File::create(&summary_path).map_err(|e| format!("summary create: {e}"))?;
-    writeln!(out, "{body}").map_err(|e| format!("summary write: {e}"))?;
+    artifactfs::write(&summary_path, format!("{body}\n"))
+        .map_err(|e| format!("summary write: {e}"))?;
     Ok(())
 }
 
