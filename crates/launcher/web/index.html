@@ -7,9 +7,17 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; color: #ddd; }
   canvas { display: block; outline: none; }
+  #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 12px; font: 14px system-ui, sans-serif; z-index: 10; background: #000; }
+  #loading .bar { width: min(360px, 70vw); height: 6px; background: #222; border-radius: 3px; overflow: hidden; }
+  #loading .fill { height: 100%; width: 0; background: #ddd; transition: width .1s linear; }
+  #loading .fill.indeterminate { width: 30%; animation: slide 1s ease-in-out infinite alternate; }
+  @keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
 </style>
 </head>
 <body>
+<div id="loading"><div id="loading-msg">Downloading game data…</div>
+  <div class="bar"><div class="fill indeterminate" id="loading-fill"></div></div></div>
 <script>
 // Audio unlock. A classic script: the wasm glue reads the AudioContext global when the module
 // below is evaluated, so the wrapper must already be in place. A context made before the first
@@ -100,9 +108,48 @@ Object.assign(window.iw4l, {
   },
 });
 
+// Loading overlay: one bar over the wasm + pack downloads, removed once the engine's canvas appears.
+const loadingMsg = document.getElementById('loading-msg');
+const loadingFill = document.getElementById('loading-fill');
+const progress = { wasm: [0, 0], pack: [0, 0] }; // [loaded, total] bytes; total 0 while unknown
+function showProgress() {
+  const loaded = progress.wasm[0] + progress.pack[0];
+  const total = progress.wasm[1] + progress.pack[1];
+  const known = progress.wasm[1] > 0 && progress.pack[1] > 0;
+  const mb = (n) => (n / 1048576).toFixed(1);
+  if (known) {
+    const pct = Math.min(100, (loaded / total) * 100);
+    loadingFill.classList.remove('indeterminate');
+    loadingFill.style.width = `${pct}%`;
+    loadingMsg.textContent = `Downloading game data… ${Math.floor(pct)}% (${mb(loaded)} / ${mb(total)} MB)`;
+  } else {
+    loadingMsg.textContent = `Downloading game data… ${mb(loaded)} MB`;
+  }
+}
+// Passes a response body through, counting bytes into progress[key].
+function tracked(response, key) {
+  // Decoded size: a gzipped response's content-length is the compressed size, so the server
+  // (scripts/web_serve.py) also sends the original one.
+  progress[key][1] = Number(response.headers.get('x-uncompressed-length')
+    || response.headers.get('content-length')) || 0;
+  const counter = new TransformStream({
+    transform(chunk, controller) {
+      progress[key][0] += chunk.byteLength;
+      showProgress();
+      controller.enqueue(chunk);
+    },
+  });
+  return new Response(response.body.pipeThrough(counter), response);
+}
+new MutationObserver((_, observer) => {
+  if (!document.querySelector('canvas')) return;
+  document.getElementById('loading')?.remove();
+  observer.disconnect();
+}).observe(document.body, { childList: true, subtree: true });
+
 // The wasm download + compile starts now, in parallel with the pack download below;
 // init() only instantiates it once the pack is in place (main reads window.iw4l_pack).
-const wasmModule = WebAssembly.compileStreaming(fetch('./iw4l_bg.wasm'));
+const wasmModule = WebAssembly.compileStreaming(fetch('./iw4l_bg.wasm').then((r) => tracked(r, 'wasm')));
 wasmModule.catch(() => {}); // reported where init() awaits it, not as an unhandled rejection
 
 // The game files come from a pack (xtask web-pack) kept in this JS buffer, outside
@@ -111,13 +158,16 @@ const packUrl = new URLSearchParams(location.search).get('pack') || './game.pack
 try {
   const response = await fetch(packUrl);
   if (!response.ok) throw new Error(`pack ${packUrl}: HTTP ${response.status}`);
-  window.iw4l_pack = new Uint8Array(await response.arrayBuffer());
+  window.iw4l_pack = new Uint8Array(await tracked(response, 'pack').arrayBuffer());
   console.log(`pack ${packUrl}: ${window.iw4l_pack.length} bytes`);
 } catch (error) {
   // Not fatal here: the app starts and reports the missing game files itself.
   console.error(error);
+  loadingMsg.textContent = `Could not load game data: ${error.message}`;
 }
 
+if (window.iw4l_pack) loadingMsg.textContent = 'Starting engine…';
+loadingFill.classList.add('indeterminate');
 try {
   await init({ module_or_path: wasmModule });
 } catch (error) {
