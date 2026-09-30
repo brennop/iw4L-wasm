@@ -674,6 +674,94 @@ pub fn lower_pass_to_wgsl(
     source.push_str("        sm3_constant_base,\n");
     source.push_str("    );\n}\n");
 
+    let front_facing = pixel_plan
+        .external
+        .iter()
+        .any(|r| r.file == Sm3RegisterFile::Misc && r.index == 1);
+    // The pixel body is emitted once as a helper; every fragment entry
+    // (plain and alpha-test variants) wraps it.
+    source.push_str("\nfn sm3_fragment_body(varyings: Sm3Varyings");
+    if front_facing {
+        source.push_str(", sm3_front_facing: bool");
+    }
+    source.push_str(") -> vec4<f32> {\n");
+    for register in &pixel_plan.external {
+        if register.file == Sm3RegisterFile::Misc {
+            match register.index {
+                0 => {
+                    if pixel_plan
+                        .external_read_masks
+                        .get(register)
+                        .copied()
+                        .unwrap_or(0)
+                        & !3
+                        != 0
+                    {
+                        return Err(Sm3WgslError::UnsupportedSourceFile {
+                            at_word: 0,
+                            file: register.file,
+                        });
+                    }
+                    source.push_str("    let misc0 = varyings.position.xy - vec2<f32>(0.5);\n");
+                }
+                1 => {
+                    source.push_str(
+                        "    let misc1 = vec4<f32>(select(-1.0, 1.0, sm3_front_facing));\n",
+                    );
+                }
+                _ => {
+                    return Err(Sm3WgslError::UnsupportedSourceFile {
+                        at_word: 0,
+                        file: register.file,
+                    });
+                }
+            }
+        }
+    }
+    for varying in &abi.varyings {
+        let Some(register) = varying.pixel_register else {
+            continue;
+        };
+        writeln!(
+            source,
+            "    let {} = varyings.varying_{};",
+            register_name(register),
+            varying.location
+        )
+        .unwrap();
+    }
+    emit_constant_prologue(
+        &mut source,
+        abi,
+        &pixel_plan,
+        Stage::Pixel,
+        &format!("varyings.sm3_constant_base + {}u", vertex_constant_len),
+    )?;
+    if !fixed {
+        emit_texture_slot_prologue(
+            &mut source,
+            abi,
+            &pixel_plan,
+            "varyings.sm3_constant_base",
+            slot_row_base,
+        )?;
+    }
+    let mut defined = BTreeMap::new();
+    emit_prologue(&mut source, &pixel_plan, &mut defined);
+    emit_body(
+        &mut source,
+        &pixel.instructions,
+        &pixel_plan.external,
+        &SamplerTable {
+            dims: &pixel_plan.samplers,
+            fixed,
+        },
+        &mut defined,
+        None,
+    )?;
+    writeln!(source, "    return {};", register_name(colour_output)).unwrap();
+    source.push_str("}\n");
+
     for index in 0..=abi.alpha_tests.len() {
         let alpha_test = index.checked_sub(1).map(|slot| abi.alpha_tests[slot]);
         source.push_str("\n@fragment\nfn ");
@@ -682,92 +770,23 @@ pub fn lower_pass_to_wgsl(
             Some(slot) => source.push_str(&pass_fragment_alpha_test_entry(slot)),
         }
         source.push_str("(varyings: Sm3Varyings");
-        if pixel_plan
-            .external
-            .iter()
-            .any(|r| r.file == Sm3RegisterFile::Misc && r.index == 1)
-        {
+        if front_facing {
             source.push_str(", @builtin(front_facing) sm3_front_facing: bool");
         }
         source.push_str(") -> @location(0) vec4<f32> {\n");
-        for register in &pixel_plan.external {
-            if register.file == Sm3RegisterFile::Misc {
-                match register.index {
-                    0 => {
-                        if pixel_plan
-                            .external_read_masks
-                            .get(register)
-                            .copied()
-                            .unwrap_or(0)
-                            & !3
-                            != 0
-                        {
-                            return Err(Sm3WgslError::UnsupportedSourceFile {
-                                at_word: 0,
-                                file: register.file,
-                            });
-                        }
-                        source.push_str("    let misc0 = varyings.position.xy - vec2<f32>(0.5);\n");
-                    }
-                    1 => {
-                        source.push_str(
-                            "    let misc1 = vec4<f32>(select(-1.0, 1.0, sm3_front_facing));\n",
-                        );
-                    }
-                    _ => {
-                        return Err(Sm3WgslError::UnsupportedSourceFile {
-                            at_word: 0,
-                            file: register.file,
-                        });
-                    }
-                }
+        let call = if front_facing {
+            "sm3_fragment_body(varyings, sm3_front_facing)"
+        } else {
+            "sm3_fragment_body(varyings)"
+        };
+        match alpha_test {
+            None => writeln!(source, "    return {call};").unwrap(),
+            Some(alpha_test) => {
+                writeln!(source, "    let sm3_colour = {call};").unwrap();
+                emit_alpha_test(&mut source, alpha_test)?;
+                source.push_str("    return sm3_colour;\n");
             }
         }
-        for varying in &abi.varyings {
-            let Some(register) = varying.pixel_register else {
-                continue;
-            };
-            writeln!(
-                source,
-                "    let {} = varyings.varying_{};",
-                register_name(register),
-                varying.location
-            )
-            .unwrap();
-        }
-        emit_constant_prologue(
-            &mut source,
-            abi,
-            &pixel_plan,
-            Stage::Pixel,
-            &format!("varyings.sm3_constant_base + {}u", vertex_constant_len),
-        )?;
-        if !fixed {
-            emit_texture_slot_prologue(
-                &mut source,
-                abi,
-                &pixel_plan,
-                "varyings.sm3_constant_base",
-                slot_row_base,
-            )?;
-        }
-        let mut defined = BTreeMap::new();
-        emit_prologue(&mut source, &pixel_plan, &mut defined);
-        emit_body(
-            &mut source,
-            &pixel.instructions,
-            &pixel_plan.external,
-            &SamplerTable {
-                dims: &pixel_plan.samplers,
-                fixed,
-            },
-            &mut defined,
-            None,
-        )?;
-        if let Some(alpha_test) = alpha_test {
-            emit_alpha_test(&mut source, alpha_test, colour_output)?;
-        }
-        writeln!(source, "    return {};", register_name(colour_output)).unwrap();
         source.push_str("}\n");
     }
 
@@ -785,11 +804,7 @@ pub fn lower_pass_to_wgsl(
     })
 }
 
-fn emit_alpha_test(
-    source: &mut String,
-    alpha_test: AlphaTest,
-    colour_output: Sm3Register,
-) -> Result<(), Sm3WgslError> {
+fn emit_alpha_test(source: &mut String, alpha_test: AlphaTest) -> Result<(), Sm3WgslError> {
     let operator = match alpha_test.func {
         CompareFunc::Never => {
             source.push_str("    discard;\n");
@@ -810,8 +825,7 @@ fn emit_alpha_test(
     };
     writeln!(
         source,
-        "    let sm3_alpha_ref = round(clamp({}.a, 0.0, 1.0) * {:.1});",
-        register_name(colour_output),
+        "    let sm3_alpha_ref = round(clamp(sm3_colour.a, 0.0, 1.0) * {:.1});",
         ALPHA_REF_SCALE
     )
     .unwrap();

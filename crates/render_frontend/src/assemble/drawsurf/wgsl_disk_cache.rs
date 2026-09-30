@@ -4,7 +4,7 @@ use d3d9_sm3::{PassLoweringAbi, PassWgsl};
 
 use super::material_runtime::RuntimeShaderPair;
 
-pub const WGSL_CACHE_FORMAT: u32 = 4;
+pub const WGSL_CACHE_FORMAT: u32 = 5;
 
 const MAGIC: &[u8; 8] = b"IWLWGSL\n";
 
