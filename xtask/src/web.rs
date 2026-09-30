@@ -103,6 +103,9 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
     let html = versioned_page(&html, tag)?;
     std::fs::write(out.join("index.html"), html)
         .map_err(|e| format!("write {}/index.html: {e}", out.display()))?;
+    let mixer = root.join("crates/launcher/web/iw4l-mixer.js");
+    std::fs::copy(&mixer, out.join("iw4l-mixer.js"))
+        .map_err(|e| format!("copy {}: {e}", mixer.display()))?;
 
     let fin = file_len(&wasm)?;
     let mb = |bytes: u64| bytes as f64 / 1_000_000.0;
@@ -132,7 +135,12 @@ fn versioned_page(html: &str, tag: &str) -> Res<String> {
             "index.html: expected `{import}` and `{wasm}` to version the build"
         ));
     }
+    let mixer = "'./iw4l-mixer.js'";
+    if !html.contains(mixer) {
+        return Err(format!("index.html: expected {mixer} to version the build"));
+    }
     Ok(html
+        .replace(mixer, &format!("'./iw4l-mixer.js?v={tag}'"))
         .replace(&import, &format!("from '{glue}?v={tag}';"))
         .replace(&wasm, &format!("'./{BIN}_bg.wasm?v={tag}'")))
 }

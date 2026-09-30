@@ -16,6 +16,8 @@ mod shellshock;
 mod space;
 mod start;
 mod voice;
+#[cfg(target_arch = "wasm32")]
+mod worklet;
 
 pub use aliases::{
     StepGait, footstep_aliases, gear_rattle_alias, land_aliases, mantle_gear_alias,
@@ -46,6 +48,10 @@ pub use start::{
     SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome, SuppressReason,
 };
 pub use voice::VoiceOccupancy;
+#[cfg(not(target_arch = "wasm32"))]
+pub use bevy::audio::{AudioSink, AudioSinkPlayback};
+#[cfg(target_arch = "wasm32")]
+pub use worklet::{AudioSink, AudioSinkPlayback};
 
 mod destructible_loops;
 mod map_doors;

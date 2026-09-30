@@ -2,11 +2,12 @@ use std::time::Duration;
 use web_time::Instant;
 
 use bevy::{
-    audio::{AudioPlayer, AudioSink, AudioSinkPlayback, PlaybackSettings, Volume},
+    audio::{AudioPlayer, PlaybackSettings, Volume},
     prelude::*,
 };
 use frame::ClientSet;
 
+use crate::{AudioSink, AudioSinkPlayback};
 use crate::pcm::{LoopingPcmAudio, LoopingPcmPlayback, PcmAudio};
 use crate::voice::reclaim_finished_voices;
 

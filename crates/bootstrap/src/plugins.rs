@@ -121,7 +121,11 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
     // Bevy has no pipelined rendering on wasm32. The web entry installs its own panic
     // hook (console + on-page overlay), which Bevy's would replace.
     #[cfg(target_arch = "wasm32")]
-    return plugins.disable::<bevy::app::PanicHandlerPlugin>();
+    // The browser mixes on an AudioWorklet (audio crate), so bevy_audio must not open a
+    // second AudioContext through cpal.
+    return plugins
+        .disable::<bevy::app::PanicHandlerPlugin>()
+        .disable::<bevy::audio::AudioPlugin>();
     #[cfg(not(target_arch = "wasm32"))]
     if pipelined_rendering() {
         plugins

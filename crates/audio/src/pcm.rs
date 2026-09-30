@@ -126,6 +126,11 @@ impl PcmAudio {
 }
 
 impl LoopingPcmAudio {
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn inner(&self) -> &PcmAudio {
+        &self.0
+    }
+
     pub fn live_pan(&self) -> Option<&LivePan> {
         self.0.live_pan()
     }

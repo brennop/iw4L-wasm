@@ -6,7 +6,7 @@ use web_time::Instant;
 use asset_iw4::{SND_CURVE_MAX_KNOTS, snd_attenuate, snd_has_free_voice};
 use assets::{AssetNamespace, NamespaceSoundIwd, SoundCatalog, lerp_range, snd_unit_random};
 use bevy::{
-    audio::{AddAudioSource, AudioSink, AudioSinkPlayback, Volume},
+    audio::Volume,
     prelude::*,
 };
 use frame::{ClientSet, FxSoundPublished, MatchTornDown, SessionSwapApplied};
@@ -14,6 +14,7 @@ use net::{LastAdoptedSnapshot, SvcLocalSound};
 
 use crate::ambient::SoundIwd;
 use crate::backend::MatchEpoch;
+use crate::{AudioSink, AudioSinkPlayback};
 use crate::clip_store::{
     ClipError, ClipKey, ClipStore, PendingOneshot, PendingStarts, clip_key_for_variant,
     clip_keys_for_alias, deadline_for,
@@ -22,7 +23,9 @@ use crate::messages::{
     AliasCommand, BoundWeaponSound, Footstep, LandSound, PlayAlias, SND_ENT_LOCAL,
     ViewmodelNotetracks, WeaponSound,
 };
-use crate::pcm::{LoopingPcmAudio, PcmAudio};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::pcm::LoopingPcmAudio;
+use crate::pcm::PcmAudio;
 use crate::space::{distance_inches, transform_inches};
 use crate::start::{
     SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome, SuppressReason,
@@ -142,6 +145,14 @@ pub(crate) struct PlayerSoundPlugin;
 
 impl Plugin for PlayerSoundPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use bevy::audio::AddAudioSource;
+            app.add_audio_source::<PcmAudio>()
+                .add_audio_source::<LoopingPcmAudio>();
+        }
+        #[cfg(target_arch = "wasm32")]
+        crate::worklet::register(app);
         app.init_resource::<SoundPickState>()
             .init_resource::<crate::clip_store::ResidentClipCache>()
             .init_resource::<MissingAliasGaps>()
@@ -153,8 +164,6 @@ impl Plugin for PlayerSoundPlugin {
             .init_resource::<crate::ambient::SoundBankLoadAttempted>()
             .init_resource::<crate::ambient::ResidentSoundBank>()
             .init_resource::<crate::BobCycleTracker>()
-            .add_audio_source::<PcmAudio>()
-            .add_audio_source::<LoopingPcmAudio>()
             .add_message::<AliasCommand>()
             .add_message::<Footstep>()
             .add_message::<WeaponSound>()

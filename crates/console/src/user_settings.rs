@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
+use audio::{AudioSink, AudioSinkPlayback};
+
 use bevy::{
-    audio::{AudioSink, AudioSinkPlayback, GlobalVolume, Volume},
+    audio::{GlobalVolume, Volume},
     input::{
         ButtonInput,
         keyboard::KeyCode,

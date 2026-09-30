@@ -7,7 +7,7 @@ use assets::{
     compose_sound_bank, gather_sound_sources, namespace_for_zone,
 };
 use bevy::{
-    audio::{AudioSink, AudioSinkPlayback, Volume},
+    audio::Volume,
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, TaskPool, futures_lite::future},
 };
@@ -15,6 +15,7 @@ use frame::{MatchTornDown, ReturnedToMenu};
 
 use crate::backend::{AudioScope, MatchEpoch, Voice};
 use crate::pcm::{LoopingPcmAudio, PcmAudio};
+use crate::{AudioSink, AudioSinkPlayback};
 use crate::playback::{
     AmbientListener, MissingAliasGaps, SharedPlayAssets, SoundBank, world_oneshot_channel_gains,
 };
