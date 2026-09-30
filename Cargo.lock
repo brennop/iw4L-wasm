@@ -587,6 +587,7 @@ dependencies = [
  "frame",
  "gamemode_iw4",
  "hud_iw4",
+ "js-sys",
  "killcam_iw4",
  "movement_iw4",
  "net",
@@ -595,7 +596,9 @@ dependencies = [
  "sim",
  "sound_iw4",
  "symphonia",
+ "wasm-bindgen",
  "weapon_iw4",
+ "web-sys",
  "web-time",
 ]
 
