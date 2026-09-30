@@ -180,9 +180,6 @@ struct SoundSource {
     absent: Absent,
 }
 
-/// The voice fastfile: announcer and battle chatter as raw PCM, plus strings.
-const VOICE_ZONE: &str = "localized_common_mp";
-
 fn sound_sources(games: &GamesRoot, map: &Path) -> (Vec<SoundSource>, Vec<SoundSource>) {
     let runtime = |name: &'static str, merge, absent| SoundSource {
         namespace: AssetNamespace::Iw4,
@@ -250,23 +247,6 @@ fn origin_label(origin: ZoneSoundOrigin) -> String {
 
 pub fn gather_sound_sources(games: &GamesRoot, map: &Path) -> SoundSources {
     let (before, after) = sound_sources(games, map);
-    // Off a real disk (the browser, `IW4L_FS=pack:`) the voice zone is a
-    // strings-only stub in the pack: its ~120 MB of PCM announcer and battle
-    // chatter is not shipped, so the aliases it would define stay absent.
-    let keep = |source: &SoundSource| {
-        let skip = source.name == VOICE_ZONE && !gamefs::is_native();
-        if skip {
-            diag::info!(
-                Zone,
-                "sound bank: {} {} skipped (voice is not shipped on the web)",
-                source.namespace.as_str(),
-                source.name
-            );
-        }
-        !skip
-    };
-    let before = before.into_iter().filter(|s| keep(s)).collect::<Vec<_>>();
-    let after = after.into_iter().filter(|s| keep(s)).collect::<Vec<_>>();
     let mut sources = SoundSources {
         before_map: SoundCatalog::default(),
         after_map: Vec::new(),
