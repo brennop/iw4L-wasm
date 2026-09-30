@@ -1,7 +1,8 @@
 //! `web [--profile NAME] [--no-opt]`: build the browser entry into `dist/web/`.
 //!
-//! cargo build (wasm32, `launcher`'s `iw4l` bin) -> wasm-bindgen -> optional
-//! wasm-opt -> `index.html` next to the glue, its URLs tagged with the wasm's hash. The `wasm-bindgen` CLI has to
+//! cargo build (wasm32, `launcher`'s `iw4l` bin, `[profile.web]` by default) ->
+//! wasm-bindgen -> optional wasm-opt -> `iw4l_bg.wasm.gz` -> `index.html` next to
+//! the glue, its URLs tagged with the wasm's hash. The `wasm-bindgen` CLI has to
 //! match the crate version in `Cargo.lock` exactly, so that version is read
 //! from the lockfile; a matching binary on PATH or under `target/tools/` is
 //! used, otherwise it is installed into `target/tools/` (repo-local, ignored
@@ -27,7 +28,7 @@ const WASM_OPT_FLAGS: [&str; 7] = [
 ];
 
 pub fn run(root: &Path, args: &[String]) -> Res<()> {
-    let mut profile = "play".to_owned();
+    let mut profile = "web".to_owned();
     let mut optimise = true;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -108,8 +109,11 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
     println!("web: {}", out.display());
     println!("web: {BIN}_bg.wasm raw {:.1} MB ({raw} bytes)", mb(raw));
     println!("web: {BIN}_bg.wasm final {:.1} MB ({fin} bytes)", mb(fin));
-    match gzip_len(&wasm) {
-        Some(gz) => println!("web: {BIN}_bg.wasm gzip -9 {:.1} MB ({gz} bytes)", mb(gz)),
+    match write_gzip(&wasm) {
+        Some(gz) => println!(
+            "web: {BIN}_bg.wasm.gz gzip -9 {:.1} MB ({gz} bytes)",
+            mb(gz)
+        ),
         None => println!("web: gzip size unavailable (gzip not on PATH)"),
     }
     println!("web: serve with `make web-serve`");
@@ -122,18 +126,15 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
 fn versioned_page(html: &str, tag: &str) -> Res<String> {
     let glue = format!("./{BIN}.js");
     let import = format!("from '{glue}';");
-    let init = "await init();";
-    if !html.contains(&import) || !html.contains(init) {
+    let wasm = format!("'./{BIN}_bg.wasm'");
+    if !html.contains(&import) || !html.contains(&wasm) {
         return Err(format!(
-            "index.html: expected `{import}` and `{init}` to version the build"
+            "index.html: expected `{import}` and `{wasm}` to version the build"
         ));
     }
     Ok(html
         .replace(&import, &format!("from '{glue}?v={tag}';"))
-        .replace(
-            init,
-            &format!("await init({{ module_or_path: './{BIN}_bg.wasm?v={tag}' }});"),
-        ))
+        .replace(&wasm, &format!("'./{BIN}_bg.wasm?v={tag}'")))
 }
 
 fn file_len(path: &Path) -> Res<u64> {
@@ -142,16 +143,20 @@ fn file_len(path: &Path) -> Res<u64> {
         .map_err(|e| format!("stat {}: {e}", path.display()))
 }
 
-fn gzip_len(path: &Path) -> Option<u64> {
+/// Writes `path` + `.gz` (gzip -9, for `scripts/web_serve.py`) and returns its size.
+fn write_gzip(path: &Path) -> Option<u64> {
     let output = Command::new("gzip")
-        .args(["-9", "-c"])
+        .args(["-9", "-c", "-n"])
         .arg(path)
         .output()
         .ok()?;
-    output
-        .status
-        .success()
-        .then_some(output.stdout.len() as u64)
+    if !output.status.success() {
+        return None;
+    }
+    let mut name = path.as_os_str().to_owned();
+    name.push(".gz");
+    std::fs::write(name, &output.stdout).ok()?;
+    Some(output.stdout.len() as u64)
 }
 
 /// The version of the locked package `name` in `Cargo.lock`.

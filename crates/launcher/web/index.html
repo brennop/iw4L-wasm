@@ -44,6 +44,11 @@ window.iw4l = {
   },
 };
 
+// The wasm download + compile starts now, in parallel with the pack download below;
+// init() only instantiates it once the pack is in place (main reads window.iw4l_pack).
+const wasmModule = WebAssembly.compileStreaming(fetch('./iw4l_bg.wasm'));
+wasmModule.catch(() => {}); // reported where init() awaits it, not as an unhandled rejection
+
 // The game files come from a pack (xtask web-pack) kept in this JS buffer, outside
 // wasm memory: ?pack=<url>, default ./game.pack next to this page. Never bundled.
 const packUrl = new URLSearchParams(location.search).get('pack') || './game.pack';
@@ -58,7 +63,7 @@ try {
 }
 
 try {
-  await init();
+  await init({ module_or_path: wasmModule });
 } catch (error) {
   // winit leaves its event loop by throwing; that one is not a failure.
   if (!String(error).includes('Using exceptions for control flow')) {

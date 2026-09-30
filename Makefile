@@ -298,16 +298,16 @@ mr:
 	@$(XTASK) mr $(ARGS) $(FILES)
 
 # Browser build: cargo (wasm32) -> wasm-bindgen -> optional wasm-opt -> dist/web/.
-# PROFILE= as for the native recipes (play default). Serve it with web-serve;
-# python's http.server sends application/wasm for .wasm.
+# Builds with [profile.web] (fat LTO); PROFILE= overrides it. Serve it with
+# web-serve (scripts/web_serve.py: http.server + the pre-compressed .wasm.gz).
 WEB_PORT ?= 8080
 web:
-	@$(XTASK) web --profile $(PROFILE)
+	@$(XTASK) web $(if $(filter command line environment,$(origin PROFILE)),--profile $(PROFILE))
 
 web-serve:
 	@test -f $(ROOT)/dist/web/index.html || { echo "dist/web is empty; run make web first"; exit 1; }
 	@echo "http://127.0.0.1:$(WEB_PORT)/"
-	@cd $(ROOT)/dist/web && python3 -m http.server $(WEB_PORT) --bind 127.0.0.1
+	@cd $(ROOT)/dist/web && python3 $(ROOT)/scripts/web_serve.py $(WEB_PORT)
 
 # Workspace Rust footprint: per-crate files / lines / bytes, group totals,
 # and the heaviest source files. Counts only crates/ + xtask.

@@ -228,6 +228,15 @@ codegen-units = 16
 incremental = true
 strip = "symbols"
 
+# The browser build (`make web` / `xtask web`). Play's settings buy a fast
+# native link; the wasm is downloaded and compiled by every visitor, so its
+# size is worth the slow link: fat LTO, one codegen unit, no incremental.
+[profile.web]
+inherits = "play"
+lto = "fat"
+codegen-units = 1
+incremental = false
+
 # The binary a sampler can read (`make bench-perf`). Same code as
 # [profile.play] — opt-level and codegen-units unchanged, so the frame times it
 # samples are the frame times `make bench-live` reports — plus the two things
