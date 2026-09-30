@@ -17,8 +17,9 @@ use render_material::PortId;
 
 /// How much pipeline creation one `flush` may start.
 ///
-/// The browser default is small so every frame still presents during the
-/// load; native is unbounded. `IW4L_EXACT_MODULES_PER_FRAME` and
+/// The browser default keeps each frame's share of module creation and
+/// descriptor conversion small so frames still present during the load; the
+/// pipelines themselves compile asynchronously there. Native is unbounded. `IW4L_EXACT_MODULES_PER_FRAME` and
 /// `IW4L_EXACT_PIPELINES_PER_FRAME` override either (0 = unbounded). A call
 /// always takes at least one module, and stops once either bound is reached,
 /// so a single module's plans may exceed the pipeline bound.
@@ -30,8 +31,8 @@ struct FlushBudget {
 
 impl FlushBudget {
     const WEB: Self = Self {
-        modules: 4,
-        pipelines: 12,
+        modules: 16,
+        pipelines: 64,
     };
 
     fn get() -> Self {
@@ -239,7 +240,7 @@ impl ExactPipelineRegistry {
             let device = device.clone();
             let existing = self.modules.get(&module).cloned();
             self.jobs.push(
-                pool.spawn(async move { build_port(&device, module, source, existing, plans) }),
+                pool.spawn(async move { build_port(&device, module, source, existing, plans).await }),
             );
         }
     }
@@ -296,7 +297,7 @@ impl ExactPipelineRegistry {
     }
 }
 
-fn build_port(
+async fn build_port(
     device: &RenderDevice,
     module: ModuleKey,
     source: ExactModuleSource,
@@ -326,10 +327,34 @@ fn build_port(
             (shader.clone(), Some(shader))
         }
     };
-    let pipelines = plans
-        .into_iter()
-        .map(|(slot, plan, layout)| (slot, build_pipeline(device, &shader, &plan, &layout)))
+    // Every pipeline of the port is started before any is awaited, so the
+    // browser compiles them concurrently off its GPU main thread
+    // (`createRenderPipelineAsync`). Native creates each synchronously here.
+    let started: Vec<_> = plans
+        .iter()
+        .map(|(_, plan, layout)| {
+            with_pipeline_descriptor(&shader, plan, layout, |descriptor| {
+                device
+                    .wgpu_device()
+                    .create_render_pipeline_async(descriptor)
+            })
+        })
         .collect();
+    let mut pipelines = Vec::with_capacity(plans.len());
+    for ((slot, plan, layout), pipeline) in plans.into_iter().zip(started) {
+        let pipeline = match pipeline.await {
+            Ok(pipeline) => RenderPipeline::from(pipeline),
+            Err(error) => {
+                // The sync call reports the same error through the device's
+                // error handling, as before async creation.
+                bevy::log::error!("exact pipeline {}: {error}", plan.label);
+                with_pipeline_descriptor(&shader, &plan, &layout, |descriptor| {
+                    device.create_render_pipeline(descriptor)
+                })
+            }
+        };
+        pipelines.push((slot, pipeline));
+    }
     PortBuild {
         module,
         created,
@@ -337,12 +362,12 @@ fn build_port(
     }
 }
 
-fn build_pipeline(
-    device: &RenderDevice,
+fn with_pipeline_descriptor<R>(
     shader: &ShaderModule,
     plan: &ExactPipelinePlan,
     layout: &PipelineLayout,
-) -> RenderPipeline {
+    create: impl FnOnce(&RawRenderPipelineDescriptor) -> R,
+) -> R {
     let buffers: Vec<RawVertexBufferLayout> = plan
         .vertex_buffers
         .iter()
@@ -356,7 +381,7 @@ fn build_pipeline(
         constants: &[],
         zero_initialize_workgroup_memory: false,
     };
-    device.create_render_pipeline(&RawRenderPipelineDescriptor {
+    create(&RawRenderPipelineDescriptor {
         label: Some(&plan.label),
         layout: Some(layout),
         vertex: RawVertexState {
