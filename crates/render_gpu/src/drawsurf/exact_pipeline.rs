@@ -240,7 +240,9 @@ impl ExactPipelineRegistry {
             let device = device.clone();
             let existing = self.modules.get(&module).cloned();
             self.jobs.push(
-                pool.spawn(async move { build_port(&device, module, source, existing, plans).await }),
+                pool.spawn(
+                    async move { build_port(&device, module, source, existing, plans).await },
+                ),
             );
         }
     }
@@ -327,33 +329,62 @@ async fn build_port(
             (shader.clone(), Some(shader))
         }
     };
-    // Every pipeline of the port is started before any is awaited, so the
-    // browser compiles them concurrently off its GPU main thread
-    // (`createRenderPipelineAsync`). Native creates each synchronously here.
-    let started: Vec<_> = plans
-        .iter()
-        .map(|(_, plan, layout)| {
-            with_pipeline_descriptor(&shader, plan, layout, |descriptor| {
-                device
-                    .wgpu_device()
-                    .create_render_pipeline_async(descriptor)
-            })
-        })
-        .collect();
-    let mut pipelines = Vec::with_capacity(plans.len());
-    for ((slot, plan, layout), pipeline) in plans.into_iter().zip(started) {
-        let pipeline = match pipeline.await {
-            Ok(pipeline) => RenderPipeline::from(pipeline),
-            Err(error) => {
-                // The sync call reports the same error through the device's
-                // error handling, as before async creation.
-                bevy::log::error!("exact pipeline {}: {error}", plan.label);
-                with_pipeline_descriptor(&shader, &plan, &layout, |descriptor| {
-                    device.create_render_pipeline(descriptor)
-                })
-            }
+    // A browser compiles each stage of an async pipeline independently and
+    // caches the result, but only for pipelines started after it resolved.
+    // Starting a whole port at once therefore compiles the shared vertex and
+    // fragment stages once per pipeline. So the port goes in three waves, each
+    // awaited before the next: one pipeline per layout (vertex stage plus one
+    // fragment stage), then one per remaining (layout, fragment entry), then
+    // the rest, which differ only in render state and hit the cache for both
+    // stages. Each wave still runs concurrently off the browser's GPU main
+    // thread (`createRenderPipelineAsync`). Native creates synchronously here.
+    let mut seen_layouts = Vec::new();
+    let mut seen_entries = Vec::new();
+    let mut waves: [Vec<_>; 3] = Default::default();
+    for item in plans {
+        let layout = (
+            item.1.constants_layout.clone(),
+            item.1.textures_layout.clone(),
+        );
+        let entry = (layout.clone(), item.1.fragment_entry.clone());
+        let wave = if !seen_layouts.contains(&layout) {
+            seen_layouts.push(layout);
+            seen_entries.push(entry);
+            0
+        } else if !seen_entries.contains(&entry) {
+            seen_entries.push(entry);
+            1
+        } else {
+            2
         };
-        pipelines.push((slot, pipeline));
+        waves[wave].push(item);
+    }
+    let mut pipelines = Vec::new();
+    for wave in waves {
+        let started: Vec<_> = wave
+            .iter()
+            .map(|(_, plan, layout)| {
+                with_pipeline_descriptor(&shader, plan, layout, |descriptor| {
+                    device
+                        .wgpu_device()
+                        .create_render_pipeline_async(descriptor)
+                })
+            })
+            .collect();
+        for ((slot, plan, layout), pipeline) in wave.into_iter().zip(started) {
+            let pipeline = match pipeline.await {
+                Ok(pipeline) => RenderPipeline::from(pipeline),
+                Err(error) => {
+                    // The sync call reports the same error through the
+                    // device's error handling, as before async creation.
+                    bevy::log::error!("exact pipeline {}: {error}", plan.label);
+                    with_pipeline_descriptor(&shader, &plan, &layout, |descriptor| {
+                        device.create_render_pipeline(descriptor)
+                    })
+                }
+            };
+            pipelines.push((slot, pipeline));
+        }
     }
     PortBuild {
         module,
