@@ -243,12 +243,20 @@ pub fn load_localize_catalog_t5(path: &Path) -> Result<LocalizeCatalog, String> 
 const LOCALIZE_CACHE_FORMAT: u32 = 1;
 const LOCALIZE_CACHE_MAGIC: u32 = 0x4c_4f_43_31;
 
+/// Keyed on the zone's last two path components (language dir and file) and
+/// its length, not the games root or the mtime: a pack has neither a stable
+/// root nor mtimes, and its voice zone is a stub whose data is never read.
 fn localize_cache_key(path: &Path) -> Option<String> {
     let meta = gamefs::metadata(path).ok()?;
-    let modified = meta.modified?.as_nanos() as u64;
-    let mut hash = asset_transport::fnv1a64(path.to_string_lossy().as_bytes());
+    let mut names = path.components().rev().take(2).collect::<Vec<_>>();
+    names.reverse();
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for name in names {
+        let name = name.as_os_str().to_string_lossy().to_ascii_lowercase();
+        hash = asset_transport::fnv1a64_more(hash, name.as_bytes());
+        hash = asset_transport::fnv1a64_more(hash, b"/");
+    }
     hash = asset_transport::fnv1a64_more(hash, &meta.len.to_le_bytes());
-    hash = asset_transport::fnv1a64_more(hash, &modified.to_le_bytes());
     Some(format!("{LOCALIZE_CACHE_FORMAT:08x}-{hash:016x}"))
 }
 
@@ -477,7 +485,7 @@ pub fn load_mp_localized_strings(
     let mut catalog = LocalizeCatalog::default();
     for name in MP_LOCALIZED_ZONES {
         match crate::find_zone_for_tree(&zone_ff.path, name) {
-            Ok(found) => match load_localize_catalog(&found.path) {
+            Ok(found) => match load_localize_catalog_in_lane(&found.path) {
                 Ok(part) => catalog.absorb(part),
                 Err(e) => diag::warn!(Zone, "localize: {name} failed to load ({e})"),
             },

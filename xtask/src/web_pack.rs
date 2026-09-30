@@ -1,4 +1,4 @@
-//! `web-pack [--root DIR] [--cache-record FILE] [--image-cap PX] <record> <out.pack>`: turn an
+//! `web-pack [--root DIR] [--cache-record FILE] [--image-cap PX] [--stub PATH]... <record> <out.pack>`: turn an
 //! `IW4L_FS_RECORD` log into a pack. Paths are stored relative to the games root
 //! (`--root`, default `IW4L_GAMES`), so the pack works wherever the app mounts it.
 //! `--cache-record` is an `IW4L_CACHE_RECORD` log; the artifact-cache entries it
@@ -6,6 +6,9 @@
 //! under `.iw4l-cache/<kind>/<key>`, read back by `asset_transport::cache_get`.
 //! `--image-cap PX` shrinks fully-read IWI textures in IWDs to at most PX on the
 //! largest side by dropping top mips in place (see `web_pack_cap`).
+//! `--stub PATH` (games-root relative, repeatable) keeps the file's length and name in
+//! the pack with only its 12-byte IWff envelope, so the loader still finds and sizes it
+//! (artifact-cache keys hash the length) but a read of its data fails.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom};
@@ -36,15 +39,17 @@ fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 }
 
 pub fn run(env: &Env, args: &[String]) -> Res<()> {
-    let usage = "usage: web-pack [--root GAMES_ROOT] [--cache-record FILE] [--image-cap PX] <record> <out.pack>";
+    let usage = "usage: web-pack [--root GAMES_ROOT] [--cache-record FILE] [--image-cap PX] [--stub PATH]... <record> <out.pack>";
     let mut args = args;
     let mut root = None;
     let mut cache_record = None;
     let mut image_cap = None;
+    let mut stubs = Vec::new();
     while let [flag, value, rest @ ..] = args {
         match flag.as_str() {
             "--root" => root = Some(value.clone()),
             "--cache-record" => cache_record = Some(value.clone()),
+            "--stub" => stubs.push(PathBuf::from(value)),
             "--image-cap" => {
                 image_cap = Some(
                     value
@@ -107,6 +112,18 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
             ranges: merge(seen.ranges),
         })
         .collect::<Vec<_>>();
+    for stub in &stubs {
+        let file = files
+            .iter_mut()
+            .find(|file| file.path == *stub)
+            .ok_or_else(|| format!("web-pack: --stub {} is not in the record", stub.display()))?;
+        println!(
+            "web-pack: stub {} ({} MiB of data dropped)",
+            stub.display(),
+            file.ranges.iter().map(|(s, e)| e - s).sum::<u64>() >> 20
+        );
+        file.ranges = vec![(0, file.len.min(12))];
+    }
     let mut patches: BTreeMap<PathBuf, Patches> = BTreeMap::new();
     let mut cap_stats = Stats::default();
     if let Some(cap) = image_cap {
