@@ -19,6 +19,7 @@ pub mod scenario;
 pub mod shell;
 pub mod web;
 pub mod web_pack;
+pub mod web_pack_cap;
 pub mod windows;
 
 use std::path::{Path, PathBuf};

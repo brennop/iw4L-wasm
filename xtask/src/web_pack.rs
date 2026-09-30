@@ -1,9 +1,11 @@
-//! `web-pack [--root DIR] [--cache-record FILE] <record> <out.pack>`: turn an
+//! `web-pack [--root DIR] [--cache-record FILE] [--image-cap PX] <record> <out.pack>`: turn an
 //! `IW4L_FS_RECORD` log into a pack. Paths are stored relative to the games root
 //! (`--root`, default `IW4L_GAMES`), so the pack works wherever the app mounts it.
 //! `--cache-record` is an `IW4L_CACHE_RECORD` log; the artifact-cache entries it
 //! names (wgsl, nav, localize) are stored zlib-compressed as ordinary pack files
 //! under `.iw4l-cache/<kind>/<key>`, read back by `asset_transport::cache_get`.
+//! `--image-cap PX` shrinks fully-read IWI textures in IWDs to at most PX on the
+//! largest side by dropping top mips in place (see `web_pack_cap`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom};
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 use gamefs::pack::{self, WriteFile};
 
 use crate::dotenv::Env;
+use crate::web_pack_cap::{self, Patches, Stats};
 
 type Res<T> = Result<T, String>;
 
@@ -33,14 +36,22 @@ fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 }
 
 pub fn run(env: &Env, args: &[String]) -> Res<()> {
-    let usage = "usage: web-pack [--root GAMES_ROOT] <record> <out.pack>";
+    let usage = "usage: web-pack [--root GAMES_ROOT] [--cache-record FILE] [--image-cap PX] <record> <out.pack>";
     let mut args = args;
     let mut root = None;
     let mut cache_record = None;
+    let mut image_cap = None;
     while let [flag, value, rest @ ..] = args {
         match flag.as_str() {
             "--root" => root = Some(value.clone()),
             "--cache-record" => cache_record = Some(value.clone()),
+            "--image-cap" => {
+                image_cap = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|e| format!("--image-cap {value}: {e}"))?,
+                );
+            }
             _ => break,
         }
         args = rest;
@@ -96,6 +107,34 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
             ranges: merge(seen.ranges),
         })
         .collect::<Vec<_>>();
+    let mut patches: BTreeMap<PathBuf, Patches> = BTreeMap::new();
+    let mut cap_stats = Stats::default();
+    if let Some(cap) = image_cap {
+        for file in &mut files {
+            let is_iwd = file
+                .path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("iwd"));
+            if !is_iwd {
+                continue;
+            }
+            let (patch, stats) = web_pack_cap::plan(&root.join(&file.path), &file.ranges, cap)?;
+            file.ranges = web_pack_cap::subtract(&file.ranges, &patch.removed);
+            cap_stats.add(&stats);
+            patches.insert(file.path.clone(), patch);
+        }
+        println!(
+            "web-pack: image cap {cap}: {} images capped ({} MiB -> {} MiB deflated); skipped: {} no mips, {} cube/volume/wavelet, {} unparsed, {} not fully read, {} already within cap",
+            cap_stats.capped,
+            cap_stats.before >> 20,
+            cap_stats.after >> 20,
+            cap_stats.no_mips,
+            cap_stats.special,
+            cap_stats.unparsed,
+            cap_stats.not_covered,
+            cap_stats.under_cap
+        );
+    }
     let baked = match &cache_record {
         Some(record) => bake_cache(record)?,
         None => BTreeMap::new(),
@@ -118,7 +157,11 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
         }
         let mut source = std::fs::File::open(root.join(path))?;
         source.seek(SeekFrom::Start(start))?;
-        source.read_exact(buf)
+        source.read_exact(buf)?;
+        if let Some(patch) = patches.get(path) {
+            web_pack_cap::apply(&patch.overlays, start, buf);
+        }
+        Ok(())
     })
     .map_err(|e| format!("write {out}: {e}"))?;
     let kept: u64 = files
