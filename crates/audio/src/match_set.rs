@@ -76,6 +76,7 @@ pub(crate) fn register(app: &mut App) {
             (
                 queue_match_clips.after(crate::ambient::install_sound_bank),
                 poll_match_audio_ready.after(queue_match_clips),
+                pump_inline_clips,
                 reset_match_audio_on_match_end,
             )
                 .in_set(ClientSet::Load),
@@ -247,6 +248,14 @@ fn queue_match_clips(
             names.join(" ")
         );
     }
+    if clips.is_inline() {
+        diag::info!(
+            Audio,
+            "audio: no clip prep threads — {} clips decode inline on demand, {}ms/frame ahead of use",
+            clips.inline_backlog(),
+            crate::clip_store::INLINE_BULK_BUDGET.as_millis(),
+        );
+    }
     prep.total = set.required.len();
     prep.required = set.required;
     prep.submitted = true;
@@ -276,6 +285,16 @@ fn queue_match_clips(
     );
     if prep.total == 0 {
         mark_ready(&mut ready, &mut prep, Some(&mut **clips));
+    }
+}
+
+/// Where the clips get decoded when no prep thread could start.
+fn pump_inline_clips(mut clips: Option<ResMut<ClipStore>>) {
+    if let Some(clips) = clips.as_mut() {
+        clips.pump_inline(
+            crate::clip_store::INLINE_BULK_BUDGET,
+            crate::clip_store::INLINE_URGENT_BUDGET,
+        );
     }
 }
 
@@ -331,8 +350,10 @@ fn request_named(
         set.resolved_aliases += 1;
     }
     for key in keys {
-        clips.request(key.clone());
-        if clips.ready(&key).is_none() {
+        clips.request_bulk(key.clone());
+        // An inline store decodes a few milliseconds a frame, so holding
+        // AudioReady for the whole set would hold the world spawn for it.
+        if !clips.is_inline() && clips.ready(&key).is_none() {
             set.required.insert(key);
         }
     }

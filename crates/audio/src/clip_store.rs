@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
@@ -269,10 +269,33 @@ impl Drop for ClipWorkers {
     }
 }
 
+/// What stands in for the prep threads where none could start (a browser, or a
+/// host that refuses `thread::spawn`): the jobs wait here and the main thread
+/// decodes them a few milliseconds a frame, see [`ClipStore::pump_inline`].
+///
+/// Two lanes. `urgent` holds the clips something is waiting to play — asked for
+/// by `request`, or asked for again after the match set queued them — and is
+/// always drained first. `bulk` is the match set, in the order it was queued:
+/// weapons, then movement, then the rest, which is cheapest-useful first.
+struct InlineQueue {
+    iwd: Option<Arc<NamespaceSoundIwd>>,
+    urgent: VecDeque<ClipJob>,
+    bulk: VecDeque<ClipJob>,
+    promoted: HashSet<ClipKey>,
+}
+
+/// Main-thread decode time per frame for the clips the match set queued in
+/// advance, and for clips a sound is waiting on. The second is larger: one
+/// dropped gunshot is worse than one long frame. A single clip is never split,
+/// so a frame can run past either by one decode.
+pub(crate) const INLINE_BULK_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
+pub(crate) const INLINE_URGENT_BUDGET: std::time::Duration = std::time::Duration::from_millis(6);
+
 #[derive(Resource)]
 pub struct ClipStore {
     bank: Arc<SoundCatalog>,
     tx: Sender<ClipJob>,
+    inline: Option<InlineQueue>,
     queued: HashSet<ClipKey>,
     outcomes: Arc<Mutex<HashMap<ClipKey, Result<PreparedPcm, ClipError>>>>,
     workers: ClipWorkers,
@@ -377,9 +400,22 @@ impl ClipStore {
             }
         }
         WORKERS.fetch_add(handles.len() as u64, Ordering::Relaxed);
+        let inline = handles.is_empty().then(|| {
+            diag::warn!(
+                Audio,
+                "audio: no clip prep thread started — clips decode inline on the main thread"
+            );
+            InlineQueue {
+                iwd: iwd.clone(),
+                urgent: VecDeque::new(),
+                bulk: VecDeque::new(),
+                promoted: HashSet::new(),
+            }
+        });
         Self {
             bank,
             tx,
+            inline,
             queued: HashSet::new(),
             outcomes,
             workers: ClipWorkers { handles, stop },
@@ -394,6 +430,70 @@ impl ClipStore {
 
     pub fn workers(&self) -> usize {
         self.workers.handles.len()
+    }
+
+    /// No prep thread runs, so clips are decoded by [`Self::pump_inline`].
+    pub fn is_inline(&self) -> bool {
+        self.inline.is_some()
+    }
+
+    /// Jobs the inline decoder has yet to reach.
+    pub fn inline_backlog(&self) -> usize {
+        self.inline
+            .as_ref()
+            .map_or(0, |inline| inline.urgent.len() + inline.bulk.len())
+    }
+
+    /// Decode queued clips on this thread until a lane's budget is spent: the
+    /// urgent lane up to `urgent`, then the bulk lane up to `bulk`, measured
+    /// from the start of the call. At least one urgent clip is decoded per call.
+    /// Results go where a worker's would: the outcomes, the resident cache and
+    /// the same counters. Returns how many clips it finished.
+    pub(crate) fn pump_inline(
+        &mut self,
+        bulk: std::time::Duration,
+        urgent: std::time::Duration,
+    ) -> usize {
+        let Some(inline) = self.inline.as_mut() else {
+            return 0;
+        };
+        let start = Instant::now();
+        let mut done = 0;
+        loop {
+            let elapsed = start.elapsed();
+            let job = (elapsed < urgent || done == 0)
+                .then(|| inline.urgent.pop_front())
+                .flatten()
+                .or_else(|| (elapsed < bulk).then(|| inline.bulk.pop_front()).flatten());
+            let Some(job) = job else { break };
+            let known = self
+                .outcomes
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .contains_key(&job.key);
+            if known {
+                continue;
+            }
+            QUEUE_WAIT_NS.fetch_add(job.queued_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            let jobs = [job];
+            let mut prepared = prepare_jobs(&self.bank, inline.iwd.as_deref(), &jobs);
+            let [job] = jobs;
+            let Some(result) = prepared.pop() else {
+                continue;
+            };
+            if let Some(cache) = &self.clip_cache
+                && let Ok(pcm) = &result
+                && let Some(key) = resident_clip_key(&self.bank, &job.key)
+            {
+                cache.remember(self.common_profile_id, key, pcm.clone());
+            }
+            self.outcomes
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .insert(job.key, result);
+            done += 1;
+        }
+        done
     }
 
     pub fn reused_resident(&self) -> (usize, u64) {
@@ -442,7 +542,18 @@ impl ClipStore {
         queued
     }
 
+    /// A clip something is about to play: decoded ahead of the match set's
+    /// backlog when the store is inline.
     pub(crate) fn request(&mut self, key: ClipKey) -> bool {
+        self.enqueue(key, true)
+    }
+
+    /// A clip the match set wants ready before anyone asks for it.
+    pub(crate) fn request_bulk(&mut self, key: ClipKey) -> bool {
+        self.enqueue(key, false)
+    }
+
+    fn enqueue(&mut self, key: ClipKey, urgent: bool) -> bool {
         REQUESTS.fetch_add(1, Ordering::Relaxed);
         if self.ready(&key).is_some() {
             return false;
@@ -460,6 +571,9 @@ impl ClipStore {
             return false;
         }
         if !self.queued.insert(key.clone()) {
+            if urgent {
+                self.promote(&key);
+            }
             return false;
         }
         self.note_late(&key);
@@ -468,6 +582,15 @@ impl ClipStore {
             key: key.clone(),
             queued_at: Instant::now(),
         };
+        if let Some(inline) = self.inline.as_mut() {
+            if urgent {
+                inline.promoted.insert(key);
+                inline.urgent.push_back(job);
+            } else {
+                inline.bulk.push_back(job);
+            }
+            return true;
+        }
         if self.tx.send(job).is_err() {
             self.outcomes
                 .lock()
@@ -476,6 +599,29 @@ impl ClipStore {
             return false;
         }
         true
+    }
+
+    /// A clip already queued as bulk that something now waits on: queue it
+    /// again in the urgent lane, once. The bulk entry is skipped when reached.
+    fn promote(&mut self, key: &ClipKey) {
+        let Some(inline) = self.inline.as_mut() else {
+            return;
+        };
+        if !inline.promoted.insert(key.clone()) {
+            return;
+        }
+        if self
+            .outcomes
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .contains_key(key)
+        {
+            return;
+        }
+        inline.urgent.push_back(ClipJob {
+            key: key.clone(),
+            queued_at: Instant::now(),
+        });
     }
 
     pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmAudio, ClipError>> {

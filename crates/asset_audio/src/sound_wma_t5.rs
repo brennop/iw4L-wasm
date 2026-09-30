@@ -304,6 +304,14 @@ fn decode_chunk(
     chunk: &[(usize, Vec<u8>)],
     clips: &[XwmaClip<'_>],
 ) -> Vec<(usize, Result<Vec<u8>, XwmaDecodeError>)> {
+    // No `ffmpeg` to start in a browser: a clip the artifact cache (the pack's
+    // baked entries) does not hold fails here, counted and never retried.
+    if cfg!(target_arch = "wasm32") {
+        return chunk
+            .iter()
+            .map(|(i, _)| (*i, Err(XwmaDecodeError::FfmpegMissing)))
+            .collect();
+    }
     let alone =
         |(i, xwma): &(usize, Vec<u8>)| (*i, run_ffmpeg(xwma, clips[*i].channels, clips[*i].rate));
     if chunk.len() == 1 {
