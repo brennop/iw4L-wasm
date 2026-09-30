@@ -5,15 +5,59 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::Resource;
 use bevy::render::render_resource::{
     BindGroupLayout, BindGroupLayoutDescriptor, ColorTargetState, DepthStencilState,
-    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState,
-    RawFragmentState, RawRenderPipelineDescriptor, RawVertexBufferLayout, RawVertexState,
-    RenderPipeline, ShaderModule, ShaderModuleDescriptor, ShaderSource,
+    MultisampleState, PipelineCompilationOptions, PipelineLayout, PipelineLayoutDescriptor,
+    PrimitiveState, RawFragmentState, RawRenderPipelineDescriptor, RawVertexBufferLayout,
+    RawVertexState, RenderPipeline, ShaderModule, ShaderModuleDescriptor, ShaderSource,
 };
 use bevy::render::renderer::RenderDevice;
 use bevy::tasks::{Task, futures_lite::future};
 
 use super::sm3_wgsl::{PASS_VERTEX_ENTRY, ValidatedPassWgsl};
 use render_material::PortId;
+
+/// How much pipeline creation one `flush` may start.
+///
+/// The browser default is small so every frame still presents during the
+/// load; native is unbounded. `IW4L_EXACT_MODULES_PER_FRAME` and
+/// `IW4L_EXACT_PIPELINES_PER_FRAME` override either (0 = unbounded). A call
+/// always takes at least one module, and stops once either bound is reached,
+/// so a single module's plans may exceed the pipeline bound.
+#[derive(Clone, Copy)]
+struct FlushBudget {
+    modules: usize,
+    pipelines: usize,
+}
+
+impl FlushBudget {
+    const WEB: Self = Self {
+        modules: 4,
+        pipelines: 12,
+    };
+
+    fn get() -> Self {
+        static BUDGET: std::sync::OnceLock<FlushBudget> = std::sync::OnceLock::new();
+        *BUDGET.get_or_init(|| {
+            let knob = |name: &str, default: usize| {
+                std::env::var(name)
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .map_or(default, |n| if n == 0 { usize::MAX } else { n })
+            };
+            let default = if cfg!(target_arch = "wasm32") {
+                Self::WEB
+            } else {
+                Self {
+                    modules: usize::MAX,
+                    pipelines: usize::MAX,
+                }
+            };
+            Self {
+                modules: knob("IW4L_EXACT_MODULES_PER_FRAME", default.modules),
+                pipelines: knob("IW4L_EXACT_PIPELINES_PER_FRAME", default.pipelines),
+            }
+        })
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct ModuleKey {
@@ -78,6 +122,7 @@ pub(super) struct ExactPipelineRegistry {
     jobs: Vec<Task<PortBuild>>,
 
     layouts: Mutex<HashMap<BindGroupLayoutDescriptor, BindGroupLayout>>,
+    pipeline_layouts: HashMap<(BindGroupLayout, BindGroupLayout), PipelineLayout>,
 
     discovered: Mutex<Vec<super::colour_submit::ExactColourPipelineKey>>,
 }
@@ -159,19 +204,69 @@ impl ExactPipelineRegistry {
         slot
     }
 
+    /// Starts a bounded slice of the queued work; the rest stays in `queued`
+    /// (its slots stay `Building`, so warm-up counts it as not ready) and the
+    /// caller flushes again next frame. Wasm runs spawned futures as
+    /// microtasks, so an unbounded drain is one multi-second burst with no
+    /// frame presented.
     pub(super) fn flush(&mut self, device: &RenderDevice) {
         if self.queued.is_empty() {
             return;
         }
 
+        let budget = FlushBudget::get();
         let pool = assets::load_pool();
-        for (module, (source, plans)) in self.queued.drain() {
+        let mut modules = 0usize;
+        let mut pipelines = 0usize;
+        while modules < budget.modules && pipelines < budget.pipelines {
+            let Some(module) = self.queued.keys().next().copied() else {
+                break;
+            };
+            let (source, plans) = self
+                .queued
+                .remove(&module)
+                .expect("key was just read from the queue");
+            modules += 1;
+            pipelines += plans.len();
+
+            let plans: Vec<_> = plans
+                .into_iter()
+                .map(|(slot, plan)| {
+                    let layout = self.pipeline_layout(device, &plan);
+                    (slot, plan, layout)
+                })
+                .collect();
             let device = device.clone();
             let existing = self.modules.get(&module).cloned();
             self.jobs.push(
                 pool.spawn(async move { build_port(&device, module, source, existing, plans) }),
             );
         }
+    }
+
+    fn pipeline_layout(
+        &mut self,
+        device: &RenderDevice,
+        plan: &ExactPipelinePlan,
+    ) -> PipelineLayout {
+        self.pipeline_layouts
+            .entry((plan.constants_layout.clone(), plan.textures_layout.clone()))
+            .or_insert_with(|| {
+                device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                    label: Some("iw4_exact_colour/layout"),
+                    bind_group_layouts: &[
+                        Some(&plan.constants_layout),
+                        Some(&plan.textures_layout),
+                    ],
+                    immediate_size: 0,
+                })
+            })
+            .clone()
+    }
+
+    /// Modules or plans still waiting for a later `flush`.
+    pub(super) fn queued_n(&self) -> usize {
+        self.queued.values().map(|(_, plans)| plans.len()).sum()
     }
 
     pub(super) fn poll(&mut self) {
@@ -206,7 +301,7 @@ fn build_port(
     module: ModuleKey,
     source: ExactModuleSource,
     existing: Option<Arc<ShaderModule>>,
-    plans: Vec<(ExactPipelineSlot, ExactPipelinePlan)>,
+    plans: Vec<(ExactPipelineSlot, ExactPipelinePlan, PipelineLayout)>,
 ) -> PortBuild {
     let label = format!(
         "iw4_exact_colour/{:016x}/{}{}",
@@ -233,7 +328,7 @@ fn build_port(
     };
     let pipelines = plans
         .into_iter()
-        .map(|(slot, plan)| (slot, build_pipeline(device, &shader, &plan)))
+        .map(|(slot, plan, layout)| (slot, build_pipeline(device, &shader, &plan, &layout)))
         .collect();
     PortBuild {
         module,
@@ -246,12 +341,8 @@ fn build_pipeline(
     device: &RenderDevice,
     shader: &ShaderModule,
     plan: &ExactPipelinePlan,
+    layout: &PipelineLayout,
 ) -> RenderPipeline {
-    let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        label: Some(&plan.label),
-        bind_group_layouts: &[Some(&plan.constants_layout), Some(&plan.textures_layout)],
-        immediate_size: 0,
-    });
     let buffers: Vec<RawVertexBufferLayout> = plan
         .vertex_buffers
         .iter()
@@ -267,7 +358,7 @@ fn build_pipeline(
     };
     device.create_render_pipeline(&RawRenderPipelineDescriptor {
         label: Some(&plan.label),
-        layout: Some(&layout),
+        layout: Some(layout),
         vertex: RawVertexState {
             module: shader,
             entry_point: Some(PASS_VERTEX_ENTRY),

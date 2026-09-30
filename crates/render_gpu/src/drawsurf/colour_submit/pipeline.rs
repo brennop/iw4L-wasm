@@ -160,10 +160,11 @@ pub(super) fn kick_admitted_pipelines(
         kicked.demand_revision = extracted.frame.pipeline_demand_revision;
         diag::info!(
             World,
-            "exact pipelines: working set={} modules held={} tasks in flight={}",
+            "exact pipelines: working set={} modules held={} tasks in flight={} queued={}",
             kicked.current.len(),
             registry.module_n(),
-            registry.building_n()
+            registry.building_n(),
+            registry.queued_n()
         );
     } else if demand_changed {
         let before = kicked.current.len();
