@@ -14,5 +14,8 @@ serde_json = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 mimalloc = { version = "0.1", default-features = false }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dlmalloc = { version = "0.2", default-features = false }
+
 [lints]
 workspace = true

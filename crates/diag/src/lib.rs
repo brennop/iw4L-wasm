@@ -1,5 +1,7 @@
 mod alloc_count;
 pub mod gap;
+#[cfg(target_arch = "wasm32")]
+mod wasm_heap;
 pub mod wgsl_dump;
 
 pub use alloc_count::{

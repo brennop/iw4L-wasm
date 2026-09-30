@@ -121,7 +121,9 @@ pub fn release_freed_heap() -> std::time::Duration {
 
 #[cfg(windows)]
 static BACKING: mimalloc::MiMalloc = mimalloc::MiMalloc;
-#[cfg(not(windows))]
+#[cfg(target_arch = "wasm32")]
+static BACKING: crate::wasm_heap::WasmHeap = crate::wasm_heap::WasmHeap::new();
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 static BACKING: std::alloc::System = std::alloc::System;
 
 pub struct ProcessCountingAllocator;
