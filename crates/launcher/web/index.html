@@ -10,6 +10,53 @@
 </style>
 </head>
 <body>
+<script>
+// Audio unlock. A classic script: the wasm glue reads the AudioContext global when the module
+// below is evaluated, so the wrapper must already be in place. A context made before the first
+// gesture starts suspended, and Chrome only honours resume() with user activation. Every AudioContext the engine makes is tracked;
+// the first pointer/key/touch gesture resumes them, and the listeners stay until all run
+// (the match's output stream is created after the gesture, at map load).
+const audioContexts = [];
+function resumeAudio() {
+  for (const ctx of audioContexts) {
+    if (ctx.state === 'running') continue;
+    ctx.resume().then(
+      () => console.info(`audio: context resumed (${ctx.sampleRate} Hz)`),
+      () => {}, // no activation yet; the next gesture tries again
+    );
+  }
+  if (audioContexts.every((ctx) => ctx.state === 'running') && audioContexts.length) {
+    // Later contexts re-arm it below.
+    for (const type of gestures) removeEventListener(type, resumeAudio, true);
+    armed = false;
+  }
+}
+const gestures = ['pointerdown', 'keydown', 'touchend'];
+let armed = false;
+function armAudio() {
+  if (armed) return;
+  armed = true;
+  for (const type of gestures) addEventListener(type, resumeAudio, true);
+}
+if (window.AudioContext) {
+  const NativeAudioContext = window.AudioContext;
+  window.AudioContext = class extends NativeAudioContext {
+    constructor(...args) {
+      super(...args);
+      audioContexts.push(this);
+      armAudio();
+      if (navigator.userActivation?.hasBeenActive) resumeAudio();
+    }
+  };
+}
+armAudio();
+
+window.iw4l = {
+  audio() {
+    return audioContexts.map((ctx) => ({ state: ctx.state, sampleRate: ctx.sampleRate }));
+  },
+};
+</script>
 <script type="module">
 // Launch args come from this page's query string: ?map=<zone>&cmds=<script>, see launcher/src/web.rs.
 // ?pack=<url> is read here. ?log=1 turns on the engine's info lines in the console.
@@ -22,7 +69,9 @@ import init, { artifacts, artifact, set_console_log } from './iw4l.js';
 //   iw4l.download(path)     -> saves it through the browser
 //   iw4l.log(on = true)     -> engine info/debug lines in this console (off by default;
 //                              warnings and errors always show, the log artifact has all)
-window.iw4l = {
+//   iw4l.audio()            -> [{ state, sampleRate }] for every AudioContext the engine made
+//                              (defined by the classic script above, see there)
+Object.assign(window.iw4l, {
   artifacts,
   artifact,
   log(on = true) {
@@ -42,7 +91,7 @@ window.iw4l = {
     link.click();
     URL.revokeObjectURL(url);
   },
-};
+});
 
 // The wasm download + compile starts now, in parallel with the pack download below;
 // init() only instantiates it once the pack is in place (main reads window.iw4l_pack).
