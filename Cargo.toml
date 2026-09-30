@@ -3,6 +3,7 @@
 # Remove when a crates.io release includes quinn-rs/quinn#2806.
 [patch.crates-io]
 quinn-proto = { git = "https://github.com/quinn-rs/quinn", rev = "f650e0f213b01ea7bebd60023e5df7df65e5c2bd" }
+wgpu = { path = "third_party/wgpu" }
 
 [workspace]
 resolver = "3"

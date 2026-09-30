@@ -29,13 +29,23 @@ GNU FreeFont (crates/console/assets/FreeMono.otf)
   program that merely uses the font is not thereby covered by the GPL. The
   font itself is unmodified and remains under the GPL.
 
+wgpu (third_party/wgpu)
+  https://github.com/gfx-rs/wgpu, MIT OR Apache-2.0 (LICENSE.MIT and
+  LICENSE.APACHE are kept in that directory).
+  Vendored version 29.0.4 from crates.io, plus a backport of the async
+  pipeline creation API (`Device::create_render_pipeline_async` and
+  `create_compute_pipeline_async`) from gfx-rs/wgpu PR #10438, taken from
+  maxcelar/wgpu@b172a3e. Wired in through `[patch.crates-io]`. Remove it once a
+  Bevy release ships a wgpu that has that API. See third_party/wgpu/PATCHED.md.
+
 --------------------------------------------------------------------------------
 Third-party source code
 --------------------------------------------------------------------------------
 
-No third-party source code is vendored in this repository, and the build links
-no third-party project named below. IW4L's own dependencies are the crates
-declared in Cargo.toml, under their own licences.
+The only third-party source code vendored in this repository is the patched
+wgpu copy named above, and the build links no other third-party project named
+below. IW4L's own dependencies are the crates declared in Cargo.toml, under
+their own licences.
 
 --------------------------------------------------------------------------------
 References consulted during development
