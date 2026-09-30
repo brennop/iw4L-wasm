@@ -12,17 +12,22 @@
 <body>
 <script type="module">
 // Launch args come from this page's query string: ?map=<zone>&cmds=<script>, see launcher/src/web.rs.
-// ?pack=<url> is read here.
-import init, { artifacts, artifact } from './iw4l.js';
+// ?pack=<url> is read here. ?log=1 turns on the engine's info lines in the console.
+import init, { artifacts, artifact, set_console_log } from './iw4l.js';
 
 // What the run wrote (log, acceptance summary, captures, reports), kept in memory:
 //   iw4l.artifacts()        -> [{ path, bytes }]
 //   iw4l.artifact(path)     -> Uint8Array | undefined
 //   iw4l.text(path)         -> string | undefined
 //   iw4l.download(path)     -> saves it through the browser
+//   iw4l.log(on = true)     -> engine info/debug lines in this console (off by default;
+//                              warnings and errors always show, the log artifact has all)
 window.iw4l = {
   artifacts,
   artifact,
+  log(on = true) {
+    set_console_log(on);
+  },
   text(path) {
     const bytes = artifact(path);
     return bytes && new TextDecoder().decode(bytes);

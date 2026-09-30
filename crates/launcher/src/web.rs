@@ -1,5 +1,8 @@
 //! Browser entry: launch args come from the page URL, logs go to the browser
 //! console, and a panic is shown on the page instead of ending a process.
+//! Info and debug lines reach the console only with `?log=1` or after
+//! `iw4l.log(true)`; warnings and errors always do, and the in-memory log file
+//! keeps every line either way.
 //!
 //! `?map=<zone>` loads a map, otherwise the menu; `?mode=` names the launch word
 //! (`menu`, `map`, `play`, `export-gltf`) when it isn't implied. `cmds`,
@@ -11,6 +14,7 @@
 //! and classes are also mirrored to `localStorage` so they survive a reload.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use wasm_bindgen::prelude::*;
@@ -26,6 +30,16 @@ const PERSISTED: [&str; 2] = [
 ];
 
 static ARTIFACTS: OnceLock<Arc<artifactfs::Memory>> = OnceLock::new();
+
+/// Whether info/debug lines go to the browser console. Off by default: the
+/// engine logs per frame and per action, which floods the console.
+static CONSOLE_INFO: AtomicBool = AtomicBool::new(false);
+
+/// Turns info/debug lines in the browser console on or off (`iw4l.log(on)`).
+#[wasm_bindgen]
+pub fn set_console_log(on: bool) {
+    CONSOLE_INFO.store(on, Ordering::Relaxed);
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -64,13 +78,18 @@ pub fn main() {
         console_error(&message);
         show_error(&message);
     }));
+    let query = UrlQuery::from_page();
+    set_console_log(query.get("log").is_some_and(|value| value != "0"));
     diag::set_console(|level, line| match level {
         diag::Level::Error => console_error(line),
         diag::Level::Warn => console_warn(line),
-        diag::Level::Info | diag::Level::Debug => console_log(line),
+        diag::Level::Info | diag::Level::Debug => {
+            if CONSOLE_INFO.load(Ordering::Relaxed) {
+                console_log(line);
+            }
+        }
     });
 
-    let query = UrlQuery::from_page();
     let args = launch_args(&query);
     console::set_startup_args(args.clone());
     let games_root = PathBuf::from(query.get("games").unwrap_or(DEFAULT_GAMES_ROOT.into()));
