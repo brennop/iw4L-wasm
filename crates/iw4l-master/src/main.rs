@@ -20,8 +20,14 @@ use master_protocol::{
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls_platform_verifier::ConfigVerifierExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Mutex, Semaphore};
+
+mod peer_conn;
+mod webtransport;
+use peer_conn::{PeerConnection, PeerRecv};
+use webtransport::WebTransportConfig;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
@@ -87,6 +93,7 @@ enum Command {
         bind: SocketAddr,
         cert: PathBuf,
         key: PathBuf,
+        webtransport: Option<WebTransportConfig>,
     },
     Status(ClientTarget),
     List(ClientTarget),
@@ -112,7 +119,7 @@ struct ClientTarget {
 
 struct Peer {
     player_name: String,
-    connection: quinn::Connection,
+    connection: PeerConnection,
     control_tx: tokio::sync::mpsc::Sender<ControlFrame>,
 }
 
@@ -174,7 +181,7 @@ impl ServiceState {
         &mut self,
         connection_id: u64,
         player_name: String,
-        connection: quinn::Connection,
+        connection: PeerConnection,
         control_tx: tokio::sync::mpsc::Sender<ControlFrame>,
     ) {
         self.peers.insert(
@@ -295,7 +302,7 @@ impl ServiceState {
         Ok((room_id, member_id))
     }
 
-    fn peer_connection(&self, connection_id: u64) -> Option<quinn::Connection> {
+    fn peer_connection(&self, connection_id: u64) -> Option<PeerConnection> {
         self.peers
             .get(&connection_id)
             .map(|peer| peer.connection.clone())
@@ -305,7 +312,7 @@ impl ServiceState {
         &self,
         connection_id: u64,
         relay: &RelayDatagram<'_>,
-    ) -> Result<(quinn::Connection, Vec<u8>)> {
+    ) -> Result<(PeerConnection, Vec<u8>)> {
         match relay {
             RelayDatagram::ClientToHost(payload) => {
                 let (room_id, member_id) = self.member_of(connection_id)?;
@@ -345,7 +352,7 @@ impl ServiceState {
         &self,
         connection_id: u64,
         relay: &RelayDatagram<'_>,
-    ) -> Result<(quinn::Connection, Vec<u8>)> {
+    ) -> Result<(PeerConnection, Vec<u8>)> {
         match relay {
             RelayDatagram::ClientToHost(payload) => {
                 let (room_id, member_id) = self.member_of(connection_id)?;
@@ -386,7 +393,12 @@ impl ServiceState {
 #[tokio::main]
 async fn main() -> Result<()> {
     match parse_args()? {
-        Command::Serve { bind, cert, key } => serve(bind, &cert, &key).await,
+        Command::Serve {
+            bind,
+            cert,
+            key,
+            webtransport,
+        } => serve(bind, &cert, &key, webtransport).await,
         Command::Status(target) => tokio::time::timeout(CLI_DEADLINE, status(&target))
             .await
             .map_err(|_| "master status deadline (connect + RPC)")?,
@@ -412,6 +424,9 @@ fn parse_args() -> Result<Command> {
     let mut exec = None;
     let mut user = None;
     let mut group = None;
+    let mut webtransport_bind = None;
+    let mut webtransport_dir = None;
+    let mut webtransport_sans = Vec::new();
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -427,15 +442,30 @@ fn parse_args() -> Result<Command> {
             "--exec" => exec = Some(PathBuf::from(value)),
             "--user" => user = Some(value),
             "--group" => group = Some(value),
+            "--webtransport-bind" => webtransport_bind = Some(value.parse()?),
+            "--webtransport-dir" => webtransport_dir = Some(PathBuf::from(value)),
+            "--webtransport-san" => webtransport_sans.push(value),
             _ => return Err(format!("unknown option {flag}").into()),
         }
     }
     match command.as_str() {
-        "serve" => Ok(Command::Serve {
-            bind: bind.ok_or("serve requires --bind HOST:PORT")?,
-            cert: cert.ok_or("serve requires --cert PATH")?,
-            key: key.ok_or("serve requires --key PATH")?,
-        }),
+        "serve" => {
+            let cert = cert.ok_or("serve requires --cert PATH")?;
+            let webtransport = webtransport_bind.map(|bind| WebTransportConfig {
+                bind,
+                dir: webtransport_dir.unwrap_or_else(|| {
+                    cert.parent()
+                        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+                }),
+                sans: webtransport_sans,
+            });
+            Ok(Command::Serve {
+                bind: bind.ok_or("serve requires --bind HOST:PORT")?,
+                cert,
+                key: key.ok_or("serve requires --key PATH")?,
+                webtransport,
+            })
+        }
         "status" | "list" => {
             let target = ClientTarget {
                 connect: connect.ok_or("command requires --connect HOST:PORT")?,
@@ -504,7 +534,12 @@ WantedBy=multi-user.target
     Ok(())
 }
 
-async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()> {
+async fn serve(
+    bind: SocketAddr,
+    cert_path: &Path,
+    key_path: &Path,
+    webtransport: Option<WebTransportConfig>,
+) -> Result<()> {
     let certs = load_certificates(cert_path)?;
     let key = load_private_key(key_path)?;
     let mut crypto = rustls::ServerConfig::builder()
@@ -542,6 +577,14 @@ async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()
     )?;
     let connection_slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let address_counts = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    if let Some(config) = &webtransport {
+        tokio::spawn(webtransport::bind(config)?.run(
+            Arc::clone(&state),
+            Arc::clone(&next_connection_id),
+            Arc::clone(&connection_slots),
+            Arc::clone(&address_counts),
+        ));
+    }
     while let Some(incoming) = endpoint.accept().await {
         // No slot before the address is proven: a forged Initial would hold
         // one until its handshake timed out.
@@ -583,7 +626,7 @@ async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()
                         "connection {connection_id} handshake ok remote={remote} elapsed_ms={}",
                         started.elapsed().as_millis()
                     );
-                    handle_connection(state, connection_id, connection).await;
+                    handle_connection(state, connection_id, PeerConnection::Quic(connection)).await;
                 }
                 Err(error) => {
                     let _ = writeln!(
@@ -601,7 +644,7 @@ async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()
 async fn handle_connection(
     state: Arc<Mutex<ServiceState>>,
     connection_id: u64,
-    connection: quinn::Connection,
+    connection: PeerConnection,
 ) {
     let outcome = run_connection(&state, connection_id, connection.clone()).await;
     let seat = state
@@ -630,7 +673,7 @@ async fn handle_connection(
 async fn run_connection(
     state: &Arc<Mutex<ServiceState>>,
     connection_id: u64,
-    connection: quinn::Connection,
+    connection: PeerConnection,
 ) -> Result<()> {
     let (mut send, recv) = tokio::time::timeout(HELLO_DEADLINE, connection.accept_bi())
         .await
@@ -1295,7 +1338,7 @@ fn admission_failed(
 async fn bootstrap_forward(
     state: Arc<Mutex<ServiceState>>,
     connection_id: u64,
-    mut recv: quinn::RecvStream,
+    mut recv: PeerRecv,
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) -> ConnTask {
     let result = tokio::time::timeout(BOOTSTRAP_FORWARD, async {
@@ -1474,14 +1517,12 @@ async fn rpc(
     }
 }
 
-async fn read_owned_frame(
-    mut recv: quinn::RecvStream,
-) -> (quinn::RecvStream, Result<ControlFrame>) {
+async fn read_owned_frame<R: AsyncRead + Unpin>(mut recv: R) -> (R, Result<ControlFrame>) {
     let frame = read_frame(&mut recv).await;
     (recv, frame)
 }
 
-async fn read_frame(recv: &mut quinn::RecvStream) -> Result<ControlFrame> {
+async fn read_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<ControlFrame> {
     let mut header = [0_u8; 4];
     recv.read_exact(&mut header).await?;
     let len = stream_frame_len(header)?;
@@ -1490,7 +1531,7 @@ async fn read_frame(recv: &mut quinn::RecvStream) -> Result<ControlFrame> {
     Ok(decode_stream_payload(&body)?)
 }
 
-async fn write_frame(send: &mut quinn::SendStream, frame: &ControlFrame) -> Result<()> {
+async fn write_frame<W: AsyncWrite + Unpin>(send: &mut W, frame: &ControlFrame) -> Result<()> {
     send.write_all(&encode_stream_frame(frame)?).await?;
     Ok(())
 }

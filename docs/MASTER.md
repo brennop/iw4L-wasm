@@ -26,6 +26,16 @@ the host; with `IW4L_MASTER_CA_CERT` set it loads only that PEM into an empty
 verifier. `install` signs `San::Labels` alone: the certificate is minted **once
 per user, not per server**, and a new IP or VPS keeps it.
 
+## Browser clients (WebTransport) - development
+
+`iw4l-master serve` can open a second listener for browsers, which speak WebTransport over HTTP/3 and ignore the private CA. It is off unless asked for:
+
+```bash
+iw4l-master serve --bind 0.0.0.0:4433 --cert C --key K --webtransport-bind 0.0.0.0:4435
+```
+
+It mints an ECDSA P-256 certificate valid 13 days at startup, logs its SHA-256 and writes it to `webtransport.json` next to `--cert` (`--webtransport-dir` moves it; `--webtransport-san` adds names). A page connects with `new WebTransport(url, {serverCertificateHashes: [{algorithm: 'sha-256', value}]})` from a secure context. Restart the master before the certificate expires. Rooms mix QUIC and WebTransport players; native clients stay on port 4433. `cargo run -p iw4l-master --example wt_smoke -- list|e2e PATH/webtransport.json` checks it without a browser.
+
 ## What it records — nothing on disk
 
 Rooms, the advertised match name, peers and room membership live in `ServiceState`
