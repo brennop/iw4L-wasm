@@ -608,7 +608,13 @@ fn refusal_discriminant(cause: &PostFxSubmitRefusal) -> u8 {
 #[derive(Default)]
 struct PostFxTextureCache {
     owner: Option<(MaterialGenerationId, UVec2)>,
-    groups: HashMap<(PortId, Vec<TextureViewId>), BindGroup>,
+    groups: HashMap<(PortId, Vec<TextureViewId>, Vec<u32>), BindGroup>,
+}
+
+/// A step's constant arena bytes and the slot words (view index, sampler index) at its end.
+struct StepUpload {
+    bytes: Vec<u8>,
+    slots: Vec<u32>,
 }
 
 fn draw_postfx(
@@ -636,7 +642,7 @@ fn draw_postfx(
     }
     let active = extracted.frame.dof.active();
     let graded = extracted.frame.grading != [0.0, 1.0, 0.0, 1.0];
-    let prepare = || -> Result<Vec<Vec<u8>>, PostFxSubmitRefusal> {
+    let prepare = || -> Result<Vec<StepUpload>, PostFxSubmitRefusal> {
         if target.main_texture_format() != TextureFormat::Rgba8Unorm {
             return Err(PostFxSubmitRefusal::TargetFormat(
                 target.main_texture_format(),
@@ -750,7 +756,7 @@ fn draw_postfx(
                     d3d9_sm3::texture_slot_word(index as u16, u16::from(lane.index == 15));
             }
             bytes.extend_from_slice(bytemuck::cast_slice(&slots));
-            uploads.push(bytes);
+            uploads.push(StepUpload { bytes, slots });
         }
         Ok(uploads)
     };
@@ -794,7 +800,9 @@ fn draw_postfx(
             extracted.frame.grading,
         );
     }
-    for ((ready, step), bytes) in gpu.prepared.iter().zip(&gpu.steps).zip(&uploads) {
+    for ((ready, step), StepUpload { bytes, slots }) in
+        gpu.prepared.iter().zip(&gpu.steps).zip(&uploads)
+    {
         let size = if matches!(
             step.target,
             Image::Output | Image::Graded | Image::ScreenBlur | Image::ScreenPing
@@ -824,18 +832,49 @@ fn draw_postfx(
                 image => targets.view(*image),
             })
             .collect();
-        let key = (ready.film.port.id(), views.iter().map(|v| v.id()).collect());
+        let key = (
+            ready.film.port.id(),
+            views.iter().map(|v| v.id()).collect(),
+            slots.clone(),
+        );
         let textures = texture_cache.groups.entry(key).or_insert_with(|| {
-            texture_table.views_bind_group(
-                &device,
-                &cache.get_bind_group_layout(&ready.textures_layout),
-                "iw4_postfx_images",
-                &views,
-                &[
-                    &ready.sampler,
-                    gpu.depth_sampler.as_ref().expect("prepared"),
-                ],
-            )
+            let layout = cache.get_bind_group_layout(&ready.textures_layout);
+            let samplers = [
+                &ready.sampler,
+                gpu.depth_sampler.as_ref().expect("prepared"),
+            ];
+            match render_frame::texture_binding() {
+                d3d9_sm3::TextureBinding::FixedSlots => {
+                    let bound: Vec<_> = ready
+                        .film
+                        .port
+                        .abi()
+                        .samplers
+                        .iter()
+                        .zip(slots)
+                        .map(|(binding, &word)| {
+                            (
+                                binding.register,
+                                views[(word & 0xffff) as usize],
+                                samplers[(word >> 16) as usize],
+                            )
+                        })
+                        .collect();
+                    super::texture_table::fixed_slot_bind_group(
+                        &device,
+                        &layout,
+                        "iw4_postfx_images",
+                        &bound,
+                    )
+                }
+                d3d9_sm3::TextureBinding::Bindless => texture_table.views_bind_group(
+                    &device,
+                    &layout,
+                    "iw4_postfx_images",
+                    &views,
+                    &samplers,
+                ),
+            }
         });
         let destination = if step.target == Image::Output {
             post.destination
