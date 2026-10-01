@@ -1,7 +1,10 @@
+#[cfg(all(online, target_arch = "wasm32"))]
+use rt::JoinHandle;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(not(all(online, target_arch = "wasm32")))]
 use std::thread::JoinHandle;
 
 use bevy::prelude::*;
@@ -11,15 +14,21 @@ use tokio_util::sync::CancellationToken;
 use crate::transport::bootstrap::BootstrapLane;
 use crate::transport::udp_session::RelayMailbox;
 
-// Worker half (QUIC sessions, browser poller, the systems that drive them).
-// wasm32 has no sockets or threads, so there the launch intent is always
-// disabled and none of this exists.
+// Worker half (master sessions, browser poller, the systems that drive them).
+// Native: QUIC on a worker thread. wasm32: join-only WebTransport on the page's
+// event loop (`conn_web`, `rt_web`, URL settings in `web_config`).
 #[cfg(online)]
 mod conn;
+#[cfg(all(online, target_arch = "wasm32"))]
+mod conn_web;
 #[cfg(online)]
 mod online;
 #[cfg(online)]
 mod rt;
+#[cfg(all(online, target_arch = "wasm32"))]
+mod rt_web;
+#[cfg(all(online, target_arch = "wasm32"))]
+mod web_config;
 #[cfg(online)]
 pub use online::register_master_bridge;
 
@@ -234,6 +243,10 @@ impl MasterLaunchIntent {
 
     #[cfg(online)]
     pub fn from_env_for_map(map: &str, have: ContentFlags, requires: ContentFlags) -> Result<Self> {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(intent) = web_config::join_from_query(map, have)? {
+            return Ok(intent);
+        }
         let Ok(address) = std::env::var("IW4L_MASTER_ADDR") else {
             return Ok(Self(MasterLaunchMode::Disabled));
         };

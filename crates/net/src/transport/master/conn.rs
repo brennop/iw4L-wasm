@@ -15,7 +15,7 @@ use std::ops::Deref;
 pub(super) struct ConnError(String);
 
 impl ConnError {
-    fn from_display(error: impl fmt::Display) -> Self {
+    pub(super) fn from_display(error: impl fmt::Display) -> Self {
         Self(error.to_string())
     }
 }
@@ -55,25 +55,34 @@ pub(super) trait MasterRecvStream {
     async fn read_to_end(&mut self, limit: usize) -> Result<Vec<u8>, ConnError>;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) type Conn = QuicConn;
+#[cfg(target_arch = "wasm32")]
+pub(super) type Conn = super::conn_web::WebConn;
 pub(super) type ConnSend = <Conn as MasterConn>::SendStream;
 pub(super) type ConnRecv = <Conn as MasterConn>::RecvStream;
 
-// Native backend: raw QUIC to the master with quinn.
+// Native backend: raw QUIC to the master with quinn. The browser backend
+// (WebTransport) is `conn_web.rs`.
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub(super) struct QuicConn(quinn::Connection);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<quinn::Connection> for QuicConn {
     fn from(connection: quinn::Connection) -> Self {
         Self(connection)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) struct QuicSend(quinn::SendStream);
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) struct QuicRecv(quinn::RecvStream);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MasterConn for QuicConn {
     type SendStream = QuicSend;
     type RecvStream = QuicRecv;
@@ -122,6 +131,7 @@ impl MasterConn for QuicConn {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MasterSendStream for QuicSend {
     fn set_priority(&self, priority: i32) -> Result<(), ConnError> {
         self.0
@@ -141,6 +151,7 @@ impl MasterSendStream for QuicSend {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MasterRecvStream for QuicRecv {
     async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ConnError> {
         self.0

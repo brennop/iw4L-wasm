@@ -539,8 +539,9 @@ impl ClientPacket {
 }
 
 // zstd is native-only (`online`). Without it snapshots go out raw, which every
-// receiver accepts, and a compressed one from a native peer is refused.
-#[cfg(online)]
+// receiver accepts, and a compressed one from a native peer is refused. The
+// browser (wasm32 `online`) sends raw and decodes with ruzstd.
+#[cfg(all(online, not(target_arch = "wasm32")))]
 fn compress_snapshot(payload: &[u8]) -> Option<Vec<u8>> {
     match zstd::bulk::compress(payload, 1) {
         Ok(bytes) if bytes.len() + 4 < payload.len() => Some(bytes),
@@ -552,15 +553,31 @@ fn compress_snapshot(payload: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(not(online))]
+#[cfg(not(all(online, not(target_arch = "wasm32"))))]
 fn compress_snapshot(_payload: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-#[cfg(online)]
+#[cfg(all(online, not(target_arch = "wasm32")))]
 fn decompress_snapshot(payload: &[u8], decoded_len: usize) -> Result<Vec<u8>, WireError> {
     zstd::bulk::decompress(payload, decoded_len)
         .map_err(|_| WireError::Malformed("invalid compressed snapshot"))
+}
+
+#[cfg(all(online, target_arch = "wasm32"))]
+fn decompress_snapshot(payload: &[u8], decoded_len: usize) -> Result<Vec<u8>, WireError> {
+    use std::io::Read;
+    const MALFORMED: WireError = WireError::Malformed("invalid compressed snapshot");
+    let decoder = ruzstd::decoding::StreamingDecoder::new(payload).map_err(|_| MALFORMED)?;
+    let mut out = Vec::with_capacity(decoded_len);
+    decoder
+        .take(decoded_len as u64 + 1)
+        .read_to_end(&mut out)
+        .map_err(|_| MALFORMED)?;
+    if out.len() > decoded_len {
+        return Err(MALFORMED);
+    }
+    Ok(out)
 }
 
 #[cfg(not(online))]

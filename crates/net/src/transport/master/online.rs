@@ -1,7 +1,10 @@
 //! Worker half of the master bridge: QUIC sessions, the browser poller and the
 //! systems that spawn and talk to them. Only built with the `online` cfg.
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 
 use super::conn::{Conn, ConnRecv, ConnSend, MasterConn, MasterRecvStream, MasterSendStream};
+#[cfg(target_arch = "wasm32")]
+use super::conn_web::connect;
 use super::rt;
 use super::*;
 use super::{Error, Result};
@@ -24,8 +27,11 @@ use master_protocol::{
     SessionCloseReason, decode_relay, decode_relay_stream, decode_stream_payload, encode_relay,
     encode_relay_stream, encode_stream_frame, stream_frame_len,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use quinn::crypto::rustls::QuicClientConfig;
+#[cfg(not(target_arch = "wasm32"))]
 use rustls::pki_types::CertificateDer;
+#[cfg(not(target_arch = "wasm32"))]
 use rustls_platform_verifier::ConfigVerifierExt;
 use tokio_util::sync::CancellationToken;
 
@@ -2505,6 +2511,7 @@ async fn io_timeout<T>(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn connect(
     target: &MasterTarget,
     cancel: &CancellationToken,
@@ -2579,6 +2586,7 @@ async fn connect(
     Ok((endpoint, connection.into()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
     let mut reader = BufReader::new(File::open(path)?);
     let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect::<std::io::Result<_>>()?;
