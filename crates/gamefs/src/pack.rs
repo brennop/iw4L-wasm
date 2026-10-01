@@ -337,7 +337,9 @@ pub fn write(
     index.extend((files.len() as u32).to_le_bytes());
     let mut buf = Vec::new();
     for file in files {
-        let path = file.path.to_string_lossy();
+        // '/' between components whatever the host: a pack written on Windows is
+        // read in the browser, where a '\' would be part of one long name.
+        let path = components(&file.path).join("/");
         index.extend((path.len() as u16).to_le_bytes());
         index.extend(path.as_bytes());
         index.extend(file.len.to_le_bytes());
