@@ -281,7 +281,11 @@ pub(crate) fn register(app: &mut App) {
         .add_systems(Update, update_channel_mix.in_set(net::ClientSet::Effects))
         .add_systems(
             PostUpdate,
-            (bind_mix_gain, crate::match_bus::route_match_voices)
+            (
+                bind_mix_gain,
+                crate::match_bus::route_match_voices
+                    .run_if(resource_exists::<crate::match_bus::MatchBusState>),
+            )
                 .chain()
                 .before(bevy::transform::TransformSystems::Propagate),
         );

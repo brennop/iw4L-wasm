@@ -1,9 +1,10 @@
 use crate::ambient::{LegacyAmbient, MapAmbient, MapEmitter};
 use crate::background::{namespace_alias, pick_variant};
+use crate::{AudioSink, AudioSinkPlayback};
 use crate::{ClipStore, LoopingPcmAudio, PcmAudio, SoundBank, SoundPickState};
 use bevy::ecs::system::SystemParam;
 use bevy::{
-    audio::{AudioSink, AudioSinkPlayback, PlaybackSettings, Volume},
+    audio::{PlaybackSettings, Volume},
     prelude::*,
 };
 

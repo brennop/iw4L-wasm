@@ -188,7 +188,12 @@ pub(crate) fn route_match_voices(
     }
 }
 
+/// Not on wasm32: bevy_audio is off there (no `AudioOutput` to host the bus) and the
+/// AudioWorklet (`worklet.rs`) starts each match voice itself.
 pub(crate) fn register(app: &mut App) {
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
     app.init_resource::<MatchBusState>()
         .add_audio_source::<MatchBusAudio>();
 }

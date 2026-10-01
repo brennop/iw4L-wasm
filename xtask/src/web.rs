@@ -1,4 +1,5 @@
-//! `web [--profile NAME] [--no-opt]`: build the browser entry into `dist/web/`.
+//! `web [--profile NAME] [--features LIST] [--no-opt]`: build the browser entry into `dist/web/`.
+//! `--features` goes to the launcher build (e.g. `bevy-debug` for system names in panics).
 //!
 //! cargo build (wasm32, `launcher`'s `iw4l` bin, `[profile.web]` by default) ->
 //! wasm-bindgen -> optional wasm-opt -> `iw4l_bg.wasm.gz` -> `index.html` next to
@@ -30,16 +31,20 @@ const WASM_OPT_FLAGS: [&str; 7] = [
 pub fn run(root: &Path, args: &[String]) -> Res<()> {
     let mut profile = "web".to_owned();
     let mut optimise = true;
+    let mut features = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--profile" => {
                 profile = iter.next().ok_or("--profile needs a value")?.clone();
             }
+            "--features" => {
+                features = Some(iter.next().ok_or("--features needs a value")?.clone());
+            }
             "--no-opt" => optimise = false,
             other => {
                 return Err(format!(
-                    "usage: web [--profile NAME] [--no-opt] (got {other})"
+                    "usage: web [--profile NAME] [--features LIST] [--no-opt] (got {other})"
                 ));
             }
         }
@@ -52,7 +57,8 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
         Command::new("cargo")
             .current_dir(root)
             .args(["build", "--target", TARGET, "--profile", &profile])
-            .args(["-p", "launcher", "--bin", BIN]),
+            .args(["-p", "launcher", "--bin", BIN])
+            .args(features.iter().flat_map(|f| ["--features", f.as_str()])),
     )?;
     step.done("");
     let dir = if profile == "dev" { "debug" } else { &profile };
