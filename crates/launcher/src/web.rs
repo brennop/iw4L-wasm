@@ -93,7 +93,7 @@ pub fn main() {
     let args = launch_args(&query);
     console::set_startup_args(args.clone());
     let games_root = PathBuf::from(query.get("games").unwrap_or(DEFAULT_GAMES_ROOT.into()));
-    assets::set_games_root_override(games_root.clone());
+    asset_transport::set_games_root_override(games_root.clone());
 
     install_artifact_sink();
     install_pack_from_page(&games_root);
@@ -103,7 +103,8 @@ pub fn main() {
     diag::info!(Launch, "web launch args: {args:?}");
     let (mode, acceptance) =
         bootstrap::parse_cli(args.into_iter()).unwrap_or_else(|e| diag::exit_launch_error(&e));
-    let games = assets::games_root_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
+    let games =
+        asset_transport::games_root_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
     bootstrap::launch(games, artifacts, mode, acceptance);
 }
 

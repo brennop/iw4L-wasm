@@ -1,5 +1,16 @@
 pub fn startup_commands() -> Vec<String> {
-    startup_commands_from(std::env::args(), std::env::var("IW4L_CMDS").ok())
+    let env = std::env::var("IW4L_CMDS").ok();
+    match STARTUP_ARGS.get() {
+        Some(args) => startup_commands_from(args.iter().cloned(), env),
+        None => startup_commands_from(std::env::args(), env),
+    }
+}
+
+static STARTUP_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// A build with no argv (the browser) passes its launch args here, `--cmds` included.
+pub fn set_startup_args(args: Vec<String>) {
+    let _ = STARTUP_ARGS.set(args);
 }
 
 pub fn strip_cmds_flag(args: impl Iterator<Item = String>) -> Vec<String> {

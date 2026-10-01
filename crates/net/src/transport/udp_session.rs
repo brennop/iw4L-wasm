@@ -33,7 +33,10 @@ pub struct RelayMailbox {
     inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     control_inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
+    #[cfg(online)]
     control_inbound_drained: Arc<tokio::sync::Notify>,
+    #[cfg(not(online))]
+    control_inbound_drained: (),
     control_outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     cap: usize,
 }
@@ -44,7 +47,10 @@ impl RelayMailbox {
             inbound: Arc::new(Mutex::new(Vec::new())),
             outbound: Arc::new(Mutex::new(Vec::new())),
             control_inbound: Arc::new(Mutex::new(Vec::new())),
+            #[cfg(online)]
             control_inbound_drained: Arc::new(tokio::sync::Notify::new()),
+            #[cfg(not(online))]
+            control_inbound_drained: (),
             control_outbound: Arc::new(Mutex::new(Vec::new())),
             cap,
         }
@@ -59,6 +65,7 @@ impl RelayMailbox {
     }
     pub fn take_control_inbound(&self) -> Vec<(MemberId, Vec<u8>)> {
         let packets = take_mail(&self.control_inbound);
+        #[cfg(online)]
         self.control_inbound_drained.notify_one();
         packets
     }
@@ -66,6 +73,11 @@ impl RelayMailbox {
     // The control reader is the sole producer. Keep the capacity wait in its
     // select loop so cancellation and local commands still run under pressure.
     pub(crate) async fn wait_control_inbound_capacity(&self) {
+        #[cfg(not(online))]
+        {
+            return;
+        }
+        #[cfg(online)]
         loop {
             let drained = self.control_inbound_drained.notified();
             if self

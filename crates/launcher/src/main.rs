@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
 use asset_transport::{ensure_artifacts_dir, games_root_from_env};
 
 #[cfg(target_arch = "wasm32")]

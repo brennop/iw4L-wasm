@@ -46,7 +46,7 @@ pub use plugin::{
     ConsoleSettings, ConsoleState,
 };
 pub use registry::{ArgCompleter, CommandSpec, ConsoleRegistry, StaticCompleter};
-pub use startup::{startup_commands, strip_cmds_flag};
+pub use startup::{set_startup_args, startup_commands, strip_cmds_flag};
 pub use synthetic_input::{ConsoleInputState, PRESS_SECONDS, PRESS_TICK_DT_MAX};
 pub use weapon_dispatch::{attach_completions, weapon_completions};
 

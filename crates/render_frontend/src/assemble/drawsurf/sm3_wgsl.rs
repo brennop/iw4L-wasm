@@ -1,6 +1,6 @@
 use d3d9_sm3::{
     ConstantSlot, DeclType, PassLoweringAbi, PassWgsl, SamplerSlot, Sm3ProgramIr, Sm3Wgsl,
-    TextureBinding, VaryingLink, VertexInput, lower_pass_to_wgsl, pass_fragment_alpha_test_entry,
+    TextureBinding, VaryingLink, VertexInput, lower_pass_to_wgsl,
 };
 use render_material::MATERIAL_ALPHA_TESTS;
 
