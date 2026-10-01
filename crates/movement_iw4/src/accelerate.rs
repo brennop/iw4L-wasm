@@ -1,4 +1,4 @@
-use playerstate_iw4::PlayerState;
+use playerstate_iw4::{PlayerState, pm_flags};
 
 use crate::Pml;
 
@@ -22,7 +22,7 @@ fn accelerate_velocity(
     mut wishspeed: f32,
     accel: f32,
 ) {
-    if (pm_flags & 8) != 0 {
+    if (pm_flags & pm_flags::LADDER) != 0 {
         let wish_x = wishspeed * wishdir[0];
         let wish_y = wishdir[1] * wishspeed;
         let wish_z = wishspeed * wishdir[2];

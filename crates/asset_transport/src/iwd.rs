@@ -122,10 +122,7 @@ impl IwdIndex {
             .map_err(|error| format!("cannot read IWD directory {}: {error}", directory.display()))?
             .into_iter()
             .map(|entry| entry.path)
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("iwd"))
-            })
+            .filter(|path| is_iwd_archive(path))
             .collect::<Vec<_>>();
         archives.sort();
 
@@ -173,6 +170,17 @@ impl IwdIndex {
             archives: archives.len(),
         })
     }
+}
+
+/// macOS writes an AppleDouble `._<name>` beside every file it copies onto
+/// exFAT, FAT or a network share. `._iw_00.iwd` is not a zip, and one of them
+/// in `main/` would fail the whole index.
+fn is_iwd_archive(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("iwd"))
+        && !path
+            .file_name()
+            .is_some_and(|name| name.as_encoded_bytes().starts_with(b"._"))
 }
 
 fn index_image_entries(path: &Path) -> Result<Vec<(String, IwdFile)>, String> {
@@ -400,10 +408,7 @@ pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
                 stack.push(path);
                 continue;
             }
-            if !path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("iwd"))
-            {
+            if !is_iwd_archive(&path) {
                 continue;
             }
             let Ok(file) = gamefs::open(&path) else {
@@ -473,10 +478,7 @@ impl IwdSoundIndex {
             .map_err(|e| format!("cannot read {}: {e}", directory.display()))?
             .into_iter()
             .map(|e| e.path)
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("iwd"))
-            })
+            .filter(|p| is_iwd_archive(p))
             .collect::<Vec<_>>();
         archives.sort();
 

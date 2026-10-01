@@ -295,11 +295,14 @@ fn publish_client_action_input(
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
-    (gamepads, active, mut devices, mut physical): (
+    (gamepads, active, mut devices, mut physical, prediction, presented, local): (
         Query<&bevy::input::gamepad::Gamepad>,
         Res<frame::ActivePad>,
         ResMut<frame::InputDevices>,
         Local<PhysicalInputState>,
+        Res<net::ClientPredictionState>,
+        Res<PresentedSnapshot>,
+        Res<net::LocalPresentClient>,
     ),
 ) {
     if time.elapsed_secs() - physical.mouse_activity_start > 0.3 {
@@ -349,8 +352,14 @@ fn publish_client_action_input(
     hud_input.console_open = console.open;
     physical.blocked.retain(|button| inputs.pressed(*button));
 
+    let akimbo = prediction
+        .0
+        .predicted_local()
+        .or_else(|| presented.player(local.0))
+        .is_some_and(|ps| ps.last_weapon_hand == 1);
     let mut current = [0; input_iw4::KEY_COUNT];
     for (button, id) in binds.iter() {
+        let id = crate::binds::gameplay_binding(button, id, akimbo);
         let key_num = host_keynum(button);
         if key_num < current.len() {
             current[key_num] = id;
@@ -408,9 +417,9 @@ fn publish_client_action_input(
         physical.movement_ready = false;
         physical.look_ready = false;
     } else {
-        out.pad_sensitivity =
-            settings.pad_sensitivity / frame::GameSettings::PAD_SENSITIVITY_DEFAULT;
+        out.pad_sensitivity = settings.pad_look_sensitivity();
         out.pad_ads_sensitivity = settings.pad_ads_sensitivity;
+        out.pad_acceleration = settings.pad_acceleration;
         if let Some(pad) = pad {
             let sticks = crate::gamepad::sticks(pad, &settings);
             physical.movement_ready |= sticks.movement == Vec2::ZERO;

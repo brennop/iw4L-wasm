@@ -1,4 +1,4 @@
-use playerstate_iw4::{PlayerState, UserCmd};
+use playerstate_iw4::{PlayerState, UserCmd, pm_flags};
 
 use crate::stance_speed_scale;
 
@@ -22,7 +22,7 @@ pub struct CmdScaleWalkContext {
 #[must_use]
 pub fn cmd_scale_walk(ps: &PlayerState, cmd: &UserCmd, context: CmdScaleWalkContext) -> f32 {
     let flags = ps.pm_flags;
-    let sprinting_ads = (flags & 1) != 0 && ps.f_weapon_pos_frac > 0.0;
+    let sprinting_ads = (flags & pm_flags::PRONE) != 0 && ps.f_weapon_pos_frac > 0.0;
 
     let forward = if cmd.forwardmove < 0 {
         (cmd.forwardmove as f32) * context.player_back_speed_scale
@@ -48,11 +48,11 @@ pub fn cmd_scale_walk(ps: &PlayerState, cmd: &UserCmd, context: CmdScaleWalkCont
         return 0.0;
     }
 
-    if (flags & 0x40) != 0 || ps.leanf != 0.0 || sprinting_ads {
+    if (flags & pm_flags::WALKING) != 0 || ps.leanf != 0.0 || sprinting_ads {
         scale *= 0.4_f32;
     }
 
-    if (flags & 0x4000) != 0 {
+    if (flags & pm_flags::SPRINTING) != 0 {
         scale *= context.player_sprint_speed_scale;
     }
 
@@ -67,7 +67,7 @@ pub fn cmd_scale_walk(ps: &PlayerState, cmd: &UserCmd, context: CmdScaleWalkCont
     };
 
     if ps.weapon != 0 {
-        let leaning = (flags & 0x40) != 0;
+        let leaning = (flags & pm_flags::WALKING) != 0;
         let use_move = context.weapon_move_speed_scale > 0.0 && !leaning && !sprinting_ads;
         if use_move {
             scale *= context.weapon_move_speed_scale;
@@ -76,7 +76,7 @@ pub fn cmd_scale_walk(ps: &PlayerState, cmd: &UserCmd, context: CmdScaleWalkCont
         }
     }
 
-    if (flags & 0x8000) != 0 && context.shellshock_affects_movement {
+    if (flags & pm_flags::SHELLSHOCKED) != 0 && context.shellshock_affects_movement {
         scale *= 0.4_f32;
     }
 

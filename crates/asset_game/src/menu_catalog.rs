@@ -99,6 +99,8 @@ pub struct MenuSlider {
     #[serde(default)]
     pub display_range: Option<[f32; 2]>,
     #[serde(default)]
+    pub decimals: u8,
+    #[serde(default)]
     pub suffix: String,
 }
 

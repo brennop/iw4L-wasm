@@ -207,7 +207,7 @@ fn evaluate_gate(
     if (pm_flags & 0x40000) != 0
         || context.time_since_jump <= 499
         || (pm_flags & 0x400) != 0
-        || (pm_flags & 4) != 0
+        || (pm_flags & pm_flags::MANTLE) != 0
         || pm_type >= 8
     {
         return JumpCheckResult::NotEligible;

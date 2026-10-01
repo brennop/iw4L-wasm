@@ -1,4 +1,4 @@
-use playerstate_iw4::PlayerState;
+use playerstate_iw4::{PlayerState, pm_flags};
 
 use crate::Pml;
 
@@ -11,16 +11,16 @@ pub fn friction(ps: &mut PlayerState, pml: &Pml) {
 
     let flags = ps.pm_flags;
     let mut drop = 0.0_f32;
-    if (flags & 0x10000) == 0 {
+    if (flags & pm_flags::MELEE_CHARGE) == 0 {
         if pml.walking != 0 && (pml.ground_trace[4] & 2) == 0 && (flags & 0x100) == 0 {
             let mut control = speed;
             if speed < 100.0 {
                 control = 100.0;
             }
 
-            if (flags & 0x80) != 0 {
+            if (flags & pm_flags::TIME_HARDLANDING) != 0 {
                 control *= 2.0;
-            } else if (flags & 0x2000) != 0 {
+            } else if (flags & pm_flags::JUMPING) != 0 {
                 control *= walking_scale(ps);
             }
 

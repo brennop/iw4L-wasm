@@ -306,7 +306,7 @@ fn ladder_cmd_scale(ps: &PlayerState, cmd: &UserCmd, spectate_speed_scale: f32) 
         return 0.0;
     }
     let mut scale = (ps.speed as f32 * largest) / (magnitude * 127.0);
-    if (ps.pm_flags & 0x40) != 0 || ps.leanf != 0.0 {
+    if (ps.pm_flags & pm_flags::WALKING) != 0 || ps.leanf != 0.0 {
         scale *= 0.4;
     }
     scale *= match ps.pm_type {

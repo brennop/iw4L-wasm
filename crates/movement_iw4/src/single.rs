@@ -138,7 +138,7 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
         && ps.pm_flags & pm_flags::LAST_STAND == 0
         && ps.pm_time == 0
     {
-        ps.pm_flags |= 0x2000;
+        ps.pm_flags |= pm_flags::JUMPING;
         ps.pm_time = 1800;
     }
     let reset_torso = stance_change != crate::StanceChange::Unchanged

@@ -87,6 +87,7 @@ pub(crate) fn validated_facts(
         ads_spread: f.ads_spread,
         aim_down_sight: f.aim_down_sight,
         no_ads_when_mag_empty: f.no_ads_when_mag_empty,
+        ads_reload_trans_time_ms: f.ads_reload_trans_time_ms,
         ads_in_rate: f.ads_in_rate,
         ads_out_rate: f.ads_out_rate,
         rechamber_while_ads: f.rechamber_while_ads,

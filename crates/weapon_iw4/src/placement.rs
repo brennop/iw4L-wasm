@@ -642,8 +642,9 @@ pub fn calculate_weapon_movement_targets(
     mad3(origin_out, mv, speed_frac);
     mad3(angles_out, rot, speed_frac * ads_scale);
 
-    let (fwd, _, _) = angle_vectors(kinematics.viewangles);
-    let along = (fwd[0] * kinematics.velocity[0] + kinematics.velocity[1] * fwd[1]) * speed_frac
+    let (_, right, _) = angle_vectors(kinematics.viewangles);
+    let along = (right[0] * kinematics.velocity[0] + right[1] * kinematics.velocity[1])
+        * speed_frac
         / kinematics.xyspeed;
     mad3(origin_out, movement.strafe_move, along);
     mad3(angles_out, movement.strafe_rot, along * ads_scale);

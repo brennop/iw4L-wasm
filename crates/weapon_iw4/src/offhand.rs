@@ -104,9 +104,13 @@ fn offhand_hold_cancel_requested(cmd: &WeaponCmd) -> bool {
     if cmd.buttons & buttons::OFFHAND_HOLD_CANCEL == 0 {
         return false;
     }
-    offhand_row(&cmd.offhand, cmd.offhand.off_hand_index.max(0) as u32)
-        .and_then(|r| r.offhand_hold_is_cancelable)
-        .unwrap_or_else(|| panic!("offhand hold cancel flag missing in source format"))
+    // A client's usercmd can set off_hand_index to a weapon it does not hold.
+    let weapon = cmd.offhand.off_hand_index.max(0) as u32;
+    weapon != 0
+        && offhand_row(&cmd.offhand, weapon).is_some_and(|r| {
+            r.offhand_hold_is_cancelable
+                .unwrap_or_else(|| panic!("offhand hold cancel flag missing in source format"))
+        })
 }
 
 fn admits_check_for_offhand(weaponstate: i32) -> bool {

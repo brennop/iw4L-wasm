@@ -1,4 +1,4 @@
-use playerstate_iw4::{PlayerState, UserCmd};
+use playerstate_iw4::{PlayerState, UserCmd, pm_flags};
 
 use crate::{
     AirMoveContext, CmdScaleWalkContext, CollisionBackend, JumpCheckContext, JumpCheckResult,
@@ -28,7 +28,7 @@ pub fn walk_move<C: CollisionBackend>(
     bounds: MoveBounds,
     collision: &C,
 ) {
-    if (ps.pm_flags & 0x2000) != 0 {
+    if (ps.pm_flags & pm_flags::JUMPING) != 0 {
         prone_velocity_scale(ps);
     }
 
@@ -144,7 +144,7 @@ fn walk_accel_scale(ps: &PlayerState, pml: &Pml) -> f32 {
             StanceSurface::Stand => ACCEL_STAND,
         }
     };
-    if (ps.pm_flags & 0x80) != 0 {
+    if (ps.pm_flags & pm_flags::TIME_HARDLANDING) != 0 {
         accel *= SLOW_WALK_SCALE;
     }
     accel

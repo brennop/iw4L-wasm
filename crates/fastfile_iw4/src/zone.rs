@@ -1133,6 +1133,7 @@ pub struct WeaponGeometry {
 
     pub inherits_perks: bool,
 
+    pub ads_reload_trans_time_ms: i32,
     pub ads_in_rate: f32,
 
     pub ads_out_rate: f32,

@@ -263,11 +263,126 @@
     }
    },
    {
+    "name": "video_display_mode",
+    "fields": {
+     "item_type": 12,
+     "static_flags": 0,
+     "dvar": "ui_pad_sensitivity_preset",
+     "choices": [
+      [
+       "Custom",
+       "0"
+      ],
+      [
+       "1",
+       "1"
+      ],
+      [
+       "2",
+       "2"
+      ],
+      [
+       "3",
+       "3"
+      ],
+      [
+       "4",
+       "4"
+      ],
+      [
+       "5",
+       "5"
+      ],
+      [
+       "6",
+       "6"
+      ],
+      [
+       "7",
+       "7"
+      ],
+      [
+       "8",
+       "8"
+      ],
+      [
+       "9",
+       "9"
+      ],
+      [
+       "10",
+       "10"
+      ]
+     ],
+     "vis_exp": "1",
+     "disabled_exp": "0",
+     "text_key": "",
+     "text_exp": "",
+     "text_align_mode": 10,
+     "text_align_x": -8,
+     "text_align_y": 0,
+     "fore_color": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "rect": {
+      "x": 232,
+      "y": 68,
+      "w": 344,
+      "h": 20
+     },
+     "handlers": {
+      "action": [
+       {
+        "Script": "play mouse_click;"
+       }
+      ],
+      "focus": [
+       {
+        "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+       }
+      ],
+      "leave_focus": [
+       {
+        "Script": "setItemColor self backcolor 0 0 0 0;"
+       }
+      ]
+     },
+     "text_scale": 0.375,
+     "style": 1,
+     "background": "menu_button_selection_bar",
+     "back_color": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "name": "ui_pad_sensitivity_preset"
+    }
+   },
+   {
+    "name": "video_display_mode_label",
+    "fields": {
+     "vis_exp": "1",
+     "text_key": "Sensitivity Preset",
+     "rect": {
+      "x": 232,
+      "y": 68,
+      "w": 344,
+      "h": 20
+     },
+     "text_scale": 0.32,
+     "name": "controller_sensitivity_preset_label"
+    }
+   },
+   {
     "name": "video_brightness",
     "fields": {
      "item_type": 10,
      "static_flags": 0,
-     "dvar": "ui_pad_sensitivity",
+     "dvar": "ui_pad_custom_sensitivity",
      "choices": [],
      "vis_exp": "1",
      "disabled_exp": "0",
@@ -284,7 +399,7 @@
      ],
      "rect": {
       "x": 420,
-      "y": 68,
+      "y": 88,
       "w": 112,
       "h": 20
      },
@@ -305,23 +420,24 @@
       0
      ],
      "slider": {
-      "min": 1,
-      "max": 10,
-      "step": 0.5,
+      "min": 0.1,
+      "max": 5.0,
+      "step": 0.1,
       "display_range": null,
-      "suffix": ""
+      "suffix": "x",
+      "decimals": 1
      },
-     "name": "ui_pad_sensitivity"
+     "name": "ui_pad_custom_sensitivity"
     }
    },
    {
     "name": "video_brightness_label",
     "fields": {
-     "text_key": "Look Sensitivity",
+     "text_key": "Custom Sensitivity",
      "vis_exp": "1",
      "rect": {
       "x": 232,
-      "y": 68,
+      "y": 88,
       "w": 344,
       "h": 20
      },
@@ -350,7 +466,7 @@
      ],
      "rect": {
       "x": 420,
-      "y": 88,
+      "y": 108,
       "w": 112,
       "h": 20
      },
@@ -390,7 +506,7 @@
      "vis_exp": "1",
      "rect": {
       "x": 232,
-      "y": 88,
+      "y": 108,
       "w": 344,
       "h": 20
      },
@@ -428,7 +544,7 @@
      ],
      "rect": {
       "x": 232,
-      "y": 108,
+      "y": 128,
       "w": 344,
       "h": 20
      },
@@ -468,7 +584,7 @@
      "text_key": "Look Inversion",
      "rect": {
       "x": 232,
-      "y": 108,
+      "y": 128,
       "w": 344,
       "h": 20
      },
@@ -511,7 +627,7 @@
      ],
      "rect": {
       "x": 232,
-      "y": 128,
+      "y": 148,
       "w": 344,
       "h": 20
      },
@@ -551,7 +667,7 @@
      "text_key": "Response Curve",
      "rect": {
       "x": 232,
-      "y": 128,
+      "y": 148,
       "w": 344,
       "h": 20
      },
@@ -564,82 +680,7 @@
     "fields": {
      "item_type": 12,
      "static_flags": 0,
-     "dvar": "ui_pad_aim_assist",
-     "choices": [
-      [
-       "Off",
-       "0"
-      ]
-     ],
-     "vis_exp": "1",
-     "disabled_exp": "1",
-     "text_key": "",
-     "text_exp": "",
-     "text_align_mode": 10,
-     "text_align_x": -8,
-     "text_align_y": 0,
-     "fore_color": [
-      1,
-      1,
-      1,
-      1
-     ],
-     "rect": {
-      "x": 232,
-      "y": 148,
-      "w": 344,
-      "h": 20
-     },
-     "handlers": {
-      "action": [
-       {
-        "Script": "play mouse_click;"
-       }
-      ],
-      "focus": [
-       {
-        "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
-       }
-      ],
-      "leave_focus": [
-       {
-        "Script": "setItemColor self backcolor 0 0 0 0;"
-       }
-      ]
-     },
-     "text_scale": 0.375,
-     "style": 1,
-     "background": "menu_button_selection_bar",
-     "back_color": [
-      0,
-      0,
-      0,
-      0
-     ],
-     "name": "ui_pad_aim_assist"
-    }
-   },
-   {
-    "name": "video_display_mode_label",
-    "fields": {
-     "vis_exp": "1",
-     "text_key": "Aim Assist",
-     "rect": {
-      "x": 232,
-      "y": 148,
-      "w": 344,
-      "h": 20
-     },
-     "text_scale": 0.32,
-     "name": "controller_label_13"
-    }
-   },
-   {
-    "name": "video_display_mode",
-    "fields": {
-     "item_type": 12,
-     "static_flags": 0,
-     "dvar": "ui_pad_vibration",
+     "dvar": "ui_pad_acceleration",
      "choices": [
       [
        "@MENU_DISABLED",
@@ -695,6 +736,160 @@
       0,
       0
      ],
+     "name": "ui_pad_acceleration"
+    }
+   },
+   {
+    "name": "video_display_mode_label",
+    "fields": {
+     "vis_exp": "1",
+     "text_key": "Look Acceleration",
+     "rect": {
+      "x": 232,
+      "y": 168,
+      "w": 344,
+      "h": 20
+     },
+     "text_scale": 0.32,
+     "name": "controller_acceleration_label"
+    }
+   },
+   {
+    "name": "video_display_mode",
+    "fields": {
+     "item_type": 12,
+     "static_flags": 0,
+     "dvar": "ui_pad_aim_assist",
+     "choices": [
+      [
+       "Off",
+       "0"
+      ]
+     ],
+     "vis_exp": "1",
+     "disabled_exp": "1",
+     "text_key": "",
+     "text_exp": "",
+     "text_align_mode": 10,
+     "text_align_x": -8,
+     "text_align_y": 0,
+     "fore_color": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "rect": {
+      "x": 232,
+      "y": 188,
+      "w": 344,
+      "h": 20
+     },
+     "handlers": {
+      "action": [
+       {
+        "Script": "play mouse_click;"
+       }
+      ],
+      "focus": [
+       {
+        "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+       }
+      ],
+      "leave_focus": [
+       {
+        "Script": "setItemColor self backcolor 0 0 0 0;"
+       }
+      ]
+     },
+     "text_scale": 0.375,
+     "style": 1,
+     "background": "menu_button_selection_bar",
+     "back_color": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "name": "ui_pad_aim_assist"
+    }
+   },
+   {
+    "name": "video_display_mode_label",
+    "fields": {
+     "vis_exp": "1",
+     "text_key": "Aim Assist",
+     "rect": {
+      "x": 232,
+      "y": 188,
+      "w": 344,
+      "h": 20
+     },
+     "text_scale": 0.32,
+     "name": "controller_label_13"
+    }
+   },
+   {
+    "name": "video_display_mode",
+    "fields": {
+     "item_type": 12,
+     "static_flags": 0,
+     "dvar": "ui_pad_vibration",
+     "choices": [
+      [
+       "@MENU_DISABLED",
+       "0"
+      ],
+      [
+       "@MENU_ENABLED",
+       "1"
+      ]
+     ],
+     "vis_exp": "1",
+     "disabled_exp": "0",
+     "text_key": "",
+     "text_exp": "",
+     "text_align_mode": 10,
+     "text_align_x": -8,
+     "text_align_y": 0,
+     "fore_color": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "rect": {
+      "x": 232,
+      "y": 208,
+      "w": 344,
+      "h": 20
+     },
+     "handlers": {
+      "action": [
+       {
+        "Script": "play mouse_click;"
+       }
+      ],
+      "focus": [
+       {
+        "Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"
+       }
+      ],
+      "leave_focus": [
+       {
+        "Script": "setItemColor self backcolor 0 0 0 0;"
+       }
+      ]
+     },
+     "text_scale": 0.375,
+     "style": 1,
+     "background": "menu_button_selection_bar",
+     "back_color": [
+      0,
+      0,
+      0,
+      0
+     ],
      "name": "ui_pad_vibration"
     }
    },
@@ -705,7 +900,7 @@
      "text_key": "Vibration",
      "rect": {
       "x": 232,
-      "y": 168,
+      "y": 208,
       "w": 344,
       "h": 20
      },
@@ -735,7 +930,7 @@
      ],
      "rect": {
       "x": 420,
-      "y": 188,
+      "y": 228,
       "w": 112,
       "h": 20
      },
@@ -775,7 +970,7 @@
      "vis_exp": "1",
      "rect": {
       "x": 232,
-      "y": 188,
+      "y": 228,
       "w": 344,
       "h": 20
      },
@@ -804,7 +999,7 @@
      ],
      "rect": {
       "x": 420,
-      "y": 208,
+      "y": 248,
       "w": 112,
       "h": 20
      },
@@ -844,7 +1039,7 @@
      "vis_exp": "1",
      "rect": {
       "x": 232,
-      "y": 208,
+      "y": 248,
       "w": 344,
       "h": 20
      },
@@ -890,7 +1085,7 @@
      ],
      "rect": {
       "x": 232,
-      "y": 228,
+      "y": 268,
       "w": 344,
       "h": 20
      },
@@ -930,7 +1125,7 @@
      "text_key": "Controller Prompts",
      "rect": {
       "x": 232,
-      "y": 228,
+      "y": 268,
       "w": 344,
       "h": 20
      },
@@ -960,7 +1155,7 @@
      ],
      "rect": {
       "x": 232,
-      "y": 248,
+      "y": 288,
       "w": 344,
       "h": 20
      },
@@ -1000,7 +1195,7 @@
      "text_key": "Test Vibration",
      "rect": {
       "x": 232,
-      "y": 248,
+      "y": 288,
       "w": 344,
       "h": 20
      },

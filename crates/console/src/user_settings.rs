@@ -357,10 +357,15 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("player_name={safe_name}"),
         format!("pad_layout={}", settings.pad_layout),
         format!("pad_stick_layout={}", settings.pad_stick_layout),
-        format!("pad_sensitivity={:.2}", settings.pad_sensitivity),
+        format!("pad_sensitivity_preset={}", settings.pad_sensitivity_preset),
+        format!(
+            "pad_custom_sensitivity={:.3}",
+            settings.pad_custom_sensitivity
+        ),
         format!("pad_ads_sensitivity={:.2}", settings.pad_ads_sensitivity),
         format!("pad_invert={}", settings.pad_invert),
         format!("pad_curve={}", settings.pad_curve),
+        format!("pad_acceleration={}", settings.pad_acceleration),
         format!("pad_aim_assist={}", settings.pad_aim_assist),
         format!("pad_prompts={}", settings.pad_prompts),
         format!("pad_vibration={}", settings.pad_vibration),
@@ -450,10 +455,18 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "player_name" => settings.player_name = value.to_owned(),
             "pad_layout" => parse_into(value, &mut settings.pad_layout),
             "pad_stick_layout" => parse_into(value, &mut settings.pad_stick_layout),
-            "pad_sensitivity" => parse_into(value, &mut settings.pad_sensitivity),
+            "pad_sensitivity" => {
+                if let Ok(old) = value.parse::<f32>() {
+                    settings.pad_custom_sensitivity = old.clamp(1.0, 10.0) / 3.0;
+                    settings.pad_sensitivity_preset = 0;
+                }
+            }
+            "pad_sensitivity_preset" => parse_into(value, &mut settings.pad_sensitivity_preset),
+            "pad_custom_sensitivity" => parse_into(value, &mut settings.pad_custom_sensitivity),
             "pad_ads_sensitivity" => parse_into(value, &mut settings.pad_ads_sensitivity),
             "pad_invert" => parse_into(value, &mut settings.pad_invert),
             "pad_curve" => parse_into(value, &mut settings.pad_curve),
+            "pad_acceleration" => parse_into(value, &mut settings.pad_acceleration),
             "pad_aim_assist" => parse_into(value, &mut settings.pad_aim_assist),
             "pad_prompts" => parse_into(value, &mut settings.pad_prompts),
             "pad_vibration" => parse_into(value, &mut settings.pad_vibration),
@@ -533,10 +546,15 @@ pub(crate) fn native_menu_settings(
             "ui_bloom" => settings.bloom = value == "1",
             "ui_pad_layout" => parse_into(value, &mut settings.pad_layout),
             "ui_pad_stick_layout" => parse_into(value, &mut settings.pad_stick_layout),
-            "ui_pad_sensitivity" => parse_into(value, &mut settings.pad_sensitivity),
+            "ui_pad_sensitivity_preset" => parse_into(value, &mut settings.pad_sensitivity_preset),
+            "ui_pad_custom_sensitivity" => {
+                parse_into(value, &mut settings.pad_custom_sensitivity);
+                settings.pad_sensitivity_preset = 0;
+            }
             "ui_pad_ads_sensitivity" => parse_into(value, &mut settings.pad_ads_sensitivity),
             "ui_pad_invert" => settings.pad_invert = value == "1",
             "ui_pad_curve" => parse_into(value, &mut settings.pad_curve),
+            "ui_pad_acceleration" => settings.pad_acceleration = value == "1",
             "ui_pad_aim_assist" => parse_into(value, &mut settings.pad_aim_assist),
             "ui_pad_prompts" => parse_into(value, &mut settings.pad_prompts),
             "ui_pad_test_rumble" => {
@@ -572,13 +590,24 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_r_vsync", if settings.vsync { "1" } else { "0" });
     dvars.set("ui_pad_layout", settings.pad_layout.to_string());
     dvars.set("ui_pad_stick_layout", settings.pad_stick_layout.to_string());
-    dvars.set("ui_pad_sensitivity", settings.pad_sensitivity.to_string());
+    dvars.set(
+        "ui_pad_sensitivity_preset",
+        settings.pad_sensitivity_preset.to_string(),
+    );
+    dvars.set(
+        "ui_pad_custom_sensitivity",
+        settings.pad_custom_sensitivity.to_string(),
+    );
     dvars.set(
         "ui_pad_ads_sensitivity",
         settings.pad_ads_sensitivity.to_string(),
     );
     dvars.set("ui_pad_invert", if settings.pad_invert { "1" } else { "0" });
     dvars.set("ui_pad_curve", settings.pad_curve.to_string());
+    dvars.set(
+        "ui_pad_acceleration",
+        if settings.pad_acceleration { "1" } else { "0" },
+    );
     dvars.set("ui_pad_aim_assist", settings.pad_aim_assist.to_string());
     dvars.set("ui_pad_prompts", settings.pad_prompts.to_string());
     dvars.set(

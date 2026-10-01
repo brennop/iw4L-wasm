@@ -1,6 +1,6 @@
 use crate::Pml;
 use crate::jump;
-use playerstate_iw4::PlayerState;
+use playerstate_iw4::{PlayerState, pm_flags};
 
 const PM_TIME_EXPIRY_CLEAR: u32 = 0x2180;
 
@@ -9,7 +9,7 @@ pub fn drop_timers(ps: &mut PlayerState, pml: &Pml) {
         if pml.msec < ps.pm_time {
             ps.pm_time -= pml.msec;
         } else {
-            if (ps.pm_flags & 0x2000) != 0 {
+            if (ps.pm_flags & pm_flags::JUMPING) != 0 {
                 jump::clear_state(ps);
             }
             ps.pm_flags &= !PM_TIME_EXPIRY_CLEAR;

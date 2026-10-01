@@ -136,6 +136,7 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         h.f32(row.ads_spread);
         h.bool(row.aim_down_sight);
         h.bool(row.no_ads_when_mag_empty);
+        h.i32(row.ads_reload_trans_time_ms);
         h.f32(row.ads_in_rate);
         h.f32(row.ads_out_rate);
         h.bool(row.rechamber_while_ads);

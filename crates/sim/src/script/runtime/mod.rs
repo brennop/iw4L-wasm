@@ -369,8 +369,9 @@ fn format_g(value: f64) -> String {
 pub(super) fn to_text(value: &Value) -> Option<String> {
     match value {
         Value::Int(n) => Some(n.to_string()),
-        Value::Float(n) => Some(format_g(f64::from(*n))),
-        Value::Vector(v) => Some(format!(
+        // format_g needs the exponent that NaN and infinity print without.
+        Value::Float(n) if n.is_finite() => Some(format_g(f64::from(*n))),
+        Value::Vector(v) if v.iter().all(|n| n.is_finite()) => Some(format!(
             "({}, {}, {})",
             format_g(f64::from(v[0])),
             format_g(f64::from(v[1])),

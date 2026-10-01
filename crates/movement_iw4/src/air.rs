@@ -1,4 +1,4 @@
-use playerstate_iw4::{PlayerState, UserCmd};
+use playerstate_iw4::{PlayerState, UserCmd, pm_flags};
 
 use crate::{CollisionBackend, MoveBounds, Pml, accelerate, friction, step_slide_move};
 
@@ -78,7 +78,7 @@ fn cmd_scale(ps: &PlayerState, cmd: &UserCmd, spectate_speed_scale: f32) -> f32 
     }
 
     let mut scale = (ps.speed as f32 * largest) / (magnitude * 127.0_f32);
-    if (ps.pm_flags & 0x40) != 0 || ps.leanf != 0.0 {
+    if (ps.pm_flags & pm_flags::WALKING) != 0 || ps.leanf != 0.0 {
         scale *= 0.4_f32;
     }
     scale *= match ps.pm_type {

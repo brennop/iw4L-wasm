@@ -40,10 +40,12 @@ pub struct GameSettings {
 
     pub pad_layout: u8,
     pub pad_stick_layout: u8,
-    pub pad_sensitivity: f32,
+    pub pad_sensitivity_preset: u8,
+    pub pad_custom_sensitivity: f32,
     pub pad_ads_sensitivity: f32,
     pub pad_invert: bool,
     pub pad_curve: u8,
+    pub pad_acceleration: bool,
     pub pad_aim_assist: u8,
     pub pad_prompts: u8,
     pub pad_vibration: bool,
@@ -70,10 +72,12 @@ impl Default for GameSettings {
             player_name: "Player".to_owned(),
             pad_layout: 0,
             pad_stick_layout: 0,
-            pad_sensitivity: Self::PAD_SENSITIVITY_DEFAULT,
+            pad_sensitivity_preset: 0,
+            pad_custom_sensitivity: 1.0,
             pad_ads_sensitivity: 1.0,
             pad_invert: false,
             pad_curve: 0,
+            pad_acceleration: true,
             pad_aim_assist: 0,
             pad_prompts: 0,
             pad_vibration: true,
@@ -88,7 +92,17 @@ impl GameSettings {
     pub const FOV_DEFAULT: f32 = 65.0;
     pub const FOV_MIN: f32 = 65.0;
     pub const FOV_MAX: f32 = 120.0;
-    pub const PAD_SENSITIVITY_DEFAULT: f32 = 3.0;
+    pub const PAD_SENSITIVITY_PRESETS: [f32; 10] =
+        [0.6, 1.0, 1.4, 1.8, 2.0, 2.2, 2.6, 3.0, 3.5, 4.0];
+
+    pub fn pad_look_sensitivity(&self) -> f32 {
+        self.pad_sensitivity_preset
+            .checked_sub(1)
+            .and_then(|index| Self::PAD_SENSITIVITY_PRESETS.get(usize::from(index)))
+            .copied()
+            .unwrap_or(self.pad_custom_sensitivity)
+    }
+
     pub const PAD_LAYOUT_CUSTOM: u8 = 255;
 
     pub fn touch(&mut self) {
@@ -124,12 +138,8 @@ impl GameSettings {
                 default
             }
         };
-        self.pad_sensitivity = finite(
-            self.pad_sensitivity,
-            1.0,
-            10.0,
-            Self::PAD_SENSITIVITY_DEFAULT,
-        );
+        self.pad_sensitivity_preset = self.pad_sensitivity_preset.min(10);
+        self.pad_custom_sensitivity = finite(self.pad_custom_sensitivity, 0.1, 5.0, 1.0);
         self.pad_ads_sensitivity = finite(self.pad_ads_sensitivity, 0.5, 1.5, 1.0);
         self.pad_deadzone_left = finite(self.pad_deadzone_left, 0.0, 0.4, 0.12);
         self.pad_deadzone_right = finite(self.pad_deadzone_right, 0.0, 0.4, 0.12);

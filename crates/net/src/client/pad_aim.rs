@@ -171,15 +171,9 @@ pub fn pad_look_frame(
     let wanted = [-input.pad_look[1] * max_pitch, -input.pad_look[0] * max_yaw];
 
     for (rate, goal) in input.pad_turn_rate.iter_mut().zip(wanted) {
-        if (goal.abs() > rate.abs() && goal.signum() == rate.signum())
-            || (*rate == 0.0 && goal != 0.0)
-        {
-            let step = TURN_ACCEL * zoom * dt;
-            *rate = if goal > *rate {
-                (*rate + step).min(goal)
-            } else {
-                (*rate - step).max(goal)
-            };
+        if input.pad_acceleration && goal.abs() > rate.abs() {
+            let step = TURN_ACCEL * input.pad_sensitivity * dt;
+            *rate = (rate.abs() + step).min(goal.abs()) * goal.signum();
         } else {
             *rate = goal;
         }

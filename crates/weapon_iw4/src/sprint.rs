@@ -1,4 +1,4 @@
-use crate::tick::{WeaponCombatFacts, WeaponHandState};
+use crate::tick::{WeaponCmd, WeaponCombatFacts, WeaponHandState};
 use crate::weaponstate::WeaponState;
 use playerstate_iw4::pm_flags;
 
@@ -7,20 +7,51 @@ pub fn weapon_check_for_sprint(
     facts: &WeaponCombatFacts,
     pm_flags: u32,
 ) {
-    if hand.weapon == 0 {
-        return;
-    }
-    let Ok(ws) = WeaponState::from_i32(hand.weaponstate) else {
+    let cmd = WeaponCmd {
+        cmd_weapon: hand.weapon as u16,
+        pm_flags,
+        ..Default::default()
+    };
+    weapon_check_hands_for_sprint(core::slice::from_mut(hand), facts, &cmd);
+}
+
+pub(crate) fn weapon_check_hands_for_sprint(
+    hands: &mut [WeaponHandState],
+    facts: &WeaponCombatFacts,
+    cmd: &WeaponCmd,
+) {
+    let Some(primary) = hands.first() else {
         return;
     };
-    if !check_for_sprint_allowed(ws) {
+    if cmd.cmd_weapon == 0 {
         return;
     }
-    let sprinting = pm_flags & pm_flags::SPRINTING != 0;
+    let Ok(ws) = WeaponState::from_i32(primary.weaponstate) else {
+        return;
+    };
+    if !check_for_sprint_allowed(ws)
+        || hands.iter().skip(1).any(|hand| {
+            matches!(
+                WeaponState::from_i32(hand.weaponstate),
+                Ok(WeaponState::Firing
+                    | WeaponState::Rechambering
+                    | WeaponState::MeleeInit
+                    | WeaponState::MeleeFire
+                    | WeaponState::MeleeEnd)
+            )
+        })
+    {
+        return;
+    }
+    let sprinting = cmd.pm_flags & pm_flags::SPRINTING != 0;
     if sprinting && !ws.is_sprint() {
-        begin_sprint(hand, facts);
+        for hand in hands {
+            begin_sprint(hand, facts);
+        }
     } else if !sprinting && matches!(ws, WeaponState::SprintIn | WeaponState::SprintLoop) {
-        begin_sprint_out(hand, facts);
+        for hand in hands {
+            begin_sprint_out(hand, facts);
+        }
     }
 }
 

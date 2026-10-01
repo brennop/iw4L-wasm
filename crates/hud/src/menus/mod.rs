@@ -440,7 +440,8 @@ pub(crate) fn update_script_menus(
                 let displayed = slider
                     .display_range
                     .map_or(value, |[min, max]| min + fraction * (max - min));
-                label.text_key = format!("{displayed:.0}{}", slider.suffix);
+                let decimals = usize::from(slider.decimals.min(6));
+                label.text_key = format!("{displayed:.decimals$}{}", slider.suffix);
                 label.rect.x += item.rect.w + 8.0;
                 label.rect.w = 36.0;
                 slider_parts.push(label);

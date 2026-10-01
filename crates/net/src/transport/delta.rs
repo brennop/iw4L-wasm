@@ -29,6 +29,9 @@ impl SnapshotDelta {
     pub fn decode(input: &mut WireReader<'_>) -> Result<Self, WireError> {
         let tick = Tick(input.get_u32()?);
         let length = input.get_u32()? as usize;
+        if length > input.remaining() {
+            return Err(WireError::Malformed("snapshot delta longer than its frame"));
+        }
         let mut bytes = vec![0u8; length];
         input.get_bytes(&mut bytes)?;
         Ok(Self { tick, bytes })

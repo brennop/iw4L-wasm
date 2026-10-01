@@ -130,6 +130,7 @@ pub fn melee_charge_start(
 ) {
     let can_start = (charge.pm_flags & pm_flags::MELEE_CHARGE) == 0
         && cmd_melee_charge_dist != 0
+        && cmd_melee_charge_yaw.is_finite()
         && charge.pm_type == 0
         && (charge.e_flags & 0xc00) == 0
         && (charge.pm_flags & 0xc) == 0

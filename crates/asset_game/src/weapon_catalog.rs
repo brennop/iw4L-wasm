@@ -107,6 +107,7 @@ pub struct WeaponBodyFacts {
 
     pub inherits_perks: bool,
 
+    pub ads_reload_trans_time_ms: i32,
     pub ads_in_rate: f32,
 
     pub ads_out_rate: f32,
@@ -1597,6 +1598,7 @@ impl WeaponCatalog {
                 ads_zoom_out_frac: geometry.ads_zoom_out_frac,
                 no_ads_when_mag_empty: geometry.no_ads_when_mag_empty,
                 inherits_perks: geometry.inherits_perks,
+                ads_reload_trans_time_ms: geometry.ads_reload_trans_time_ms,
                 ads_in_rate: geometry.ads_in_rate,
                 ads_out_rate: geometry.ads_out_rate,
                 rechamber_while_ads: geometry.rechamber_while_ads,
