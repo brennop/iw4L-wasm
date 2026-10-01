@@ -196,11 +196,13 @@ macro_rules! hal_type_dx12 {
 }
 /// Helper macro to generate the documentation for dx12 hal methods, referencing the hal type.
 #[cfg(not(dx12))]
+#[allow(unused_macros)]
 macro_rules! hal_type_dx12 {
     ($ty: literal) => {
         concat!("- `hal::api::Dx12` uses `hal::dx12::", $ty, "`")
     };
 }
+#[allow(unused_imports)]
 pub(crate) use hal_type_dx12;
 
 /// Helper macro to generate the documentation for metal hal methods, referencing the hal type.
@@ -212,11 +214,13 @@ macro_rules! hal_type_metal {
 }
 /// Helper macro to generate the documentation for metal hal methods, referencing the hal type.
 #[cfg(not(metal))]
+#[allow(unused_macros)]
 macro_rules! hal_type_metal {
     ($ty: literal) => {
         concat!("- `hal::api::Metal` uses `hal::metal::", $ty, "`")
     };
 }
+#[allow(unused_imports)]
 pub(crate) use hal_type_metal;
 
 /// Helper macro to generate the documentation for vulkan hal methods, referencing the hal type.
@@ -228,11 +232,13 @@ macro_rules! hal_type_vulkan {
 }
 /// Helper macro to generate the documentation for vulkan hal methods, referencing the hal type.
 #[cfg(not(vulkan))]
+#[allow(unused_macros)]
 macro_rules! hal_type_vulkan {
     ($ty: literal) => {
         concat!("- `hal::api::Vulkan` uses `hal::vulkan::", $ty, "`")
     };
 }
+#[allow(unused_imports)]
 pub(crate) use hal_type_vulkan;
 
 /// Helper macro to generate the documentation for gles hal methods, referencing the hal type.
@@ -244,11 +250,13 @@ macro_rules! hal_type_gles {
 }
 /// Helper macro to generate the documentation for gles hal methods, referencing the hal type.
 #[cfg(not(gles))]
+#[allow(unused_macros)]
 macro_rules! hal_type_gles {
     ($ty: literal) => {
         concat!("- `hal::api::Gles` uses `hal::gles::", $ty, "`")
     };
 }
+#[allow(unused_imports)]
 pub(crate) use hal_type_gles;
 
 #[doc(hidden)]

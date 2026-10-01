@@ -620,6 +620,7 @@ pub trait QueueWriteBufferInterface: CommonTraits {
 }
 
 pub trait BufferMappedRangeInterface: CommonTraits {
+    #[allow(dead_code)]
     fn len(&self) -> usize;
 
     /// # Safety

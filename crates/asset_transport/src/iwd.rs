@@ -225,7 +225,8 @@ const PARKED_LIMIT: usize = 256;
 
 static PARKED_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn index_lane_width() -> usize {
+#[cfg(not(target_arch = "wasm32"))]
+fn index_lane_width()-> usize {
     static WIDTH: OnceLock<usize> = OnceLock::new();
     *WIDTH.get_or_init(|| {
         std::env::var("IW4L_IWD_INDEX_LANES")

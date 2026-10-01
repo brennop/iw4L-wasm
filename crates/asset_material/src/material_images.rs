@@ -2304,7 +2304,8 @@ static RESIDENT_PAYLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
 
 static RETAINED_PAYLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
 
-fn gated_payload_bytes() -> u64 {
+#[cfg(not(target_arch = "wasm32"))]
+fn gated_payload_bytes()-> u64 {
     RESIDENT_PAYLOAD_BYTES
         .load(Ordering::Relaxed)
         .saturating_sub(RETAINED_PAYLOAD_BYTES.load(Ordering::Relaxed))
@@ -2322,6 +2323,7 @@ static UNAPPLIED_BATCHES: AtomicU64 = AtomicU64::new(0);
 /// the kind of ordering a later change breaks silently. A bounded wait cannot
 /// deadlock whatever the order becomes: the worst it can do is what the load
 /// did before the ceiling existed, and it says so in the log.
+#[cfg(not(target_arch = "wasm32"))]
 const BUDGET_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 const DECODE_BUDGET_ENV: &str = "IW4L_IMAGE_DECODE_BUDGET_MIB";
