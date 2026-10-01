@@ -1,6 +1,8 @@
 //! Worker half of the master bridge: QUIC sessions, the browser poller and the
 //! systems that spawn and talk to them. Only built with the `online` cfg.
 
+use super::conn::{Conn, ConnRecv, ConnSend, MasterConn, MasterRecvStream, MasterSendStream};
+use super::rt;
 use super::*;
 use super::{Error, Result};
 
@@ -48,12 +50,6 @@ const IO_DEADLINE: Duration = Duration::from_secs(8);
 const LEAVE_DRAIN: Duration = Duration::from_millis(500);
 const QUEUE_POLL: Duration = Duration::from_millis(5);
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(1);
-
-fn blocking_runtime() -> std::io::Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -117,7 +113,7 @@ impl TransportFault {
         operation: &'static str,
         role: &'static str,
         source: impl fmt::Display,
-        connection: &quinn::Connection,
+        connection: &Conn,
     ) -> Self {
         Self {
             operation,
@@ -265,15 +261,18 @@ fn arm_master_browser(
     let worker_cancel = cancel.clone();
     let target = browser_config.target.clone();
 
-    let worker = std::thread::Builder::new()
-        .name("iw4l-master-browser".into())
-        .spawn(move || browser_worker(target, worker_state, worker_refresh, worker_cancel))
-        .expect("spawn master browser thread");
+    let worker = rt::spawn_worker("iw4l-master-browser", move || {
+        browser_worker(target, worker_state, worker_refresh, worker_cancel)
+    })
+    .inspect_err(|error| {
+        state.lock().expect("master browser state poisoned").error = Some(error.to_string());
+    })
+    .ok();
     commands.insert_resource(MasterBrowser {
         state,
         refresh,
         cancel,
-        worker: Some(worker),
+        worker,
     });
 }
 
@@ -414,20 +413,15 @@ fn apply_master_menu_action(
     }
 }
 
+// Not `async fn`: the body stays at upstream's indentation so its edits merge.
+#[allow(clippy::manual_async_fn)]
 fn browser_worker(
     target: MasterTarget,
     state: Arc<Mutex<MasterBrowserSnapshot>>,
     refresh: Arc<AtomicU64>,
     cancel: CancellationToken,
-) {
-    let runtime = match blocking_runtime() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            state.lock().expect("master browser state poisoned").error = Some(error.to_string());
-            return;
-        }
-    };
-    runtime.block_on(async move {
+) -> impl Future<Output = ()> {
+    async move {
         loop {
             if cancel.is_cancelled() {
                 return;
@@ -528,14 +522,14 @@ fn browser_worker(
             for _ in 0..50 {
                 tokio::select! {
                     _ = cancel.cancelled() => return,
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    _ = rt::sleep(Duration::from_millis(100)) => {}
                 }
                 if refresh.load(Ordering::Relaxed) != seen_refresh {
                     break;
                 }
             }
         }
-    });
+    }
 }
 
 struct WorkerCtx {
@@ -599,14 +593,16 @@ fn spawn_worker(role: &'static str, kind: SessionKind, player_name: String) -> M
     let thread_state = Arc::clone(&state);
     let thread_identity = identity;
 
-    let worker = std::thread::Builder::new()
-        .name("iw4l-master-bridge".into())
-        .spawn(move || {
-            if let Err(error) = session_worker(kind, ctx) {
-                publish_failed(&thread_state, thread_identity, error);
-            }
-        })
-        .expect("spawn master bridge thread");
+    let worker = rt::spawn_worker("iw4l-master-bridge", move || async move {
+        if let Err(error) = session_main(kind, ctx).await {
+            publish_failed(&thread_state, thread_identity, error);
+        }
+    })
+    .inspect_err(|error| {
+        let fault = TransportFault::new("runtime", role, error.to_string());
+        publish_failed(&state, identity, fault);
+    })
+    .ok();
     MasterBridge {
         state,
         commands,
@@ -616,7 +612,7 @@ fn spawn_worker(role: &'static str, kind: SessionKind, player_name: String) -> M
         close,
         facts,
         incarnation,
-        worker: Some(worker),
+        worker,
     }
 }
 
@@ -964,12 +960,6 @@ fn execute_host_match_effects(
     }
 }
 
-fn session_worker(kind: SessionKind, ctx: WorkerCtx) -> std::result::Result<(), TransportFault> {
-    let runtime = blocking_runtime()
-        .map_err(|error| TransportFault::new("runtime", ctx.role, error.to_string()))?;
-    runtime.block_on(session_main(kind, ctx))
-}
-
 async fn session_main(
     kind: SessionKind,
     ctx: WorkerCtx,
@@ -987,7 +977,7 @@ async fn session_main(
         mut identity,
         role,
     } = ctx;
-    let early_close = tokio::spawn({
+    let early_close = rt::spawn({
         let close = close.clone();
         let cancel = cancel.clone();
         async move {
@@ -1043,7 +1033,7 @@ async fn session_main(
     .map_err(|error| TransportFault::with_connection("hello", role, error, &connection))?;
 
     let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlFrame>(HOST_CONTROL_CAP);
-    let mut children = tokio::task::JoinSet::new();
+    let mut children = rt::JoinSet::new();
     {
         let writer_connection = connection.clone();
         let writer_cancel = cancel.clone();
@@ -1141,10 +1131,10 @@ async fn session_main(
     let mut last_view: Option<RoomView> = None;
     let mut started_epoch = 0_u32;
     let mut leave_request: Option<u64> = None;
-    let mut leave_at: Option<tokio::time::Instant> = None;
+    let mut leave_at: Option<rt::Instant> = None;
     let mut closing = false;
-    let mut watchdog = tokio::time::interval(WATCHDOG_INTERVAL);
-    watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut watchdog = rt::interval(WATCHDOG_INTERVAL);
+    watchdog.set_missed_tick_behavior(rt::MissedTickBehavior::Delay);
 
     let mut next_control = Box::pin(read_owned_frame(recv));
     let outcome = loop {
@@ -1220,7 +1210,7 @@ async fn session_main(
                     );
                     closing = true;
                     leave_request = Some(request_id);
-                    leave_at = Some(tokio::time::Instant::now() + LEAVE_DRAIN);
+                    leave_at = Some(rt::Instant::now() + LEAVE_DRAIN);
                 }
                 Err(error) => {
                     command_error = Some(error);
@@ -1236,7 +1226,7 @@ async fn session_main(
             _ = close.cancelled(), if !closing => {}
             _ = async {
                 match leave_at {
-                    Some(at) => tokio::time::sleep_until(at).await,
+                    Some(at) => rt::sleep_until(at).await,
                     None => std::future::pending().await,
                 }
             } => {
@@ -1353,14 +1343,14 @@ async fn session_main(
                     },
                 }
             }
-            _ = tokio::time::sleep(QUEUE_POLL) => {}
+            _ = rt::sleep(QUEUE_POLL) => {}
         }
     };
 
     cancel.cancel();
     connection.close(0_u8.into(), b"session closed");
     drop(bootstrap_jobs);
-    let _ = tokio::time::timeout(LEAVE_DRAIN, async {
+    let _ = rt::timeout(LEAVE_DRAIN, async {
         while children.join_next().await.is_some() {}
     })
     .await;
@@ -1398,7 +1388,7 @@ fn enqueue_control(
 }
 
 fn flatten_task(
-    result: std::result::Result<std::result::Result<(), TransportFault>, tokio::task::JoinError>,
+    result: std::result::Result<std::result::Result<(), TransportFault>, rt::JoinError>,
     operation: &'static str,
     role: &'static str,
 ) -> std::result::Result<(), TransportFault> {
@@ -2214,7 +2204,7 @@ fn pump_local_queues(
 }
 
 async fn bootstrap_egress(
-    connection: quinn::Connection,
+    connection: Conn,
     mut jobs: tokio::sync::mpsc::Receiver<(frame::MatchKey, MemberId, Vec<u8>)>,
     prepared: tokio::sync::mpsc::Sender<HostMatchEvent>,
     cancel: CancellationToken,
@@ -2261,7 +2251,7 @@ async fn bootstrap_egress(
 }
 
 async fn datagram_ingress(
-    connection: quinn::Connection,
+    connection: Conn,
     mailbox: RelayMailbox,
     cancel: CancellationToken,
     role: &'static str,
@@ -2320,7 +2310,7 @@ async fn datagram_ingress(
 }
 
 async fn uni_ingress(
-    connection: quinn::Connection,
+    connection: Conn,
     bootstrap: Arc<BootstrapLane>,
     cancel: CancellationToken,
     role: &'static str,
@@ -2340,7 +2330,7 @@ async fn uni_ingress(
                         ));
                     }
                 };
-                let bytes = match tokio::time::timeout(
+                let bytes = match rt::timeout(
                     IO_DEADLINE,
                     recv.read_to_end(MAX_BOOTSTRAP_STREAM_BYTES),
                 )
@@ -2393,14 +2383,14 @@ async fn uni_ingress(
 }
 
 async fn gameplay_egress(
-    connection: quinn::Connection,
+    connection: Conn,
     mailbox: RelayMailbox,
     cancel: CancellationToken,
     role: &'static str,
     is_host: bool,
 ) -> std::result::Result<(), TransportFault> {
     let mut fragmenter = relay_fragmenter();
-    let mut tick = tokio::time::interval(QUEUE_POLL);
+    let mut tick = rt::interval(QUEUE_POLL);
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
@@ -2425,7 +2415,7 @@ async fn gameplay_egress(
                         let bytes = encode_relay(datagram).map_err(|error| {
                             TransportFault::with_connection("encode_relay", role, error, &connection)
                         })?;
-                        if let Err(error) = connection.send_datagram(bytes.into()) {
+                        if let Err(error) = connection.send_datagram(bytes) {
                             return Err(TransportFault::with_connection(
                                 "send_datagram",
                                 role,
@@ -2441,7 +2431,7 @@ async fn gameplay_egress(
 }
 
 async fn send_bootstrap_stream(
-    connection: &quinn::Connection,
+    connection: &Conn,
     member_id: MemberId,
     payload: &[u8],
     cancel: &CancellationToken,
@@ -2480,14 +2470,12 @@ async fn send_bootstrap_stream(
     Ok(())
 }
 
-async fn read_owned_frame(
-    mut recv: quinn::RecvStream,
-) -> (quinn::RecvStream, Result<ControlFrame>) {
+async fn read_owned_frame(mut recv: ConnRecv) -> (ConnRecv, Result<ControlFrame>) {
     let frame = read_frame(&mut recv).await;
     (recv, frame)
 }
 
-async fn read_frame(recv: &mut quinn::RecvStream) -> Result<ControlFrame> {
+async fn read_frame(recv: &mut ConnRecv) -> Result<ControlFrame> {
     let mut header = [0_u8; 4];
     recv.read_exact(&mut header).await?;
     let len = stream_frame_len(header)?;
@@ -2496,7 +2484,7 @@ async fn read_frame(recv: &mut quinn::RecvStream) -> Result<ControlFrame> {
     Ok(decode_stream_payload(&body)?)
 }
 
-async fn write_frame(send: &mut quinn::SendStream, frame: &ControlFrame) -> Result<()> {
+async fn write_frame(send: &mut ConnSend, frame: &ControlFrame) -> Result<()> {
     send.write_all(&encode_stream_frame(frame)?).await?;
     Ok(())
 }
@@ -2507,7 +2495,7 @@ async fn io_timeout<T>(
 ) -> Result<T> {
     tokio::select! {
         _ = cancel.cancelled() => Err("session cancelled".into()),
-        result = tokio::time::timeout(IO_DEADLINE, fut) => {
+        result = rt::timeout(IO_DEADLINE, fut) => {
             match result {
                 Ok(Ok(value)) => Ok(value),
                 Ok(Err(error)) => Err(error.into()),
@@ -2520,7 +2508,7 @@ async fn io_timeout<T>(
 async fn connect(
     target: &MasterTarget,
     cancel: &CancellationToken,
-) -> Result<(quinn::Endpoint, quinn::Connection)> {
+) -> Result<(quinn::Endpoint, Conn)> {
     let address = target
         .address
         .to_socket_addrs()?
@@ -2588,7 +2576,7 @@ async fn connect(
         connection.remote_address(),
         started.elapsed().as_millis()
     );
-    Ok((endpoint, connection))
+    Ok((endpoint, connection.into()))
 }
 
 fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {

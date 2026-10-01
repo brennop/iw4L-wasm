@@ -4085,6 +4085,7 @@ version = "0.1.0"
 dependencies = [
  "anim_iw4",
  "bevy",
+ "bytes",
  "diag",
  "entity_iw4",
  "frame",

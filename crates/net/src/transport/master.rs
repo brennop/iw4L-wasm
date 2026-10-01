@@ -15,7 +15,11 @@ use crate::transport::udp_session::RelayMailbox;
 // wasm32 has no sockets or threads, so there the launch intent is always
 // disabled and none of this exists.
 #[cfg(online)]
+mod conn;
+#[cfg(online)]
 mod online;
+#[cfg(online)]
+mod rt;
 #[cfg(online)]
 pub use online::register_master_bridge;
 
