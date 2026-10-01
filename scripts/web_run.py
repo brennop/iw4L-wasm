@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Build the browser bundle, link the pack into dist/web and serve it.
 
-usage: web_run.py [--pack FILE] [--port N] [--opt] [--no-build]
+usage: web_run.py [--pack FILE] [--rebuild-pack] [--record FILE] [--image-cap PX]
+                  [--port N] [--opt] [--no-build]
 
   --pack FILE   pack to link as dist/web/game.pack (default: $IW4L_WEB_PACK,
                 which may be set in the repo's .env; the real environment wins)
+  --rebuild-pack  re-record the native cache entries (make map mp_rust, webgpu profile),
+                run `cargo xtask web-pack` and write the result to --pack (required), then
+                serve that pack. Needed after WGSL_CACHE_FORMAT / nav digest changes.
+  --record FILE   read record for web-pack (default: $IW4L_WEB_RECORD, else the newest
+                *_full*.rec beside the pack)
+  --image-cap PX  image cap for web-pack (default 512)
   --port N      port for web_serve.py (default 8080)
   --opt         run wasm-opt (xtask web default); without it the build passes --no-opt
   --no-build    skip `cargo xtask web`, only re-link the pack and serve
@@ -70,10 +77,49 @@ def link_pack(pack):
     )
 
 
+def rebuild_pack(pack, record, image_cap):
+    games = os.environ.get("IW4L_GAMES")
+    if not games:
+        sys.exit("--rebuild-pack: IW4L_GAMES is not set (environment or .env)")
+    if record is None:
+        found = sorted(pack.parent.glob("*_full*.rec"), key=lambda p: p.stat().st_mtime)
+        if not found:
+            sys.exit(f"--rebuild-pack: no *_full*.rec in {pack.parent}; pass --record FILE")
+        record = found[-1]
+    record = Path(record).resolve()
+    if not record.is_file():
+        sys.exit(f"record not found: {record}")
+    cache_rec = pack.with_name(pack.stem + "_cache.rec")
+    new = pack.with_name(pack.name + ".new")
+    env = dict(
+        os.environ,
+        IW4L_GPU_PROFILE="webgpu",
+        IW4L_CACHE_RECORD=str(cache_rec),
+        CMDS="wait world; wait 5s; quit",
+    )
+    steps = [
+        (["make", "map", "mp_rust"], env),
+        (
+            ["cargo", "xtask", "web-pack", "--root", games, "--cache-record", str(cache_rec),
+             "--image-cap", str(image_cap), str(record), str(new)],
+            os.environ,
+        ),
+    ]
+    for cmd, e in steps:
+        print("+", " ".join(cmd), flush=True)
+        if subprocess.call(cmd, cwd=ROOT, env=e) != 0:
+            sys.exit(f"{cmd[0]} {cmd[1]} failed")
+    os.replace(new, pack)
+    print(f"pack rebuilt: {pack} (record {record})", flush=True)
+
+
 def main():
     load_dotenv(ROOT / ".env")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--pack", default=os.environ.get("IW4L_WEB_PACK"))
+    ap.add_argument("--rebuild-pack", action="store_true")
+    ap.add_argument("--record", default=os.environ.get("IW4L_WEB_RECORD"))
+    ap.add_argument("--image-cap", type=int, default=512)
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--opt", action="store_true")
     ap.add_argument("--no-build", action="store_true")
@@ -81,6 +127,11 @@ def main():
 
     if port_busy(args.port):
         sys.exit(f"port {args.port} is in use; stop the running server first (it may hold dist/web open)")
+
+    if args.rebuild_pack:
+        if not args.pack:
+            sys.exit("--rebuild-pack needs --pack FILE (or IW4L_WEB_PACK) as the output")
+        rebuild_pack(Path(args.pack).resolve(), args.record, args.image_cap)
 
     if not args.no_build:
         cmd = ["cargo", "xtask", "web"] + ([] if args.opt else ["--no-opt"])

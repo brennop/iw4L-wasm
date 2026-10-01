@@ -15,8 +15,13 @@ pub mod players;
 pub mod presence;
 pub mod registry;
 pub mod restart;
+pub mod spectators;
 pub mod tables;
 pub mod triggers;
 pub mod turrets;
 pub mod vehicles;
 pub mod weapons;
+
+pub mod audio;
+
+pub(crate) mod rumble;

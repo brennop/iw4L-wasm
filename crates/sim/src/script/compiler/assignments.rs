@@ -5,31 +5,23 @@ impl Parser {
     pub(super) fn assignment_ahead(&self) -> bool {
         let mut pos = self.pos + 1;
         loop {
-            if self
-                .tokens
-                .get(pos)
-                .is_some_and(|t| !t.string && t.text == ".")
-            {
+            if self.tokens.get(pos).is_some_and(|t| t.is(".")) {
                 pos += 2;
-            } else if self
-                .tokens
-                .get(pos)
-                .is_some_and(|t| !t.string && t.text == "[")
-            {
+            } else if self.tokens.get(pos).is_some_and(|t| t.is("[")) {
                 let mut depth = 1;
                 pos += 1;
                 while let Some(t) = self.tokens.get(pos) {
-                    if !t.string && t.text == "[" {
+                    if t.is("[") {
                         depth += 1;
                     }
-                    if !t.string && t.text == "]" {
+                    if t.is("]") {
                         depth -= 1;
                     }
                     pos += 1;
                     if depth == 0 {
                         break;
                     }
-                    if t.text.is_empty() {
+                    if t.is("") {
                         return false;
                     }
                 }
@@ -37,13 +29,9 @@ impl Parser {
                 break;
             }
         }
-        self.tokens.get(pos).is_some_and(|t| {
-            !t.string
-                && [
-                    "=", "+=", "-=", "*=", "/=", "|=", "&=", "^=", "%=", "++", "--",
-                ]
-                .contains(&t.text.as_str())
-        })
+        self.tokens
+            .get(pos)
+            .is_some_and(|t| t.assignment_operator().is_some())
     }
     pub(super) fn assignment(&mut self) -> Result<(), Fault> {
         let name = self.ident()?.to_ascii_lowercase();
@@ -91,7 +79,10 @@ impl Parser {
         } else if let Op::Load(slot) = target {
             target = Op::Store(slot);
         }
-        let op = self.tokens[self.pos].text.clone();
+        let op = self.tokens[self.pos]
+            .assignment_operator()
+            .ok_or_else(|| self.error("expected assignment operator"))?
+            .to_owned();
         self.pos += 1;
         if op != "=" {
             match &target {

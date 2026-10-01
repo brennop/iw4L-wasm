@@ -40,4 +40,4 @@ self SetBlurForPlayer(6, 0.5);
 
 The render chain grades color, blurs the scene, then applies film, DoF and bloom.
 HUD remains readable. Bloom preserves the material's authored sRGB writes.
-Snapshots use protocol 86; host and client must share that protocol.
+Snapshots use protocol 90; host and client must share that protocol.

@@ -94,6 +94,7 @@ impl Default for FpvPoseKind {
 /// carries. No geometry — the surfaces this rig draws were settled when it was
 /// prepared, and the vertices are written straight into the published plan.
 pub struct FpvPosedFrame {
+    pub secondary_bolt: Option<FpvBoltFrame>,
     pub poses: [Option<FpvHandPose>; 2],
     pub lens: Mat4,
     pub idle_sampled: bool,
@@ -177,13 +178,19 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
         *active = Some(Arc::clone(prepared));
     }
 
-    let Some(right_pose) = prepared.pose_hand(0, &right, Vec3::ZERO) else {
+    let combined = prepared.combines_hands();
+    let pose = if combined {
+        prepared.pose_combined(&right, &left)
+    } else {
+        prepared.pose_hand(0, &right, Vec3::ZERO)
+    };
+    let Some(right_pose) = pose else {
         return FpvPoseKind::Refuse(FpvPoseRefuse::EyePoseFailed {
             gun_xmodel: equipped.gun_xmodel.clone(),
         });
     };
     let lens = right_pose.lens;
-    let left_pose = if dual_drawn {
+    let left_pose = if dual_drawn && !combined {
         let offset = dual_offset
             .filter(|offset| *offset != 0.0)
             .map(|offset| {
@@ -206,9 +213,11 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
         None
     };
 
+    let secondary_bolt = prepared.secondary_bolt(&right_pose);
     let poses = [Some(right_pose), left_pose];
     FpvPoseKind::Posed(FpvPosedFrame {
         poses,
+        secondary_bolt,
         lens,
         idle_sampled: true,
         notetracks: notifies,

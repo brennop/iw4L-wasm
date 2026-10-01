@@ -116,8 +116,41 @@ struct Peer {
     control_tx: tokio::sync::mpsc::Sender<ControlFrame>,
 }
 
+struct PasswordVerifier {
+    salt: [u8; 16],
+    digest: ring::digest::Digest,
+}
+
+impl PasswordVerifier {
+    fn new(password: &str) -> Option<Self> {
+        if password.is_empty() {
+            return None;
+        }
+        let salt = random_bytes();
+        Some(Self {
+            salt,
+            digest: Self::digest(salt, password),
+        })
+    }
+    fn digest(salt: [u8; 16], password: &str) -> ring::digest::Digest {
+        let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+        context.update(&salt);
+        context.update(password.as_bytes());
+        context.finish()
+    }
+    fn matches(&self, password: &str) -> bool {
+        self.digest
+            .as_ref()
+            .iter()
+            .zip(Self::digest(self.salt, password).as_ref())
+            .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+            == 0
+    }
+}
+
 struct Room {
     view: RoomView,
+    password: Option<PasswordVerifier>,
     host_connection_id: u64,
     member_of: HashMap<u64, MemberId>,
     connection_of: HashMap<MemberId, u64>,
@@ -749,6 +782,8 @@ async fn handle_request(
             mode,
             max_players,
             requires,
+            available,
+            password,
         } => create_room(
             &mut state,
             connection_id,
@@ -757,10 +792,29 @@ async fn handle_request(
             mode,
             max_players,
             requires,
+            available,
+            password,
         ),
-        RequestBody::JoinRoom { room_id, have } => {
-            join_room(&mut state, connection_id, room_id, have)
-        }
+        RequestBody::JoinRoom {
+            room_id,
+            have,
+            password,
+        } => join_room(&mut state, connection_id, room_id, have, password),
+        RequestBody::SetPassword { password } => match state.host_of(connection_id) {
+            Ok(room_id) => {
+                let room = state.rooms.get_mut(&room_id).expect("host room");
+                room.password = PasswordVerifier::new(&password);
+                room.view.password_protected = room.password.is_some();
+                state.bump_room(room_id);
+                (
+                    ResponseBody::RoomUpdated {
+                        view: state.rooms[&room_id].view.clone(),
+                    },
+                    state.publish_view(room_id),
+                )
+            }
+            Err(error) => (ResponseBody::Error(error), Vec::new()),
+        },
         RequestBody::LeaveRoom => leave_room(&mut state, connection_id),
         RequestBody::SetOptions {
             map,
@@ -873,6 +927,8 @@ fn create_room(
     mode: String,
     max_players: u8,
     requires: master_protocol::ContentFlags,
+    available: master_protocol::ContentFlags,
+    password: String,
 ) -> (ResponseBody, Vec<(u64, ControlFrame)>) {
     if state.membership.contains_key(&connection_id) {
         return (
@@ -902,6 +958,8 @@ fn create_room(
         phase: RoomPhase::Gathering,
         max_players,
         requires,
+        available,
+        password_protected: !password.is_empty(),
     };
     let mut member_of = HashMap::new();
     member_of.insert(connection_id, member_id);
@@ -911,6 +969,7 @@ fn create_room(
         room_id,
         Room {
             view: view.clone(),
+            password: PasswordVerifier::new(&password),
             host_connection_id: connection_id,
             member_of,
             connection_of,
@@ -932,6 +991,7 @@ fn join_room(
     connection_id: u64,
     room_id: AdvertId,
     have: master_protocol::ContentFlags,
+    password: String,
 ) -> (ResponseBody, Vec<(u64, ControlFrame)>) {
     if let Some(existing) = state.membership.get(&connection_id).copied() {
         if existing == room_id {
@@ -953,6 +1013,16 @@ fn join_room(
     let Some(room) = state.rooms.get(&room_id) else {
         return (ResponseBody::Error(ServiceError::UnknownAdvert), Vec::new());
     };
+    if room
+        .password
+        .as_ref()
+        .is_some_and(|verifier| !verifier.matches(&password))
+    {
+        return (
+            ResponseBody::Error(ServiceError::IncorrectPassword),
+            Vec::new(),
+        );
+    }
     if !room.view.advert().allows_join_request() {
         return (ResponseBody::Error(ServiceError::Locked), Vec::new());
     }

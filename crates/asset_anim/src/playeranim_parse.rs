@@ -51,12 +51,7 @@ pub struct ParsedPlayerAnimScript {
     pub event_item_count: usize,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PlayerAnimProperties {
-    pub ladder: bool,
-    pub stationary: bool,
-    pub blend_ms: i32,
-}
+pub use xmodel_runtime::PlayerAnimProperties;
 
 impl ParsedPlayerAnimScript {
     pub fn animation_properties(&self, index: u16) -> PlayerAnimProperties {
@@ -386,6 +381,7 @@ fn parse_define(
         return Err(bad(parser, "expected '=' in define"));
     }
     let mut bits = 0u64;
+    let mut subtract = false;
     loop {
         let token = parser.parse(false);
         if token.is_empty() {
@@ -398,10 +394,20 @@ fn parse_define(
         if token.eq_ignore_ascii_case("AND") {
             continue;
         }
-        match resolve_cond_value(index as u8, &token, aliases) {
-            Some(ResolvedCondValue::Bit(bit)) => bits |= 1u64 << bit,
-            Some(ResolvedCondValue::Bits(more)) => bits |= more,
-            None => {}
+        if token.eq_ignore_ascii_case("NOT") || token.eq_ignore_ascii_case("MINUS") {
+            subtract = true;
+            if bits == 0 {
+                bits = u64::MAX;
+            }
+            continue;
+        }
+        if let Some(value) = resolve_cond_value(index as u8, &token, aliases) {
+            let more = value.bits();
+            if subtract {
+                bits &= !more;
+            } else {
+                bits |= more;
+            }
         }
     }
     aliases.insert((index as u8, alias), bits);
@@ -413,11 +419,23 @@ enum ResolvedCondValue {
     Bits(u64),
 }
 
+impl ResolvedCondValue {
+    fn bits(&self) -> u64 {
+        match *self {
+            Self::Bit(bit) => 1u64 << bit,
+            Self::Bits(bits) => bits,
+        }
+    }
+}
+
 fn resolve_cond_value(
     index: u8,
     token: &str,
     aliases: &HashMap<(u8, String), u64>,
 ) -> Option<ResolvedCondValue> {
+    if ANIM_COND_IS_BITFLAGS[usize::from(index)] && token.eq_ignore_ascii_case("all") {
+        return Some(ResolvedCondValue::Bits(u64::MAX));
+    }
     let names = anim_cond_value_names(index);
     if let Some(v) = index_ci(token, names) {
         return Some(ResolvedCondValue::Bit(v as u8));
@@ -437,6 +455,7 @@ fn parse_conditions(
     let mut conditions = Vec::new();
     let mut raw = Vec::new();
     let mut current: Option<ParsedAnimCondition> = None;
+    let mut subtract = false;
     loop {
         let token = parser.parse(false);
         if token.is_empty() {
@@ -451,11 +470,32 @@ fn parse_conditions(
             if let Some(cond) = current.take() {
                 conditions.push(cond);
             }
+            subtract = false;
             continue;
         }
         raw.push(token.clone());
         if token.eq_ignore_ascii_case("default") {
             saw = true;
+            continue;
+        }
+        if let Some(cond) = current.as_mut()
+            && let Some(value) = resolve_cond_value(cond.index, &token, aliases)
+        {
+            if cond.bitflags {
+                if subtract {
+                    cond.bits &= !value.bits();
+                } else {
+                    cond.bits |= value.bits();
+                }
+            } else {
+                match value {
+                    ResolvedCondValue::Bit(bit) => cond.value = i32::from(bit),
+                    ResolvedCondValue::Bits(bits) => {
+                        cond.bits = bits;
+                        cond.bitflags = true;
+                    }
+                }
+            }
             continue;
         }
         if let Some(index) = index_ci(&token, ANIM_COND_NAMES) {
@@ -477,32 +517,25 @@ fn parse_conditions(
                 bits: 0,
                 value,
             });
+            subtract = false;
             continue;
         }
         if token.eq_ignore_ascii_case("AND") {
             continue;
         }
         if token.eq_ignore_ascii_case("NOT") || token.eq_ignore_ascii_case("MINUS") {
-            skip = true;
+            if let Some(cond) = current.as_mut().filter(|cond| cond.bitflags) {
+                subtract = true;
+                if cond.bits == 0 {
+                    cond.bits = u64::MAX;
+                }
+            } else {
+                skip = true;
+            }
             continue;
         }
-        if let Some(cond) = current.as_mut() {
-            match resolve_cond_value(cond.index, &token, aliases) {
-                Some(ResolvedCondValue::Bit(bit)) if cond.bitflags => {
-                    cond.bits |= 1u64 << bit;
-                }
-                Some(ResolvedCondValue::Bits(more)) if cond.bitflags => {
-                    cond.bits |= more;
-                }
-                Some(ResolvedCondValue::Bit(bit)) => {
-                    cond.value = i32::from(bit);
-                }
-                Some(ResolvedCondValue::Bits(more)) => {
-                    cond.bits |= more;
-                    cond.bitflags = true;
-                }
-                None => skip = true,
-            }
+        if current.is_some() {
+            skip = true;
             continue;
         }
         return Err(bad(parser, "unknown condition token"));

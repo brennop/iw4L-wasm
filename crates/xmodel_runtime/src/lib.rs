@@ -1,6 +1,7 @@
 mod destructible;
 mod dobj;
 mod dobj_runtime;
+mod player_body;
 mod retained;
 mod semantic;
 mod xanim_clip;
@@ -18,8 +19,9 @@ pub use dobj::{
 pub use dobj_runtime::{DObjAnimRuntime, DObjReuseKey, model_token, reuse_matches};
 pub use retained::{
     BoneCollision, CollSurfCollision, CollTri, CollisionBone, DObjPoseRequest, MaterializeError,
-    RetainedModelCapability, collision_bone_from_local_box, collision_dobj_with_controller,
-    collision_models, collision_models_with_controller, pose_dobj, pose_dobj_with_controller,
+    ModelMovementBrush, RetainedModelCapability, collision_bone_from_local_box,
+    collision_dobj_with_controller, collision_models, collision_models_with_controller, pose_dobj,
+    pose_dobj_with_controller,
 };
 pub use semantic::{
     DObjCompositionDescriptor, DObjModelDescriptor, DObjSemanticState, SemanticResolveError,
@@ -35,3 +37,8 @@ pub use xanim_tree::{
 };
 
 pub use destructible::{T5DestructibleDef, T5DestructiblePiece, T5DestructibleStage};
+
+pub use player_body::{
+    ClientAnimSample, PlayerAnimProperties, PlayerBodyBranches, apply_player_anim_goals,
+    apply_player_anim_rates, overlay_legs_clip,
+};

@@ -99,6 +99,10 @@ pub enum ClientAction {
         response: [u8; MENU_RESPONSE_BYTES],
     },
 
+    ResupplyAmmo {
+        request_id: ActionRequestId,
+    },
+
     GiveKillstreak {
         request_id: ActionRequestId,
         name: [u8; MENU_RESPONSE_BYTES],
@@ -170,6 +174,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::ActionSlot { request_id, .. }
         | ClientAction::ChooseDefaultClass { request_id, .. }
         | ClientAction::MenuResponse { request_id, .. }
-        | ClientAction::GiveKillstreak { request_id, .. } => request_id,
+        | ClientAction::GiveKillstreak { request_id, .. }
+        | ClientAction::ResupplyAmmo { request_id } => request_id,
     }
 }

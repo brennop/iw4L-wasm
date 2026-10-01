@@ -310,6 +310,7 @@ pub fn drive_client_admission_facts(
 }
 
 pub fn drive_signon(
+    dvars: bevy::prelude::Res<frame::UiMenuDvars>,
     mut signon: bevy::prelude::ResMut<SignonState>,
     mut admission: bevy::prelude::ResMut<ClientAdmission>,
     role: bevy::prelude::Res<RuntimeRole>,
@@ -318,6 +319,9 @@ pub fn drive_signon(
     mut incarnation: bevy::prelude::Local<Option<u64>>,
     mut reported_terminal: bevy::prelude::Local<Option<u64>>,
 ) {
+    if dvars.get("ui_password_pending") == Some("1") {
+        return;
+    }
     let current = bridge.as_ref().map(|bridge| bridge.incarnation());
     if *incarnation != current {
         *incarnation = current;

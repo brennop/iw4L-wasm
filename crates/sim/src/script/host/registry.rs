@@ -43,6 +43,7 @@ impl Default for NativeRegistry {
             Ok(Value::Object(id))
         });
         natives::iw4::register(&mut registry);
+        super::audio::register(&mut registry);
         natives::math::register(&mut registry);
         natives::engine::register(&mut registry);
         natives::player::register(&mut registry);
@@ -55,6 +56,8 @@ impl Default for NativeRegistry {
         super::client_effects::register(&mut registry);
         super::guidance::register(&mut registry);
         super::turrets::register(&mut registry);
+        super::triggers::register(&mut registry);
+        super::spectators::register(&mut registry);
         registry
     }
 }
@@ -66,4 +69,15 @@ impl NativeRegistry {
     pub(crate) fn get(&self, namespace: Namespace, name: &str) -> Option<Native> {
         self.0.get(&(namespace, name.to_owned())).copied()
     }
+}
+
+pub(crate) fn unavailable(
+    world: &mut World,
+    name: &'static str,
+    reason: &str,
+) -> Result<Value, String> {
+    let mut runtime = world.resource_mut::<Runtime>();
+    let calls = runtime.unsupported.entry(name).or_default();
+    *calls = calls.saturating_add(1);
+    Err(format!("unavailable: {reason}"))
 }

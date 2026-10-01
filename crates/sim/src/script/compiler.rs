@@ -61,7 +61,7 @@ impl Parser {
         Fault::at(&self.location(), message)
     }
     fn is(&self, text: &str) -> bool {
-        !self.tokens[self.pos].string && self.tokens[self.pos].text == text
+        self.tokens[self.pos].is(text)
     }
     fn eat(&mut self, text: &str) -> bool {
         if self.is(text) {
@@ -189,7 +189,7 @@ impl Parser {
                     let name = self.ident()?.to_ascii_lowercase();
                     let line = self.tokens[self.pos - 1].line;
                     if let Some(end) = (self.pos..self.tokens.len())
-                        .find(|&i| self.tokens[i].line > line || self.tokens[i].text.is_empty())
+                        .find(|&i| self.tokens[i].line > line || self.tokens[i].is(""))
                     {
                         let mut separator = self.tokens[end].clone();
                         separator.text = ";".into();

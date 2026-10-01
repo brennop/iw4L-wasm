@@ -2,8 +2,8 @@
 
 use core::{fmt, str::FromStr};
 
-pub const PROTOCOL_VERSION: u16 = 9;
-pub const ALPN: &[u8] = b"iw4l-master/9";
+pub const PROTOCOL_VERSION: u16 = 10;
+pub const ALPN: &[u8] = b"iw4l-master/10";
 pub const MAX_CONTROL_BYTES: usize = 16 * 1024;
 pub const MAX_OPAQUE_PAYLOAD: usize = 1100;
 
@@ -125,6 +125,8 @@ const TAG_MAP_LOADED: u8 = 11;
 const TAG_BOOTSTRAP_APPLIED: u8 = 12;
 const TAG_ENTER_MATCH: u8 = 13;
 const TAG_VOTE_TO_SKIP: u8 = 14;
+const TAG_SET_PASSWORD: u8 = 16;
+pub const MAX_PASSWORD_BYTES: usize = 64;
 const TAG_ADMISSION_FAILED: u8 = 15;
 const TAG_ERROR: u8 = 0x7f;
 
@@ -336,13 +338,19 @@ pub struct RoomView {
     pub phase: RoomPhase,
     pub max_players: u8,
     pub requires: ContentFlags,
+    pub available: ContentFlags,
+    pub password_protected: bool,
 }
 
 impl RoomView {
     pub fn advert(&self) -> Advert {
         Advert {
             id: self.room_id,
-            name: self.name.clone(),
+            name: self
+                .member_names
+                .get(&self.host)
+                .cloned()
+                .unwrap_or_else(|| self.name.clone()),
             map: self.map.clone(),
             mode: self.mode.clone(),
             players: u8::try_from(self.members.len()).unwrap_or(MAX_SESSION_MEMBERS),
@@ -350,6 +358,8 @@ impl RoomView {
             locked: !self.joinable,
             in_match: self.phase.in_match(),
             requires: self.requires,
+            available: self.available,
+            password_protected: self.password_protected,
             generation: self.revision,
         }
     }
@@ -372,6 +382,8 @@ pub struct Advert {
 
     pub in_match: bool,
     pub requires: ContentFlags,
+    pub available: ContentFlags,
+    pub password_protected: bool,
     pub generation: u64,
 }
 
@@ -394,10 +406,16 @@ pub enum RequestBody {
         mode: String,
         max_players: u8,
         requires: ContentFlags,
+        available: ContentFlags,
+        password: String,
     },
     JoinRoom {
         room_id: AdvertId,
         have: ContentFlags,
+        password: String,
+    },
+    SetPassword {
+        password: String,
     },
     LeaveRoom,
     SetOptions {
@@ -480,6 +498,7 @@ pub enum ServiceError {
     UnknownAdvert,
     Full,
     Locked,
+    IncorrectPassword,
     NotHost,
     NotMember,
     MissingContent {
@@ -499,6 +518,7 @@ impl ServiceError {
             5 => Self::UnknownAdvert,
             7 => Self::Full,
             8 => Self::Locked,
+            15 => Self::IncorrectPassword,
             11 => Self::NotHost,
             13 => Self::NotMember,
             14 => Self::MissingContent {
@@ -518,6 +538,7 @@ impl ServiceError {
             Self::UnknownAdvert => 5,
             Self::Full => 7,
             Self::Locked => 8,
+            Self::IncorrectPassword => 15,
             Self::NotHost => 11,
             Self::NotMember => 13,
             Self::MissingContent { .. } => 14,
@@ -834,6 +855,8 @@ fn encode_request_body(body: &RequestBody) -> Result<Vec<u8>, ProtocolError> {
             mode,
             max_players,
             requires,
+            available,
+            password,
         } => {
             validate_advert(name, map, mode, *max_players)?;
             out.u8(TAG_CREATE_ROOM);
@@ -842,11 +865,22 @@ fn encode_request_body(body: &RequestBody) -> Result<Vec<u8>, ProtocolError> {
             out.string(mode, MAX_MODE_BYTES)?;
             out.u8(*max_players);
             out.u8(requires.0);
+            out.u8(available.0);
+            out.string(password, MAX_PASSWORD_BYTES)?;
         }
-        RequestBody::JoinRoom { room_id, have } => {
+        RequestBody::JoinRoom {
+            room_id,
+            have,
+            password,
+        } => {
             out.u8(TAG_JOIN_ROOM);
             out.bytes(&room_id.0);
             out.u8(have.0);
+            out.string(password, MAX_PASSWORD_BYTES)?;
+        }
+        RequestBody::SetPassword { password } => {
+            out.u8(TAG_SET_PASSWORD);
+            out.string(password, MAX_PASSWORD_BYTES)?;
         }
         RequestBody::LeaveRoom => out.u8(TAG_LEAVE_ROOM),
         RequestBody::SetOptions {
@@ -943,27 +977,51 @@ fn encode_request_body(body: &RequestBody) -> Result<Vec<u8>, ProtocolError> {
 fn decode_request_body(body: &mut Reader<'_>) -> Result<RequestBody, ProtocolError> {
     Ok(match body.u8()? {
         TAG_STATUS => RequestBody::Status,
-        TAG_CREATE_ROOM => RequestBody::CreateRoom {
-            name: body.string(MAX_ADVERT_NAME_BYTES)?,
-            map: body.string(MAX_MAP_BYTES)?,
-            mode: body.string(MAX_MODE_BYTES)?,
-            max_players: body.u8()?,
-            requires: ContentFlags(body.u8()?),
-        },
+        TAG_CREATE_ROOM => {
+            let name = body.string(MAX_ADVERT_NAME_BYTES)?;
+            let map = body.string(MAX_MAP_BYTES)?;
+            let mode = body.string(MAX_MODE_BYTES)?;
+            let max_players = body.u8()?;
+            let requires = ContentFlags(body.u8()?);
+            let available = ContentFlags(body.u8()?);
+            let password = body.string(MAX_PASSWORD_BYTES)?;
+            validate_advert(&name, &map, &mode, max_players)?;
+            RequestBody::CreateRoom {
+                name,
+                map,
+                mode,
+                max_players,
+                requires,
+                available,
+                password,
+            }
+        }
         TAG_JOIN_ROOM => RequestBody::JoinRoom {
             room_id: AdvertId(body.array()?),
             have: ContentFlags(body.u8()?),
+            password: body.string(MAX_PASSWORD_BYTES)?,
+        },
+        TAG_SET_PASSWORD => RequestBody::SetPassword {
+            password: body.string(MAX_PASSWORD_BYTES)?,
         },
         TAG_LEAVE_ROOM => RequestBody::LeaveRoom,
-        TAG_SET_OPTIONS => RequestBody::SetOptions {
-            map: body.string(MAX_MAP_BYTES)?,
-            mode: body.string(MAX_MODE_BYTES)?,
-            joinable: bool_byte(body.u8()?)?,
-        },
-        TAG_START_MATCH => RequestBody::StartMatch {
-            map: body.string(MAX_MAP_BYTES)?,
-            mode: body.string(MAX_MODE_BYTES)?,
-        },
+        TAG_SET_OPTIONS => {
+            let map = body.string(MAX_MAP_BYTES)?;
+            let mode = body.string(MAX_MODE_BYTES)?;
+            let joinable = bool_byte(body.u8()?)?;
+            validate_map_mode(&map, &mode)?;
+            RequestBody::SetOptions {
+                map,
+                mode,
+                joinable,
+            }
+        }
+        TAG_START_MATCH => {
+            let map = body.string(MAX_MAP_BYTES)?;
+            let mode = body.string(MAX_MODE_BYTES)?;
+            validate_map_mode(&map, &mode)?;
+            RequestBody::StartMatch { map, mode }
+        }
         TAG_END_MATCH => RequestBody::EndMatch {
             room_id: AdvertId(body.array()?),
             epoch: body.u32()?,
@@ -1050,6 +1108,8 @@ fn encode_response_body(body: &ResponseBody) -> Result<Vec<u8>, ProtocolError> {
                 out.u8(u8::from(advert.locked));
                 out.u8(u8::from(advert.in_match));
                 out.u8(advert.requires.0);
+                out.u8(advert.available.0);
+                out.u8(u8::from(advert.password_protected));
                 out.u64(advert.generation);
             }
         }
@@ -1099,6 +1159,8 @@ fn decode_response_body(body: &mut Reader<'_>) -> Result<ResponseBody, ProtocolE
                     locked: bool_byte(body.u8()?)?,
                     in_match: bool_byte(body.u8()?)?,
                     requires: ContentFlags(body.u8()?),
+                    available: ContentFlags(body.u8()?),
+                    password_protected: bool_byte(body.u8()?)?,
                     generation: body.u64()?,
                 });
             }
@@ -1127,6 +1189,8 @@ fn encode_room_view(view: &RoomView) -> Result<Vec<u8>, ProtocolError> {
     out.u8(u8::from(view.joinable));
     out.u8(view.max_players);
     out.u8(view.requires.0);
+    out.u8(view.available.0);
+    out.u8(u8::from(view.password_protected));
     out.string(&view.name, MAX_ADVERT_NAME_BYTES)?;
     out.string(&view.map, MAX_MAP_BYTES)?;
     out.string(&view.mode, MAX_MODE_BYTES)?;
@@ -1152,6 +1216,8 @@ fn decode_room_view(body: &mut Reader<'_>) -> Result<RoomView, ProtocolError> {
     let joinable = bool_byte(body.u8()?)?;
     let max_players = body.u8()?;
     let requires = ContentFlags(body.u8()?);
+    let available = ContentFlags(body.u8()?);
+    let password_protected = bool_byte(body.u8()?)?;
     let name = body.string(MAX_ADVERT_NAME_BYTES)?;
     let map = body.string(MAX_MAP_BYTES)?;
     let mode = body.string(MAX_MODE_BYTES)?;
@@ -1180,6 +1246,8 @@ fn decode_room_view(body: &mut Reader<'_>) -> Result<RoomView, ProtocolError> {
         phase,
         max_players,
         requires,
+        available,
+        password_protected,
     })
 }
 

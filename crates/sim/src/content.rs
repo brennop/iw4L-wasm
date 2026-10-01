@@ -2,7 +2,7 @@ use crate::spawn::{AuthoredSpawnPoint, MatchBootstrap};
 use crate::world::SimBrush;
 use weapon_iw4::WeaponCombatFacts;
 
-pub const CONTENT_DIGEST_SCHEME: u64 = 16;
+pub const CONTENT_DIGEST_SCHEME: u64 = 17;
 
 #[derive(Clone, Copy)]
 struct Digest(u64);
@@ -62,6 +62,7 @@ impl Digest {
 fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
     h.u64(combat.len() as u64);
     for row in combat {
+        h.bool(row.dual_wield);
         h.i32(row.fire_time_ms);
         h.i32(row.fire_delay_ms);
         h.i32(row.raise_time_ms);
@@ -117,6 +118,8 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         h.bool(row.inherits_perks);
         h.i32(row.sprint_raise_time_ms);
         h.i32(row.sprint_drop_time_ms);
+        h.i32(row.stunned_start_time_ms);
+        h.i32(row.stunned_end_time_ms);
         h.i32(row.damage);
         h.i32(row.min_damage);
         h.f32(row.max_damage_range);
@@ -137,6 +140,7 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         h.bool(row.aim_down_sight);
         h.bool(row.no_ads_when_mag_empty);
         h.i32(row.ads_reload_trans_time_ms);
+        h.bool(row.can_hold_breath);
         h.f32(row.ads_in_rate);
         h.f32(row.ads_out_rate);
         h.bool(row.rechamber_while_ads);
@@ -213,6 +217,7 @@ fn hash_equipment(h: &mut Digest, rows: &[crate::EquipmentRuntimeFacts]) {
         h.i32(row.start_ammo);
         h.i32(row.clip_size);
         h.i32(row.impact_damage);
+        h.u32(row.impact_payload_weapon);
         h.i32(row.fuse_time_ms);
         h.i32(row.hold_fire_time_ms);
         h.bool(row.cook_off_hold);
@@ -265,6 +270,29 @@ fn hash_script_models(h: &mut Digest, script_models: &[crate::EntityCollisionCap
             h.bytes(dobj.current_model.as_bytes());
             h.u32(dobj.model_revision);
             h.u32(dobj.pose_revision);
+            let brushes = dobj
+                .capability
+                .as_ref()
+                .map_or(&[][..], |c| c.movement_brushes.as_slice());
+            h.u32(brushes.len() as u32);
+            if !brushes.is_empty() {
+                for value in dobj.world_from_model.to_cols_array() {
+                    h.f32(value);
+                }
+            }
+            for brush in brushes {
+                h.u32(brush.contents);
+                h.u32(brush.planes.len() as u32);
+                for plane in &brush.planes {
+                    for value in plane {
+                        h.f32(*value);
+                    }
+                }
+                h.u32(brush.plane_surface_flags.len() as u32);
+                for flags in &brush.plane_surface_flags {
+                    h.u32(*flags);
+                }
+            }
             let bones = dobj
                 .current_collision
                 .as_ref()
@@ -295,8 +323,20 @@ fn hash_script_models(h: &mut Digest, script_models: &[crate::EntityCollisionCap
     }
 }
 
+fn hash_penetration(h: &mut Digest, penetration: &[weapon_iw4::BulletPenFacts]) {
+    h.u64(penetration.len() as u64);
+    for row in penetration {
+        h.i32(row.penetrate_type);
+        h.f32(row.penetrate_multiplier);
+        h.bool(row.rifle_bullet);
+        h.f32(row.ricochet_chance);
+        h.bool(row.explosive_bullet);
+    }
+}
+
 pub fn content_digest(
     combat: &[WeaponCombatFacts],
+    penetration: &[weapon_iw4::BulletPenFacts],
     runnable: &[bool],
     transition_groups: &[u32],
     equipment: &[crate::EquipmentRuntimeFacts],
@@ -307,6 +347,7 @@ pub fn content_digest(
     let mut h = Digest::new();
     h.u64(CONTENT_DIGEST_SCHEME);
     hash_combat(&mut h, combat);
+    hash_penetration(&mut h, penetration);
     hash_weapon_admission(&mut h, runnable, transition_groups);
     hash_equipment(&mut h, equipment);
     hash_class_catalog(&mut h);
@@ -329,6 +370,7 @@ pub struct ContentComponents {
 
 pub fn content_components(
     combat: &[WeaponCombatFacts],
+    penetration: &[weapon_iw4::BulletPenFacts],
     runnable: &[bool],
     transition_groups: &[u32],
     equipment: &[crate::EquipmentRuntimeFacts],
@@ -352,6 +394,7 @@ pub fn content_components(
 
     let mut weapons = component(b'W');
     hash_combat(&mut weapons, combat);
+    hash_penetration(&mut weapons, penetration);
     hash_weapon_admission(&mut weapons, runnable, transition_groups);
     hash_equipment(&mut weapons, equipment);
 

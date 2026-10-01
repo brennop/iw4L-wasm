@@ -169,13 +169,13 @@ pub fn check(
         push_off_ladder(ps, pml, launch.jump_ladder_push_vel);
     }
 
-    JumpCheckResult::Launched {
-        animation: if cmd.forwardmove >= 0 {
-            JumpAnimation::Forward
-        } else {
-            JumpAnimation::Backward
-        },
-    }
+    let animation = if cmd.forwardmove >= 0 {
+        JumpAnimation::Forward
+    } else {
+        JumpAnimation::Backward
+    };
+    pml.record_jump_animation(animation, true);
+    JumpCheckResult::Launched { animation }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

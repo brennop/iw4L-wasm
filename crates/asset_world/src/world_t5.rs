@@ -37,6 +37,8 @@ const MATERIAL_OFF: usize = 0x30;
 const LIGHTMAP_INDEX_OFF: usize = 0x34;
 const REFLECTION_PROBE_OFF: usize = 0x35;
 const PRIMARY_LIGHT_OFF: usize = 0x36;
+const SURFACE_FLAGS_OFF: usize = 0x37;
+const DRAW_SURF_CASTS_SUN_SHADOW: u64 = 1 << 20;
 
 const T5_CPLANE: usize = 20;
 const T5_GFX_CELL: usize = 56;
@@ -225,7 +227,7 @@ pub fn build_t5_world_draw(
     let mut surface_reflection_probes = Vec::with_capacity(geometry.surface_count);
     let mut surface_lightmap_indices = Vec::with_capacity(geometry.surface_count);
     let mut surface_draw_fields = Vec::with_capacity(geometry.surface_count);
-    let surface_casts_sun_shadow = SurfaceCastsSunShadow::with_len(geometry.surface_count);
+    let mut surface_casts_sun_shadow = SurfaceCastsSunShadow::with_len(geometry.surface_count);
     let mut skipped_surfaces = 0usize;
     let mut skipped_sky_surfaces = 0usize;
     let mut sky_material: Option<usize> = None;
@@ -280,6 +282,14 @@ pub fn build_t5_world_draw(
                 .map_err(|_| WorldMeshError::NoGeometry)?,
         );
         surface_lightmap_indices.push(lightmap_index.min(255) as u8);
+        let surface_flags = s
+            .u8_at(surface, SURFACE_FLAGS_OFF)
+            .map_err(|_| WorldMeshError::NoGeometry)?;
+        if surface_flags & 1 != 0
+            && authored.is_some_and(|m| m.draw_surf & DRAW_SURF_CASTS_SUN_SHADOW != 0)
+        {
+            surface_casts_sun_shadow.set(i);
+        }
         surface_draw_fields.push(SurfaceDrawFields {
             first_vertex: first_vertex as u32,
             tri_count: tri_count as u16,
@@ -357,7 +367,7 @@ pub fn build_t5_world_draw(
         min,
         max,
 
-        bounds: None,
+        bounds: geometry.bounds.map(|bits| bits.map(f32::from_bits)),
     };
 
     let lightmap = if geometry.lightmap_count == 0 {
@@ -509,6 +519,7 @@ pub fn build_t5_world_draw(
                 })
                 .collect(),
             sun_primary_light_count: geometry.sun_primary_light_index as u32,
+            sun_stages: Vec::new(),
             light_region_hulls: None,
             shadow_geometry: Vec::new(),
             reflection_probes,

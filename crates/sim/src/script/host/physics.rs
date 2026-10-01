@@ -1,6 +1,6 @@
-use super::args::{arg, string, vector};
+use super::args::{arg, float, string, vector};
 use crate::frame::FrameWorld;
-use crate::script::Namespace::Method;
+use crate::script::Namespace::{Function, Method};
 use crate::script::{NativeRegistry, Runtime, Value};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
@@ -38,6 +38,52 @@ fn usable<'a>(
 }
 
 pub(crate) fn register(registry: &mut NativeRegistry) {
+    registry.register(Function, "physicsexplosionsphere", |world, _, args| {
+        if args.len() != 4 {
+            return Err(
+                "PhysicsExplosionSphere requires origin, outer radius, inner radius and magnitude"
+                    .into(),
+            );
+        }
+        let center = vector(args, 0)?;
+        let outer = float(args, 1)?;
+        let inner = float(args, 2)?;
+        let magnitude = float(args, 3)?;
+        if center.iter().any(|v| !v.is_finite())
+            || !outer.is_finite()
+            || !inner.is_finite()
+            || !magnitude.is_finite()
+            || inner < 0.0
+            || outer < inner
+        {
+            return Err(
+                "physics sphere requires finite values and 0 <= inner radius <= outer radius"
+                    .into(),
+            );
+        }
+        world.resource_scope::<super::mechanics::Mechanics, _>(|world, mut mechanics| {
+            mechanics.explode(
+                &mut world.resource_mut::<Runtime>(),
+                center,
+                outer,
+                inner,
+                magnitude,
+            );
+        });
+        let tick = world.resource::<crate::step::StepRequest>().tick;
+        FrameWorld::from_world(world).push_entity_event(
+            tick,
+            crate::EventAudience::All,
+            entity_iw4::EntityEventKind::PHYS_EXPLOSION_SPHERE,
+            crate::EntityEventPayload {
+                number: i32::from(trace_iw4::ENTITYNUM_WORLD),
+                origin: center,
+                origin2: [outer, inner, magnitude],
+                ..Default::default()
+            },
+        );
+        Ok(Value::Undefined)
+    });
     for name in ["physicslaunchserver", "physicslaunchclient"] {
         registry.register(Method, name, |world, receiver, args| {
             let object = object_of(world, receiver)?;
@@ -86,19 +132,32 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
 }
 
 pub(crate) fn select_usables(world: &mut World) {
-    let usables: Vec<(u64, [f32; 3], super::entities::Usable)> = {
+    super::triggers::refresh_claims(world);
+    let usables: Vec<(
+        u64,
+        [f32; 3],
+        super::entities::Usable,
+        super::triggers::TriggerPolicy,
+    )> = {
         let mut runtime = world.resource_mut::<Runtime>();
-        let candidates: Vec<(u64, super::entities::Usable)> = runtime
-            .entities
-            .iter()
-            .filter(|(_, e)| !e.hidden)
-            .filter_map(|(object, e)| Some((*object, e.usable.clone().filter(|u| u.enabled)?)))
-            .collect();
+        let candidates: Vec<(u64, super::entities::Usable, super::triggers::TriggerPolicy)> =
+            runtime
+                .entities
+                .iter()
+                .filter(|(_, e)| !e.hidden)
+                .filter_map(|(object, e)| {
+                    Some((
+                        *object,
+                        e.usable.clone().filter(|u| u.enabled)?,
+                        e.trigger_policy.clone(),
+                    ))
+                })
+                .collect();
         candidates
             .into_iter()
             .filter_map(
-                |(object, usable)| match runtime.object_field(object, "origin") {
-                    Value::Vector(at) => Some((object, at, usable)),
+                |(object, usable, policy)| match runtime.object_field(object, "origin") {
+                    Value::Vector(at) => Some((object, at, usable, policy)),
                     _ => None,
                 },
             )
@@ -129,8 +188,10 @@ pub(crate) fn select_usables(world: &mut World) {
         ];
         let nearest = usables
             .iter()
-            .filter(|(_, _, usable)| !usable.barred.contains(&client))
-            .map(|(object, at, usable)| {
+            .filter(|(_, _, usable, policy)| {
+                !usable.barred.contains(&client) && policy.allows(&frame, client)
+            })
+            .map(|(object, at, usable, _)| {
                 let d2: f32 = (0..3).map(|i| (at[i] - eye[i]).powi(2)).sum();
                 (d2, *object, usable)
             })

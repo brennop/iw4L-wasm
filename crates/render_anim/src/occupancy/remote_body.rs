@@ -47,6 +47,7 @@ pub struct RemotePlayer {
     pub ffa_team: Option<u8>,
 
     pub client_state_team: i32,
+    pub shield: Option<sim::ShieldAttachment>,
 }
 
 #[derive(Component, Default)]
@@ -230,8 +231,9 @@ fn occupy_remote_scene_ents(
         let ffa_team = meta.and_then(|m| m.ffa_team);
         let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
         let axis = asset_model::kit_assignment_is_axis(client_state_team, ffa_team);
+        let shield = meta.and_then(|meta| meta.shield);
         let held = remote_pose_sample(runtime).weapon;
-        let (kit_models, radius, hide_part_bits) = match live_kits {
+        let (kit_models, radius, hide_part_bits) = match live_kits.filter(|_| shield.is_none()) {
             Some((kits, world)) => {
                 let Some(kit) = kits.get(axis, held) else {
                     continue;
@@ -249,6 +251,7 @@ fn occupy_remote_scene_ents(
                     axis,
                     held,
                     true,
+                    shield,
                 ) else {
                     continue;
                 };
@@ -354,8 +357,10 @@ fn sync_remote_bodies(
             .and_then(|snap| snap.meta.for_client(client));
         let ffa_team = meta.and_then(|m| m.ffa_team);
         let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
-        let Some(kit) = kits.kit(asset_model::kit_assignment_is_axis(client_state_team, ffa_team))
-        else {
+        let Some(kit) = kits.kit(asset_model::kit_assignment_is_axis(
+            client_state_team,
+            ffa_team,
+        )) else {
             if remote.is_some() {
                 commands
                     .entity(entity)
@@ -390,6 +395,7 @@ fn sync_remote_bodies(
         let marker = RemotePlayer {
             ffa_team,
             client_state_team,
+            shield: meta.and_then(|meta| meta.shield),
         };
         if remote.is_some() {
             commands.entity(entity).insert((pose, marker));
@@ -762,7 +768,8 @@ impl<'a> RemotePoseFrame<'a> {
         let world_gun_gap = &mut self.world_gun_gap;
         let result = (|| {
             let origin = transform.translation.to_array();
-            let model_set = select_remote_models(bodies, weapons, world_weapons, axis, weapon)?;
+            let model_set =
+                select_remote_models(bodies, weapons, world_weapons, axis, weapon, remote.shield)?;
             let advanced = advance_remote_tree(
                 tree,
                 self.script,

@@ -365,6 +365,10 @@ pub struct XModelGeometry {
     pub contents: u32,
 
     pub radius: Option<f32>,
+
+    pub collision_maps: Option<Ptr>,
+
+    pub collision_map_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -549,6 +553,8 @@ pub struct GfxWorldGeometry {
     pub smodel_insts: Option<Ptr>,
     pub smodel_draw_insts: Option<Ptr>,
     pub dpvs_static: Option<Ptr>,
+
+    pub bounds: Option<[u32; 6]>,
 }
 
 #[derive(Clone, Copy, Debug)]

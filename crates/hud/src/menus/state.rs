@@ -55,6 +55,10 @@ impl ScriptMenus {
         Some((&menu.name, menu.focus?))
     }
 
+    pub fn focused_item_in(&self, name: &str) -> Option<usize> {
+        self.stack.get(self.position(name)?)?.focus
+    }
+
     pub(crate) fn position(&self, name: &str) -> Option<usize> {
         self.stack
             .iter()

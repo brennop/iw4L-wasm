@@ -184,7 +184,6 @@ pub(crate) fn resume_lifecycle_commands(
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct DebugPosOverlay(pub bool);
 
-
 pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[String]) {
     if registry.resolve("map").is_none() {
         registry.register(
@@ -281,7 +280,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {
@@ -398,4 +397,3 @@ fn parse_finite(s: &String) -> Result<f32, String> {
         .filter(|v| v.is_finite())
         .ok_or_else(|| format!("bot: not a finite number `{s}`"))
 }
-

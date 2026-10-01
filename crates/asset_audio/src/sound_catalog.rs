@@ -646,6 +646,24 @@ impl SoundCatalog {
         self.loaded.push(loaded);
     }
 
+    pub fn script_alias_looping(&self) -> std::collections::BTreeMap<String, Option<bool>> {
+        self.sounds
+            .iter()
+            .flat_map(|sound| {
+                let namespace = ns_of(sound.game);
+                let name = sound.name.to_ascii_lowercase();
+                let looping = sound
+                    .aliases
+                    .first()
+                    .and_then(CapturedAlias::decoded_flags)
+                    .map(SndAliasFlags::looping);
+                let qualified = format!("{}:{name}", namespace.as_str());
+                std::iter::once((qualified, looping))
+                    .chain((namespace == AssetNamespace::Iw4).then_some((name, looping)))
+            })
+            .collect()
+    }
+
     pub fn index_in(&self, ns: AssetNamespace, alias: &str) -> Option<usize> {
         if let Some(&i) = self.by_alias.get(&(ns, alias.to_owned())) {
             return Some(i);

@@ -355,6 +355,8 @@ pub struct WorldDraw {
 
     pub sun_primary_light_count: u32,
 
+    pub sun_stages: Vec<crate::MapSunStage>,
+
     pub light_region_hulls: Option<Vec<Vec<WorldLightRegionHull>>>,
 
     pub shadow_geometry: Vec<WorldShadowGeometry>,
@@ -903,6 +905,7 @@ pub fn build_world_draw(
             primary_lights,
             light_defs,
             sun_primary_light_count: geometry.sun_primary_light_count as u32,
+            sun_stages: crate::sun_stages(s),
             light_region_hulls,
             shadow_geometry,
             reflection_probes,

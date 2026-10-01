@@ -228,11 +228,13 @@ pub fn apply_prepared_match(
             script_level,
             script_entries,
             script_dvars,
+            script_sound_aliases,
             objective_weapons,
             kind,
             gametype,
             scene: loaded_scene,
             weapons,
+            killstreaks,
             fpv_meshes,
             bodies,
             world_weapons,
@@ -286,6 +288,7 @@ pub fn apply_prepared_match(
         let mut sim_cam = *sim_cam;
         let mut input_gate = *input_gate;
         let mut content = sim::SimContentBuilder::default();
+        content.set_script_sound_aliases(script_sound_aliases);
         let mut sim = sim::SimWorld::new();
         content.set_weapon_def_scales(weapons.0.scales_table());
         let combat = combat_table::from_registry(&weapons.0, lochit_table);
@@ -300,17 +303,31 @@ pub fn apply_prepared_match(
             player_kit_collision(&bodies.0, true),
         );
         if let Some(Ok(tree)) = player_anim_sources.compiled() {
-            if let Ok(definition) = tree.to_runtime_definition(|_, name| {
-                let kit = bodies.0.kits().kit(false)?;
-                let body = bodies.0.get(&kit.body)?;
-                xanims
-                    .0
-                    .body_clip(body.namespace, name, &body.skel.bone_names)
-            }) {
-                let names = tree.nodes().iter().map(|node| node.name.clone()).collect();
-                content.set_player_anim_tree(Some(definition), names);
+            for axis in [false, true] {
+                if let Ok(definition) = tree.to_runtime_definition(|_, name| {
+                    let kit = bodies.0.kits().kit(axis)?;
+                    let body = bodies.0.get(&kit.body)?;
+                    xanims
+                        .0
+                        .body_clip(body.namespace, name, &body.skel.bone_names)
+                }) {
+                    if axis {
+                        content.set_player_axis_anim_tree(Some(definition));
+                    } else {
+                        let names = tree.nodes().iter().map(|node| node.name.clone()).collect();
+                        content.set_player_anim_tree(Some(definition), names);
+                    }
+                }
+            }
+            if let Some(Ok(parsed)) = player_anim_sources.parsed_script() {
+                content.set_player_anim_properties(
+                    (0..tree.nodes().len())
+                        .map(|index| parsed.animation_properties(index as u16))
+                        .collect(),
+                );
             }
         }
+
         let anim_namespace = prepared_map
             .namespace
             .unwrap_or(asset_core::AssetNamespace::Iw4);
@@ -359,6 +376,21 @@ pub fn apply_prepared_match(
                         base: family.base.clone(),
                         attachments: selection.attachments.clone(),
                     })
+                })
+                .collect(),
+        );
+        content.set_shield_models(
+            (0..=weapons.0.len())
+                .map(|index| {
+                    let weapon = index as u32;
+                    (weapons.0.facts_of(weapon)?.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+                        .then_some(())?;
+                    weapons
+                        .0
+                        .world_model_entry(weapon, &world_weapons.0)?
+                        .skel
+                        .retained_capability()
+                        .map(Arc::new)
                 })
                 .collect(),
         );
@@ -506,6 +538,7 @@ pub fn apply_prepared_match(
         )
         .map_err(|error| InstallRefusal::new(format!("Invalid content manifest: {error:?}")))?;
         stage_resource(&mut install, weapons);
+        stage_resource(&mut install, killstreaks);
 
         let components = sim.content_components();
         diag::info!(
@@ -642,11 +675,13 @@ struct MatchInstallPlan {
     script_level: sim::script::LevelData,
     script_entries: Vec<String>,
     script_dvars: Vec<(String, String)>,
+    script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
     objective_weapons: Vec<(String, u32)>,
     kind: gamemode_iw4::GameModeKind,
     gametype: &'static str,
     scene: WorldScene,
     weapons: PreparedWeapons,
+    killstreaks: assets::prepared::PreparedKillstreaks,
     fpv_meshes: PreparedFpvMeshes,
     bodies: assets::PreparedBodies,
     world_weapons: assets::PreparedWorldWeapons,
@@ -758,6 +793,36 @@ fn preflight_match_install(
     catalog: Option<&asset_game::MenuCatalog>,
     identity: Option<&LaunchIdentity>,
 ) -> Result<MatchInstallPlan, InstallRefusal> {
+    let killstreaks = assets::prepared::PreparedKillstreaks(
+        prepared
+            .scripts
+            .tables()
+            .get("mp/killstreaktable.csv")
+            .map_or_else(Vec::new, |table| {
+                let mut names: Vec<String> = (0..table.rows)
+                    .filter_map(|row| {
+                        let cells = table
+                            .cells
+                            .get(row * table.columns..(row + 1) * table.columns)?;
+                        cells.get(4)?.parse::<i32>().ok()?;
+                        let weapon = cells.get(12)?;
+                        if weapon.is_empty()
+                            || prepared.weapons.resolve_index(weapon).ok().flatten()? == 0
+                        {
+                            return None;
+                        }
+                        let name = cells.get(1)?;
+                        (!name.is_empty()
+                            && name != "none"
+                            && sim::menu_response_field(name).is_some())
+                        .then(|| name.clone())
+                    })
+                    .collect();
+                names.sort();
+                names.dedup();
+                names
+            }),
+    );
     let weapons = PreparedWeapons(prepared.weapons);
     let fpv_meshes = PreparedFpvMeshes(prepared.fpv_meshes);
     let bodies = assets::PreparedBodies(prepared.bodies);
@@ -944,6 +1009,12 @@ fn preflight_match_install(
             Vec::new()
         }
     };
+    if !script_dvars
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("onlinegame"))
+    {
+        script_dvars.push(("onlinegame".into(), "1".into()));
+    }
     script_dvars.push(("mapname".into(), zone.to_owned()));
     script_dvars.push(("g_gametype".into(), gametype.to_owned()));
     script_dvars.push(("sv_maxclients".into(), "18".into()));
@@ -1001,6 +1072,7 @@ fn preflight_match_install(
         ));
     }
     Ok(MatchInstallPlan {
+        script_sound_aliases: prepared.script_sound_aliases,
         scripts,
         script_level,
         script_entries,
@@ -1010,6 +1082,7 @@ fn preflight_match_install(
         gametype,
         scene,
         weapons,
+        killstreaks,
         fpv_meshes,
         bodies,
         world_weapons,
@@ -1269,11 +1342,11 @@ fn authority_entity_model_install(world: &assets::PreparedWorld) -> AuthorityEnt
                 retained(world.map_xmodel_scene_assets.get(&instance.current_model)),
                 instance.transform.to_matrix(),
             );
+            dobj.semantic_state.hide_part_bits = instance.dobj_state.hide_part_bits;
+            dobj.pose_request.hide_part_bits = instance.dobj_state.hide_part_bits;
             if let Some(definition) = &instance.metadata.t5_destructible {
                 sim::t5_destructible::install(&mut dobj, definition.clone());
             }
-            dobj.semantic_state.hide_part_bits = instance.dobj_state.hide_part_bits;
-            dobj.pose_request.hide_part_bits = instance.dobj_state.hide_part_bits;
             sim::EntityCollisionCapabilities::current_tick(owner, Some(dobj), Vec::new())
         })
         .collect();

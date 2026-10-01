@@ -1166,6 +1166,81 @@ pub fn trigger_models(s: &ZoneStream<'_>) -> Vec<Vec<MapTriggerHull>> {
         .collect()
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapSunStage {
+    pub origin: [f32; 3],
+    pub trigger: Vec<MapTriggerHull>,
+    pub sun_primary_light: u8,
+}
+
+impl MapSunStage {
+    pub fn contains(&self, point: [f32; 3]) -> bool {
+        let p: [f32; 3] = std::array::from_fn(|i| point[i] - self.origin[i]);
+        self.trigger.iter().any(|hull| {
+            (0..3).all(|i| (p[i] - hull.mid[i]).abs() <= hull.half[i])
+                && hull.slabs.iter().all(|&(dir, at, width)| {
+                    let along: f32 = (0..3).map(|i| dir[i] * p[i]).sum();
+                    (along - at).abs() <= width
+                })
+        })
+    }
+}
+
+pub fn sun_stages(s: &ZoneStream<'_>) -> Vec<MapSunStage> {
+    let Some(geo) = s.map_ents() else {
+        return Vec::new();
+    };
+    let Some(stages) = geo.stages else {
+        return Vec::new();
+    };
+    let stride = s.layout(asset_iw4::size::STAGE, 24);
+    let ptr = s.layout(4, 8);
+    (0..geo.stage_count)
+        .map_while(|n| {
+            let stage = stages.at(n * stride);
+            let origin = [
+                s.f32_at(stage, ptr).ok()?,
+                s.f32_at(stage, ptr + 4).ok()?,
+                s.f32_at(stage, ptr + 8).ok()?,
+            ];
+            let trigger = usize::from(s.u16_at(stage, ptr + 12).ok()?);
+            Some(MapSunStage {
+                origin,
+                trigger: capture_trigger_hulls(s, geo, trigger).unwrap_or_default(),
+                sun_primary_light: s.u8_at(stage, ptr + 14).ok()?,
+            })
+        })
+        .collect()
+}
+
+pub fn sun_stages_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<MapSunStage> {
+    let Some(clip) = s.clip_map() else {
+        return Vec::new();
+    };
+    let Some(stages) = clip.stages else {
+        return Vec::new();
+    };
+    let stride = s.layout(fastfile_iw5::size::STAGE, 24);
+    let ptr = s.layout(4, 8);
+    (0..clip.stage_count)
+        .map_while(|n| {
+            let stage = stages.at(n * stride);
+            let origin = [
+                s.f32_at(stage, ptr).ok()?,
+                s.f32_at(stage, ptr + 4).ok()?,
+                s.f32_at(stage, ptr + 8).ok()?,
+            ];
+            let trigger = usize::from(s.u16_at(stage, ptr + 12).ok()?);
+            Some(MapSunStage {
+                origin,
+                trigger: capture_iw5_trigger_hulls(s, clip.stage_trigger, trigger)
+                    .unwrap_or_default(),
+                sun_primary_light: s.u8_at(stage, ptr + 14).ok()?,
+            })
+        })
+        .collect()
+}
+
 pub fn trigger_models_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<Vec<MapTriggerHull>> {
     let Some(geo) = s.map_ents() else {
         return Vec::new();

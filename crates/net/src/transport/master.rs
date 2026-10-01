@@ -155,6 +155,7 @@ struct MasterTarget {
 #[derive(Clone, Debug)]
 #[cfg_attr(not(online), allow(dead_code))]
 struct HostConfig {
+    password: String,
     auto_start_map: bool,
     target: MasterTarget,
     name: String,
@@ -168,6 +169,7 @@ struct HostConfig {
 #[derive(Clone, Debug)]
 #[cfg_attr(not(online), allow(dead_code))]
 struct JoinConfig {
+    password: String,
     target: MasterTarget,
     advert_id: AdvertId,
     map: String,
@@ -243,6 +245,7 @@ impl MasterLaunchIntent {
         match (host, join) {
             (Some(name), None) if !name.trim().is_empty() => {
                 Ok(Self(MasterLaunchMode::Host(HostConfig {
+                    password: std::env::var("IW4L_MASTER_PASSWORD").unwrap_or_default(),
                     auto_start_map: true,
                     target,
                     name,
@@ -254,6 +257,7 @@ impl MasterLaunchIntent {
                 })))
             }
             (None, Some(advert_id)) => Ok(Self(MasterLaunchMode::Join(JoinConfig {
+                password: std::env::var("IW4L_MASTER_PASSWORD").unwrap_or_default(),
                 target,
                 advert_id: advert_id.parse()?,
                 map: map.to_owned(),
@@ -295,6 +299,8 @@ pub struct MasterAdvert {
     pub locked: bool,
     pub in_match: bool,
     pub requires: ContentFlags,
+    pub available: ContentFlags,
+    pub password_protected: bool,
     pub missing: ContentFlags,
 }
 
@@ -338,11 +344,16 @@ impl Drop for MasterBrowser {
 #[derive(Clone, Debug)]
 pub enum MasterMenuAction {
     Refresh,
+    SetPassword {
+        password: String,
+    },
     Host {
+        password: String,
         map: String,
         mode: String,
     },
     Join {
+        password: String,
         advert_id: AdvertId,
         map: String,
         mode: String,
@@ -362,6 +373,9 @@ pub enum MasterMenuAction {
 #[derive(Clone, Debug)]
 #[cfg_attr(not(online), allow(dead_code))]
 enum MasterBridgeCommand {
+    SetPassword {
+        password: String,
+    },
     UpdateLobby {
         map: String,
         mode: String,

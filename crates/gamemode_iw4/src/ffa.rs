@@ -16,28 +16,6 @@ pub const SPAWN_CLASSNAME: &str = "mp_dm_spawn";
 
 pub const START_SPAWN_CLASSNAME: &str = "mp_dm_spawn_start";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatchEndCause {
-    ScoreLimit,
-
-    TimeLimit,
-}
-
-pub const fn match_end_cause(
-    highest_score: i32,
-    score_limit: i32,
-    elapsed_ms: u32,
-    time_limit_ms: u32,
-) -> Option<MatchEndCause> {
-    if score_limit > 0 && highest_score >= score_limit {
-        return Some(MatchEndCause::ScoreLimit);
-    }
-    if time_limit_ms > 0 && elapsed_ms >= time_limit_ms {
-        return Some(MatchEndCause::TimeLimit);
-    }
-    None
-}
-
 pub const fn ffa_player_is_better(
     challenger_score: i32,
     challenger_deaths: i32,

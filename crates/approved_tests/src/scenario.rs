@@ -91,7 +91,7 @@ pub fn scene_commands(scene: &Scene, place: ResolvedPlace) -> Vec<String> {
     out.push("wait 2t".into());
     out.push("mark {phase}.spawned".into());
     if let Some(weapon) = &scene.weapon {
-        out.push(format!("give {}", weapon.give));
+        out.push(format!("give weapon/{}", weapon.give));
         out.push("wait 2t".into());
     }
     for input in scene.hold {

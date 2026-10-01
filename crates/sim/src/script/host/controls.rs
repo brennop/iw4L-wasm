@@ -13,7 +13,7 @@ mod pof {
     pub const REMOTE_CAMERA_SOUNDS: u32 = 0x20;
     pub const ALT_SCENE_REAR_VIEW: u32 = 0x40;
     pub const EMP_JAMMED: u32 = 0x400;
-    pub const AC130: u32 = 0x8000;
+    pub const AC130: u32 = playerstate_iw4::other_flags::AC130;
 }
 
 const POINT_LOCK: u8 = 0x40;
@@ -183,10 +183,14 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "stunplayer", |world, receiver, args| {
         let client = player(world, receiver)?;
-        let on = truthy(args, 0)?;
-        let mut frame = FrameWorld::from_world(world);
-        if frame.client_meta(ClientId(client)).is_some() {
-            frame.client_meta_mut(ClientId(client)).controls.stunned = on;
+        let seconds = float(args, 0)?;
+        let duration = (seconds * 1000.0 + 0.5).floor();
+        if !duration.is_finite() || duration < 0.0 || duration > i32::MAX as f32 {
+            return Err(format!("invalid stun duration {seconds}"));
+        }
+        let now = crate::level_time_ms(world.resource::<crate::step::StepRequest>().tick);
+        if let Some(ps) = FrameWorld::from_world(world).player_mut(ClientId(client)) {
+            ps.stun_time = now.wrapping_add(duration as i32);
         }
         Ok(Value::Undefined)
     });

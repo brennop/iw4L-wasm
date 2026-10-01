@@ -65,6 +65,8 @@ pub struct BulletPenFacts {
     pub penetrate_multiplier: f32,
 
     pub rifle_bullet: bool,
+    pub ricochet_chance: f32,
+    pub explosive_bullet: bool,
 }
 
 impl Default for BulletPenFacts {
@@ -73,6 +75,8 @@ impl Default for BulletPenFacts {
             penetrate_type: 0,
             penetrate_multiplier: 1.0,
             rifle_bullet: false,
+            ricochet_chance: 0.0,
+            explosive_bullet: false,
         }
     }
 }

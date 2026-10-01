@@ -92,6 +92,29 @@ pub fn sample_killcam_seat(
     session: &KillcamSession,
     now_ms: i32,
 ) -> Option<SeatSample> {
+    if session.killcamoffset_ms == 0 {
+        let target = snapshot_now
+            .players
+            .iter()
+            .find(|(id, _)| *id == session.focus_client)?
+            .1;
+        let mut player_state = target;
+        player_state.pm_type = playerstate_iw4::PM_TYPE_SPECTATOR;
+        player_state.other_flags &= !(playerstate_iw4::other_flags::PLAYER
+            | playerstate_iw4::other_flags::DEAD_KILLCAM_TPV);
+        player_state.kill_cam_entity = playerstate_iw4::ENTITYNUM_NONE;
+        player_state.kill_cam_look_at_entity = playerstate_iw4::ENTITYNUM_NONE;
+        player_state.kill_cam_client_num = session.focus_client.0 as i32;
+        player_state.delta_time = 0;
+        return Some(SeatSample {
+            player_state,
+            lookup: ArchiveLookup {
+                attained_ms: 0,
+                tick: None,
+            },
+            rebase_ms: 0,
+        });
+    }
     let lookup = archive.lookup(session.archivetime_ms);
     if lookup.nothing_to_show() {
         return None;
@@ -207,6 +230,11 @@ fn seat_snapshot(
             .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
     {
         return (live.clone(), None);
+    }
+    if session.killcamoffset_ms == 0 {
+        let mut out = live.clone();
+        let sample = apply_seat_to_snapshot(archive, &mut out, viewer, session, now_ms);
+        return (out, sample);
     }
     let lookup = archive.lookup(session.archivetime_ms);
     let mut out = match lookup.tick.and_then(|tick| archive.frame(tick)) {

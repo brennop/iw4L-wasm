@@ -12,4 +12,18 @@ pub struct Pml {
     pub previous_origin: [f32; 3],
     pub previous_velocity: [f32; 3],
     pub holdrand: i32,
+    pub jump_animations: [Option<(crate::JumpAnimation, bool)>; 4],
+    pub mantle_movetype: Option<u8>,
+    pub landing_animation: bool,
+}
+
+impl Pml {
+    pub(crate) fn record_jump_animation(&mut self, animation: crate::JumpAnimation, force: bool) {
+        let slot = self
+            .jump_animations
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .expect("at most four jump animation producers per movement step");
+        *slot = Some((animation, force));
+    }
 }

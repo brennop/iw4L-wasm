@@ -122,5 +122,6 @@ pub(crate) fn install_level(
         .resource_mut::<Runtime>()
         .spawn_map_entities(&entities, &keys)
         .map_err(|m| Fault::at(&location, m))?;
+    host::presence::initialize_map_models(world);
     Ok(())
 }

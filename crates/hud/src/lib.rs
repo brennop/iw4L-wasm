@@ -1,5 +1,6 @@
 mod ammo;
 mod blood;
+mod breath_hint;
 mod chrome;
 mod compass;
 mod draw2d;

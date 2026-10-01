@@ -85,6 +85,7 @@ pub fn pass_lowering_abi(abi: &PassProgramAbi, texture_binding: TextureBinding) 
             .map(|binding| SamplerSlot {
                 register: binding.register,
                 dimension: binding.dimension,
+                depth_compare: binding.depth_compare,
             })
             .collect(),
         alpha_tests: MATERIAL_ALPHA_TESTS.to_vec(),

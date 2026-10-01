@@ -131,6 +131,20 @@ impl VoiceOccupancy {
         }
     }
 
+    pub(crate) fn take_sound_entity(&mut self, snd_ent: u32) {
+        let entities: Vec<_> = self
+            .live
+            .iter()
+            .filter(|(_, lease)| lease.snd_ent == Some(snd_ent))
+            .map(|(entity, _)| *entity)
+            .collect();
+        for entity in entities {
+            self.reclaim(entity);
+        }
+        self.aliases
+            .retain(|_, lease| lease.snd_ent != Some(snd_ent));
+    }
+
     pub fn take_entity_channel(&mut self, snd_ent: u32, channel: u32) -> Vec<Entity> {
         let mut out = Vec::new();
         self.live.retain(|&entity, lease| {

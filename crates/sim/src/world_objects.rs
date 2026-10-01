@@ -38,6 +38,7 @@ pub struct WorldObjectSnapshot {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DestructibleLoopSound {
+    pub snd_ent: Option<u32>,
     pub owner: ScriptModelId,
     pub alias_index: u8,
     pub origin: [f32; 3],

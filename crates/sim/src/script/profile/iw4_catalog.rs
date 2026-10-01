@@ -542,6 +542,8 @@ pub(super) const IW4: &[Builtin] = &[
     Builtin::new(Method, "setautorotationdelay", Entity, false),
     Builtin::new(Method, "setblurforplayer", Player, false),
     Builtin::new(Method, "setbottomarc", Entity, false),
+    Builtin::new(Method, "damagepiece", Entity, false),
+    Builtin::new(Method, "piecestage", Entity, false),
     Builtin::new(Method, "setcandamage", ScriptMover, false),
     Builtin::new(Method, "setcanradiusdamage", ScriptMover, false),
     Builtin::new(Method, "setcarddisplayslot", PlayerCommand, false),

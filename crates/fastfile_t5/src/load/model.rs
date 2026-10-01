@@ -171,6 +171,8 @@ pub(super) fn load_xmodel(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         coll_lod: s.i16_at(p, 218)?,
         contents: s.u32_at(p, 180)?,
         radius: Some(s.f32_at(p, sz::XMODEL_RADIUS_OFF)?),
+        collision_maps: retained_ptr(sz::XMODEL_COLLMAPS_OFF)?,
+        collision_map_count: num_collmaps,
     });
 
     s.pop()
@@ -266,7 +268,8 @@ fn load_collmap(s: &mut ZoneStream<'_>, p: Ptr) -> Result<()> {
                 for i in 0..count {
                     let g = arr.at(i * sz::PHYS_GEOM_INFO);
                     if s.begin_body(g.at(0))? {
-                        load_brush_wrapper(s)?;
+                        let brush = load_brush_wrapper(s)?;
+                        s.fixup_slot(g.at(0), brush)?;
                     }
                 }
                 Ok(())
@@ -276,7 +279,7 @@ fn load_collmap(s: &mut ZoneStream<'_>, p: Ptr) -> Result<()> {
     Ok(())
 }
 
-fn load_brush_wrapper(s: &mut ZoneStream<'_>) -> Result<()> {
+fn load_brush_wrapper(s: &mut ZoneStream<'_>) -> Result<Ptr> {
     let p = s.with_align_site(AlignWasteSite::BrushWrapper, |s| {
         s.alloc_load(16, sz::BRUSH_WRAPPER)
     })?;
@@ -289,13 +292,14 @@ fn load_brush_wrapper(s: &mut ZoneStream<'_>) -> Result<()> {
         for i in 0..numsides {
             let sp = sides.at(i * sz::CBRUSH_SIDE);
             if s.begin_body(sp.at(0))? {
-                s.alloc_load(4, sz::CPLANE)?;
+                let plane = s.alloc_load(4, sz::CPLANE)?;
+                s.fixup_slot(sp.at(0), plane)?;
             }
         }
     }
     s.plain_array(p, sz::BRUSH_WRAPPER_VERTS_OFF, 4, 12, numverts)?;
     s.plain_array(p, sz::BRUSH_WRAPPER_PLANES_OFF, 4, sz::CPLANE, numsides)?;
-    Ok(())
+    Ok(p)
 }
 
 pub(super) fn load_phys_constraints(

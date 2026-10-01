@@ -61,6 +61,8 @@ pub struct PmoveSingleContext {
     pub old_buttons: u32,
 
     pub weapon_blocks_prone: bool,
+
+    pub can_hold_breath: bool,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -88,6 +90,9 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
         previous_origin: ps.origin,
         previous_velocity: ps.velocity,
         holdrand: holdrand(ps.viewangles[1], cmd.server_time),
+        jump_animations: [None; 4],
+        mantle_movetype: None,
+        landing_animation: false,
     };
 
     update_view_angles(ps, cmd, context.view_angles);
@@ -148,6 +153,7 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
     bounds.maxs[2] = sync_stance_tail(ps);
 
     update_ads_frac(ps, pml.msec, context.ads_frac);
+    crate::breath::update_hold_breath(ps, cmd.buttons, pml.msec, context.can_hold_breath);
 
     if ps.pm_type == PM_TYPE_NORMAL_LINKED {
         // The trigger link owns the origin: no walk, no air move, no jump, and
@@ -168,7 +174,7 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
     if (ps.pm_flags & pm_flags::MANTLE) == 0 {
         // Mantle root motion owns the path through the ledge. Ground solid
         // correction during that path would push the player back off it.
-        complete_ground_trace(ps, &mut pml, bounds, collision);
+        complete_ground_trace(ps, &mut pml, bounds, cmd.forwardmove, collision);
         let mut mantle_tracer = CollisionMantleTrace { collision, bounds };
         let _ = mantle::check(
             ps,
@@ -188,6 +194,7 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
     if (ps.pm_flags & pm_flags::MANTLE) != 0 {
         mantle::cap_view(ps, MantleCapViewContext::default());
         mantle::advance(ps, pml.msec, MantleMoveContext::default(), lengths, root);
+        pml.mantle_movetype = Some((mantle::active_xanim(ps, lengths) + 21) as u8);
         return PmoveResult {
             pml,
             bounds,
@@ -200,7 +207,7 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
 
     {
         let mut ladder_backend = CollisionLadderBackend { collision, bounds };
-        check_ladder_move(
+        if check_ladder_move(
             ps,
             CheckLadderContext {
                 server_time: cmd.server_time,
@@ -209,7 +216,9 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
                 forwardmove: cmd.forwardmove,
             },
             &mut ladder_backend,
-        );
+        ) {
+            pml.record_jump_animation(crate::JumpAnimation::Forward, true);
+        }
     }
 
     if (ps.pm_flags & pm_flags::LADDER) != 0 {
@@ -243,7 +252,7 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
         }
     }
 
-    complete_ground_trace(ps, &mut pml, bounds, collision);
+    complete_ground_trace(ps, &mut pml, bounds, cmd.forwardmove, collision);
 
     if (ps.pm_flags & pm_flags::LADDER) != 0 {
         ladder_footsteps(ps, pml.msec, cmd.server_time);

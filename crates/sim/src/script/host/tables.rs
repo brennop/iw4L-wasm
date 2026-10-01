@@ -3,6 +3,7 @@ use super::entities::table_key;
 use crate::script::{Runtime, StringTable, Value};
 use bevy_ecs::prelude::World;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub(super) fn table<'a>(
     tables: &'a BTreeMap<String, StringTable>,
@@ -47,4 +48,15 @@ pub(crate) fn table_lookup(world: &World, args: &[Value]) -> Result<String, Stri
         .and_then(|row| table.cell(row, result as usize))
         .unwrap_or("")
         .to_owned())
+}
+
+pub(crate) fn table_lookup_by_row(world: &World, args: &[Value]) -> Result<Arc<str>, String> {
+    let tables = world.resource::<Runtime>().tables.clone();
+    let name = string(args, 0)?;
+    let (row, column) = (int(args, 1)?, int(args, 2)?);
+    Ok(table(&tables, &name)
+        .filter(|_| row >= 0 && column >= 0)
+        .and_then(|t| t.cell(row as usize, column as usize))
+        .unwrap_or("")
+        .into())
 }

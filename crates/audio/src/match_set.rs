@@ -235,6 +235,21 @@ fn queue_match_clips(
         aliases += 1;
         request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
     }
+    let mut breath_namespaces = HashSet::new();
+    for weapon in 1..=weapons.0.len() as u32 {
+        if weapons
+            .0
+            .facts_of(weapon)
+            .is_some_and(|facts| facts.can_hold_breath)
+            && let Some(ns) = weapons.0.namespace_of(weapon)
+            && breath_namespaces.insert(ns)
+        {
+            for alias in crate::breath::aliases(ns) {
+                aliases += 1;
+                request_named(clips, &bank.0, ns, alias, &mut set);
+            }
+        }
+    }
     for alias in &type10.0 {
         aliases += 1;
         request_fx_type10(clips, &bank.0, alias, &mut set);

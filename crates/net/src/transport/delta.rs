@@ -159,17 +159,22 @@ impl SnapshotDecoder {
             decode_player(&mut input, &mut state)?;
             players.push((client, state));
         }
-        let projectile_delta = decode_projectile_delta(&mut input, &mut self.projectile_baseline)?;
-        self.last_projectile_delta = projectile_delta.clone();
-        let mut projectiles: Vec<_> = self.projectile_baseline.values().copied().collect();
-        projectiles.sort_by_key(|p| p.id.0);
-
+        let projectile_delta = decode_projectile_delta(&mut input)?;
         if !input.is_empty() {
             return Err(WireError::Malformed(
                 "trailing bytes after the projectile entity delta",
             ));
         }
 
+        for projectile in &projectile_delta.changed {
+            self.projectile_baseline.insert(projectile.id, *projectile);
+        }
+        for id in &projectile_delta.removed {
+            self.projectile_baseline.remove(id);
+        }
+        let mut projectiles: Vec<_> = self.projectile_baseline.values().copied().collect();
+        projectiles.sort_by_key(|p| p.id.0);
+        self.last_projectile_delta = projectile_delta;
         self.baseline = players.clone();
         Ok(Snapshot {
             tick: delta.tick,
@@ -287,6 +292,7 @@ fn encode_projectile(out: &mut WireWriter, projectile: &ProjectileState) {
     out.put_u8(projectile.guide.top.into());
     out.put_u8(projectile.guide.stage);
     out.put_u8(projectile.guide.passed.into());
+    encode_missile_target(out, projectile.attached_to);
 }
 
 fn encode_trajectory(out: &mut WireWriter, tr: &entity_iw4::Trajectory) {
@@ -342,6 +348,7 @@ fn decode_projectile(input: &mut WireReader<'_>) -> Result<ProjectileState, Wire
             stage: input.get_u8()?,
             passed: input.get_u8()? != 0,
         },
+        attached_to: decode_missile_target(input)?,
     })
 }
 
@@ -381,22 +388,17 @@ fn encode_projectile_delta(
     ProjectileEntityDelta { changed, removed }
 }
 
-fn decode_projectile_delta(
-    input: &mut WireReader<'_>,
-    baseline: &mut HashMap<ProjectileId, ProjectileState>,
-) -> Result<ProjectileEntityDelta, WireError> {
+fn decode_projectile_delta(input: &mut WireReader<'_>) -> Result<ProjectileEntityDelta, WireError> {
     let changed_count = input.get_u16()? as usize;
     let mut changed = Vec::with_capacity(changed_count.min(256));
     for _ in 0..changed_count {
         let projectile = decode_projectile(input)?;
-        baseline.insert(projectile.id, projectile);
         changed.push(projectile);
     }
     let removed_count = input.get_u16()? as usize;
     let mut removed = Vec::with_capacity(removed_count.min(256));
     for _ in 0..removed_count {
         let id = ProjectileId(input.get_u32()?);
-        baseline.remove(&id);
         removed.push(id);
     }
     Ok(ProjectileEntityDelta { changed, removed })
@@ -417,6 +419,9 @@ pub(crate) fn encode_usercmd(out: &mut WireWriter, cmd: &UserCmd) {
     out.put_u8(cmd.melee_charge_dist);
     out.put_bytes(&cmd.selected_location);
     out.put_bytes(&cmd.remote_control);
+    for angle in cmd.gun_angle_offset {
+        out.put_f32(angle);
+    }
 }
 
 pub(crate) fn decode_usercmd(input: &mut WireReader<'_>) -> Result<UserCmd, WireError> {
@@ -437,7 +442,15 @@ pub(crate) fn decode_usercmd(input: &mut WireReader<'_>) -> Result<UserCmd, Wire
     input.get_bytes(&mut selected_location)?;
     let mut remote_control = [0u8; 2];
     input.get_bytes(&mut remote_control)?;
+    let mut gun_angle_offset = [0.0; 2];
+    for angle in &mut gun_angle_offset {
+        *angle = input.get_f32()?;
+        if !angle.is_finite() {
+            return Err(WireError::Malformed("non-finite gun aim"));
+        }
+    }
     Ok(UserCmd {
+        gun_angle_offset,
         server_time,
         buttons,
         angles,

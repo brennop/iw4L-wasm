@@ -16,6 +16,8 @@ use crate::{
 pub struct WeaponArgCompletions {
     pub give: Arc<RwLock<Vec<String>>>,
     pub attach: Arc<RwLock<Vec<String>>>,
+    pub killstreaks: Arc<RwLock<Vec<String>>>,
+    pub bots: Arc<RwLock<Vec<String>>>,
 }
 
 impl Default for WeaponArgCompletions {
@@ -23,6 +25,8 @@ impl Default for WeaponArgCompletions {
         Self {
             give: Arc::new(RwLock::new(Vec::new())),
             attach: Arc::new(RwLock::new(Vec::new())),
+            killstreaks: Arc::new(RwLock::new(Vec::new())),
+            bots: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -39,6 +43,12 @@ pub(crate) fn clear_weapon_args_on_torn_down(
     }
     if let Ok(mut attach) = completions.attach.write() {
         attach.clear();
+    }
+    if let Ok(mut values) = completions.killstreaks.write() {
+        values.clear();
+    }
+    if let Ok(mut values) = completions.bots.write() {
+        values.clear();
     }
 }
 
@@ -60,9 +70,16 @@ pub(crate) fn register_weapon_commands(
     if registry.resolve("give").is_none() {
         registry.register(
             crate::CommandSpec::new("give")
-                .usage("give <game:weapon> [attachment...] | give killstreak <name> — equip a weapon on the active slot (e.g. give iw5:acr acog), or grant a killstreak (e.g. give killstreak airdrop)")
-                .arg(LiveListCompleter(Arc::clone(&completions.give))),
+                .usage(GIVE_USAGE)
+                .arg(GiveCompleter(completions.clone())),
         );
+    }
+    if registry.resolve("bot").is_none() {
+        let mut spec = crate::CommandSpec::new("bot").usage(super::feature_dispatch::BOT_USAGE);
+        for _ in 0..4 {
+            spec = spec.arg(BotCompleter(completions.clone()));
+        }
+        registry.register(spec);
     }
     if registry.resolve("attach").is_none() {
         registry.register(
@@ -75,11 +92,30 @@ pub(crate) fn register_weapon_commands(
 
 pub(crate) fn refresh_weapon_arg_completions(
     weapons: Option<Res<PreparedWeapons>>,
+    killstreaks: Option<Res<assets::prepared::PreparedKillstreaks>>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     completions: Res<WeaponArgCompletions>,
     mut last_held: Local<Option<u32>>,
 ) {
+    if let Ok(mut values) = completions.killstreaks.write() {
+        *values = killstreaks.as_ref().map_or_else(Vec::new, |v| v.0.clone());
+    }
+    if let Ok(mut values) = completions.bots.write() {
+        *values = presented.snapshot().map_or_else(Vec::new, |snapshot| {
+            snapshot
+                .meta
+                .clients
+                .iter()
+                .filter(|(_, meta)| {
+                    ["bot", "dummy"]
+                        .iter()
+                        .any(|name| meta.name == entity_iw4::pack_client_state_name(name))
+                })
+                .map(|(id, _)| id.0.to_string())
+                .collect()
+        });
+    }
     let Some(weapons) = weapons.as_ref() else {
         return;
     };
@@ -115,6 +151,7 @@ pub(crate) fn route_weapon_commands(
     local: Res<LocalPresentClient>,
     mut inbox: ResMut<ClientActionInbox>,
     mut seq: ResMut<net::ActionRequestIds>,
+    completions: Res<WeaponArgCompletions>,
 ) {
     let capacity = settings.log_capacity;
     let echo = |msg: String, console: &mut ConsoleState, line: &mut ConsoleLine| {
@@ -126,27 +163,34 @@ pub(crate) fn route_weapon_commands(
     for cmd in events.read() {
         match cmd.name.as_str() {
             "give" => {
-                let Some(arg) = cmd.args.first() else {
-                    echo(
-                        "usage: give <weapon> [attachment...] — equip a catalog weapon on the \
-                         active slot"
-                            .into(),
-                        &mut console,
-                        &mut line,
-                    );
-                    continue;
+                let target = match parse_give_target(&cmd.args) {
+                    Ok(target) => target,
+                    Err(reason) => {
+                        echo(reason.into(), &mut console, &mut line);
+                        continue;
+                    }
                 };
-                if arg == "killstreak" {
-                    give_killstreak(
-                        cmd.args.get(1),
-                        &presented,
-                        &local,
-                        &mut inbox,
-                        &mut seq,
-                        |msg| echo(msg, &mut console, &mut line),
-                    );
-                    continue;
-                }
+                let arg = match target {
+                    GiveTarget::Ammo => {
+                        resupply_ammo(&presented, &local, &mut inbox, &mut seq, |msg| {
+                            echo(msg, &mut console, &mut line)
+                        });
+                        continue;
+                    }
+                    GiveTarget::Killstreak(name) => {
+                        grant_killstreak(
+                            name,
+                            &completions,
+                            &presented,
+                            &local,
+                            &mut inbox,
+                            &mut seq,
+                            |msg| echo(msg, &mut console, &mut line),
+                        );
+                        continue;
+                    }
+                    GiveTarget::Weapon(name) => name,
+                };
                 let Some(weapons) = weapons.as_ref() else {
                     echo(
                         "give: weapon catalog not loaded".into(),
@@ -260,24 +304,65 @@ pub(crate) fn route_weapon_commands(
     }
 }
 
-fn give_killstreak(
-    name: Option<&String>,
+const GIVE_USAGE: &str = "give ammo | give killstreak/<name> | give weapon/<game:weapon> [attachment...] — resupply ammo, acquire a reward, or equip a weapon";
+
+#[derive(Debug, PartialEq)]
+enum GiveTarget<'a> {
+    Ammo,
+    Killstreak(&'a str),
+    Weapon(&'a str),
+}
+
+fn parse_give_target(args: &[String]) -> Result<GiveTarget<'_>, &'static str> {
+    let Some(item) = args.first() else {
+        return Err(GIVE_USAGE);
+    };
+    if item == "ammo" && args.len() == 1 {
+        return Ok(GiveTarget::Ammo);
+    }
+    if let Some(name) = item
+        .strip_prefix("killstreak/")
+        .filter(|name| !name.is_empty())
+        && args.len() == 1
+    {
+        return Ok(GiveTarget::Killstreak(name));
+    }
+    if let Some(name) = item.strip_prefix("weapon/").filter(|name| !name.is_empty()) {
+        return Ok(GiveTarget::Weapon(name));
+    }
+    Err(GIVE_USAGE)
+}
+
+fn grant_killstreak(
+    name: &str,
+    completions: &WeaponArgCompletions,
     presented: &PresentedSnapshot,
     local: &LocalPresentClient,
     inbox: &mut ClientActionInbox,
     seq: &mut net::ActionRequestIds,
     mut echo: impl FnMut(String),
 ) {
-    let Some(name) = name else {
-        echo("usage: give killstreak <name> (e.g. airdrop, uav, predator_missile)".into());
+    let names = completions
+        .killstreaks
+        .read()
+        .map(|v| v.clone())
+        .unwrap_or_else(|_| Vec::new());
+    let requested = name.to_ascii_lowercase().replace(['-', ' '], "_");
+    let requested = KILLSTREAK_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == requested)
+        .map_or(requested.as_str(), |(_, name)| *name);
+    let Some(name) = names.iter().find(|name| name.as_str() == requested) else {
+        echo(format!(
+            "give: unknown or unavailable reward `{requested}`; autocomplete give killstreak/ for choices"
+        ));
         return;
     };
     if !alive(presented, local.0) {
-        echo("give killstreak: not Alive — spawn a class first".into());
+        echo("give: spawn a class first".into());
         return;
     }
     let Some(field) = sim::menu_response_field(name) else {
-        echo(format!("give killstreak: `{name}` is too long"));
         return;
     };
     let request_id = seq.allocate();
@@ -289,9 +374,113 @@ fn give_killstreak(
         },
     ) {
         Ok(()) => echo(format!(
-            "give killstreak: queued {name} request_id={request_id}"
+            "give: acquisition queued for killstreak/{name}; use its action slot when ready"
         )),
-        Err(error) => echo(format!("give killstreak: {error}")),
+        Err(error) => echo(format!("give: {error}")),
+    }
+}
+
+fn resupply_ammo(
+    presented: &PresentedSnapshot,
+    local: &LocalPresentClient,
+    inbox: &mut ClientActionInbox,
+    seq: &mut net::ActionRequestIds,
+    mut echo: impl FnMut(String),
+) {
+    if !alive(presented, local.0) {
+        echo("give: spawn a class first".into());
+        return;
+    }
+    let request_id = seq.allocate();
+    match inbox.push(local.0, ClientAction::ResupplyAmmo { request_id }) {
+        Ok(()) => echo("give: ammo resupply queued; reload magazines normally".into()),
+        Err(error) => echo(format!("give: {error}")),
+    }
+}
+
+const KILLSTREAK_ALIASES: &[(&str, &str)] = &[
+    ("care_package", "airdrop"),
+    ("predator", "predator_missile"),
+    ("pave_low", "helicopter_flares"),
+    ("pavelow", "helicopter_flares"),
+    ("chopper_gunner", "helicopter_minigun"),
+    ("sentry_gun", "airdrop_sentry_minigun"),
+    ("emergency_airdrop", "airdrop_mega"),
+    ("harrier", "harrier_airstrike"),
+];
+
+struct KillstreakCompleter(Arc<RwLock<Vec<String>>>);
+
+impl ArgCompleter for KillstreakCompleter {
+    fn complete(&self, prefix: &str) -> Vec<String> {
+        let Ok(names) = self.0.read() else {
+            return Vec::new();
+        };
+        let aliases = KILLSTREAK_ALIASES
+            .iter()
+            .filter(|(_, name)| names.iter().any(|value| value == name))
+            .map(|(alias, _)| alias.to_string());
+        StaticCompleter::new(names.iter().cloned().chain(aliases)).complete(prefix)
+    }
+}
+
+struct GiveCompleter(WeaponArgCompletions);
+
+impl ArgCompleter for GiveCompleter {
+    fn complete(&self, prefix: &str) -> Vec<String> {
+        let mut items = vec!["ammo".to_owned()];
+        if let Ok(weapons) = self.0.give.read() {
+            items.extend(weapons.iter().map(|name| format!("weapon/{name}")));
+        }
+        items.extend(
+            KillstreakCompleter(Arc::clone(&self.0.killstreaks))
+                .complete("")
+                .into_iter()
+                .map(|name| format!("killstreak/{name}")),
+        );
+        StaticCompleter::new(items).complete(prefix)
+    }
+}
+
+struct BotCompleter(WeaponArgCompletions);
+
+impl ArgCompleter for BotCompleter {
+    fn complete(&self, prefix: &str) -> Vec<String> {
+        StaticCompleter::new(["add", "dummy", "hold", "give", "fire", "tp"]).complete(prefix)
+    }
+    fn complete_with_context(&self, prefix: &str, args: &[&str]) -> Vec<String> {
+        let Some(verb) = args.first() else {
+            return self.complete(prefix);
+        };
+        match (*verb, args.len()) {
+            ("add" | "dummy", 1) => {
+                StaticCompleter::new((1..=16).map(|n| n.to_string())).complete(prefix)
+            }
+            ("hold", 1) => StaticCompleter::new(["on", "off"]).complete(prefix),
+            ("give" | "fire" | "tp", 1) => {
+                let mut ids = self
+                    .0
+                    .bots
+                    .read()
+                    .map(|v| v.clone())
+                    .unwrap_or_else(|_| Vec::new());
+                if *verb != "give" {
+                    ids.insert(0, "all".into());
+                }
+                StaticCompleter::new(ids).complete(prefix)
+            }
+            ("give", 2) => {
+                let names = self
+                    .0
+                    .give
+                    .read()
+                    .map(|v| v.clone())
+                    .unwrap_or_else(|_| Vec::new());
+                StaticCompleter::new(names).complete(prefix)
+            }
+            ("tp", 2) => StaticCompleter::new(["above"]).complete(prefix),
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -390,9 +579,15 @@ pub(crate) fn resolve_give_id(
             .map(|resolved| resolved.id)
             .map_err(|refusal| format!("`{raw}`: {refusal} ({})", refusal.code()))
     };
-    if let Some(key) = asset_game::FamilyKey::parse(raw)
-        && let Some(family) = registry.weapon_families().find(&key)
-    {
+    let families = registry.weapon_families();
+    let family = asset_game::FamilyKey::parse(raw)
+        .and_then(|key| families.find(&key))
+        .or_else(|| {
+            families
+                .offered()
+                .find(|family| family.key.short().eq_ignore_ascii_case(raw))
+        });
+    if let Some(family) = family {
         return resolve(WeaponSelection::with(family.key.clone(), attachments));
     }
     let id = match registry.resolve_index(raw) {
@@ -424,7 +619,10 @@ pub(crate) fn resolve_give_id(
     resolve(selection)
 }
 
-fn family_of(registry: &asset_game::WeaponRegistry, weapon: u32) -> Result<WeaponSelection, String> {
+fn family_of(
+    registry: &asset_game::WeaponRegistry,
+    weapon: u32,
+) -> Result<WeaponSelection, String> {
     registry
         .describe_configuration(weapon)
         .filter(|selection| selection.family.is_some())

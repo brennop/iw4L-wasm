@@ -119,12 +119,13 @@ pub(super) fn load_clipmap(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink
     s.walk_stage = "clip_map.stages";
     let stage = s.layout(sz::STAGE, 24);
     let stage_count = s.u8_at(p, s.layout(0xa0, 320))? as usize;
-    if let Some(stages) = s.plain_array(p, s.layout(0x9c, 312), 4, stage, stage_count)? {
+    let stages = s.plain_array(p, s.layout(0x9c, 312), 4, stage, stage_count)?;
+    if let Some(stages) = stages {
         for i in 0..stage_count {
             follow_name(s, stages.at(i * stage), 0)?;
         }
     }
-    load_map_triggers(s, p.at(s.layout(0xa4, 328)))?;
+    let stage_trigger = load_map_triggers(s, p.at(s.layout(0xa4, 328)))?;
 
     s.walk_stage = "clip_map.dyn_entities";
     let dyn_count = s.layout(0xc4, 392);
@@ -173,6 +174,9 @@ pub(super) fn load_clipmap(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink
         collision_aabb_trees,
         cmodels,
         static_models,
+        stages,
+        stage_count: if stages.is_some() { stage_count } else { 0 },
+        stage_trigger,
     });
     let _ = (material_count, brush_side_count, leafbrush_node_count);
 

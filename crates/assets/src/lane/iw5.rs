@@ -533,6 +533,7 @@ impl ZoneLane for Iw5Lane {
                         world: PreparedWorld {
                             min: draw.stats.min,
                             max: draw.stats.max,
+                            world_bounds: draw.stats.bounds,
                             draw: Some(draw),
                             static_model_meshes,
                             static_model_instances,

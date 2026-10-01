@@ -482,7 +482,10 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     world.remove_dropped_item_by_number(number);
     world.free_dynamic_entity_number(item.state.number);
     let mut swapped_entnum = ENTITYNUM_NONE;
-    let akimbo = gsc_give_weapon_is_akimbo(world.weapon_script_name(weapon));
+    let akimbo = world
+        .combat_facts_for(weapon)
+        .is_some_and(|facts| facts.dual_wield)
+        || gsc_give_weapon_is_akimbo(world.weapon_script_name(weapon));
     if already_has {
         let mut next = ps;
         weapon_iw4::latch_weapon_dual_wield(&next.weapons, &mut next.weapon_data, weapon, akimbo);
@@ -903,8 +906,12 @@ pub(crate) fn phase_use_items(
             id,
             &world.player(id).copied().expect("client exists"),
         );
-        let dual = selected
-            .is_some_and(|item| gsc_give_weapon_is_akimbo(world.weapon_script_name(item.weapon)));
+        let dual = selected.is_some_and(|item| {
+            world
+                .combat_facts_for(item.weapon)
+                .is_some_and(|facts| facts.dual_wield)
+                || gsc_give_weapon_is_akimbo(world.weapon_script_name(item.weapon))
+        });
         if let Some(ps) = world.player_mut(id) {
             ps.cursor_hint = selected.map_or(0, |item| item.weapon as i32 + 4);
             ps.cursor_hint_ent_index = selected.map_or(ENTITYNUM_NONE, |item| item.number);

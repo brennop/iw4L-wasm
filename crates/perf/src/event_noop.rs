@@ -21,6 +21,7 @@ pub fn player_tick(
 }
 pub fn death(_: u32, _: Option<u32>, _: u8, _: u32) {}
 pub fn projectile(_: u32) {}
+pub fn projectile_phase(_: u32, _: u32, _: &str, _: i32) {}
 pub fn truck(_: u32, _: Option<i64>, _: Option<i64>, _: Option<&str>, _: Option<&str>) {}
 pub fn feel(
     _: i32,

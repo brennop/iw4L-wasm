@@ -66,6 +66,7 @@ pub(crate) struct ScriptBlast {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ScriptHit {
+    pub piece: Option<i32>,
     pub target: HitTarget,
     pub amount: i32,
     pub origin: [f32; 3],
@@ -97,6 +98,17 @@ pub(crate) fn apply_script_blasts(world: &mut World, tick: crate::Tick) {
                 crate::damage::apply_script_hit(&mut FrameWorld::from_world(world), tick, &hit);
             }
             HitTarget::Entity(target) => {
+                if let Some(piece) = hit.piece {
+                    crate::t5_destructible::apply_piece_hit(
+                        &mut FrameWorld::from_world(world),
+                        tick,
+                        crate::AuthorityModelOwner::ScriptModel(target),
+                        piece,
+                        hit.amount,
+                        hit.attacker,
+                    );
+                    continue;
+                }
                 let mut runtime = world.resource_mut::<Runtime>();
                 let at = match runtime
                     .presented_by(target)
@@ -164,7 +176,7 @@ pub(crate) fn radius_targets(
     let candidates: Vec<(u64, ScriptModelId)> = runtime
         .entities
         .iter()
-        .filter(|(_, entity)| entity.can_damage)
+        .filter(|(_, entity)| entity.accepts_damage(crate::script_player::IDFLAGS_RADIUS))
         .filter_map(|(object, entity)| Some((*object, entity.presence?)))
         .collect();
     let placed: Vec<(ScriptModelId, [f32; 3])> = candidates
@@ -210,7 +222,7 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
     let Some(object) = world
         .get_resource::<Runtime>()
         .and_then(|runtime| runtime.presented_by(hit.target))
-        .filter(|object| world.resource::<Runtime>().entities[object].can_damage)
+        .filter(|object| world.resource::<Runtime>().entities[object].accepts_damage(hit.flags))
     else {
         return false;
     };
@@ -270,4 +282,131 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         raise(world, receiver, "death", vec![attacker]);
     }
     true
+}
+
+pub(crate) fn destructible_callback(
+    world: &mut World,
+    owner: crate::AuthorityModelOwner,
+    entry: &str,
+    args: Vec<Value>,
+) {
+    let Some(object) = owner
+        .script_model()
+        .and_then(|id| world.get_resource::<Runtime>()?.presented_by(id))
+    else {
+        return;
+    };
+    let name = format!("iw4l_maps/destructibles::{entry}");
+    let now = super::players::now_ms(world);
+    if let Err(fault) =
+        crate::script::runtime::run_now(world, &name, Value::Object(object), args, now)
+    {
+        diag::warn!(Sim, "destructible callback unavailable: {fault:?}");
+    }
+}
+
+pub(crate) fn destructible_attacker(world: &World, attacker: Option<crate::ClientId>) -> Value {
+    attacker.map_or(Value::Undefined, |client| {
+        super::players::player_object(world, client.0)
+    })
+}
+
+pub(crate) fn destructible_effect(
+    world: &mut World,
+    name: String,
+    origin: [f32; 3],
+    direction: [f32; 3],
+) {
+    let now = super::players::now_ms(world);
+    let Some(mut runtime) = world.get_resource_mut::<Runtime>() else {
+        return;
+    };
+    let Ok(id) = runtime.create_entity(super::entities::EntityKind::Spawned, "script_model") else {
+        return;
+    };
+    let forward = glam::Vec3::from_array(direction)
+        .try_normalize()
+        .unwrap_or(glam::Vec3::Z);
+    runtime.engine.effects.insert(
+        id,
+        super::entities::PersistentFx {
+            name,
+            origin,
+            forward: forward.to_array(),
+            up: forward.any_orthonormal_vector().to_array(),
+            start_ms: Some(now as i32),
+            repeat_ms: 0,
+            cull_distance: 0.0,
+        },
+    );
+}
+
+pub(crate) fn set_destructible_model(
+    world: &mut World,
+    owner: crate::AuthorityModelOwner,
+    model: Option<&str>,
+    sound: Option<&str>,
+) {
+    let Some(mut runtime) = world.get_resource_mut::<Runtime>() else {
+        return;
+    };
+    let Some(object) = owner.script_model().and_then(|id| runtime.presented_by(id)) else {
+        return;
+    };
+    if let Some(model) = model {
+        runtime.set_object_field(object, "model", Value::string(model));
+    }
+    runtime.entities.get_mut(&object).unwrap().loop_sound = sound.map(Arc::from);
+}
+
+pub(crate) fn destructible_debris(
+    world: &mut World,
+    dobj: crate::AuthorityDObjState,
+    offset: [f32; 3],
+    half: [f32; 3],
+    velocity: [f32; 3],
+) {
+    let origin = dobj.world_from_model.w_axis.truncate().to_array();
+    let rotation = dobj.world_from_model;
+    let forward = rotation.x_axis.truncate();
+    let angles = [
+        -forward.z.atan2(forward.truncate().length()).to_degrees(),
+        forward.y.atan2(forward.x).to_degrees(),
+        0.0,
+    ];
+    let Ok(object) = world
+        .resource_mut::<Runtime>()
+        .create_entity(super::entities::EntityKind::Spawned, "script_model")
+    else {
+        return;
+    };
+    let presence = match super::presence::spawn_presence(world, origin) {
+        Ok(presence) => presence,
+        Err(_) => {
+            world.resource_mut::<Runtime>().delete_entity(object);
+            return;
+        }
+    };
+    let model = dobj.current_model.clone();
+    let mut frame = FrameWorld::from_world(world);
+    if let Some(row) = frame.collision_owner_mut(presence) {
+        row.dobj = Some(dobj);
+        row.solid = false;
+    }
+    let mut runtime = world.resource_mut::<Runtime>();
+    runtime.set_object_field(object, "origin", Value::Vector(origin));
+    runtime.set_object_field(object, "angles", Value::Vector(angles));
+    runtime.set_object_field(object, "model", Value::string(&model));
+    let entity = runtime.entities.get_mut(&object).unwrap();
+    entity.presence = Some(presence);
+    entity.solid = false;
+    drop(runtime);
+    let now = super::players::now_ms(world);
+    world
+        .resource_mut::<Runtime>()
+        .lingering
+        .push((now + 30000, object));
+    world
+        .resource_mut::<super::mechanics::Mechanics>()
+        .launch_piece(object, velocity, offset, half);
 }

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::World;
 
-use crate::script::host::args::{float, vector};
+use crate::script::host::args::{float, optional, vector};
 use crate::script::{Runtime, Value};
 use crate::{ScriptEarthquake, ScriptFog, ScriptFogParams, ScriptSunFog};
 
@@ -10,6 +10,31 @@ fn duration_ms(seconds: f32) -> Result<i32, String> {
         return Err("duration must be finite, nonnegative and fit the level clock".into());
     }
     Ok(ms as i32)
+}
+
+pub(super) fn set_slow_motion(
+    world: &mut World,
+    _: &Value,
+    args: &[Value],
+) -> Result<Value, String> {
+    if !(1..=3).contains(&args.len()) {
+        return Err(
+            "SetSlowMotion expects start scale, optional end scale and transition seconds".into(),
+        );
+    }
+    let slow_motion = crate::ScriptSlowMotion {
+        from: float(args, 0)?,
+        to: optional(args, 1, float)?.unwrap_or(1.0),
+        start_ms: world
+            .get_resource::<crate::step::StepRequest>()
+            .map_or(0, |request| crate::level_time_ms(request.tick)),
+        duration_ms: duration_ms(optional(args, 2, float)?.unwrap_or(1.0))?,
+    };
+    if !slow_motion.valid() {
+        return Err("slow-motion scales must be finite and positive".into());
+    }
+    world.resource_mut::<Runtime>().engine.slow_motion = Some(slow_motion);
+    Ok(Value::Undefined)
 }
 
 pub(super) fn set_exp_fog(world: &mut World, _: &Value, args: &[Value]) -> Result<Value, String> {

@@ -1,11 +1,5 @@
 pub fn unpack_unit_vec(packed: u32) -> [f32; 3] {
-    let bytes = packed.to_le_bytes();
-    let scale = (f32::from(bytes[3]) + 192.0) / 32_385.0;
-    [
-        (f32::from(bytes[0]) - 127.0) * scale,
-        (f32::from(bytes[1]) - 127.0) * scale,
-        (f32::from(bytes[2]) - 127.0) * scale,
-    ]
+    dpvs_iw4::skin_unpack_unit_vec(packed)
 }
 
 pub fn normalize_or_up(v: [f32; 3]) -> [f32; 3] {

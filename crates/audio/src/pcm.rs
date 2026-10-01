@@ -40,12 +40,32 @@ impl LivePan {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LiveGain(Arc<AtomicU32>);
+
+impl Default for LiveGain {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU32::new(1.0f32.to_bits())))
+    }
+}
+
+impl LiveGain {
+    pub(crate) fn set(&self, gain: f32) {
+        self.0.store(gain.to_bits(), Ordering::Relaxed);
+    }
+    fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
 #[derive(Asset, TypePath, Clone)]
 pub struct PcmAudio {
     samples: Arc<[f32]>,
     channels: u16,
     sample_rate: u32,
     live_pan: Option<LivePan>,
+    live_gain: Option<LiveGain>,
+    channel_gain: Option<LiveGain>,
 }
 
 #[derive(Asset, TypePath, Clone)]
@@ -80,6 +100,8 @@ impl PcmAudio {
             channels,
             sample_rate,
             live_pan: None,
+            live_gain: None,
+            channel_gain: None,
         })
     }
 
@@ -101,11 +123,37 @@ impl PcmAudio {
             channels: self.channels,
             sample_rate: self.sample_rate,
             live_pan: Some(LivePan::unity()),
+            live_gain: self.live_gain.clone(),
+            channel_gain: self.channel_gain.clone(),
         }
     }
 
     pub fn live_pan(&self) -> Option<&LivePan> {
         self.live_pan.as_ref()
+    }
+
+    pub(crate) fn with_gain(&self, gain: &LiveGain) -> Self {
+        let mut pcm = self.clone();
+        pcm.live_gain = Some(gain.clone());
+        pcm
+    }
+
+    pub(crate) fn gain_bound_to(&self, gain: &LiveGain) -> bool {
+        self.live_gain
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(&current.0, &gain.0))
+    }
+
+    pub(crate) fn with_channel_gain(&self, gain: &LiveGain) -> Self {
+        let mut pcm = self.clone();
+        pcm.channel_gain = Some(gain.clone());
+        pcm
+    }
+
+    pub(crate) fn channel_gain_bound_to(&self, gain: &LiveGain) -> bool {
+        self.channel_gain
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(&current.0, &gain.0))
     }
 
     pub fn into_looping(self) -> LoopingPcmAudio {
@@ -119,6 +167,8 @@ impl PcmAudio {
             src_channels: self.channels,
             sample_rate: self.sample_rate,
             live: self.live_pan.clone(),
+            gain: self.live_gain.clone(),
+            channel_gain: self.channel_gain.clone(),
             pending_right: None,
             looping,
         }
@@ -129,6 +179,19 @@ impl LoopingPcmAudio {
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn inner(&self) -> &PcmAudio {
         &self.0
+    }
+
+    pub(crate) fn with_channel_gain(&self, gain: &LiveGain) -> Self {
+        Self(self.0.with_channel_gain(gain))
+    }
+    pub(crate) fn channel_gain_bound_to(&self, gain: &LiveGain) -> bool {
+        self.0.channel_gain_bound_to(gain)
+    }
+    pub(crate) fn with_gain(&self, gain: &LiveGain) -> Self {
+        Self(self.0.with_gain(gain))
+    }
+    pub(crate) fn gain_bound_to(&self, gain: &LiveGain) -> bool {
+        self.0.gain_bound_to(gain)
     }
 
     pub fn live_pan(&self) -> Option<&LivePan> {
@@ -143,11 +206,34 @@ pub struct PcmDecoder {
     src_channels: u16,
     sample_rate: u32,
     live: Option<LivePan>,
+    gain: Option<LiveGain>,
+    channel_gain: Option<LiveGain>,
     pending_right: Option<f32>,
     looping: bool,
 }
 
 impl PcmDecoder {
+    fn next_sample(&mut self) -> Option<f32> {
+        if let Some(right) = self.pending_right.take() {
+            return Some(right);
+        }
+        if !self.rewind_for_loop() {
+            return None;
+        }
+        let Some(live) = &self.live else {
+            let sample = self.samples[self.pos];
+            self.pos += 1;
+            return Some(sample);
+        };
+        let (gain_l, gain_r) = live.get();
+        let ch = self.src_channels.max(1) as usize;
+        let left = *self.samples.get(self.pos)?;
+        let right = self.samples.get(self.pos + 1).copied().unwrap_or(left);
+        self.pos += ch;
+        self.pending_right = Some(right * gain_r);
+        Some(left * gain_l)
+    }
+
     fn remaining_out(&self) -> usize {
         if self.live.is_some() {
             let extra = usize::from(self.pending_right.is_some());
@@ -175,24 +261,11 @@ impl Iterator for PcmDecoder {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        if let Some(right) = self.pending_right.take() {
-            return Some(right);
-        }
-        if !self.rewind_for_loop() {
-            return None;
-        }
-        let Some(live) = &self.live else {
-            let sample = self.samples[self.pos];
-            self.pos += 1;
-            return Some(sample);
-        };
-        let (gain_l, gain_r) = live.get();
-        let ch = self.src_channels.max(1) as usize;
-        let left = *self.samples.get(self.pos)?;
-        let right = self.samples.get(self.pos + 1).copied().unwrap_or(left);
-        self.pos += ch;
-        self.pending_right = Some(right * gain_r);
-        Some(left * gain_l)
+        self.next_sample().map(|sample| {
+            sample
+                * self.gain.as_ref().map_or(1.0, LiveGain::get)
+                * self.channel_gain.as_ref().map_or(1.0, LiveGain::get)
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -306,5 +379,7 @@ pub fn decode_audio_bytes(bytes: &[u8]) -> Option<PcmAudio> {
         channels,
         sample_rate,
         live_pan: None,
+        live_gain: None,
+        channel_gain: None,
     })
 }

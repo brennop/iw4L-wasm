@@ -833,6 +833,7 @@ fn queue_reliable_events(reliable: &mut crate::ReliableEventHub, tick: &ServerTi
 #[derive(SystemParam)]
 struct FanoutQueues<'w> {
     pending_acks: ResMut<'w, PendingAcks>,
+    faults: ResMut<'w, PendingConnectionFaults>,
     pending_svc: ResMut<'w, crate::PendingSvcSounds>,
     pending_playercard: ResMut<'w, crate::PendingPlayerCard>,
     pending_gamenotify: ResMut<'w, crate::PendingGameNotify>,
@@ -863,6 +864,12 @@ fn fanout_loopback(
     let Some(tick) = server_tick.0.as_ref() else {
         return;
     };
+    for (client, reason) in queues.world.0.take_script_kicks() {
+        reliable
+            .queue_mut(client)
+            .push(crate::ReliableRow::Failure(reason.clone()));
+        queues.faults.0.push((client, reason));
+    }
     queues
         .pending_playercard
         .adopt_from_world(&mut queues.world.0);
@@ -870,6 +877,12 @@ fn fanout_loopback(
         .pending_gamenotify
         .adopt_from_world(&mut queues.world.0);
     queues.pending_svc.adopt_from_world(&mut queues.world.0);
+    let audio = queues.world.0.take_pending_script_audio();
+    crate::svc_script_audio::fanout_script_audio(
+        &mut reliable,
+        tick.snapshot.meta.clients.iter().map(|(id, _)| *id),
+        &audio,
+    );
     crate::policy::killcam::play_script_seats(
         &mut seats,
         &archive,

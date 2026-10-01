@@ -100,8 +100,11 @@ impl Parser {
             self.loops.push((Vec::new(), None));
             while !self.eat("}") {
                 if self.eat("case") {
-                    let t = self.tokens[self.pos].clone();
                     let negative = self.eat("-");
+                    let t = self.tokens[self.pos].clone();
+                    if negative && t.string {
+                        return Err(self.error("case label must be an integer or string"));
+                    }
                     let value = if t.string {
                         self.pos += 1;
                         Value::String(t.text.into())
@@ -247,7 +250,7 @@ impl Parser {
             self.assignment()?;
             self.expect(";")?;
         } else if (self.is("prof_begin") || self.is("prof_end"))
-            && self.tokens.get(self.pos + 1).is_some_and(|t| t.text == "(")
+            && self.tokens.get(self.pos + 1).is_some_and(|t| t.is("("))
         {
             self.pos += 2;
             if !self.tokens[self.pos].string {

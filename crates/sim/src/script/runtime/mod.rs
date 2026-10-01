@@ -925,6 +925,14 @@ fn instruction(
                 thread.stack.push(value);
                 return Ok(());
             }
+            if let Some(value) = super::host::mechanics::load_slide_field(
+                world,
+                id,
+                &program.symbols[field as usize],
+            ) {
+                thread.stack.push(value);
+                return Ok(());
+            }
             let runtime = world.resource::<Runtime>();
             let fields = runtime
                 .objects
@@ -948,6 +956,14 @@ fn instruction(
                     &value,
                 )?
             {
+                return Ok(());
+            }
+            if super::host::mechanics::store_slide_field(
+                world,
+                id,
+                &program.symbols[field as usize],
+                &value,
+            )? {
                 return Ok(());
             }
             super::host::hud::store_field(world, id, &program.symbols[field as usize], &value)?;
@@ -1212,17 +1228,6 @@ fn kill(world: &mut World, entity: Entity, serial: u64) {
     retire(&mut world.resource_mut::<Runtime>(), serial);
 }
 
-fn deliver_timers(world: &mut World, now: i64) {
-    let mut runtime = world.resource_mut::<Runtime>();
-    let timers = std::mem::take(&mut runtime.timers);
-    let (due, pending): (Vec<_>, Vec<_>) = timers.into_iter().partition(|(at, _, _)| *at <= now);
-    runtime.timers = pending;
-    drop(runtime);
-    for (_, receiver, name) in due {
-        raise(world, receiver, &name, Vec::new());
-    }
-}
-
 pub(crate) fn advance_scheduler(world: &mut World) {
     let request = world.resource::<crate::step::StepRequest>();
     if !request.reason.advances_authority_world() {
@@ -1254,7 +1259,6 @@ pub(crate) fn advance_scheduler(world: &mut World) {
     world.resource_mut::<Runtime>().last_tick = Some(tick);
     let now = i64::from(tick.0) * i64::from(crate::MATCH_TICK_MS);
     super::host::mechanics::deliver_finished(world);
-    deliver_timers(world, now);
     deliver_external(world, now);
     let threads: Vec<_> = world
         .query::<(Entity, &Thread)>()
@@ -1588,7 +1592,6 @@ impl Runtime {
             pending.push(receiver.clone());
             pending.extend(args.iter().cloned());
         }
-        pending.extend(self.timers.iter().map(|(_, receiver, _)| receiver.clone()));
         pending.extend(self.engine.match_data.values().cloned());
         pending.extend(self.engine.world.map(Value::Object));
         pending.extend(

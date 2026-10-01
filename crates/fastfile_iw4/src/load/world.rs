@@ -421,6 +421,14 @@ pub(super) fn load_mapents(s: &mut ZoneStream<'_>) -> Result<()> {
         s.plain_array(triggers, s.layout(12, 24), 4, sz::TRIGGER_HULL, hull_count)?;
     let trigger_slabs =
         s.plain_array(triggers, s.layout(20, 40), 4, sz::TRIGGER_SLAB, slab_count)?;
+    let mut stages = None;
+    if s.begin_body(p.at(s.layout(36, 72)))? {
+        let arr = s.alloc_load(4, s.layout(sz::STAGE, 24) * stage_count)?;
+        for i in 0..stage_count {
+            follow_name(s, arr.at(i * s.layout(sz::STAGE, 24)), 0)?;
+        }
+        stages = Some(arr);
+    }
     s.record_map_ents(MapEntsGeometry {
         entity_string,
         entity_chars,
@@ -430,14 +438,9 @@ pub(super) fn load_mapents(s: &mut ZoneStream<'_>) -> Result<()> {
         trigger_hull_count: hull_count,
         trigger_slabs,
         trigger_slab_count: slab_count,
+        stages,
+        stage_count: if stages.is_some() { stage_count } else { 0 },
     });
-
-    if s.begin_body(p.at(s.layout(36, 72)))? {
-        let arr = s.alloc_load(4, s.layout(sz::STAGE, 24) * stage_count)?;
-        for i in 0..stage_count {
-            follow_name(s, arr.at(i * s.layout(sz::STAGE, 24)), 0)?;
-        }
-    }
 
     s.pop()
 }

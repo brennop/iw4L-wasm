@@ -138,9 +138,11 @@ pub fn update_shellshock_look_control(
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ShellshockSoundParms {
     pub affect: bool,
+
+    pub channel_volumes: Option<BTreeMap<String, f32>>,
 
     pub loop_alias: String,
 
@@ -199,6 +201,22 @@ impl ShockParams {
                 ));
             }
         };
+        let mut channel_volumes = BTreeMap::new();
+        for (key, value) in &values {
+            let Some(channel) = key.strip_prefix("bg_shock_volume_") else {
+                continue;
+            };
+            if channel.is_empty() || channel.len() > 64 || channel_volumes.len() >= 64 {
+                return Err("invalid shellshock channel volume name or count".into());
+            }
+            let gain = value
+                .parse::<f32>()
+                .map_err(|_| format!("{key} \"{value}\" is not a number"))?;
+            if !gain.is_finite() {
+                return Err(format!("{key} must be finite"));
+            }
+            channel_volumes.insert(channel.to_owned(), gain.clamp(0.0, 1.0));
+        }
         Ok(Self {
             screen_type,
             white_fade_ms: ms("screenFlashWhiteFadeTime")?,
@@ -211,6 +229,7 @@ impl ShockParams {
                 max_yaw_speed: number("lookControl_maxyawspeed")?,
             },
             sound: ShellshockSoundParms {
+                channel_volumes: Some(channel_volumes),
                 affect: flag("sound")?,
                 loop_alias: text("soundLoop")?,
                 end_alias: text("soundEnd")?,

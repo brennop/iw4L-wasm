@@ -37,6 +37,7 @@ pub struct RuntimeProgramPort {
     t5_custom_sampler_flags: u8,
     arguments: Vec<RuntimeArgumentBinding>,
     color_space: super::pass_color_space::PassColorSpace,
+    hardware_shadow_compare: bool,
     abi: super::sm3_abi::PassProgramAbi,
     module: std::sync::Arc<super::sm3_wgsl::ValidatedPassWgsl>,
     wgpu_layout: super::gpu_contract::WgpuPassLayout,
@@ -78,6 +79,7 @@ impl RuntimeProgramPort {
             &pass.arguments,
             pass.custom_sampler_flags,
             pass.t5_custom_sampler_flags,
+            pass.hardware_shadow_compare,
         )
         .map_err(ProgramRegistryError::Abi)?;
         Self::finish_compile(
@@ -124,6 +126,7 @@ impl RuntimeProgramPort {
             t5_custom_sampler_flags: pass.t5_custom_sampler_flags,
             arguments: pass.arguments.clone(),
             color_space: pass.color_space,
+            hardware_shadow_compare: pass.hardware_shadow_compare,
             abi,
             module: std::sync::Arc::new(module),
             wgpu_layout,
@@ -154,6 +157,7 @@ impl RuntimeProgramPort {
             && self.t5_custom_sampler_flags == other.t5_custom_sampler_flags
             && self.arguments == other.arguments
             && self.color_space == other.color_space
+            && self.hardware_shadow_compare == other.hardware_shadow_compare
             && self.abi.vertex_type == other.abi.vertex_type
     }
 
@@ -239,6 +243,7 @@ impl RuntimeProgramPort {
             && pass.t5_custom_sampler_flags == self.t5_custom_sampler_flags
             && pass.arguments == self.arguments
             && pass.color_space == self.color_space
+            && pass.hardware_shadow_compare == self.hardware_shadow_compare
             && self.abi.vertex_type == vertex_type
     }
 }
@@ -300,6 +305,7 @@ impl RuntimeProgramRegistry {
                 u8,
                 u8,
                 render_material::PassColorSpace,
+                bool,
                 Vec<RuntimeArgumentBinding>,
             ),
             usize,
@@ -320,6 +326,7 @@ impl RuntimeProgramRegistry {
                     pass.custom_sampler_flags,
                     pass.t5_custom_sampler_flags,
                     pass.color_space,
+                    pass.hardware_shadow_compare,
                     pass.arguments.clone(),
                 );
                 if seen.contains_key(&key) {
@@ -1289,6 +1296,8 @@ pub fn capture_runtime_catalog(
                                 facts.namespace,
                                 slot_index as u8,
                             ),
+                            hardware_shadow_compare: facts.namespace
+                                == asset_core::AssetNamespace::T5,
                         };
                         sort_pass_args(&mut runtime_pass);
                         runtime_pass

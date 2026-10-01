@@ -3,6 +3,7 @@ pub struct UserCmd {
     pub server_time: i32,
     pub buttons: u32,
     pub angles: [i32; 3],
+    pub gun_angle_offset: [f32; 2],
     pub weapon: u16,
     pub weapon_mapped: u16,
     pub off_hand_index: u16,

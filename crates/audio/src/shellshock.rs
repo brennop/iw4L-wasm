@@ -78,6 +78,7 @@ pub(crate) fn update_shellshock_tinnitus(
             &mut gaps,
             epoch.0,
             &parms.loop_alias,
+            local.0.0,
         );
         *was_active = true;
         return;
@@ -115,6 +116,7 @@ fn ensure_loop(
     gaps: &mut MissingAliasGaps,
     epoch: u64,
     alias: &str,
+    snd_ent: u32,
 ) {
     if playing.iter().any(|(_, bed)| bed.alias == alias) {
         return;
@@ -143,6 +145,9 @@ fn ensure_loop(
         gaps.record(alias);
         return;
     };
+    let channel = crate::clip_store::alias_for_clip(&bank.0, AssetNamespace::Iw4, alias, &key)
+        .and_then(|row| row.decoded_flags())
+        .map(|flags| flags.channel());
     let handle = looping_assets.add(pcm.into_looping());
     let entity = crate::backend::spawn_loop(
         commands,
@@ -151,7 +156,15 @@ fn ensure_loop(
         epoch,
         crate::backend::AudioScope::Match,
     );
-    commands.entity(entity).insert(ShellshockTinnitus {
-        alias: alias.to_owned(),
-    });
+    if let Some(channel) = channel {
+        commands
+            .entity(entity)
+            .insert(crate::backend::SoundChannel(channel));
+    }
+    commands.entity(entity).insert((
+        ShellshockTinnitus {
+            alias: alias.to_owned(),
+        },
+        crate::backend::SoundEntity(snd_ent),
+    ));
 }

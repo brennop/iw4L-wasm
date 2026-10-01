@@ -27,6 +27,7 @@ fn retire_match_catalogs(world: &mut World) {
     frame::retire::retire_resources(world, |batch| {
         batch
             .resource::<PreparedWeapons>()
+            .resource::<crate::prepared::PreparedKillstreaks>()
             .resource::<MatchType10SoundHints>()
             .resource::<PreparedFpvMeshes>()
             .resource::<PreparedBodies>()

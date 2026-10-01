@@ -31,9 +31,7 @@ pub use animated_models::{
 };
 
 pub use damage_feedback::{DAMAGE_FEEDBACK_SHADER, HIT_ALERT_ALIAS};
-pub use ffa::{
-    GAMETYPE_DIALOG_LINE, ffa_highest_scoring_index, ffa_player_is_better, match_end_cause,
-};
+pub use ffa::{GAMETYPE_DIALOG_LINE, ffa_highest_scoring_index, ffa_player_is_better};
 pub use gamelogic::{GAME_STATE_PLAYING, USE_START_SPAWNS_AT_START};
 pub use gaps::{ScriptGap, ScriptGapCause};
 pub use globallogic::{OBJECTIVE_BASED, POST_ROUND_TIME_MS};

@@ -378,7 +378,7 @@ pub fn arm_listen_prediction(
     prediction.0.arm_from_content(&authority.0);
 }
 
-pub fn advance_cls_realtime(mut cls: ResMut<ClientRealtime>, time: Res<Time>) {
+pub fn advance_cls_realtime(mut cls: ResMut<ClientRealtime>, time: Res<Time<Real>>) {
     cls.advance_listen(time.delta_secs());
 }
 
@@ -573,6 +573,7 @@ pub struct ReliableControlEvent(pub sim::SimEvent);
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct SvcFrameWriters<'w> {
     sound: MessageWriter<'w, crate::SvcLocalSound>,
+    audio: MessageWriter<'w, crate::SvcScriptAudio>,
     card: MessageWriter<'w, crate::SvcCardSlotCmd>,
     menu: MessageWriter<'w, crate::SvcOpenMenuCmd>,
     splash: MessageWriter<'w, crate::SvcHudSplash>,
@@ -629,6 +630,9 @@ impl ReliableInbound<'_> {
             }
             match row {
                 crate::ReliableRow::Failure(_) => unreachable!("terminal handled before sequence"),
+                crate::ReliableRow::ScriptAudio(cmd) => {
+                    self.svc.audio.write(crate::SvcScriptAudio(cmd.clone()));
+                }
                 crate::ReliableRow::Sound(cmd) => {
                     self.svc.sound.write(crate::SvcLocalSound {
                         stop: cmd.stop,
@@ -701,7 +705,7 @@ fn apply_weapon_switch_requests(
 }
 
 pub fn sample_client_input(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut actions: ResMut<ClientActionInput>,
     mut look: ResMut<LookState>,
     mut template: ResMut<ClientCmdTemplate>,
@@ -716,8 +720,9 @@ pub fn sample_client_input(
     mut request_ids: Option<ResMut<crate::ActionRequestIds>>,
     view: Option<Res<frame::ViewSubject>>,
     trace: Option<ResMut<ClientPhaseTrace>>,
-    mut cursor: ResMut<LocationCursor>,
+    aim_cursor: (ResMut<LocationCursor>, Res<crate::ViewweaponAim>),
 ) {
+    let (mut cursor, aim) = aim_cursor;
     push_phase(trace, "Input");
     if !gate.local_cmds_enabled {
         actions.client.weapon_cycles.clear();
@@ -1013,6 +1018,12 @@ pub fn sample_client_input(
         cmd.buttons |= playerstate_iw4::buttons::RELOAD;
     }
     look.angles = cmd.angles;
+    if !frozen
+        && aim.live
+        && ps.is_some_and(|ps| aim.weapon == playerstate_iw4::get_viewmodel_weapon_index(ps))
+    {
+        cmd.gun_angle_offset = aim.angle_offset;
+    }
     if let Some((mouse_x, mouse_y)) = remote_mouse {
         cmd.remote_control = remote_control_axes(&actions, mouse_x, mouse_y);
         cmd.buttons |= playerstate_iw4::buttons::REMOTE_CONTROL;
@@ -1843,6 +1854,7 @@ pub fn register_client_runtime(app: &mut App) {
         .init_resource::<ClientShotSamples>()
         .init_resource::<crate::Scoreboard>()
         .add_message::<crate::SvcLocalSound>()
+        .add_message::<crate::SvcScriptAudio>()
         .add_message::<crate::SvcCardSlotCmd>()
         .add_message::<crate::SvcOpenMenuCmd>()
         .add_message::<crate::SvcHudSplash>()

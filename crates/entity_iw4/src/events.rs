@@ -85,6 +85,7 @@ entity_events! {
     ROCKET_EXPLODE_NOMARKS = 0x4a;
     FLASHBANG_EXPLODE = 0x4b;
     PLAY_FX = 0x53;
+    PHYS_EXPLOSION_SPHERE = 0x56;
     DETONATE = 0x5e;
     OBITUARY = 0x62;
     FOOTSTEP_SPRINT = 0x6b;
@@ -155,6 +156,9 @@ entity_events! {
     LANDING_PAIN_RIOTSHIELD = 0xac;
     LANDING_PAIN_SLUSH = 0xad;
     MANTLE = 0xae;
+    PLAY_RUMBLE_ON_ENT = 0xb1;
+    PLAY_RUMBLE_ON_POS = 0xb2;
+    STOP_RUMBLE = 0xb5;
 }
 
 impl EntityEventKind {
@@ -167,7 +171,7 @@ impl EntityEventKind {
     pub const LANDING_PAIN_LAST: Self = Self::LANDING_PAIN_SLUSH;
 
     pub const fn from_event_entity_type(e_type: i32) -> Option<Self> {
-        if e_type >= ET_EVENTS && e_type <= ET_EVENTS + Self::MANTLE.0 {
+        if e_type >= ET_EVENTS && e_type <= ET_EVENTS + Self::STOP_RUMBLE.0 {
             Some(Self(e_type - ET_EVENTS))
         } else {
             None
@@ -175,7 +179,7 @@ impl EntityEventKind {
     }
 
     pub const fn event_entity_type(self) -> Option<i32> {
-        if self.0 > Self::NONE.0 && self.0 <= Self::MANTLE.0 {
+        if self.0 > Self::NONE.0 && self.0 <= Self::STOP_RUMBLE.0 {
             Some(ET_EVENTS + self.0)
         } else {
             None
@@ -213,6 +217,8 @@ pub enum EntityEventAction {
     BulletHit,
     GrenadeContact,
     Explosion,
+    PhysicsSphere,
+    Rumble,
     PlayFx,
     Obituary,
     MovementSound,
@@ -280,6 +286,10 @@ pub fn entity_event_action(
         | EntityEventKind::ROCKET_EXPLODE
         | EntityEventKind::ROCKET_EXPLODE_NOMARKS
         | EntityEventKind::FLASHBANG_EXPLODE => EntityEventAction::Explosion,
+        EntityEventKind::PLAY_RUMBLE_ON_ENT
+        | EntityEventKind::PLAY_RUMBLE_ON_POS
+        | EntityEventKind::STOP_RUMBLE => EntityEventAction::Rumble,
+        EntityEventKind::PHYS_EXPLOSION_SPHERE => EntityEventAction::PhysicsSphere,
         EntityEventKind::PLAY_FX => EntityEventAction::PlayFx,
         EntityEventKind::OBITUARY => EntityEventAction::Obituary,
         EntityEventKind::FOOTSTEP_SPRINT

@@ -324,8 +324,10 @@ pub struct PreparedFpvRig {
     generation: u64,
     parts: PartBits,
     tags: FpvBoltTags,
+    secondary_tags: Option<FpvBoltTags>,
     slots: Vec<PlanSlot>,
     tracks: [Vec<Option<Arc<[u16]>>>; 2],
+    hand_parts: Option<[PartBits; 2]>,
     pub geometry: PreparedFpvGeometry,
 }
 
@@ -350,7 +352,11 @@ impl PreparedFpvRig {
 
         // Every hand's view hands first, then every hand's gun and whatever
         // hangs off it.
-        let hand_n = if dual { 2 } else { 1 };
+        let hand_n = if dual && !composition.assembly.combined_hands {
+            2
+        } else {
+            1
+        };
         let mut order: Vec<(usize, usize)> = Vec::new();
         for hand in 0..hand_n {
             order.push((hand, 0));
@@ -451,15 +457,49 @@ impl PreparedFpvRig {
             tracker_screen: assembly.tags.tracker_screen,
             tracker_light: assembly.tags.tracker_light,
         };
+        let secondary_tags = assembly.combined_hands.then(|| {
+            let tag = |name: &str| {
+                assembly
+                    .dobj
+                    .find(name)
+                    .and_then(|index| u16::try_from(index).ok())
+            };
+            FpvBoltTags {
+                flash: tag("tag_flash1"),
+                flash_silenced: tag("tag_flash_silenced1"),
+                brass: tag("tag_brass1"),
+                ..FpvBoltTags::default()
+            }
+        });
         let parts = assembly.dobj.all_parts();
 
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let hand_parts = composition.assembly.combined_hands.then(|| {
+            let mut masks = [PartBits::default(); 2];
+            let bones = &composition.assembly.dobj.bones;
+            for (index, bone) in bones.iter().enumerate() {
+                let mut ancestor = Some(index);
+                let mut left = bone.model == 2;
+                while let Some(parent) = ancestor {
+                    let name = &bones[parent].name;
+                    if name == "j_shoulder_le" || name == "tag_weapon1" {
+                        left = true;
+                        break;
+                    }
+                    ancestor = bones[parent].parent;
+                }
+                masks[usize::from(left)].set(index);
+            }
+            masks
+        });
         Self {
+            hand_parts,
             composition,
             dual,
             generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             parts,
             tags,
+            secondary_tags,
             slots,
             tracks,
             geometry,
@@ -473,34 +513,90 @@ impl PreparedFpvRig {
         anims: &[PosedClip<'_>],
         offset: Vec3,
     ) -> Option<FpvHandPose> {
+        self.pose_clips(hand, anims, &[], offset)
+    }
+
+    pub fn combines_hands(&self) -> bool {
+        self.composition.assembly.combined_hands
+    }
+
+    pub fn secondary_bolt(&self, pose: &FpvHandPose) -> Option<FpvBoltFrame> {
+        Some(FpvBoltFrame {
+            bones: pose.bolt.bones.clone(),
+            tags: self.secondary_tags?,
+        })
+    }
+
+    pub fn pose_combined(
+        &self,
+        right: &[PosedClip<'_>],
+        left: &[PosedClip<'_>],
+    ) -> Option<FpvHandPose> {
+        self.pose_clips(0, right, left, Vec3::ZERO)
+    }
+
+    fn pose_clips(
+        &self,
+        hand: usize,
+        anims: &[PosedClip<'_>],
+        left: &[PosedClip<'_>],
+        offset: Vec3,
+    ) -> Option<FpvHandPose> {
         if anims.is_empty() {
             return None;
         }
-        let bound: Vec<(&PosedClip<'_>, Vec<Option<usize>>)> = anims
+        let bound: Vec<(&PosedClip<'_>, Vec<Option<usize>>, usize)> = anims
             .iter()
-            .filter_map(|anim| {
-                let tracks = self.tracks[hand].get(anim.node)?.as_ref()?;
+            .map(|anim| (anim, hand))
+            .chain(left.iter().map(|anim| (anim, 1)))
+            .filter_map(|(anim, source)| {
+                let tracks = self.tracks[source].get(anim.node)?.as_ref()?;
                 let bones = tracks
                     .iter()
                     .map(|&bone| (bone != FpvClipTracks::NONE).then_some(usize::from(bone)))
                     .collect();
-                Some((anim, bones))
+                Some((anim, bones, source))
             })
             .collect();
         if !bound
             .iter()
-            .any(|(_, bones)| bones.iter().any(Option::is_some))
+            .any(|(_, bones, _)| bones.iter().any(Option::is_some))
         {
             return None;
         }
+        let full_body = |anim: &PosedClip<'_>| {
+            anim.node != asset_game::WeaponAnimSlot::AdsUp.index()
+                && anim.node != asset_game::WeaponAnimSlot::AdsDown.index()
+                && anim
+                    .clip
+                    .tracks
+                    .iter()
+                    .any(|track| track.name == "j_shoulder_le")
+        };
+        let full_weight = if self.combines_hands() {
+            bound
+                .iter()
+                .filter(|(anim, _, source)| *source == 0 && full_body(anim))
+                .map(|(anim, _, _)| anim.weight)
+                .sum::<f32>()
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let instances: Vec<AnimInstance<'_>> = bound
             .iter()
-            .map(|(anim, bones)| AnimInstance {
+            .map(|(anim, bones, source)| AnimInstance {
                 clip: anim.clip,
                 tracks: bones,
                 time: anim.time,
-                weight: anim.weight,
-                parts: None,
+                weight: anim.weight * if *source == 1 { 1.0 - full_weight } else { 1.0 },
+                parts: self.hand_parts.as_ref().and_then(|masks| {
+                    if *source == 0 && full_body(anim) {
+                        None
+                    } else {
+                        Some(&masks[*source])
+                    }
+                }),
             })
             .collect();
         let assembly = &self.composition.assembly;

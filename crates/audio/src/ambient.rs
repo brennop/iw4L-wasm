@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use asset_iw4::attenuate;
+use asset_audio::{SoundCatalog, namespace_for_zone};
 use asset_core::AssetNamespace;
-use asset_audio::{
-    LoadedSoundBank, SoundCatalog, compose_sound_bank, gather_sound_sources, namespace_for_zone,
-};
+use asset_iw4::attenuate;
 use asset_transport::GamesRoot;
 use assets::{NamespaceSoundIwd, NamespaceTrees};
 use bevy::{
@@ -25,6 +23,9 @@ use crate::space::{distance_inches, transform_inches};
 
 #[derive(Component)]
 pub struct MapAmbient;
+
+#[derive(Component)]
+pub(crate) struct LegacyAmbient;
 
 pub const MAX_ACTIVE_MAP_EMITTERS: usize = 8;
 
@@ -282,34 +283,17 @@ pub(crate) fn install_sound_bank(
                         namespace: bank.namespace,
                         reused: true,
                     });
-                let games = identity
-                    .as_ref()
-                    .map(|identity| GamesRoot(identity.games_root.clone()));
-                let zone = compose.zone.clone();
+                let namespace = identity.as_ref().map_or(AssetNamespace::Iw4, |identity| {
+                    namespace_for_zone(&GamesRoot(identity.games_root.clone()), &compose.zone)
+                });
+                let gaps = arrived.gaps;
                 let pool = AsyncComputeTaskPool::get_or_init(TaskPool::default);
                 compose.bank = Some(pool.spawn(async move {
-                    if let Some(kept) = kept {
-                        return kept;
-                    }
-                    let Some(games) = games else {
-                        return ComposedBank {
-                            loaded: Err("no launch identity to find the zones by".to_owned()),
-                            namespace: AssetNamespace::Iw4,
-                            reused: false,
-                        };
-                    };
-                    let namespace = namespace_for_zone(&games, &zone);
-                    let loaded = asset_transport::find_zone_file(&games, &zone).map(|found| {
-                        let sources = gather_sound_sources(&games, &found.path);
-                        let LoadedSoundBank { catalog, gaps, .. } =
-                            compose_sound_bank(sources, &zone, namespace, map);
-                        (Arc::new(catalog), gaps.len())
-                    });
-                    ComposedBank {
-                        loaded,
+                    kept.unwrap_or_else(|| ComposedBank {
+                        loaded: map.map(|catalog| (Arc::new(catalog), gaps)),
                         namespace,
                         reused: false,
-                    }
+                    })
                 }));
                 compose.products_id = products_id;
             }
@@ -414,6 +398,7 @@ pub(crate) fn install_sound_bank(
 }
 
 pub(crate) fn boot_map_ambient_once(
+    presented: Option<Res<net::PresentedSnapshot>>,
     mut booted: ResMut<MapAmbientBooted>,
     loading: Option<Res<assets::LoadingScreen>>,
     bank: Option<Res<SoundBank>>,
@@ -451,9 +436,14 @@ pub(crate) fn boot_map_ambient_once(
     let Some(namespace) = namespace.filter(|ns| ns.zone == identity.zone) else {
         return;
     };
+    let scripted = presented
+        .as_ref()
+        .and_then(|p| p.snapshot())
+        .is_some_and(|s| s.meta.objectives.ambient.is_some());
     let ambient_alias = script_sound
         .as_deref()
-        .and_then(|facts| facts.0.ambient_alias.as_deref());
+        .and_then(|facts| facts.0.ambient_alias.as_deref())
+        .filter(|_| !scripted);
     start_map_ambient_prepared(
         &mut commands,
         &mut pcm_assets,
@@ -490,7 +480,7 @@ fn start_map_ambient_prepared(
     gaps: &mut MissingAliasGaps,
 ) {
     if let Some(alias) = ambient_alias {
-        if let Some(pcm) = pcm_for_map_alias(clips, bank, map_ns, alias) {
+        if let Some((pcm, row)) = pcm_for_map_alias(clips, bank, map_ns, alias) {
             let handle = looping_assets.add(pcm.into_looping());
             let entity = crate::backend::spawn_loop(
                 commands,
@@ -499,7 +489,12 @@ fn start_map_ambient_prepared(
                 epoch,
                 AudioScope::Match,
             );
-            commands.entity(entity).insert(MapAmbient);
+            commands.entity(entity).insert((MapAmbient, LegacyAmbient));
+            if let Some(flags) = row.decoded_flags() {
+                commands
+                    .entity(entity)
+                    .insert(crate::backend::SoundChannel(flags.channel()));
+            }
             diag::info!(Audio, "audio: ambient loop `{alias}`");
         } else {
             gaps.record(alias);
@@ -508,39 +503,29 @@ fn start_map_ambient_prepared(
                 "audio: ambient alias `{alias}` unresolved for {map_name}"
             );
         }
-    } else {
-        diag::warn!(
-            Audio,
-            "audio: no ambientPlay in map script for `{map_name}` (typed gap)"
-        );
     }
 
     let loops = bank.createfx_loop_sounds(map_ns, map_name);
-    let mut pcm_by_alias: HashMap<String, Handle<PcmAudio>> = HashMap::new();
+    let mut pcm_by_alias: HashMap<String, (Handle<PcmAudio>, &asset_audio::CapturedAlias)> =
+        HashMap::new();
     let mut started = 0usize;
     let mut missed = 0usize;
     for emitter in &loops {
-        let handle = if let Some(handle) = pcm_by_alias.get(&emitter.soundalias) {
-            handle.clone()
+        let (handle, row) = if let Some((handle, row)) = pcm_by_alias.get(&emitter.soundalias) {
+            (handle.clone(), *row)
         } else {
-            let Some(pcm) = pcm_for_map_alias(clips, bank, map_ns, &emitter.soundalias) else {
+            let Some((pcm, row)) = pcm_for_map_alias(clips, bank, map_ns, &emitter.soundalias)
+            else {
                 gaps.record(&emitter.soundalias);
                 missed += 1;
                 continue;
             };
             let handle = pcm_assets.add(pcm);
-            pcm_by_alias.insert(emitter.soundalias.clone(), handle.clone());
-            handle
+            pcm_by_alias.insert(emitter.soundalias.clone(), (handle.clone(), row));
+            (handle, row)
         };
         let origin_inches = emitter.origin_inches;
-        let row = bank
-            .sound_in(map_ns, &emitter.soundalias)
-            .or_else(|| {
-                bank.index_unique(&emitter.soundalias)
-                    .and_then(|i| bank.sounds.get(i))
-            })
-            .and_then(|s| s.aliases.first());
-        let (dist_min, dist_max, knots, base_gain) = if let Some(row) = row {
+        let (dist_min, dist_max, knots, base_gain) = {
             let knots = row
                 .volume_falloff
                 .as_ref()
@@ -554,22 +539,27 @@ fn start_map_ambient_prepared(
                 );
             }
             (row.dist_min, row.dist_max, knots, row.vol_min.max(0.0))
-        } else {
-            (0.0, 0.0, Arc::from(Vec::<[f32; 2]>::new()), 0.0)
         };
-        commands.spawn((
-            MapAmbient,
-            MapEmitter {
-                origin_inches,
-                dist_min,
-                dist_max,
-                knots,
-                base_gain,
-                pcm: handle,
-                live_pan: None,
-            },
-            Transform::from_translation(Vec3::from_array(origin_inches)),
-        ));
+        let entity = commands
+            .spawn((
+                MapAmbient,
+                MapEmitter {
+                    origin_inches,
+                    dist_min,
+                    dist_max,
+                    knots,
+                    base_gain,
+                    pcm: handle,
+                    live_pan: None,
+                },
+                Transform::from_translation(Vec3::from_array(origin_inches)),
+            ))
+            .id();
+        if let Some(flags) = row.decoded_flags() {
+            commands
+                .entity(entity)
+                .insert(crate::backend::SoundChannel(flags.channel()));
+        }
         started += 1;
     }
     if started > 0 {
@@ -699,16 +689,17 @@ pub fn update_map_emitter_gain(
     }
 }
 
-fn pcm_for_map_alias(
+fn pcm_for_map_alias<'a>(
     clips: Option<&crate::ClipStore>,
-    bank: &SoundCatalog,
+    bank: &'a SoundCatalog,
     ns: AssetNamespace,
     alias: &str,
-) -> Option<PcmAudio> {
+) -> Option<(PcmAudio, &'a asset_audio::CapturedAlias)> {
     let clips = clips?;
     for key in crate::clip_store::clip_keys_for_alias(bank, ns, alias) {
         if let Some(Ok(pcm)) = clips.ready(&key) {
-            return Some(pcm);
+            let row = crate::clip_store::alias_for_clip(bank, ns, alias, &key)?;
+            return Some((pcm, row));
         }
     }
     None

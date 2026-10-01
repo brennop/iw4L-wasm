@@ -174,6 +174,21 @@ pub(crate) fn publish(world: &mut World) {
         )
         .collect();
     let game_end_time = runtime.engine.game_end_time;
+    let slow_motion = runtime.engine.slow_motion;
+    let ambient = runtime
+        .program
+        .is_some()
+        .then(|| runtime.engine.ambient.clone().unwrap_or_default());
+    let ac130_ambient = runtime
+        .program
+        .is_some()
+        .then(|| runtime.engine.ac130_ambient.clone().unwrap_or_default());
+    let rumble_aliases = runtime
+        .precached
+        .iter()
+        .filter(|((kind, _), _)| *kind == "rumble")
+        .map(|((_, name), index)| (*index, name.clone()))
+        .collect();
     let scripted_effects = runtime.program.is_some();
     let naked_vision = runtime.engine.naked_vision.clone();
     let thermal_vision = runtime.engine.thermal_vision.clone();
@@ -216,6 +231,10 @@ pub(crate) fn publish(world: &mut World) {
         vehicles,
         server_info,
         game_end_time,
+        slow_motion,
+        ambient,
+        ac130_ambient,
+        rumble_aliases,
         scripted_effects,
         effects,
         fog,

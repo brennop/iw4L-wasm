@@ -25,6 +25,13 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
     let model_count = s.i32_at(p, sz::GFX_WORLD_MODEL_COUNT_OFF)?.max(0) as usize;
     let material_memory_count =
         s.i32_at(p, sz::GFX_WORLD_MATERIAL_MEMORY_COUNT_OFF)?.max(0) as usize;
+    let mut bounds = [0u32; 6];
+    for i in 0..3 {
+        let min = s.f32_at(p, sz::GFX_WORLD_MINS_OFF + i * 4)?;
+        let max = s.f32_at(p, sz::GFX_WORLD_MINS_OFF + 12 + i * 4)?;
+        bounds[i] = ((min + max) * 0.5).to_bits();
+        bounds[i + 3] = ((max - min) * 0.5).to_bits();
+    }
     let lod_chain_count = s.u32_at(p, sz::GFX_WORLD_LOD_CHAIN_COUNT_OFF)? as usize;
     let lod_info_count = s.u32_at(p, sz::GFX_WORLD_LOD_INFO_COUNT_OFF)? as usize;
     let lod_surface_count = s.u32_at(p, sz::GFX_WORLD_LOD_SURFACE_COUNT_OFF)? as usize;
@@ -371,6 +378,7 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
     )?;
 
     s.record_gfx_world(GfxWorldGeometry {
+        bounds: Some(bounds),
         terrain_scorch_images: Some(p.at(sz::GFX_WORLD_DRAW_OFF + 0x20)),
         vertices,
         vertex_count,

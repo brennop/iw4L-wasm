@@ -134,12 +134,103 @@ and table lookup in `script/host/tables.rs`. All three use the one `Runtime`
 `Token`/`lex` and the call, expression, assignment, and statement methods sit in child
 modules, and `Parser` stays in the parent.
 
+`SoundExists(alias)` checks the composed match sound-alias catalog, installed
+before script entry points run even when audio output is disabled. Host aliases
+resolve case-insensitively; imported aliases use an explicit `t5:` or `iw5:`
+prefix. A missing catalog reports an unavailable native error. Arguments use the usual
+script string conversion.
+
+`AmbientPlay(alias, [fadeSeconds])`, `AmbientStop([fadeSeconds])` and
+`SetAC130Ambience(alias, [fadeSeconds])` update persistent sound state in
+snapshots. The client prepares changed aliases, selects authored variants and
+applies voice fades. The player AC130 flag selects the separate AC130 track;
+leaving AC130 restores the normal track. Stops affect global ambience, while
+CreateFX emitters retain their own playback. Joining clients use the remaining
+fade deadline.
+
+`PlayRumbleOnEntity(name)` and `StopRumble(name)` are entity methods;
+`PlayRumbleOnPosition(name, position)` is a global function. Names must be
+registered by `PrecacheRumble` during script loading. These commands send
+ordered events to the client controller mixer. Authored rumble graphs determine
+motor intensity and duration; `broadcast`, `range` and `fadeWithDistance`
+determine spatial eligibility and attenuation. Represented moving entities use
+their presented positions. Named stops affect matching entity rumbles, including
+local weapon notetracks. Vibration preferences, focus, pad selection and player
+lifecycle still govern controller output. Missing definitions or graphs are
+diagnosed by the client.
+
+`PlaySound(alias)` and `PlaySoundAsMaster(alias)` emit the same spatial sound
+event in the MP runtime. They take one alias argument and require a live entity;
+a valid alias is sent before an extra notify argument produces an error. Missing aliases, looping aliases, unavailable
+looping flags, and a full sound-alias configstring table produce errors without
+emitting an event. Use
+`PlayLoopSound` for looping aliases.
+
 Sounds the scripts play (`playLocalSound`, `playSoundToPlayer`, `playSoundToTeam`)
 reach the client. Effects, rumble and earthquakes validate their receiver and are
 kept in `Runtime.presented` or dropped. In-game menus (team, class, escape, leave-game,
 scoreboard header) and the IW4L frontend run from menuDefs through the same ordered
 GPU menu pass. `crates/ui/menus/frontend.json` defines IW4L navigation and native
 menu styling; frontend service commands connect it to session and master APIs.
+
+`MoveSlide(center, radius, velocity)` starts continuous script-mover motion with
+an offset collision sphere, gravity and collision-plane sliding plus an 18-unit
+step attempt. `slideVelocity` reads the current velocity and accepts finite vector
+writes while sliding; it reads zero when inactive. `StopMoveSlide()` freezes the
+current pose without emitting `movedone`. Stop sliding before a timed origin move.
+Linked players follow the mover and are excluded from its collision query.
+
+`CanMantle()` probes the current player's facing direction against mantle
+surfaces, landing space and clearance using the movement collision backend.
+It leaves player state unchanged. `ForceMantle()` repeats that probe and enters
+the existing mantle root-motion controller without requiring jump input.
+Dead or linked players and unavailable ledges cannot start a mantle; a failed
+force request reports a native error. Authored mantle animations are used when
+loaded, with the existing movement fallback otherwise.
+
+`AllowADS(bool)` gates ADS through the replicated player weapon flags.
+`AllowSprint(bool)` gates new sprints and ends an active sprint when disabled.
+`IsReloading()` and `IsSwitchingWeapon()` inspect both weapon hands;
+`IsDualWielding()` inspects the held inventory weapon's dual-wield latch.
+`GetCurrentWeaponClipAmmo()` reads the held weapon's primary-hand clip, and
+`GetOffhandPrimaryClass()` reads the current offhand class.
+`SwitchToWeaponImmediate(weapon)` arms an owned weapon immediately, cancels its
+pending switch/reload state and preserves the player's ammo inventory.
+
+`MoveX/Y/Z(distance, seconds, accelSeconds = 0, decelSeconds = 0)` move an
+non-player entity by a relative distance along the corresponding world axis,
+with the same ramp and `movedone` behavior as `MoveTo`. `IsLinked()` reads the active
+entity or player link. `LocalToWorldCoords(vector)` rotates a local vector by
+the entity's angles and adds its origin; players use their current view angles.
+
+`GetFirstArrayKey(array)` and `GetNextArrayKey(array, previousKey)` traverse
+keys in the same deterministic descending order as `GetArrayKeys`, preserving
+integer and string key types. Empty arrays and the end return undefined. A
+previous key must still exist; mutation during iteration is not stabilized.
+
+`Kick(clientNumber, reason = "EXE_PLAYERKICKED")` requests client retirement.
+The reason must contain 1–256 bytes and no control characters. Repeated requests
+before retirement preserve the first reason. The client receives a terminal
+control failure through the existing reliable route; transport membership is
+retired, and the next authority tick runs the script disconnect callback and
+removes the player, owned HUD, trigger claims and command state.
+
+`SetSlowMotion(startScale, endScale = 1, seconds = 1)` changes the rate of the
+50 ms gameplay ticks and the client game clock. Script waits, entity mechanics,
+weapons and player simulation follow that rate together. Scales must be finite
+and positive; zero duration applies the end scale immediately. The transition
+is linear over real time: its phase is recovered from the integrated game clock
+so snapshots and late joins share the same transition. Bevy frame quantization
+and its time clamp still apply. Raw input timing and connection clocks use real
+time. Removing the match's time policy restores normal speed.
+
+`PhysicsExplosionSphere(origin, outerRadius, innerRadius, magnitude)` applies an
+outward impulse with an upward bias, full strength inside the inner radius and
+linear falloff to zero at the outer radius. It wakes server bodies registered by
+`PhysicsLaunchServer/Client`, including bodies that have settled, and sends the
+sphere to clients for map props with a physics preset. Client props use their
+mass and explosive-force scale; server script bodies use unit mass. Timed scripted movement or vehicle teleport cancels a
+server body's physical motion.
 
 Killstreak hardware:
 - `spawnHelicopter` arms the vehicle with its VehicleDef `turretWeaponName` (captured
@@ -185,6 +276,24 @@ replay pinning/restoration and client-role lifecycle evidence are still missing.
 Only terminal faults (exhausted identifiers, inconsistent IR) are sticky; they end the
 match and return the host to the lobby. Earlier
 writes are not rolled back.
+
+`GetMissileOwner(missile)` returns the original player entity for an adopted missile,
+including a lingering grenade after explosion. It returns undefined after that player
+disconnects; reconnecting in the same client slot does not transfer ownership.
+
+Damage triggers support `EnableGrenadeTouchDamage()` and `DisableGrenadeTouchDamage()`.
+Enabled triggers test the grenade's actual swept movement through their hulls and emit
+`damage` (inner explosion damage, grenade entity, direction, zero point, MOD_GRENADE),
+then `trigger` when threshold, accumulate and response flags permit activation.
+Bullet segments and radius damage use the same activation policy without requiring
+grenade touch to be enabled. Splash uses bounds distance, cone/visibility samples and
+per-entity radius eligibility. Single-use triggers retire after notification delivery.
+Melee tests its central trace with base damage, including physical misses. Terminal
+missile impacts test their collision point; duds report MOD_IMPACT. Adopted projectile
+impact/splash attribution uses the captured owner object across client-slot reuse.
+
+`IsUsingTurret()` reads the player's authoritative turret-active prone/duck flags.
+
 
 ## Remaining
 

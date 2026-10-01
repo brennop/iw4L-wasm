@@ -47,6 +47,12 @@ enum VoicePhase {
     Playing,
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SoundEntity(pub u32);
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SoundChannel(pub u32);
+
 #[derive(Component, Debug)]
 pub struct Voice {
     pub epoch: u64,
@@ -138,6 +144,7 @@ pub(crate) fn detach_loop(commands: &mut Commands, entity: Entity) {
         AudioPlayer<LoopingPcmAudio>,
         PlaybackSettings,
         AudioSink,
+        crate::match_bus::MatchBusVoice,
         Voice,
     )>();
 }
@@ -147,14 +154,26 @@ pub(crate) fn stop(commands: &mut Commands, entity: Entity) {
 }
 
 fn advance_voice_phases(
-    mut voices: Query<(Entity, &mut Voice, Option<&AudioSink>)>,
+    mut voices: Query<(
+        Entity,
+        &mut Voice,
+        Option<&AudioSink>,
+        Option<&crate::match_bus::MatchBusVoice>,
+    )>,
+    bus: Option<Res<crate::match_bus::MatchBusState>>,
     mut commands: Commands,
 ) {
     let now = Instant::now();
-    for (entity, mut voice, sink) in &mut voices {
+    for (entity, mut voice, sink, routed) in &mut voices {
+        if voice.kind == VoiceKind::Oneshot && sink.is_some_and(|sink| sink.empty()) {
+            end_voice(&mut commands, entity, voice.owner);
+            continue;
+        }
         match voice.phase {
             VoicePhase::Starting => {
-                if sink.is_some() {
+                if sink.is_some()
+                    && (routed.is_none() || bus.as_ref().is_some_and(|bus| bus.ready(voice.epoch)))
+                {
                     voice.phase = VoicePhase::Playing;
                     continue;
                 }
@@ -166,14 +185,7 @@ fn advance_voice_phases(
                     end_voice(&mut commands, entity, voice.owner);
                 }
             }
-            VoicePhase::Playing => {
-                if voice.kind != VoiceKind::Oneshot {
-                    continue;
-                }
-                if sink.is_some_and(|s| s.empty()) {
-                    end_voice(&mut commands, entity, voice.owner);
-                }
-            }
+            VoicePhase::Playing => {}
         }
     }
 }
@@ -192,6 +204,75 @@ fn cancel_stale_match_voices(
         }
         end_voice(&mut commands, entity, voice.owner);
     }
+}
+
+pub(crate) fn stop_entity_match(commands: &mut Commands, snd_ent: u32, epoch: u64) {
+    commands.queue(move |world: &mut World| {
+        let voices: Vec<_> = world
+            .query::<(
+                Entity,
+                &Voice,
+                Option<&crate::playback::AliasPlayback>,
+                Option<&SoundEntity>,
+            )>()
+            .iter(world)
+            .filter(|(_, voice, alias, source)| {
+                voice.scope == AudioScope::Match
+                    && voice.epoch == epoch
+                    && (alias.is_some_and(|alias| alias.snd_ent == Some(snd_ent))
+                        || source.is_some_and(|source| source.0 == snd_ent))
+            })
+            .map(|(entity, voice, _, _)| (entity, voice.owner))
+            .collect();
+        for (entity, owner) in voices {
+            match owner {
+                VoiceOwner::Exclusive => {
+                    world.despawn(entity);
+                }
+                VoiceOwner::Attached => {
+                    world.entity_mut(entity).remove::<(
+                        AudioPlayer<LoopingPcmAudio>,
+                        PlaybackSettings,
+                        AudioSink,
+                        crate::match_bus::MatchBusVoice,
+                        Voice,
+                    )>();
+                }
+            }
+        }
+    });
+}
+
+pub(crate) fn stop_all_match(commands: &mut Commands, epoch: u64) {
+    commands.queue(move |world: &mut World| {
+        let voices: Vec<_> = world
+            .query::<(Entity, &Voice)>()
+            .iter(world)
+            .filter(|(_, voice)| voice.scope == AudioScope::Match && voice.epoch == epoch)
+            .map(|(entity, voice)| (entity, voice.owner))
+            .collect();
+        for (entity, owner) in voices {
+            match owner {
+                VoiceOwner::Exclusive => {
+                    world.despawn(entity);
+                }
+                VoiceOwner::Attached => {
+                    world.entity_mut(entity).remove::<(
+                        AudioPlayer<LoopingPcmAudio>,
+                        PlaybackSettings,
+                        AudioSink,
+                        crate::match_bus::MatchBusVoice,
+                        Voice,
+                    )>();
+                }
+            }
+        }
+        if let Some(mut pending) = world.get_resource_mut::<crate::clip_store::PendingStarts>() {
+            pending
+                .entries
+                .retain(|entry| entry.epoch != epoch || entry.class.scope() != AudioScope::Match);
+        }
+    });
 }
 
 fn end_voice(commands: &mut Commands, entity: Entity, owner: VoiceOwner) {

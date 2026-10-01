@@ -12,7 +12,9 @@ pub mod signon;
 pub mod svc_gamenotify;
 pub mod svc_playercard;
 pub mod svc_scores;
+mod svc_script_audio;
 pub mod svc_sound;
+mod time_scale;
 pub mod transport;
 
 pub use authority::actions::{
@@ -53,9 +55,9 @@ pub use client::presentation::entities::{
 pub use client::presentation::entity_event_dispatch::{
     AppliedEntityEventWalk, DispatchedEntityEvent, EntityBulletHit, EntityEjectBrass,
     EntityEventCursor, EntityEventSound, EntityExplosion, EntityGrenadeContact, EntityMeleeBlood,
-    EntityMovementSound, EntityObituary, EntityPlayFx, EntityResetAds, EntityWeaponFire,
-    KillcamFxTransition, UnsupportedEntityEvents, WeaponFirePing, WeaponFirePingBus,
-    register_entity_event_dispatch,
+    EntityMovementSound, EntityObituary, EntityPhysicsSphere, EntityPlayFx, EntityResetAds,
+    EntityRumble, EntityWeaponFire, KillcamFxTransition, UnsupportedEntityEvents, WeaponFirePing,
+    WeaponFirePingBus, register_entity_event_dispatch,
 };
 pub use client::presentation::entity_event_registry::{
     EV_DISPATCH_REGISTRY, EntityEventDispatch, EntityEventRow, ev_dispatch_row,
@@ -165,4 +167,6 @@ pub use transport::udp_session::{CommittedAdmission, UdpAuthorityHub, UdpClientL
 pub use transport::udp_socket::UdpSendError;
 pub use transport::wire::{WireError, WireReader, WireWriter};
 
-pub const PROTOCOL_VERSION: u32 = 86;
+pub use svc_script_audio::SvcScriptAudio;
+
+pub const PROTOCOL_VERSION: u32 = 94;

@@ -80,3 +80,43 @@ operate_doors()
         level.radiation_switches[i] makeusable();
 }
 "#;
+
+pub(crate) const DESTRUCTIBLES: &str = r#"main()
+{
+    level.globalCarsDestroyed = 0;
+}
+
+broken(event, attacker)
+{
+    if (event == "destructible_car_fire" || event == "destructible_barrel_fire")
+        self thread ignite(attacker);
+    else if (event == "destructible_car_explosion" || event == "destructible_barrel_explosion" || event == "explode")
+        self explode(attacker);
+}
+
+ignite(attacker)
+{
+    self endon("wrecked");
+    wait randomintrange(7, 10);
+    self thread explode(attacker);
+}
+
+explode(attacker)
+{
+    if (isdefined(self.wrecked) && self.wrecked)
+        return;
+    self.wrecked = true;
+    self notify("wrecked");
+    self damagepiece(20000, -1, attacker);
+    self radiusdamage(self.origin, 256, 300, 75, attacker, "MOD_EXPLOSIVE");
+    earthquake(.5, .5, self.origin, 800);
+    level.globalCarsDestroyed++;
+}
+
+break_after(piece, stage, duration, amount, attacker)
+{
+    wait duration;
+    if (self piecestage(piece, stage))
+        self damagepiece(amount, piece, attacker);
+}
+"#;

@@ -29,6 +29,11 @@ struct PlayerAnimTreeSlot {
     runtime: xmodel_runtime::XAnimTreeRuntime,
     leaf: u16,
     restart_toggle: bool,
+    torso: u16,
+    torso_restart: bool,
+    kit: usize,
+    legs_rate_sample: xmodel_runtime::ClientAnimSample,
+    torso_rate_sample: xmodel_runtime::ClientAnimSample,
     persist: i64,
 }
 
@@ -243,8 +248,10 @@ pub struct HitvolDumpRow {
     pub dobj_models: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PredictionRemoteBody {
+    pub shield: Option<crate::ShieldAttachment>,
+    pub shield_collision: Option<crate::ShieldCarrierCollision>,
     pub client: ClientId,
     pub origin: [f32; 3],
     pub life_sequence: crate::LifeSequence,
@@ -281,6 +288,7 @@ pub struct WeaponSetup {
 
 #[derive(Debug, Default)]
 pub struct SimContentBuilder {
+    script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
     clip_brushes: Vec<SimBrush>,
     clip_bsp: SimClipBsp,
     clip_mesh: SimClipMesh,
@@ -295,6 +303,9 @@ pub struct SimContentBuilder {
     player_kits: [PlayerKitCollision; 2],
     player_anim_tree: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
     player_anim_node_names: Vec<String>,
+    player_axis_anim_tree: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
+    player_anim_properties: Vec<xmodel_runtime::PlayerAnimProperties>,
+    player_body_branches: Option<xmodel_runtime::PlayerBodyBranches>,
     script_model_anims: std::collections::BTreeMap<String, crate::ScriptModelPlayAnim>,
     xanims: Arc<crate::MantleXAnimBind>,
     weapon_script_names: Arc<[String]>,
@@ -303,6 +314,7 @@ pub struct SimContentBuilder {
     vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
     weapon_setups: Arc<[Option<WeaponSetup>]>,
     weapon_world_models: Vec<(String, Vec<String>)>,
+    shield_models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
     weapon_projectile_models: Vec<String>,
     weapon_melee_only: Vec<bool>,
     weapon_script_sounds: Vec<WeaponScriptSounds>,
@@ -315,6 +327,18 @@ pub struct SimContentBuilder {
 }
 
 impl SimContentBuilder {
+    pub fn set_script_sound_aliases(
+        &mut self,
+        aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
+    ) {
+        self.script_sound_aliases = aliases.map(|names| {
+            names
+                .into_iter()
+                .map(|(name, looping)| (name.to_ascii_lowercase(), looping))
+                .collect()
+        });
+    }
+
     pub fn finish(mut self) -> Arc<SimContent> {
         self.clip_mesh.rebuild_smodel_grid();
         Arc::new(SimContent { data: self })
@@ -375,7 +399,29 @@ impl SimContentBuilder {
         node_names: Vec<String>,
     ) {
         self.player_anim_tree = definition;
+        self.player_body_branches = node_names
+            .iter()
+            .position(|name| name == "legs")
+            .zip(node_names.iter().position(|name| name == "torso"))
+            .map(|(legs, torso)| xmodel_runtime::PlayerBodyBranches {
+                legs: xmodel_runtime::XAnimNodeId(legs as u16),
+                torso: xmodel_runtime::XAnimNodeId(torso as u16),
+            });
         self.player_anim_node_names = node_names;
+    }
+
+    pub fn set_player_axis_anim_tree(
+        &mut self,
+        definition: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
+    ) {
+        self.player_axis_anim_tree = definition;
+    }
+
+    pub fn set_player_anim_properties(
+        &mut self,
+        properties: Vec<xmodel_runtime::PlayerAnimProperties>,
+    ) {
+        self.player_anim_properties = properties;
     }
 
     pub fn set_mantle_xanims(&mut self, bind: crate::MantleXAnimBind) {
@@ -403,6 +449,13 @@ impl SimContentBuilder {
 
     pub fn set_weapon_setups(&mut self, setups: Vec<Option<WeaponSetup>>) {
         self.weapon_setups = setups.into();
+    }
+
+    pub fn set_shield_models(
+        &mut self,
+        models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
+    ) {
+        self.shield_models = models;
     }
 
     pub fn set_weapon_world_models(&mut self, models: Vec<(String, Vec<String>)>) {
@@ -560,6 +613,7 @@ pub struct SimState {
 
     pending_prints: Vec<PendingPrint>,
     pending_local_sounds: Vec<PendingLocalSound>,
+    pending_script_audio: Vec<crate::ScriptAudioCommand>,
 
     pending_final_kill: Option<(ClientId, ClientId)>,
 
@@ -569,7 +623,8 @@ pub struct SimState {
 
     last_stuck_ejects: Vec<(ClientId, ClientId)>,
 
-    last_anim_movetype: HashMap<ClientId, u8>,
+    last_anim_movement: HashMap<ClientId, (u8, u8)>,
+    anim_command_buttons: HashMap<ClientId, u32>,
 
     anim_event_seed: u32,
 
@@ -657,11 +712,13 @@ impl Default for SimState {
             pending_player_cards: Vec::new(),
             pending_prints: Vec::new(),
             pending_local_sounds: Vec::new(),
+            pending_script_audio: Vec::new(),
             pending_final_kill: None,
             last_pmove_walking: HashMap::new(),
             stuck_holdrand: 0,
             last_stuck_ejects: Vec::new(),
-            last_anim_movetype: HashMap::new(),
+            last_anim_movement: HashMap::new(),
+            anim_command_buttons: HashMap::new(),
             anim_event_seed: 1,
             corpses: crate::PlayerCorpsePool::default(),
             entity_kernel: crate::gentity::EntityKernel::default(),
@@ -746,6 +803,7 @@ impl SimState {
         self.pending_player_cards.clear();
         self.pending_prints.clear();
         self.pending_local_sounds.clear();
+        self.pending_script_audio.clear();
         self.script_gaps = ScriptGaps::default();
         self.recompute_content_digest();
         Ok(())
@@ -809,6 +867,27 @@ impl SimState {
         self.hud_elem_sound_ids = ids;
     }
 
+    pub fn script_sound_exists(&self, name: &str) -> Option<bool> {
+        self.content
+            .data
+            .script_sound_aliases
+            .as_ref()
+            .map(|names| names.contains_key(&name.to_ascii_lowercase()))
+    }
+
+    pub fn script_sound_is_looping(&self, name: &str) -> Result<bool, &'static str> {
+        let aliases = self
+            .content
+            .data
+            .script_sound_aliases
+            .as_ref()
+            .ok_or("sound alias catalog is not installed")?;
+        aliases
+            .get(&name.to_ascii_lowercase())
+            .ok_or("sound alias not found")?
+            .ok_or("sound alias looping flags are unavailable")
+    }
+
     pub fn sound_alias_index(&mut self, name: &str) -> u8 {
         self.sound_alias_cs.index(name)
     }
@@ -835,6 +914,14 @@ impl SimState {
 
     pub(crate) fn push_local_sound(&mut self, sound: PendingLocalSound) {
         self.pending_local_sounds.push(sound);
+    }
+
+    pub(crate) fn push_script_audio(&mut self, command: crate::ScriptAudioCommand) {
+        self.pending_script_audio.push(command);
+    }
+
+    pub fn take_pending_script_audio(&mut self) -> Vec<crate::ScriptAudioCommand> {
+        core::mem::take(&mut self.pending_script_audio)
     }
 
     pub fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
@@ -986,12 +1073,28 @@ impl SimState {
         self.content.data.player_anim_script.clone()
     }
 
-    pub fn set_last_anim_movetype(&mut self, id: ClientId, movetype: u8) {
-        self.last_anim_movetype.insert(id, movetype);
+    pub(crate) fn set_anim_movement(&mut self, id: ClientId, movetype: u8, strafing: u8) {
+        self.last_anim_movement.insert(id, (movetype, strafing));
+    }
+
+    pub(crate) fn set_anim_command_buttons(&mut self, id: ClientId, buttons: u32) {
+        self.anim_command_buttons.insert(id, buttons);
+    }
+
+    pub(crate) fn anim_command_buttons(&self, id: ClientId) -> u32 {
+        self.anim_command_buttons.get(&id).copied().unwrap_or(0)
     }
 
     pub fn last_anim_movetype(&self, id: ClientId) -> Option<u8> {
-        self.last_anim_movetype.get(&id).copied()
+        self.last_anim_movement
+            .get(&id)
+            .map(|&(movetype, _)| movetype)
+    }
+
+    pub(crate) fn last_anim_strafing(&self, id: ClientId) -> u8 {
+        self.last_anim_movement
+            .get(&id)
+            .map_or(0, |&(_, strafing)| strafing)
     }
 
     pub fn anim_event_seed(&self) -> u32 {
@@ -1113,6 +1216,29 @@ impl SimState {
             .get(weapon as usize)
             .copied()
             .unwrap_or(false)
+    }
+
+    pub(crate) fn shield_weapon_for_model(
+        &self,
+        model: &str,
+        weapons: impl IntoIterator<Item = i32>,
+    ) -> Option<u32> {
+        weapons
+            .into_iter()
+            .filter_map(|weapon| u32::try_from(weapon).ok())
+            .find(|weapon| {
+                self.content
+                    .data
+                    .weapon_world_models
+                    .get(*weapon as usize)
+                    .is_some_and(|(name, _)| name == model)
+                    && self
+                        .content
+                        .data
+                        .shield_models
+                        .get(*weapon as usize)
+                        .is_some_and(Option::is_some)
+            })
     }
 
     pub(crate) fn weapon_world_model(&self, weapon: u32) -> Option<(&str, &[String])> {
@@ -1260,6 +1386,7 @@ impl SimState {
     fn recompute_content_digest(&mut self) {
         self.content_digest = crate::content::content_digest(
             &self.content.data.weapon_combat,
+            &self.content.data.bullet_pen,
             &self.content.data.weapon_runnable,
             &self.content.data.weapon_transition_groups,
             &self.content.data.equipment_runtime,
@@ -1269,6 +1396,7 @@ impl SimState {
         );
         self.content_components = crate::content::content_components(
             &self.content.data.weapon_combat,
+            &self.content.data.bullet_pen,
             &self.content.data.weapon_runnable,
             &self.content.data.weapon_transition_groups,
             &self.content.data.equipment_runtime,
@@ -1399,7 +1527,8 @@ impl SimState {
         self.lagcomp_sample.remove(&id);
         self.lagcomp_commands.retain(|(client, _), _| *client != id);
         self.last_pmove_walking.remove(&id);
-        self.last_anim_movetype.remove(&id);
+        self.last_anim_movement.remove(&id);
+        self.anim_command_buttons.remove(&id);
     }
 
     pub(crate) fn area_entity_candidates(
@@ -1505,6 +1634,55 @@ impl SimState {
         &self.entity_collision_capabilities
     }
 
+    pub(crate) fn model_movement_brushes(&self) -> Vec<SimBrush> {
+        self.model_movement_brushes_where(|_| true)
+    }
+
+    pub(crate) fn model_movement_brushes_where(
+        &self,
+        keep: impl Fn(&EntityCollisionCapabilities) -> bool,
+    ) -> Vec<SimBrush> {
+        let mut brushes = Vec::new();
+        for row in self
+            .entity_collision_capabilities
+            .iter()
+            .filter(|row| row.solid && keep(row))
+        {
+            let Some(dobj) = &row.dobj else { continue };
+            let Some(capability) = &dobj.capability else {
+                continue;
+            };
+            if capability.movement_brushes.is_empty() {
+                continue;
+            }
+            let plane_transform = dobj.world_from_model.inverse().transpose();
+            for brush in &capability.movement_brushes {
+                let planes = brush
+                    .planes
+                    .iter()
+                    .map(|plane| {
+                        let plane = plane_transform
+                            * glam::Vec4::new(plane[0], plane[1], plane[2], -plane[3]);
+                        let length = plane.truncate().length();
+                        [
+                            plane.x / length,
+                            plane.y / length,
+                            plane.z / length,
+                            -plane.w / length,
+                        ]
+                    })
+                    .collect();
+                brushes.push(SimBrush {
+                    planes,
+                    contents: brush.contents,
+                    plane_surface_flags: brush.plane_surface_flags.clone(),
+                    glass_encoded: 0,
+                });
+            }
+        }
+        brushes
+    }
+
     pub(crate) fn entity_collision_capabilities_mut(
         &mut self,
     ) -> &mut [EntityCollisionCapabilities] {
@@ -1565,6 +1743,29 @@ impl SimState {
         mask: u32,
     ) -> trace_iw4::Trace {
         self.trace_clip(start, end, mins, maxs, mask)
+    }
+
+    pub(crate) fn trace_world_except(
+        &self,
+        start: [f32; 3],
+        end: [f32; 3],
+        mask: u32,
+        exclude: Option<crate::AuthorityModelOwner>,
+    ) -> trace_iw4::Trace {
+        self.trace_clip_maps_glass(
+            &self.content.data.clip_brushes,
+            &self.content.data.clip_bsp,
+            &self.content.data.clip_mesh,
+            movement_iw4::GroundTraceInput {
+                start,
+                end,
+                mins: [0.0; 3],
+                maxs: [0.0; 3],
+                tracemask: mask,
+            },
+            false,
+            exclude,
+        )
     }
 
     pub fn trace_static_world(
@@ -1636,6 +1837,7 @@ impl SimState {
                 tracemask: mask,
             },
             false,
+            None,
         )
     }
 
@@ -1661,6 +1863,7 @@ impl SimState {
                 tracemask: mask,
             },
             true,
+            None,
         )
     }
 
@@ -1671,6 +1874,7 @@ impl SimState {
         clip_mesh: &SimClipMesh,
         input: movement_iw4::GroundTraceInput,
         ignore_glass: bool,
+        exclude: Option<crate::AuthorityModelOwner>,
     ) -> trace_iw4::Trace {
         let movement_iw4::GroundTraceInput {
             start,
@@ -1693,8 +1897,9 @@ impl SimState {
         let linked = self
             .entity_collision_capabilities
             .iter()
+            .filter(|c| Some(c.owner) != exclude)
             .flat_map(|c| c.solid_brushes().iter());
-        clip_move_to_bmodels(
+        let hit = clip_move_to_bmodels(
             world_hit,
             &self.content.data.clip_cmodels.models,
             &clip_bsp.leafbrushes,
@@ -1707,6 +1912,11 @@ impl SimState {
                 maxs,
                 tracemask: mask,
             },
+        );
+        clip_move_to_model_brushes(
+            hit,
+            &self.model_movement_brushes_where(|row| Some(row.owner) != exclude),
+            input,
         )
     }
 
@@ -1999,6 +2209,8 @@ impl SimState {
                 pose.client == *id
                     && pose.life_sequence == meta.life_sequence
                     && pose.origin == ps.origin
+                    && pose.viewangles == ps.viewangles
+                    && pose.shield == meta.shield
             });
             if !held {
                 return Some(self.alive_collision_poses_inner(player, recorded, |_| {}));
@@ -2031,15 +2243,17 @@ impl SimState {
                 pose.client == *id
                     && pose.life_sequence == meta.life_sequence
                     && pose.origin == ps.origin
+                    && pose.viewangles == ps.viewangles
+                    && pose.shield == meta.shield
             }) {
                 poses.push(pose.clone());
                 continue;
             }
-            let bones = match self.player_hitvol_bones(*id, &ps) {
+            let (bones, shield_normal) = match self.player_hitvol_bones(*id, &ps) {
                 Ok(bones) => bones,
                 Err(error) => {
                     on_err(&error);
-                    Vec::new()
+                    (Vec::new(), None)
                 }
             };
             poses.push(PlayerCollisionPose {
@@ -2050,22 +2264,32 @@ impl SimState {
                 life_sequence: meta.life_sequence,
                 hit_volume: HitVolumeKind::Standing,
                 bones,
+                viewangles: ps.viewangles,
+                shield: meta.shield,
+                shield_normal,
             });
         }
-        poses.extend(
-            self.prediction_remote_bodies
-                .iter()
-                .map(|body| PlayerCollisionPose {
-                    client: body.client,
-                    origin: body.origin,
-                    mins: PLAYER_MINS,
-                    maxs: PLAYER_MAXS,
-                    life_sequence: body.life_sequence,
-                    hit_volume: HitVolumeKind::Standing,
+        poses.extend(self.prediction_remote_bodies.iter().map(|body| {
+            PlayerCollisionPose {
+                client: body.client,
+                origin: body.origin,
+                mins: PLAYER_MINS,
+                maxs: PLAYER_MAXS,
+                life_sequence: body.life_sequence,
+                hit_volume: HitVolumeKind::Standing,
 
-                    bones: Vec::new(),
-                }),
-        );
+                bones: body
+                    .shield_collision
+                    .as_ref()
+                    .map_or_else(Vec::new, |collision| collision.bones.clone()),
+                viewangles: [0.0; 3],
+                shield: body.shield,
+                shield_normal: body
+                    .shield_collision
+                    .as_ref()
+                    .map(|collision| collision.normal),
+            }
+        }));
         poses
     }
 
@@ -2132,15 +2356,31 @@ impl SimState {
         &self,
         id: ClientId,
         ps: &PlayerState,
-    ) -> Result<Vec<xmodel_runtime::CollisionBone>, String> {
+    ) -> Result<(Vec<xmodel_runtime::CollisionBone>, Option<[f32; 3]>), String> {
         let kit = self.collision_kit(id);
         let Some(cap) = kit.body.as_ref() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         };
         let world = glam::Mat4::from_rotation_translation(
             glam::Quat::from_rotation_z(ps.viewangles[1].to_radians()),
             glam::Vec3::from_array(ps.origin),
         );
+        let legs = PlayerAnimValue::from_raw((ps.legs_anim as u16) & PLAYER_ANIM_RAW_MASK)
+            .map(PlayerAnimValue::effective_index)
+            .unwrap_or(0);
+        let torso = PlayerAnimValue::from_raw((ps.torso_anim as u16) & PLAYER_ANIM_RAW_MASK)
+            .map(PlayerAnimValue::effective_index)
+            .unwrap_or(0);
+        if legs != 0
+            && !self.player_anim_trees.get(&id.0).is_some_and(|slot| {
+                slot.leaf == legs && slot.torso == torso && slot.kit == self.collision_kit_index(id)
+            })
+        {
+            return Err(format!(
+                "player {} body tree unavailable for legs {legs}/torso {torso}",
+                id.0
+            ));
+        }
         let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
         let input = player_controller_input(ps);
         let controller = move |dobj: &xmodel_runtime::DObj,
@@ -2148,7 +2388,7 @@ impl SimState {
                                locals: &mut [anim_iw4::Local]| {
             xmodel_runtime::apply_player_controller(dobj, locals, input);
         };
-        let models: Vec<(
+        let mut models: Vec<(
             &xmodel_runtime::RetainedModelCapability,
             Option<xmodel_runtime::Attach>,
         )> = match (
@@ -2167,13 +2407,91 @@ impl SimState {
             ],
             (Some(_), None) | (None, _) => vec![(cap.as_ref(), None)],
         };
+        if let Some(shield) = self.client_meta(id).and_then(|meta| meta.shield) {
+            let capability = self
+                .content
+                .data
+                .shield_models
+                .get(shield.weapon as usize)
+                .and_then(Option::as_ref)
+                .ok_or("shield collision capability unavailable")?;
+            models.push((
+                capability.as_ref(),
+                Some(xmodel_runtime::Attach {
+                    parent_model: 0,
+                    tag: shield.tag().into(),
+                }),
+            ));
+            let specs: Vec<_> = models
+                .iter()
+                .map(|(model, attach)| (&model.pose, attach.clone()))
+                .collect();
+            let dobj = xmodel_runtime::DObj::build(&specs).map_err(|e| format!("{e:?}"))?;
+            let mut bones = xmodel_runtime::collision_dobj_with_controller(
+                &dobj, &models, &request, world, controller,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+            let shield_slot = dobj.models.last().ok_or("shield DObj model missing")?;
+            for bone in &mut bones {
+                if usize::from(bone.bone) >= shield_slot.base {
+                    bone.part_classification = crate::shield::HITLOC;
+                }
+            }
+            let posed = xmodel_runtime::pose_dobj_with_controller(
+                &dobj,
+                &request,
+                world,
+                |dobj, _, locals| {
+                    xmodel_runtime::apply_player_controller(dobj, locals, input);
+                },
+            )
+            .map_err(|e| format!("{e:?}"))?;
+            if !bones
+                .iter()
+                .any(|bone| bone.part_classification == crate::shield::HITLOC)
+            {
+                for surf in &capability.coll_surfs {
+                    let index = shield_slot.base + usize::from(surf.bone);
+                    if let Some(transform) = posed.get(index)
+                        && let Some(mut bone) = xmodel_runtime::collision_bone_from_local_box(
+                            index as u16,
+                            surf.midpoint,
+                            surf.half_size,
+                            *transform,
+                        )
+                    {
+                        bone.part_classification = crate::shield::HITLOC;
+                        bones.push(bone);
+                    }
+                }
+            }
+            let tag = dobj
+                .bones
+                .iter()
+                .position(|bone| bone.name == shield.tag())
+                .ok_or("shield tag missing")?;
+            let normal = posed
+                .get(tag)
+                .and_then(|matrix| matrix.x_axis.truncate().try_normalize())
+                .ok_or("shield tag transform invalid")?
+                .to_array();
+            if !bones
+                .iter()
+                .any(|bone| bone.part_classification == crate::shield::HITLOC)
+            {
+                return Err("shield model has no collision geometry".into());
+            }
+            return Ok((bones, Some(normal)));
+        }
         if let Some(slot) = self.player_dobjs.get(&id.0) {
             return xmodel_runtime::collision_dobj_with_controller(
                 &slot.dobj, &models, &request, world, controller,
             )
+            .map(|bones| (bones, None))
             .map_err(|e| format!("{e:?}"));
         }
         xmodel_runtime::collision_models_with_controller(&models, &request, world, controller)
+            .map(|bones| (bones, None))
             .map_err(|e| format!("{e:?}"))
     }
 
@@ -2252,10 +2570,12 @@ impl SimState {
     ) {
         use crate::match_state::ClientLifecycle;
         let dt = msec as f32 / 1000.0;
-        let Some(definition) = self.content.data.player_anim_tree.clone() else {
+        if self.content.data.player_anim_tree.is_none()
+            && self.content.data.player_axis_anim_tree.is_none()
+        {
             self.player_anim_trees.clear();
             return;
-        };
+        }
         let ids: Vec<ClientId> = self
             .clients
             .iter()
@@ -2271,51 +2591,206 @@ impl SimState {
             let Some(ps) = player(id) else {
                 continue;
             };
-            let Some(value) =
+            let kit = self.collision_kit_index(id);
+            let definition = if kit == 0 {
+                self.content.data.player_anim_tree.clone()
+            } else {
+                self.content.data.player_axis_anim_tree.clone()
+            };
+            let Some(definition) = definition else {
+                self.player_anim_trees.remove(&id.0);
+                continue;
+            };
+            let Some(legs) =
                 PlayerAnimValue::from_raw((ps.legs_anim as u16) & PLAYER_ANIM_RAW_MASK)
             else {
                 self.player_anim_trees.remove(&id.0);
                 continue;
             };
-            let leaf = value.effective_index();
-            let restart = value.restart_toggle();
-            if leaf == 0
-                || !matches!(
-                    definition.nodes().get(leaf as usize).map(|n| &n.kind),
-                    Some(xmodel_runtime::XAnimNodeKind::Leaf { .. })
-                )
-            {
+            let Some(torso) =
+                PlayerAnimValue::from_raw((ps.torso_anim as u16) & PLAYER_ANIM_RAW_MASK)
+            else {
                 self.player_anim_trees.remove(&id.0);
                 continue;
-            }
-            let reuse = self
+            };
+            let leaf = legs.effective_index();
+            let torso_index = torso.effective_index();
+            let restart = legs.restart_toggle();
+            let torso_restart = torso.restart_toggle();
+            let previous = self
                 .player_anim_trees
-                .get(&id.0)
-                .is_some_and(|slot| slot.leaf == leaf && slot.restart_toggle == restart);
-            if reuse {
-                if let Some(slot) = self.player_anim_trees.get_mut(&id.0) {
-                    let _ = slot.runtime.update(dt);
+                .remove(&id.0)
+                .filter(|slot| slot.kit == kit);
+            let reused = previous.as_ref().is_some_and(|slot| {
+                slot.leaf == leaf
+                    && slot.torso == torso_index
+                    && slot.restart_toggle == restart
+                    && slot.torso_restart == torso_restart
+            });
+            let advanced = (|| -> Result<PlayerAnimTreeSlot, String> {
+                let mut slot = if reused {
+                    let mut slot = previous.expect("reuse checked");
                     slot.persist = 1;
-                }
-            } else {
-                let mut runtime = xmodel_runtime::XAnimTreeRuntime::new(Arc::clone(&definition));
-                if runtime
-                    .set_complete_goal_weight(xmodel_runtime::XAnimNodeId(leaf), 0.0, 1.0)
-                    .is_err()
-                {
-                    self.player_anim_trees.remove(&id.0);
-                    continue;
-                }
-                let _ = runtime.update(dt);
-                self.player_anim_trees.insert(
-                    id.0,
-                    PlayerAnimTreeSlot {
-                        runtime,
+                    slot
+                } else {
+                    let clip_at = |index: u16| match definition
+                        .nodes()
+                        .get(index as usize)
+                        .map(|node| &node.kind)
+                    {
+                        Some(xmodel_runtime::XAnimNodeKind::Leaf { clip, .. }) if index != 0 => {
+                            Ok(Arc::clone(clip))
+                        }
+                        _ => Err(format!("player body leaf {index} missing")),
+                    };
+                    let clip = clip_at(leaf)?;
+                    let torso_clip = if torso_index != 0 {
+                        Some(clip_at(torso_index)?)
+                    } else {
+                        None
+                    };
+                    let legs_for_tree = torso_clip.as_ref().map_or_else(
+                        || Arc::clone(&clip),
+                        |torso| Arc::new(xmodel_runtime::overlay_legs_clip(&clip, torso)),
+                    );
+                    let old_legs = previous.as_ref().map_or(0, |slot| slot.leaf);
+                    let old_torso = previous.as_ref().map_or(0, |slot| slot.torso);
+                    let legs_restart = previous
+                        .as_ref()
+                        .is_some_and(|slot| slot.restart_toggle != restart);
+                    let torso_restart_changed = previous
+                        .as_ref()
+                        .is_some_and(|slot| slot.torso_restart != torso_restart);
+                    let mut nodes = definition.nodes().to_vec();
+                    if let Some(slot) = &previous {
+                        for (index, state) in slot.runtime.states().iter().enumerate() {
+                            if (state.weight > 0.0 || state.goal_weight > 0.0)
+                                && let Some(clip) = slot
+                                    .runtime
+                                    .leaf_clip(xmodel_runtime::XAnimNodeId(index as u16))
+                                && let xmodel_runtime::XAnimNodeKind::Leaf { clip: bound, .. } =
+                                    &mut nodes[index].kind
+                            {
+                                *bound = clip;
+                            }
+                        }
+                    }
+                    if let xmodel_runtime::XAnimNodeKind::Leaf { clip, .. } =
+                        &mut nodes[leaf as usize].kind
+                    {
+                        *clip = legs_for_tree;
+                    }
+                    if let Some(torso_clip) = &torso_clip
+                        && let xmodel_runtime::XAnimNodeKind::Leaf { clip, .. } =
+                            &mut nodes[torso_index as usize].kind
+                    {
+                        *clip = Arc::clone(torso_clip);
+                    }
+                    let bound = Arc::new(
+                        xmodel_runtime::XAnimTreeDefinition::new(nodes)
+                            .map_err(|e| e.to_string())?,
+                    );
+                    let mut slot = match previous {
+                        Some(mut slot) => {
+                            slot.runtime.rebind(bound).map_err(|e| e.to_string())?;
+                            slot
+                        }
+                        None => PlayerAnimTreeSlot {
+                            runtime: xmodel_runtime::XAnimTreeRuntime::new(bound),
+                            leaf: 0,
+                            restart_toggle: false,
+                            torso: 0,
+                            torso_restart: false,
+                            kit,
+                            legs_rate_sample: Default::default(),
+                            torso_rate_sample: Default::default(),
+                            persist: 0,
+                        },
+                    };
+                    let old_legs_moving = slot.legs_rate_sample.move_speed > 0.0;
+                    let old_torso_moving = slot.torso_rate_sample.move_speed > 0.0;
+                    let properties = |index: u16| {
+                        self.content
+                            .data
+                            .player_anim_properties
+                            .get(index as usize)
+                            .copied()
+                            .unwrap_or_default()
+                    };
+                    let legs_properties = properties(leaf);
+                    let torso_properties = properties(torso_index);
+                    slot.legs_rate_sample.move_speed = if legs_properties.stationary {
+                        0.0
+                    } else {
+                        clip.move_speed()
+                    };
+                    slot.legs_rate_sample.ladder = legs_properties.ladder;
+                    slot.torso_rate_sample.move_speed = if torso_properties.stationary {
+                        0.0
+                    } else {
+                        torso_clip.as_ref().map_or(0.0, |clip| clip.move_speed())
+                    };
+                    slot.torso_rate_sample.ladder = torso_properties.ladder;
+                    let phase = if old_legs != leaf
+                        && old_legs_moving
+                        && slot.legs_rate_sample.move_speed > 0.0
+                        && clip.looping
+                        && slot
+                            .runtime
+                            .leaf_clip(xmodel_runtime::XAnimNodeId(old_legs))
+                            .is_some_and(|clip| clip.looping)
+                    {
+                        Some(slot.runtime.states()[old_legs as usize].time)
+                    } else {
+                        None
+                    };
+                    xmodel_runtime::apply_player_anim_goals(
+                        &mut slot.runtime,
+                        self.content
+                            .data
+                            .player_body_branches
+                            .ok_or("player body branches missing")?,
+                        old_legs,
+                        old_torso,
                         leaf,
-                        restart_toggle: restart,
-                        persist: 0,
-                    },
-                );
+                        torso_index,
+                        legs_restart,
+                        torso_restart_changed,
+                        old_legs_moving,
+                        old_torso_moving,
+                        slot.legs_rate_sample.move_speed > 0.0,
+                        slot.torso_rate_sample.move_speed > 0.0,
+                        [legs_properties.blend_ms, torso_properties.blend_ms],
+                    )?;
+                    if let Some(time) = phase {
+                        let mut state = slot.runtime.states()[leaf as usize];
+                        state.time = time;
+                        state.old_time = time;
+                        slot.runtime
+                            .set_state(xmodel_runtime::XAnimNodeId(leaf), state)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    slot.leaf = leaf;
+                    slot.torso = torso_index;
+                    slot.restart_toggle = restart;
+                    slot.torso_restart = torso_restart;
+                    slot.persist = 0;
+                    slot
+                };
+                xmodel_runtime::apply_player_anim_rates(
+                    &mut slot.runtime,
+                    &mut slot.legs_rate_sample,
+                    &mut slot.torso_rate_sample,
+                    leaf,
+                    torso_index,
+                    ps.origin,
+                    ps.command_time,
+                )?;
+                slot.runtime.update(dt).map_err(|e| e.to_string())?;
+                Ok(slot)
+            })();
+            if let Ok(slot) = advanced {
+                self.player_anim_trees.insert(id.0, slot);
             }
         }
         self.player_anim_trees.retain(|k, _| live.contains(k));
@@ -2554,6 +3029,15 @@ impl SimState {
             .iter()
             .map(|(id, m)| {
                 let mut meta = m.to_snapshot_meta();
+                if meta.shield.is_some()
+                    && meta.lifecycle == crate::ClientLifecycle::Alive
+                    && let Some(ps) = players
+                        .iter()
+                        .find_map(|(client, ps)| (*client == *id).then_some(ps))
+                    && let Ok((bones, Some(normal))) = self.player_hitvol_bones(*id, ps)
+                {
+                    meta.shield_collision = Some(crate::ShieldCarrierCollision { normal, bones });
+                }
 
                 let (archival, current) = crate::hudelem::hud_elem_update_client(
                     &self.g_hudelems,
@@ -2713,6 +3197,8 @@ impl SimState {
                             .expect("authoritative player row omitted client meta");
                         (meta.lifecycle == crate::ClientLifecycle::Alive).then_some(
                             PredictionRemoteBody {
+                                shield: meta.shield,
+                                shield_collision: meta.shield_collision.clone(),
                                 client: *id,
                                 origin: ps.origin,
                                 life_sequence: meta.life_sequence,
@@ -3349,6 +3835,32 @@ fn player_controller_input(ps: &PlayerState) -> xmodel_runtime::PlayerController
         crouch: ps.e_flags & playerstate_iw4::eflags::DUCK != 0,
         lean_frac: math_iw4::get_lean_fraction(ps.leanf),
     }
+}
+
+pub(crate) fn clip_move_to_model_brushes(
+    mut hit: trace_iw4::Trace,
+    brushes: &[SimBrush],
+    input: movement_iw4::GroundTraceInput,
+) -> trace_iw4::Trace {
+    if hit.fraction == 0.0 || brushes.is_empty() {
+        return hit;
+    }
+    let other = trace_iw4::trace_capsule(
+        brushes.iter().map(clipmap_iw4::brush_ref),
+        input.start,
+        input.end,
+        input.mins,
+        input.maxs,
+        input.tracemask,
+    );
+    let startsolid = hit.startsolid | other.startsolid;
+    let allsolid = hit.allsolid | other.allsolid;
+    if other.fraction < hit.fraction {
+        hit = other;
+    }
+    hit.startsolid = startsolid;
+    hit.allsolid = allsolid;
+    hit
 }
 
 pub(crate) fn clip_move_to_bmodels<'a>(

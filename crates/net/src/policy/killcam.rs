@@ -53,7 +53,9 @@ pub(crate) fn play_script_seats(
             recalc_pending: false,
             entity_focus: None,
         };
-        follow_archived_focus(archive, &mut session);
+        if seat.archive_ms > 0 {
+            follow_archived_focus(archive, &mut session);
+        }
         seats.arm(*viewer, session);
     }
 }

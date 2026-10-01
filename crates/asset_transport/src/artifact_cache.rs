@@ -248,12 +248,7 @@ fn sweep(cache: &Path, budget: u64) {
 }
 
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    hash
+    fnv1a64_more(0xcbf29ce484222325u64, bytes)
 }
 
 pub fn fnv1a64_more(mut hash: u64, bytes: &[u8]) -> u64 {

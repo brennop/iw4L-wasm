@@ -1,6 +1,6 @@
 use super::entities::{EntityKind, KeyType};
 use crate::frame::FrameWorld;
-use crate::script::runtime::{install_level, reset, start};
+use crate::script::runtime::{install_level, reset, run_now};
 use crate::script::{
     Arc, ArrayKey, BTreeMap, Fault, Location, NativeRegistry, Runtime, StringTable, Value,
 };
@@ -147,6 +147,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         for number in frame.dropped_item_numbers_sorted() {
             frame.remove_dropped_item_by_number(number);
         }
+        crate::t5_destructible::restart(&mut frame);
         frame.restart_level_phase();
         for id in frame.client_ids_sorted() {
             let (origin, angles) = frame
@@ -157,13 +158,14 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     }
 
     reset(world);
-    let mut plan = (*plan).clone();
-    let entries = std::mem::take(&mut plan.entries);
+    let plan = (*plan).clone();
+    let entries = plan.entries.clone();
     if let Err(fault) = install_level(world, program, plan) {
         world.resource_mut::<Runtime>().fault = Some(fault);
         return;
     }
     let mut runtime = world.resource_mut::<Runtime>();
+    runtime.last_tick = Some(tick);
     runtime.dvars = dvars;
     runtime.weapon_bridge = weapon_bridge;
     runtime.personal_classes = personal_classes;
@@ -188,7 +190,13 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     }
     drop(runtime);
     for entry in entries {
-        if let Err(fault) = start(world, &entry, Value::level(), Vec::new()) {
+        if let Err(fault) = run_now(
+            world,
+            &entry,
+            Value::level(),
+            Vec::new(),
+            i64::from(crate::level_time_ms(tick)),
+        ) {
             world.resource_mut::<Runtime>().fault = Some(fault);
             return;
         }

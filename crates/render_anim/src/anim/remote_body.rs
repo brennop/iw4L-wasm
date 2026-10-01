@@ -1,12 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+pub use xmodel_runtime::{ClientAnimSample, overlay_legs_clip};
+use xmodel_runtime::{apply_player_anim_goals, apply_player_anim_rates};
 
-use anim_iw4::{
-    DOBJ_RADIUS_PARENT_ROOT, PLAYER_ANIM_RAW_MASK, PlayerAnimValue,
-    XANIM_LEGS_PARENT_WEIGHT_WHEN_TORSO, client_anim_blend_ms, client_anim_playback_rate,
-    goal_time_from_blend_ms,
-};
+use anim_iw4::{DOBJ_RADIUS_PARENT_ROOT, PLAYER_ANIM_RAW_MASK, PlayerAnimValue};
 use bevy::prelude::*;
 
 use crate::anim::xmodel_pose::PosedSmodelSurface;
@@ -22,21 +20,11 @@ pub struct PersistentRemoteTree {
     pub legs_restart: bool,
     pub torso_restart: bool,
 
-    pub cloned: bool,
-
     pub occupation_tr_time: Option<i32>,
 
     pub legs_rate_sample: ClientAnimSample,
 
     pub torso_rate_sample: ClientAnimSample,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ClientAnimSample {
-    pub origin: [f32; 3],
-    pub time_ms: i32,
-    pub move_speed: f32,
-    pub ladder: bool,
 }
 
 pub struct PoseClips {
@@ -120,7 +108,6 @@ pub fn clone_corpse_tree_from_victim(
     let mut dst = src;
     dst.dobj = None;
     dst.reuse_key = None;
-    dst.cloned = true;
     dst.occupation_tr_time = Some(tr_time);
     trees.by_ent.insert(corpse_ent, dst);
 }
@@ -161,7 +148,6 @@ pub fn advance_remote_tree(
     let reused = prev.as_ref().is_some_and(|slot| {
         slot.namespace == body.namespace
             && tree_clips_unchanged(
-                slot.cloned,
                 slot.legs,
                 slot.torso,
                 slot.legs_restart,
@@ -236,7 +222,6 @@ pub fn advance_remote_tree(
                 torso: 0,
                 legs_restart: false,
                 torso_restart: false,
-                cloned: false,
                 occupation_tr_time: None,
                 legs_rate_sample: ClientAnimSample::default(),
                 torso_rate_sample: ClientAnimSample::default(),
@@ -271,8 +256,18 @@ pub fn advance_remote_tree(
         } else {
             None
         };
-        apply_remote_client_anim_goals(
+        apply_player_anim_goals(
             &mut slot.runtime,
+            xmodel_runtime::PlayerBodyBranches {
+                legs: xmodel_runtime::XAnimNodeId(
+                    tree.index_of("legs")
+                        .ok_or("player tree legs branch missing")?,
+                ),
+                torso: xmodel_runtime::XAnimNodeId(
+                    tree.index_of("torso")
+                        .ok_or("player tree torso branch missing")?,
+                ),
+            },
             old_legs,
             old_torso,
             legs_index,
@@ -305,7 +300,7 @@ pub fn advance_remote_tree(
         slot.torso_restart = torso_restart;
         slot
     };
-    apply_remote_client_anim_rates(
+    apply_player_anim_rates(
         &mut slot.runtime,
         &mut slot.legs_rate_sample,
         &mut slot.torso_rate_sample,
@@ -323,7 +318,6 @@ pub fn advance_remote_tree(
     }
     trees.by_ent.insert(persist_key, slot);
     let slot = trees.by_ent.get_mut(&persist_key).expect("tree inserted");
-    slot.cloned = false;
     Ok(AdvancedRemoteTree {
         runtime: slot.runtime.clone(),
         clips,
@@ -338,140 +332,7 @@ fn leaf_enrolled(runtime: &xmodel_runtime::XAnimTreeRuntime, index: u16) -> bool
         .is_some_and(|state| state.weight > 0.0 || state.goal_weight > 0.0)
 }
 
-fn apply_remote_client_anim_rates(
-    runtime: &mut xmodel_runtime::XAnimTreeRuntime,
-    legs_sample: &mut ClientAnimSample,
-    torso_sample: &mut ClientAnimSample,
-    legs_index: u16,
-    torso_index: u16,
-    origin: [f32; 3],
-    pose_time_ms: i32,
-) -> Result<(), String> {
-    apply_one_client_anim_rate(runtime, legs_index, origin, pose_time_ms, legs_sample)?;
-    if torso_index != 0 {
-        apply_one_client_anim_rate(runtime, torso_index, origin, pose_time_ms, torso_sample)?;
-    }
-    Ok(())
-}
-
-fn apply_one_client_anim_rate(
-    runtime: &mut xmodel_runtime::XAnimTreeRuntime,
-    index: u16,
-    origin: [f32; 3],
-    pose_time_ms: i32,
-    sample: &mut ClientAnimSample,
-) -> Result<(), String> {
-    if index == 0 {
-        return Ok(());
-    }
-    if pose_time_ms < sample.time_ms {
-        sample.time_ms = 0;
-    }
-    let Some(rate) = client_anim_playback_rate(
-        origin,
-        sample.origin,
-        pose_time_ms,
-        sample.time_ms,
-        sample.move_speed,
-        sample.ladder,
-    ) else {
-        return Ok(());
-    };
-    runtime
-        .set_rate(xmodel_runtime::XAnimNodeId(index), rate)
-        .map_err(|error| error.to_string())?;
-    *sample = ClientAnimSample {
-        origin,
-        time_ms: pose_time_ms,
-        ..*sample
-    };
-    Ok(())
-}
-
-fn apply_remote_client_anim_goals(
-    runtime: &mut xmodel_runtime::XAnimTreeRuntime,
-    old_legs: u16,
-    old_torso: u16,
-    legs_index: u16,
-    torso_index: u16,
-    legs_restart: bool,
-    torso_restart: bool,
-    old_legs_moving: bool,
-    old_torso_moving: bool,
-    new_legs_moving: bool,
-    new_torso_moving: bool,
-    authored_blend_ms: [i32; 2],
-) -> Result<(), String> {
-    let legs_time = goal_time_from_blend_ms(client_anim_blend_ms(
-        legs_index,
-        authored_blend_ms[0],
-        old_legs != 0,
-        false,
-        old_legs_moving,
-        new_legs_moving,
-    ));
-    let torso_time = goal_time_from_blend_ms(client_anim_blend_ms(
-        torso_index,
-        authored_blend_ms[1],
-        old_torso != 0,
-        true,
-        old_torso_moving,
-        new_torso_moving,
-    ));
-    if old_legs != 0 && old_legs != legs_index {
-        runtime
-            .set_goal_weight(xmodel_runtime::XAnimNodeId(old_legs), 0.0, legs_time)
-            .map_err(|error| error.to_string())?;
-    }
-    if old_torso != 0 && old_torso != torso_index {
-        runtime
-            .set_goal_weight(xmodel_runtime::XAnimNodeId(old_torso), 0.0, torso_time)
-            .map_err(|error| error.to_string())?;
-    }
-    let legs_weight = if torso_index != 0 {
-        XANIM_LEGS_PARENT_WEIGHT_WHEN_TORSO
-    } else {
-        1.0
-    };
-    if old_legs == legs_index && !legs_restart {
-        runtime
-            .set_goal_weight(
-                xmodel_runtime::XAnimNodeId(legs_index),
-                legs_weight,
-                legs_time,
-            )
-            .map_err(|error| error.to_string())?;
-    } else {
-        runtime
-            .set_complete_goal_weight_in(
-                xmodel_runtime::XAnimNodeId(legs_index),
-                0.0,
-                legs_weight,
-                legs_time,
-            )
-            .map_err(|error| error.to_string())?;
-    }
-    if torso_index != 0 {
-        if old_torso == torso_index && !torso_restart {
-            runtime
-                .set_goal_weight(xmodel_runtime::XAnimNodeId(torso_index), 1.0, torso_time)
-                .map_err(|error| error.to_string())?;
-        } else {
-            runtime
-                .set_complete_goal_weight_in(
-                    xmodel_runtime::XAnimNodeId(torso_index),
-                    0.0,
-                    1.0,
-                    torso_time,
-                )
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
 pub fn tree_clips_unchanged(
-    cloned: bool,
     last_legs: u16,
     last_torso: u16,
     last_legs_restart: bool,
@@ -481,11 +342,10 @@ pub fn tree_clips_unchanged(
     legs_restart: bool,
     torso_restart: bool,
 ) -> bool {
-    cloned
-        || (last_legs == legs
-            && last_torso == torso
-            && last_legs_restart == legs_restart
-            && last_torso_restart == torso_restart)
+    last_legs == legs
+        && last_torso == torso
+        && last_legs_restart == legs_restart
+        && last_torso_restart == torso_restart
 }
 
 fn decode_leaf_clip(
@@ -510,19 +370,6 @@ fn decode_leaf_clip(
             Err(format!("decode failed for `{}`: {detail}", leaf.name))
         }
     }
-}
-
-pub fn overlay_legs_clip(legs: &xmodel_runtime::AnimClip, torso: &xmodel_runtime::AnimClip) -> xmodel_runtime::AnimClip {
-    let names: HashSet<&str> = torso
-        .tracks
-        .iter()
-        .map(|track| track.name.as_str())
-        .collect();
-    let mut overlayed = legs.clone();
-    overlayed
-        .tracks
-        .retain(|track| !names.contains(track.name.as_str()));
-    overlayed
 }
 
 pub fn occupy_lod_byte(lod: Option<u8>) -> i8 {
@@ -661,6 +508,7 @@ impl PreparedRemoteKits {
                     axis,
                     weapon,
                     true,
+                    None,
                 ) else {
                     continue;
                 };
@@ -671,11 +519,17 @@ impl PreparedRemoteKits {
                         KitSource::World(index) => PreparedKitSource::World(index),
                     })
                     .collect();
-                let dobj =
-                    select_remote_models(bodies, Some(weapons), Some(world_weapons), axis, weapon)
-                        .ok()
-                        .and_then(|set| xmodel_runtime::DObj::build(&set.dobj_models).ok())
-                        .map(std::sync::Arc::new);
+                let dobj = select_remote_models(
+                    bodies,
+                    Some(weapons),
+                    Some(world_weapons),
+                    axis,
+                    weapon,
+                    None,
+                )
+                .ok()
+                .and_then(|set| xmodel_runtime::DObj::build(&set.dobj_models).ok())
+                .map(std::sync::Arc::new);
                 kits.insert(
                     (axis, weapon),
                     PreparedRemoteKit {
@@ -734,6 +588,7 @@ pub fn occupy_remote_kit_dobj<'a>(
     axis: bool,
     weapon: u32,
     with_hide_tags: bool,
+    shield: Option<sim::ShieldAttachment>,
 ) -> Option<(Vec<KitModel<'a>>, Option<f32>)> {
     let kits = bodies.0.kits();
     let kit = kits.kit(axis)?;
@@ -763,7 +618,11 @@ pub fn occupy_remote_kit_dobj<'a>(
             }
         }
     }
-    if weapon != 0 {
+    if weapon != 0
+        && !weapons
+            .and_then(|w| w.0.facts_of(weapon))
+            .is_some_and(|f| f.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+    {
         if let (Some(registry), Some(catalog)) = (weapons, world_weapons) {
             let gun_index = registry
                 .0
@@ -798,6 +657,22 @@ pub fn occupy_remote_kit_dobj<'a>(
         }
     }
 
+    if let Some(shield) = shield {
+        let registry = weapons?;
+        let catalog = world_weapons?;
+        let index = registry
+            .0
+            .world_model_edge_of(shield.weapon)?
+            .bound_index()?;
+        let entry = catalog.0.get_at(index)?;
+        entry.skel.pose.as_ref()?;
+        skels.push(KitModel {
+            name: entry.skel.name.as_str(),
+            skel: &entry.skel,
+            hide_tags: Vec::new(),
+            source: KitSource::World(index),
+        });
+    }
     let radius = kit_dobj_radius(skels.iter().filter_map(|model| model.skel.radius));
     Some((skels, radius))
 }
@@ -810,9 +685,13 @@ pub struct RemoteModelSet<'a> {
     pub gun: Option<&'a asset_model::WorldWeaponEntry>,
 
     pub world_gun_gap: Option<WorldGunGap>,
-    pub dobj_models: Vec<(&'a xmodel_runtime::ModelPoseSrc, Option<xmodel_runtime::Attach>)>,
+    pub dobj_models: Vec<(
+        &'a xmodel_runtime::ModelPoseSrc,
+        Option<xmodel_runtime::Attach>,
+    )>,
     pub gun_model_index: usize,
     pub attachments: Vec<(&'a asset_model::WorldWeaponEntry, usize)>,
+    pub shield: Option<sim::ShieldAttachment>,
 }
 
 pub(crate) struct WorldAttachment<'a> {
@@ -923,6 +802,7 @@ pub fn select_remote_models<'a>(
     world_weapons: Option<&'a assets::PreparedWorldWeapons>,
     axis: bool,
     weapon: u32,
+    shield: Option<sim::ShieldAttachment>,
 ) -> Result<RemoteModelSet<'a>, String> {
     let kits = bodies.0.kits();
     let kit = kits
@@ -951,13 +831,14 @@ pub fn select_remote_models<'a>(
                 .pose
                 .as_ref()
                 .ok_or_else(|| format!("head `{name}` has no ModelPoseSrc"))?;
-            let tag = xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names).ok_or_else(|| {
-                format!(
-                    "body `{}` has no {}; refusing a headless DObj for `{name}`",
-                    kit.body,
-                    xmodel_runtime::TP_HEAD_ATTACH_TAG
-                )
-            })?;
+            let tag =
+                xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names).ok_or_else(|| {
+                    format!(
+                        "body `{}` has no {}; refusing a headless DObj for `{name}`",
+                        kit.body,
+                        xmodel_runtime::TP_HEAD_ATTACH_TAG
+                    )
+                })?;
             dobj_models.push((
                 head_pose,
                 Some(xmodel_runtime::Attach {
@@ -972,7 +853,15 @@ pub fn select_remote_models<'a>(
 
     let mut world_gun_gap = None;
     let mut attachments = Vec::new();
-    let gun = match weapon {
+    let held = if weapons
+        .and_then(|w| w.0.facts_of(weapon))
+        .is_some_and(|f| f.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+    {
+        0
+    } else {
+        weapon
+    };
+    let gun = match held {
         0 => None,
         index => {
             let registry = weapons
@@ -1029,6 +918,23 @@ pub fn select_remote_models<'a>(
             }
         }
     };
+    if let Some(shield) = shield {
+        let registry = weapons.ok_or("shield weapon registry missing")?;
+        let catalog = world_weapons.ok_or("shield world model catalog missing")?;
+        let entry = registry
+            .0
+            .world_model_entry(shield.weapon, &catalog.0)
+            .ok_or("shield world model missing")?;
+        let pose = entry.skel.pose.as_ref().ok_or("shield pose missing")?;
+        attachments.push((entry, dobj_models.len()));
+        dobj_models.push((
+            pose,
+            Some(xmodel_runtime::Attach {
+                parent_model: 0,
+                tag: shield.tag().into(),
+            }),
+        ));
+    }
     Ok(RemoteModelSet {
         body_name: kit.body.clone(),
         head_name: kit.head.clone().unwrap_or_default(),
@@ -1039,6 +945,7 @@ pub fn select_remote_models<'a>(
         dobj_models,
         gun_model_index,
         attachments,
+        shield,
     })
 }
 
@@ -1053,11 +960,14 @@ pub fn ensure_remote_dobj(
         .gun
         .map(|entry| entry.skel.name.as_str())
         .unwrap_or("");
-    let attachment_names: Vec<&str> = models
+    let mut attachment_names: Vec<&str> = models
         .attachments
         .iter()
         .map(|(entry, _)| entry.skel.name.as_str())
         .collect();
+    if let Some(shield) = models.shield {
+        attachment_names.push(shield.tag());
+    }
     let reuse_key = remote_dobj_reuse_key(
         e_type,
         models.body_name.as_str(),
@@ -1067,12 +977,18 @@ pub fn ensure_remote_dobj(
     );
     let slot = trees.get_mut(persist_key).expect("tree slot inserted");
     if !remote_dobj_reuses(slot.dobj.is_some(), slot.reuse_key, reuse_key) {
-        slot.dobj = Some(std::sync::Arc::clone(prepared.ok_or_else(|| {
-            format!(
-                "remote representation not prepared: body={} head={} weapon={gun_name}",
-                models.body_name, models.head_name
+        slot.dobj = Some(if models.shield.is_some() {
+            std::sync::Arc::new(
+                xmodel_runtime::DObj::build(&models.dobj_models).map_err(|e| format!("{e:?}"))?,
             )
-        })?));
+        } else {
+            std::sync::Arc::clone(prepared.ok_or_else(|| {
+                format!(
+                    "remote representation not prepared: body={} head={} weapon={gun_name}",
+                    models.body_name, models.head_name
+                )
+            })?)
+        });
         slot.reuse_key = Some(reuse_key);
     }
     Ok(())
@@ -1231,7 +1147,11 @@ pub fn skin_matrices_cover_slot(skin_len: usize, base: usize, bone_n: usize) -> 
     Ok(())
 }
 
-pub fn skin_slot_need(skel: &asset_model::ModelSkel, skin: &[Mat4], base: usize) -> Result<(), String> {
+pub fn skin_slot_need(
+    skel: &asset_model::ModelSkel,
+    skin: &[Mat4],
+    base: usize,
+) -> Result<(), String> {
     skin_matrices_cover_slot(skin.len(), base, skel.bones.len())
 }
 

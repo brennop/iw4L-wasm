@@ -23,10 +23,11 @@ const TWO: f32 = 2.0;
 
 const NEG_ONE: f32 = -1.0;
 
-pub fn crash_land(ps: &mut PlayerState, pml: &Pml) {
+pub fn crash_land(ps: &mut PlayerState, pml: &mut Pml) {
     let Some(fall_height) = crash_land_fall_height(ps, pml) else {
         return;
     };
+    pml.landing_animation |= fall_height > FALL_HARD_IN;
     let surface = jump::ground_surface_type(pml.ground_trace[4]);
     crash_land_apply_sfx(ps, fall_height, surface);
 }

@@ -26,6 +26,7 @@ pub(crate) fn validated_facts(
         }
     }
     WeaponCombatFacts::try_from_captured(CapturedCombatInput {
+        dual_wield: f.dual_wield,
         fire_time_ms: f.fire_time_ms,
         fire_delay_ms: f.fire_delay_ms,
         raise_time_ms: f.raise_time_ms,
@@ -68,6 +69,8 @@ pub(crate) fn validated_facts(
         inherits_perks: f.inherits_perks,
         sprint_raise_time_ms: f.sprint_raise_time_ms,
         sprint_drop_time_ms: f.sprint_drop_time_ms,
+        stunned_start_time_ms: f.stunned_start_time_ms,
+        stunned_end_time_ms: f.stunned_end_time_ms,
         damage: f.damage,
         min_damage: f.min_damage,
         max_damage_range: f.max_damage_range,
@@ -93,6 +96,7 @@ pub(crate) fn validated_facts(
         rechamber_while_ads: f.rechamber_while_ads,
         ads_fire_only: f.ads_fire_only,
         melee_damage: f.melee_damage,
+        can_hold_breath: f.can_hold_breath,
         overlay_reticle: f.overlay_reticle,
         melee_time_ms: f.melee_time_ms,
         melee_delay_ms: f.melee_delay_ms,
@@ -225,6 +229,8 @@ pub fn pen_from_registry(weapons: &WeaponRegistry) -> Vec<weapon_iw4::BulletPenF
                 penetrate_type: f.penetrate_type,
                 penetrate_multiplier: f.penetrate_multiplier,
                 rifle_bullet: f.rifle_bullet,
+                ricochet_chance: f.ricochet_chance,
+                explosive_bullet: f.explosive_bullet,
             }
         })
         .collect()
@@ -241,6 +247,7 @@ pub fn equipment_from_registry(weapons: &WeaponRegistry) -> Vec<sim::EquipmentRu
                 start_ammo: f.start_ammo_rounds(),
                 clip_size: f.clip_size,
                 impact_damage: f.damage,
+                impact_payload_weapon: weapons.impact_payload_of(index as u32).unwrap_or(0),
                 fuse_time_ms: f.fuse_time_ms,
                 hold_fire_time_ms: f.hold_fire_time_ms,
                 cook_off_hold: f.cook_off_hold,

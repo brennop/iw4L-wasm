@@ -47,6 +47,7 @@ impl Plugin for NetPlugin {
             .init_resource::<LocalPresentClient>()
             .init_resource::<crate::MasterMatchStart>()
             .init_resource::<crate::client::presentation::presented::ViewweaponAim>();
+        app.add_systems(Last, crate::time_scale::apply_time_scale);
         {
             configure_authority_sets(app);
             app.init_resource::<AuthorityClock>()

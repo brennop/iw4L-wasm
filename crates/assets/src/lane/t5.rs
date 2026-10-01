@@ -430,6 +430,7 @@ impl ZoneLane for T5Lane {
                 };
                 let min = draw.stats.min;
                 let max = draw.stats.max;
+                let world_bounds = draw.stats.bounds;
                 LoadedWorld {
                     scripts,
                     sound: map_sound,
@@ -460,8 +461,7 @@ impl ZoneLane for T5Lane {
                         createart_name,
                         min,
                         max,
-
-                        world_bounds: None,
+                        world_bounds,
                         policy: WorldDrawPolicy::t5(),
                     },
                     collision: clip,
@@ -575,6 +575,10 @@ impl ZoneLane for T5Lane {
         let captured = sink.weapons.len();
 
         sink.weapons.resolve_reticles(&sink.materials);
+        sink.weapons.resolve_projectile_fx_edges(&sink.fx);
+        if let Some(table) = sink.impact_fx.table.as_ref() {
+            sink.weapons.resolve_projectile_impact_fx(table);
+        }
         sink.weapons
             .resolve_combat_fx(&sink.fx, &asset_game::TracerCatalog::default());
         let leftover_fx = sink.fx.len();

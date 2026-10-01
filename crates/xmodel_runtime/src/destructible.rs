@@ -14,6 +14,7 @@ pub struct T5DestructiblePiece {
     pub bullet_damage_scale: f32,
     pub explosive_damage_scale: f32,
     pub health: i32,
+    pub launch: Option<([f32; 3], f32)>,
     pub hide_bones: [u32; 5],
 }
 

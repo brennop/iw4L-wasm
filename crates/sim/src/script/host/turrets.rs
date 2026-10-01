@@ -615,6 +615,7 @@ pub(crate) fn fire_bullet(
         .resource_mut::<Runtime>()
         .hits
         .push(crate::script::ScriptHit {
+            piece: None,
             target,
             amount,
             origin: from,

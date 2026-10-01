@@ -22,8 +22,8 @@ mod vocabulary_types;
 
 pub use event::{
     ambient_boot, ambient_hold, benchmark_mark, cgame_hold, corpse, death, feel, item,
-    lighting_fail, match_installed, match_torn, pickup, player_tick, projectile, remote,
-    render_owner_plan, render_owner_submit, sim_hold, swap, theater, truck, world_hold,
+    lighting_fail, match_installed, match_torn, pickup, player_tick, projectile, projectile_phase,
+    remote, render_owner_plan, render_owner_submit, sim_hold, swap, theater, truck, world_hold,
     world_ready,
 };
 pub use session::{RunMetadata, enabled, flush, start};

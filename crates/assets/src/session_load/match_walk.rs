@@ -761,6 +761,8 @@ pub(super) async fn walk_prepared_match(
         lochit_table: common_lochit_table,
         xmodel_walk,
         sound,
+        sound_gaps: 0,
+        script_sound_aliases: None,
     };
     (MatchLoadOutcome::Ready(prepared), Some(common))
 }
@@ -1264,6 +1266,12 @@ fn t5_map_under_iw4_rules(
         .unwrap_or_default();
     let mut scripts = crate::ScriptSources::default();
     let mut map_main = declarations.map_script(&entities);
+    let end = map_main.rfind('}').expect("generated map main");
+    map_main.insert_str(end, "\tthread iw4l_maps\\destructibles::main();\n");
+    scripts.insert_source(
+        "iw4l_maps/destructibles",
+        crate::map_scripts::DESTRUCTIBLES.to_owned(),
+    );
     if zone_name == "mp_radiation" {
         let end = map_main.rfind('}').expect("generated map main");
         map_main.insert_str(end, "\tthread iw4l_maps\\radiation::main();\n");

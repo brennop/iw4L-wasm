@@ -60,6 +60,9 @@ pub struct PreparedMap {
 }
 
 #[derive(Clone, Debug, Default, Resource)]
+pub struct PreparedKillstreaks(pub Vec<String>);
+
+#[derive(Clone, Debug, Default, Resource)]
 pub struct PreparedWeapons(pub std::sync::Arc<WeaponRegistry>);
 
 #[derive(Clone, Debug, Default, Resource)]

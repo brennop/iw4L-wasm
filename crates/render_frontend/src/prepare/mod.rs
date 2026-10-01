@@ -67,6 +67,7 @@ impl Plugin for RenderPreparePlugin {
             .init_resource::<crate::assemble::drawsurf::DrawMethodDfog>()
             .init_resource::<crate::assemble::drawsurf::fog::FogDvars>()
             .init_resource::<crate::assemble::drawsurf::SunShadowMapPresent>()
+            .init_resource::<crate::assemble::drawsurf::SunShadowUnmatchedLights>()
             .init_resource::<crate::assemble::drawsurf::SpotShadowMapLights>()
             .init_resource::<crate::assemble::drawsurf::SunShadowCasterPlan>()
             .init_resource::<crate::assemble::drawsurf::SpotShadowCasterPlan>()
@@ -193,7 +194,15 @@ impl Plugin for RenderPreparePlugin {
                 apply_dpvs_cull
                     .after(fly_camera)
                     .after(stamp_prepared_scene_view)
+                    .after(crate::prepare::scene::sun_stage::update_active_sun_stage)
                     .in_set(WorkerCmdSet::CellStatic),
+            )
+            .add_systems(
+                Update,
+                crate::prepare::scene::sun_stage::update_active_sun_stage
+                    .after(stamp_prepared_scene_view)
+                    .before(crate::assemble::drawsurf::update_command_context_code_sources)
+                    .in_set(ClientSet::Present),
             )
             .init_resource::<frame::Retiring>()
             .add_systems(

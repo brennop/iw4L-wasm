@@ -178,6 +178,7 @@ pub struct HudTessPass {
     pub killcam_skip: TessJob,
     pub targetmap: TessJob,
     pub mantle_hint: TessJob,
+    pub breath_hint: TessJob,
     pub use_hint: TessJob,
     pub hud_elems: TessJob,
     pub hud_elems_back: TessJob,

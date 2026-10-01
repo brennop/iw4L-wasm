@@ -88,10 +88,6 @@ pub enum ZoneError {
 
     AmbiguousWireFormat,
 
-    UnsupportedWireFormat {
-        format: Iw5WireFormat,
-    },
-
     InvalidWirePointer {
         raw: u64,
         format: Iw5WireFormat,
@@ -147,11 +143,6 @@ impl core::fmt::Display for ZoneError {
             ZoneError::AmbiguousWireFormat => {
                 write!(f, "ambiguous IW5 asset table: both x86 and x64 validate")
             }
-            ZoneError::UnsupportedWireFormat { format } => write!(
-                f,
-                "IW5 zone is serialized {} (Steam re-release); only x86 asset bodies are decoded",
-                format.name()
-            ),
             ZoneError::InvalidWirePointer {
                 raw,
                 format,
@@ -451,6 +442,10 @@ pub struct XModelGeometry {
 
     pub base_mat: Option<Ptr>,
 
+    pub part_classification: Option<Ptr>,
+
+    pub bone_info: Option<Ptr>,
+
     pub coll_surfs: Option<Ptr>,
 
     pub num_coll_surfs: i32,
@@ -576,6 +571,8 @@ pub struct GfxWorldGeometry {
     pub surfaces_bounds: Option<Ptr>,
     pub smodel_draw_insts: Option<Ptr>,
     pub dpvs_static: Option<Ptr>,
+
+    pub bounds: Option<[u32; 6]>,
 }
 
 impl Default for GfxWorldGeometry {
@@ -627,6 +624,7 @@ impl Default for GfxWorldGeometry {
             surfaces_bounds: None,
             smodel_draw_insts: None,
             dpvs_static: None,
+            bounds: None,
         }
     }
 }
@@ -680,6 +678,10 @@ pub struct ClipMapGeometry {
     pub cmodels: Option<Ptr>,
 
     pub static_models: Option<Ptr>,
+
+    pub stages: Option<Ptr>,
+    pub stage_count: usize,
+    pub stage_trigger: MapEntsGeometry,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

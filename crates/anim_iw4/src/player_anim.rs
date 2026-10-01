@@ -107,6 +107,14 @@ pub const ANIM_MT_NAMES: &[&str] = &[
     "STUMBLE_CROUCH_FORWARD",
     "STUMBLE_CROUCH_BACKWARD",
     "STUMBLE_SPRINT_FORWARD",
+    "JUMPDIVE_FORWARD",
+    "JUMPDIVE_FORWARDLEFT",
+    "JUMPDIVE_LEFT",
+    "JUMPDIVE_BACKLEFT",
+    "JUMPDIVE_BACK",
+    "JUMPDIVE_BACKRIGHT",
+    "JUMPDIVE_RIGHT",
+    "JUMPDIVE_FORWARDRIGHT",
     "IDLELASTSTAND",
     "CRAWLLASTSTAND",
     "CRAWLLASTSTANDBK",
@@ -141,6 +149,8 @@ pub const ANIM_ET_NAMES: &[&str] = &[
 
 pub const ANIM_ET_DEATH: u8 = 1;
 pub const ANIM_ET_FIREWEAPON: u8 = 2;
+pub const ANIM_ET_DROPWEAPON: u8 = 6;
+pub const ANIM_ET_RAISEWEAPON: u8 = 7;
 pub const ANIM_ET_RELOAD: u8 = 10;
 pub const ANIM_ET_MELEEATTACK: u8 = 17;
 pub const ANIM_ET_KNIFE_MELEE: u8 = 18;
@@ -180,7 +190,9 @@ pub const ANIM_COND_DAMAGETYPE: u8 = 9;
 pub const ANIM_COND_HITLOCATION: u8 = 10;
 pub const ANIM_COND_HITDIRECTION: u8 = 11;
 pub const ANIM_COND_AKIMBO: u8 = 12;
+pub const ANIM_COND_RIOTSHIELDNEXT: u8 = 14;
 pub const ANIM_COND_PLAYERANIMTYPEPRIMARY: u8 = 15;
+pub const ANIM_COND_FASTMANTLE: u8 = 16;
 
 pub const ANIM_COND_IS_BITFLAGS: [bool; 18] = [
     true, true, false, true, false, false, false, false, false, false, false, false, false, false,
@@ -191,6 +203,9 @@ pub fn anim_cond_evaluable(index: u8) -> bool {
     matches!(
         index,
         ANIM_COND_PLAYERANIMTYPE
+            | ANIM_COND_MOUNTED
+            | ANIM_COND_FIRING
+            | ANIM_COND_FASTMANTLE
             | ANIM_COND_WEAPONCLASS
             | ANIM_COND_MOVETYPE
             | ANIM_COND_STRAFING
@@ -200,6 +215,7 @@ pub fn anim_cond_evaluable(index: u8) -> bool {
             | ANIM_COND_HITDIRECTION
             | ANIM_COND_WEAPON_POSITION
             | ANIM_COND_AKIMBO
+            | ANIM_COND_RIOTSHIELDNEXT
             | ANIM_COND_PLAYERANIMTYPEPRIMARY
     )
 }
@@ -217,6 +233,7 @@ pub const ANIM_HITDIRECTION_NAMES: &[&str] = &["hit_front", "hit_left", "hit_rig
 pub const ANIM_STRAFING_NAMES: &[&str] = &["not", "left", "right"];
 
 pub const ANIM_WEAPON_POSITION_NAMES: &[&str] = &["hip", "ads"];
+pub const ANIM_MOUNTED_NAMES: &[&str] = &["none", "mg42"];
 
 pub const ANIM_PLAYERANIMTYPE_NAMES: &[&str] = &[
     "none",
@@ -275,6 +292,7 @@ pub fn anim_cond_value_names(index: u8) -> &'static [&'static str] {
     match index {
         ANIM_COND_PLAYERANIMTYPE | ANIM_COND_PLAYERANIMTYPEPRIMARY => ANIM_PLAYERANIMTYPE_NAMES,
         ANIM_COND_WEAPONCLASS => ANIM_WEAPONCLASS_NAMES,
+        ANIM_COND_MOUNTED => ANIM_MOUNTED_NAMES,
         ANIM_COND_MOVETYPE => ANIM_MT_NAMES,
         ANIM_COND_STRAFING => ANIM_STRAFING_NAMES,
         ANIM_COND_WEAPON_POSITION => ANIM_WEAPON_POSITION_NAMES,

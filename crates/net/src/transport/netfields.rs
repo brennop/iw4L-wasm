@@ -355,12 +355,15 @@ ps_netfields! {
     shellshock_index: i32 = Replication::Replicated, Validation::Exact;
     shellshock_time: i32 = Replication::Replicated, Validation::Exact;
     shellshock_duration: i32 = Replication::Replicated, Validation::Exact;
+    stun_time: i32 = Replication::Replicated, Validation::Exact;
     objectives: opaque = Replication::Replicated, Validation::Exact;
     delta_time: i32 = Replication::Replicated, Validation::Exact;
     kill_cam_entity: i32 = Replication::Replicated, Validation::Exact;
     kill_cam_look_at_entity: i32 = Replication::Replicated, Validation::Exact;
     kill_cam_client_num: i32 = Replication::Replicated, Validation::Exact;
     recoil_scale: i32 = Replication::Replicated, Validation::Exact;
+    hold_breath_timer: i32 = Replication::Replicated, Validation::Exact;
+    hold_breath_scale: f32 = Replication::Replicated, Validation::Exact;
 }
 
 pub const PS_FIELD_COUNT: usize = PS_NETFIELDS.len();

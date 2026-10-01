@@ -317,7 +317,9 @@ fn read_pooled_entry(
     let inflate_at = web_time::Instant::now();
     let mut entry = archive
         .by_name(entry_name)
-        .map_err(|error| format!("cannot read {entry_name}: {error}"))?;
+        .map_err(|error| {
+            format!("cannot open IWD entry {entry_name} in {archive_path:?}: {error}")
+        })?;
     let want = limit.map_or(entry.size() as usize, |limit| {
         limit.min(entry.size() as usize)
     });
@@ -326,7 +328,9 @@ fn read_pooled_entry(
         Some(limit) => entry.take(limit as u64).read_to_end(&mut bytes),
         None => entry.read_to_end(&mut bytes),
     };
-    read.map_err(|error| format!("cannot read {entry_name}: {error}"))?;
+    read.map_err(|error| {
+        format!("cannot read IWD entry {entry_name} in {archive_path:?}: {error}")
+    })?;
     IWD_INFLATE_NS.fetch_add(inflate_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
     Ok(bytes)
 }

@@ -591,6 +591,9 @@ fn run_peer_lobby_return(
     mut live: Local<bool>,
     mut terminal_cleanup: Local<Option<u64>>,
 ) {
+    if dvars.get("ui_password_pending") == Some("1") {
+        return;
+    }
     let held = bridge.as_ref().map(|b| b.state());
     if signon.phase.is_failed()
         || matches!(

@@ -43,6 +43,7 @@ pub enum UiMenuRequest {
     Toggle,
     Open(String),
     Close(String),
+    Focus { menu: String, item: String },
     Key(UiMenuKey),
     Text(String),
 }

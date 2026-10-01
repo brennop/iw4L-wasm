@@ -83,7 +83,11 @@ pub struct SamplerBinding {
     pub register: u16,
     pub source: SamplerSource,
     pub dimension: SamplerTextureDimension,
+
+    pub depth_compare: bool,
 }
+
+const CODE_TEXTURE_SHADOWMAP_SUN: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassProgramAbi {
@@ -229,6 +233,7 @@ pub fn build_pass_abi(
     arguments: &[RuntimeArgumentBinding],
     custom_sampler_flags: u8,
     t5_custom_sampler_flags: u8,
+    hardware_shadow_compare: bool,
 ) -> Result<PassProgramAbi, PassAbiRefusal> {
     let attributes = routed_attributes(decl, vertex_type)?;
     let vertex_inputs = bind_vertex_inputs(vertex, &attributes)?;
@@ -245,6 +250,7 @@ pub fn build_pass_abi(
         arguments,
         custom_sampler_flags,
         t5_custom_sampler_flags,
+        hardware_shadow_compare,
     )?;
 
     Ok(PassProgramAbi {
@@ -582,6 +588,7 @@ fn sampler_bindings(
     arguments: &[RuntimeArgumentBinding],
     custom_sampler_flags: u8,
     t5_custom_sampler_flags: u8,
+    hardware_shadow_compare: bool,
 ) -> Result<Vec<SamplerBinding>, PassAbiRefusal> {
     if let Some(register) = used_samplers(vertex).into_iter().next() {
         return Err(PassAbiRefusal::VertexStageSampler { register });
@@ -659,6 +666,12 @@ fn sampler_bindings(
             register,
             source,
             dimension,
+            depth_compare: hardware_shadow_compare
+                && dimension == SamplerTextureDimension::D2
+                && source
+                    == (SamplerSource::CodeTexture {
+                        index: CODE_TEXTURE_SHADOWMAP_SUN,
+                    }),
         });
     }
     Ok(bindings)

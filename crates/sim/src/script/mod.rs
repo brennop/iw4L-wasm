@@ -50,3 +50,8 @@ pub use source::{FileSources, SourceResolver, decode_source, normalize_module};
 pub(crate) use value::ArrayKey;
 pub use value::Value;
 pub(crate) use vm::state::{Frame, Thread, ThreadState, Waiter, WaiterKind};
+
+pub(crate) use host::entity_damage::{
+    destructible_attacker, destructible_callback, destructible_debris, destructible_effect,
+    set_destructible_model,
+};

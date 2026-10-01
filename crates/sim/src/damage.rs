@@ -14,6 +14,7 @@ const _: () = assert!(crate::MATCH_TICK_MS == 50);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DamageAttempt {
+    pub splash: bool,
     pub source: crate::DamageSource,
     pub pellet: PelletId,
     pub attacker: ClientId,
@@ -104,6 +105,49 @@ pub(crate) fn apply_explosion_blast(world: &mut FrameWorld, tick: Tick, blast: &
     }
     apply_glass_blast_hits(world, tick, glass);
     apply_entity_blast(world, blast);
+    crate::t5_destructible::apply_radius(
+        world,
+        tick,
+        &crate::t5_destructible::RadiusDamage {
+            origin: blast.origin,
+            radius: blast.radius,
+            inner: blast.inner_damage,
+            outer: blast.outer_damage,
+            attacker: Some(blast.attacker),
+            exclude: None,
+            cone: blast.cone,
+        },
+    );
+    let means = crate::script_player::means(world, blast.source, blast.weapon, 0, true);
+    let ignore_model = world
+        .ecs()
+        .get_resource::<crate::script::Runtime>()
+        .and_then(|runtime| match blast.source {
+            DamageSource::Projectile(id) => runtime
+                .missiles
+                .get(&id)
+                .and_then(|object| runtime.entities.get(object))
+                .and_then(|entity| entity.presence),
+            DamageSource::Radius(id) => Some(id),
+            _ => None,
+        });
+    crate::script::host::triggers::damage_blast(
+        world.ecs(),
+        &crate::script::host::triggers::TriggerBlast {
+            origin: blast.origin,
+            radius: blast.radius,
+            max: blast.inner_damage,
+            min: blast.outer_damage,
+            client: Some(blast.attacker),
+            missile: match blast.source {
+                DamageSource::Projectile(id) => Some(id),
+                _ => None,
+            },
+            means,
+            ignore_model,
+            cone: blast.cone,
+        },
+    );
 }
 
 fn apply_entity_blast(world: &mut FrameWorld, blast: &ExplosionBlast) {
@@ -154,6 +198,22 @@ pub(crate) fn apply_script_blast(
     if blast.radius <= 0.0 {
         return;
     }
+    if world.publishes_snapshot() {
+        crate::script::host::triggers::damage_blast(
+            world.ecs(),
+            &crate::script::host::triggers::TriggerBlast {
+                origin: blast.origin,
+                radius: blast.radius,
+                max: blast.max,
+                min: blast.min,
+                client: blast.attacker,
+                missile: None,
+                means: blast.means,
+                ignore_model: blast.inflictor,
+                cone: None,
+            },
+        );
+    }
     for target in radius_player_candidates(world, blast.origin, blast.radius) {
         let Some(meta) = world.client_meta(target) else {
             continue;
@@ -166,7 +226,12 @@ pub(crate) fn apply_script_blast(
             continue;
         };
         let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
-        let vis_scale = player_radius_vis_scale(world, blast.origin, target);
+        let vis_scale = player_radius_vis_scale(
+            world,
+            blast.origin,
+            target,
+            blast.inflictor.map(crate::AuthorityModelOwner::ScriptModel),
+        );
         let amount = radius_damage_amount(blast.max, blast.min, blast.radius, dist, vis_scale);
         if amount <= 0 {
             continue;
@@ -212,6 +277,19 @@ pub(crate) fn apply_script_blast(
         };
         crate::script::player_damage(world.ecs(), tick, &hit);
     }
+    crate::t5_destructible::apply_radius(
+        world,
+        tick,
+        &crate::t5_destructible::RadiusDamage {
+            origin: blast.origin,
+            radius: blast.radius,
+            inner: blast.max,
+            outer: blast.min,
+            attacker: blast.attacker,
+            exclude: blast.inflictor,
+            cone: None,
+        },
+    );
     apply_shared_glass_blast(
         world,
         tick,
@@ -295,7 +373,7 @@ fn radius_player_attempts(world: &FrameWorld, blast: &ExplosionBlast) -> Vec<Dam
             continue;
         }
         let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
-        let vis_scale = player_radius_vis_scale(world, blast.origin, target);
+        let vis_scale = player_radius_vis_scale(world, blast.origin, target, None);
         let amount = radius_damage_amount(
             blast.inner_damage,
             blast.outer_damage,
@@ -307,6 +385,7 @@ fn radius_player_attempts(world: &FrameWorld, blast: &ExplosionBlast) -> Vec<Dam
             continue;
         }
         intents.push(DamageAttempt {
+            splash: true,
             source: blast.source,
             pellet: PelletId(0),
             attacker: blast.attacker,
@@ -457,7 +536,12 @@ pub(crate) fn apply_shared_glass_blast(
     *world.stuck_holdrand_mut() = holdrand;
 }
 
-fn player_radius_vis_scale(world: &FrameWorld, inflictor: [f32; 3], target: ClientId) -> f32 {
+fn player_radius_vis_scale(
+    world: &FrameWorld,
+    inflictor: [f32; 3],
+    target: ClientId,
+    exclude: Option<crate::AuthorityModelOwner>,
+) -> f32 {
     let Some(ps) = world.player(target) else {
         return 1.0;
     };
@@ -468,8 +552,7 @@ fn player_radius_vis_scale(world: &FrameWorld, inflictor: [f32; 3], target: Clie
         right,
         inflictor,
         |start, end| {
-            let trace =
-                world.trace_world(start, end, [0.0; 3], [0.0; 3], G_CAN_DAMAGE_CONTENTS_MASK);
+            let trace = world.trace_world_except(start, end, G_CAN_DAMAGE_CONTENTS_MASK, exclude);
             t_trace_passed(&trace)
         },
     )
@@ -512,7 +595,7 @@ pub(crate) fn apply_flashbang_blast(
         if dist > max_r {
             continue;
         }
-        if player_radius_vis_scale(world, origin, target) <= 0.0 {
+        if player_radius_vis_scale(world, origin, target, None) <= 0.0 {
             continue;
         }
         let amount_distance = flashbang_amount_distance(dist, min_r, max_r);
@@ -582,7 +665,9 @@ pub(crate) fn apply_damage_attempt(
         return DamageOutcome::Refused(DamageRefusal::StaleLife);
     }
     let mut amount = intent.amount;
-    if !matches!(intent.source, crate::DamageSource::Melee) {
+    if intent.hitloc != crate::shield::HITLOC
+        && !matches!(intent.source, crate::DamageSource::Melee)
+    {
         let scale = world
             .combat_facts_for(intent.weapon)
             .map(|facts| facts.location_scale(intent.hitloc))
@@ -617,12 +702,17 @@ pub(crate) fn play_death(
         Some(crate::DamageSource::Shot(_)) | Some(crate::DamageSource::Melee) => attacker_origin,
         _ => None,
     };
-    let mut conds = crate::AnimConditions::default();
-
-    let mt = world
-        .last_anim_movetype(victim)
-        .unwrap_or(anim_iw4::ANIM_MT_IDLE);
-    conds.set_bit(anim_iw4::ANIM_COND_MOVETYPE, mt);
+    let mt =
+        crate::player_anim_script::event_anim_movetype(&self_ps, world.last_anim_movetype(victim));
+    let (view, primary) = crate::pmove_anim_weapon_ids(&self_ps);
+    let mut conds = crate::anim_conditions_from_pmove(
+        &self_ps,
+        world.combat_facts_for(view),
+        world.combat_facts_for(primary),
+        Some(mt),
+        world.last_anim_strafing(victim),
+        world.anim_command_buttons(victim),
+    );
     if let Some(commit) = commit {
         let blast_origin = inflictor_origin.or(hitscan_origin);
         let dist_sq = blast_origin.map(|origin| {
@@ -661,7 +751,7 @@ pub(crate) fn play_death(
         if let Some(ps) = world.player_mut(victim) {
             ps.viewangles = dead_viewangles;
             ps.pm_type = playerstate_iw4::PM_TYPE_DEAD;
-            let _ = script.apply_event(ps, anim_iw4::ANIM_ET_DEATH, &conds, &mut seed);
+            let _ = script.apply_event(ps, anim_iw4::ANIM_ET_DEATH, &conds, &mut seed, true);
         }
     } else if let Some(ps) = world.player_mut(victim) {
         ps.viewangles = dead_viewangles;

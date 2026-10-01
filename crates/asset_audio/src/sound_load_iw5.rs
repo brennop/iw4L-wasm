@@ -20,7 +20,7 @@ pub struct Iw5SoundCapture {
     last_curve_name: Option<String>,
     file_to_loaded: HashMap<(u8, u32), String>,
     file_to_streamed: HashMap<(u8, u32), (String, String)>,
-    loaded_by_insert: HashMap<(u8, u32), String>,
+    loaded_by_ptr: HashMap<(u8, u32), String>,
     curve_by_ptr: HashMap<(u8, u32), String>,
 }
 
@@ -81,9 +81,11 @@ impl AssetLinkSink for Iw5SoundCapture {
     ) -> fastfile_iw5::Result<()> {
         if ty == AssetType::LoadedSound
             && let Some(name) = self.last_loaded_name.clone()
-            && let Some(ins) = insert_slot
         {
-            self.loaded_by_insert.insert(file_key(ins), name);
+            self.loaded_by_ptr.insert(file_key(slot), name.clone());
+            if let Some(ins) = insert_slot {
+                self.loaded_by_ptr.insert(file_key(ins), name);
+            }
         }
         if ty == AssetType::SoundCurve
             && let Some(name) = self.last_curve_name.clone()
@@ -97,6 +99,11 @@ impl AssetLinkSink for Iw5SoundCapture {
     }
 
     fn alias(&mut self, ty: AssetType, slot: Ptr, target: Ptr) -> fastfile_iw5::Result<()> {
+        if ty == AssetType::LoadedSound
+            && let Some(name) = self.loaded_by_ptr.get(&file_key(target)).cloned()
+        {
+            self.loaded_by_ptr.insert(file_key(slot), name);
+        }
         if ty == AssetType::SoundCurve
             && let Some(name) = self.curve_by_ptr.get(&file_key(target)).cloned()
         {
@@ -279,15 +286,13 @@ impl Iw5SoundCapture {
                 let inspected = inspect_sound_file(s, file);
                 let u = s.ptr_at(file, s.layout(4, 8)).ok();
                 let loaded = loaded.or_else(|| match u {
-                    Some(ZonePtr::Offset(q)) => self
-                        .loaded_by_insert
-                        .get(&file_key(q))
-                        .cloned()
-                        .or_else(|| {
-                            self.loaded_by_insert
+                    Some(ZonePtr::Offset(q)) => {
+                        self.loaded_by_ptr.get(&file_key(q)).cloned().or_else(|| {
+                            self.loaded_by_ptr
                                 .get(&file_key(s.resolve_alias(q)))
                                 .cloned()
-                        }),
+                        })
+                    }
                     _ => None,
                 });
                 let file_u_deref = match u {

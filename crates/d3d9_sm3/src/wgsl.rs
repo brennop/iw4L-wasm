@@ -33,6 +33,8 @@ pub const FIXED_SAMPLER_BINDING_BASE: u32 = 16;
 struct SamplerTable<'a> {
     dims: &'a BTreeMap<u16, SamplerTextureDimension>,
     fixed: bool,
+    /// Registers bound to depth-format shadow maps (see `SHADOW_COMPARE_FN`).
+    compare: &'a BTreeSet<u16>,
 }
 
 pub const fn texture_slot_word(texture: u16, sampler: u16) -> u32 {
@@ -498,6 +500,7 @@ pub fn lower_sm3_to_wgsl(program: &Sm3ProgramIr) -> Result<Sm3Wgsl, Sm3WgslError
         &SamplerTable {
             dims: &plan.samplers,
             fixed: false,
+            compare: &BTreeSet::new(),
         },
         &mut defined,
         None,
@@ -521,6 +524,12 @@ pub fn lower_pass_to_wgsl(
 ) -> Result<PassWgsl, Sm3WgslError> {
     let vertex_plan = plan_program(vertex)?;
     let pixel_plan = plan_program(pixel)?;
+    let compare: BTreeSet<u16> = abi
+        .samplers
+        .iter()
+        .filter(|slot| slot.depth_compare)
+        .map(|slot| slot.register)
+        .collect();
 
     let vertex_constant_len = constant_block_len(abi, &vertex_plan, Stage::Vertex)?;
     let pixel_constant_len = constant_block_len(abi, &pixel_plan, Stage::Pixel)?;
@@ -656,6 +665,7 @@ pub fn lower_pass_to_wgsl(
         &SamplerTable {
             dims: &vertex_plan.samplers,
             fixed,
+            compare: &BTreeSet::new(),
         },
         &mut defined,
         vertex_relative,
@@ -759,6 +769,7 @@ pub fn lower_pass_to_wgsl(
         &SamplerTable {
             dims: &pixel_plan.samplers,
             fixed,
+            compare: &compare,
         },
         &mut defined,
         None,
@@ -992,6 +1003,9 @@ fn write_texture_table_bindings(wgsl: &mut String, abi: &PassLoweringAbi) {
         "@group({TEXTURE_TABLE_GROUP}) @binding({TEXTURE_TABLE_BINDING_SAMPLERS}) var sm3_samplers: binding_array<sampler>;"
     )
     .unwrap();
+    if abi.samplers.iter().any(|slot| slot.depth_compare) {
+        wgsl.push_str(SHADOW_COMPARE_FN);
+    }
 }
 
 fn write_fixed_slot_bindings(
@@ -1029,9 +1043,39 @@ fn write_fixed_slot_bindings(
             FIXED_SAMPLER_BINDING_BASE + u32::from(register)
         )
         .unwrap();
+        let compare = abi
+            .samplers
+            .iter()
+            .any(|bound| bound.register == register && bound.depth_compare);
+        if compare && dimension == SamplerTextureDimension::D2 {
+            // Same bilinear `z <= stored` test as `SHADOW_COMPARE_FN`, on the fixed bindings.
+            writeln!(
+                wgsl,
+                "fn sm3_shadow_compare_s{register}(uv: vec2<f32>, z: f32) -> f32 {{
+    let size = vec2<f32>(textureDimensions(sm3_tex_s{register}));
+    let stored = textureGather(0, sm3_tex_s{register}, sm3_smp_s{register}, uv);
+    let lit = select(vec4<f32>(0.0), vec4<f32>(1.0), stored >= vec4<f32>(z));
+    let f = fract(uv * size - 0.5);
+    return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
+}}"
+            )
+            .unwrap();
+        }
     }
     Ok(())
 }
+
+// D3D9 depth-format shadow maps answer a fetch with a bilinear-filtered
+// `z <= stored` test, not the stored depth; programs written for them average
+// those answers, so a plain fetch of the float atlas yields garbage edges.
+const SHADOW_COMPARE_FN: &str = "fn sm3_shadow_compare(slot: u32, uv: vec2<f32>, z: f32) -> f32 {
+    let size = vec2<f32>(textureDimensions(sm3_textures_2d[slot & 0xffffu]));
+    let stored = textureGather(0, sm3_textures_2d[slot & 0xffffu], sm3_samplers[slot >> 16u], uv);
+    let lit = select(vec4<f32>(0.0), vec4<f32>(1.0), stored >= vec4<f32>(z));
+    let f = fract(uv * size - 0.5);
+    return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
+}
+";
 
 fn emit_texture_slot_prologue(
     wgsl: &mut String,
@@ -1651,7 +1695,8 @@ fn operation_component(
             format!("({x0} * {x1} + {y0} * {y1} + {})", scalar(&sources[2], 0)?)
         }
         Sm3Opcode::TexLd | Sm3Opcode::TexLdL | Sm3Opcode::TexLdD => texture_component(
-            at_word, opcode, controls, sources, component, external, samplers, defined, relative_c,
+            at_word, opcode, controls, sources, component, external, samplers, defined,
+            relative_c,
         )?,
         Sm3Opcode::Nop
         | Sm3Opcode::Dcl
@@ -1749,6 +1794,27 @@ fn texture_component(
             }
         }
     };
+    let shadow = samplers.compare.contains(&sampler.register.index)
+        && dimension == SamplerTextureDimension::D2
+        && opcode != Sm3Opcode::TexLdD;
+    if shadow {
+        let z = source_component(at_word, &sources[0], 2, external, defined, relative_c)?;
+        let z = match &w {
+            Some(w) => format!("{z} / {w}"),
+            None => z,
+        };
+        return Ok(if samplers.fixed {
+            format!(
+                "sm3_shadow_compare_s{}({coordinate}, {z})",
+                sampler.register.index
+            )
+        } else {
+            format!(
+                "sm3_shadow_compare(sm3_slot_s{}, {coordinate}, {z})",
+                sampler.register.index
+            )
+        });
+    }
     let (texture, sampler_expr) = if samplers.fixed {
         (
             format!("sm3_tex_s{}", sampler.register.index),

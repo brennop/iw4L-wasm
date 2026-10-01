@@ -939,6 +939,9 @@ pub struct PlayerCollisionPose {
     pub life_sequence: LifeSequence,
     pub hit_volume: HitVolumeKind,
     pub bones: Vec<AuthorityDObjCollisionBone>,
+    pub viewangles: [f32; 3],
+    pub shield: Option<crate::ShieldAttachment>,
+    pub shield_normal: Option<[f32; 3]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1333,7 +1336,12 @@ fn bullet_trace_filtered(
                             end: query.start,
                         };
                     }
-                    RayAabb::Hit(c) => candidates.push(c),
+                    RayAabb::Hit(mut c) => {
+                        if bone.part_classification == crate::shield::HITLOC {
+                            c.normal = pose.shield_normal.unwrap_or(bone.axes[0]);
+                        }
+                        candidates.push(c);
+                    }
                     RayAabb::Miss => {}
                 }
             }
@@ -1626,6 +1634,9 @@ fn fire_extended(
                     false,
                 ));
                 terminal = Some(hit.collider);
+                if is_shield(hit.collider) {
+                    break;
+                }
                 if glass_contents {
                     let Some(next) =
                         advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
@@ -1734,6 +1745,9 @@ fn fire_penetrate(
     let mut last_hit = first;
 
     for _ in 0..MAX_PENETRATE_STEPS {
+        if is_shield(last_hit.collider) {
+            break;
+        }
         let mut max_depth = table.depth(pen.penetrate_type, last_surf) * pen.penetrate_multiplier;
         if max_depth <= 0.0 {
             break;
@@ -2031,6 +2045,10 @@ fn make_segment_from_hit(
 fn surf_type_for(collider: ColliderId) -> u8 {
     match collider {
         ColliderId::World { surface_flags, .. } => surface_type_from_flags(surface_flags),
+        ColliderId::Player {
+            hitloc: crate::shield::HITLOC,
+            ..
+        } => crate::shield::SURFACE,
         ColliderId::Player { .. } => SURF_TYPE_FLESH as u8,
         ColliderId::EntityDObjBone { surface_flags, .. }
         | ColliderId::EntityLinkedBrush { surface_flags, .. } => {
@@ -2050,6 +2068,10 @@ fn depth_surf_new(collider: ColliderId) -> u32 {
 fn collider_surface_flags(collider: ColliderId) -> u32 {
     match collider {
         ColliderId::World { surface_flags, .. } => surface_flags,
+        ColliderId::Player {
+            hitloc: crate::shield::HITLOC,
+            ..
+        } => (u32::from(crate::shield::SURFACE) << 20) | weapon_iw4::SURF_NOPENETRATE,
         ColliderId::Player { .. } => SURF_TYPE_FLESH << 20,
         ColliderId::EntityDObjBone { surface_flags, .. }
         | ColliderId::EntityLinkedBrush { surface_flags, .. } => surface_flags,
@@ -2105,6 +2127,16 @@ fn collider_hit_kind(collider: ColliderId, startsolid: bool) -> (i32, u16) {
 
 fn is_world(collider: ColliderId) -> bool {
     matches!(collider, ColliderId::World { .. })
+}
+
+fn is_shield(collider: ColliderId) -> bool {
+    matches!(
+        collider,
+        ColliderId::Player {
+            hitloc: crate::shield::HITLOC,
+            ..
+        }
+    )
 }
 
 fn is_player(collider: ColliderId) -> bool {
@@ -2220,14 +2252,19 @@ fn select_first_hit(query: &BulletTraceQuery, candidates: &mut [TraceCandidate])
     }
 }
 
-fn hit_order_key(hit: &TraceCandidate) -> (u8, u32) {
+fn hit_order_key(hit: &TraceCandidate) -> (u8, u32, u8) {
     match hit.collider {
-        ColliderId::Player { client, .. } => (0, client.0),
+        ColliderId::Player {
+            client,
+            hitloc: crate::shield::HITLOC,
+            ..
+        } => (0, client.0, 0),
+        ColliderId::Player { client, .. } => (0, client.0, 1),
         ColliderId::EntityDObjBone { owner, bone, .. } => {
-            (1, owner_order_key(owner).wrapping_add(u32::from(bone)))
+            (1, owner_order_key(owner).wrapping_add(u32::from(bone)), 0)
         }
-        ColliderId::EntityLinkedBrush { owner, .. } => (2, owner_order_key(owner)),
-        ColliderId::World { .. } => (3, 0),
+        ColliderId::EntityLinkedBrush { owner, .. } => (2, owner_order_key(owner), 0),
+        ColliderId::World { .. } => (3, 0, 0),
     }
 }
 

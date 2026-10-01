@@ -142,6 +142,12 @@ pub(super) fn load_xmodel(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         ZonePtr::Offset(arr) => Some(s.resolve_alias(arr)),
         _ => None,
     };
+    let retained_ptr = |offset| match s.ptr_at(p, offset) {
+        Ok(ZonePtr::Offset(arr)) => Some(s.resolve_alias(arr)),
+        _ => None,
+    };
+    let part_classification = retained_ptr(s.layout(52, 72));
+    let bone_info = retained_ptr(s.layout(sz::XMODEL_BONE_INFO_OFF, 344));
     let mut no_scale_part_bits = [0u32; 6];
     for (i, slot) in no_scale_part_bits.iter_mut().enumerate() {
         *slot = s.u32_at(p, s.layout(12, 16) + i * 4)?;
@@ -161,6 +167,8 @@ pub(super) fn load_xmodel(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         quats,
         trans,
         base_mat,
+        part_classification,
+        bone_info,
         coll_surfs,
         num_coll_surfs: num_coll_surfs as i32,
         coll_lod: s.u8_at(p, s.layout(0xf2, 322))? as i8 as i16,

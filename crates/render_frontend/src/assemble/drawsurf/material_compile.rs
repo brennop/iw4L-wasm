@@ -69,19 +69,50 @@ fn compile_jobs_parallel(
     if jobs.is_empty() {
         return Vec::new();
     }
-    let nthreads = assets::load_workers().clamp(1, jobs.len());
-    let chunk_len = jobs.len().div_ceil(nthreads);
+    let mut unique = Vec::<(CompileJob, u32)>::new();
+    let mut indices = Vec::with_capacity(jobs.len());
+    let mut by_pass = HashMap::new();
+    for &job in &jobs {
+        let pass = RuntimeProgramRegistry::catalog_pass(
+            &catalog,
+            TechType(job.tech),
+            job.set_i,
+            job.pass_i,
+        );
+        let index = if let Some(pass) = pass {
+            let key = (
+                pass.shader_pair,
+                pass.custom_sampler_flags,
+                pass.t5_custom_sampler_flags,
+                pass.color_space,
+                pass.hardware_shadow_compare,
+                pass.arguments.as_slice(),
+                job.vertex_type,
+            );
+            *by_pass.entry(key).or_insert_with(|| {
+                unique.push((job, 0));
+                unique.len() - 1
+            })
+        } else {
+            unique.push((job, 0));
+            unique.len() - 1
+        };
+        unique[index].1 += 1;
+        indices.push(index);
+    }
+    let nthreads = assets::load_workers().clamp(1, unique.len());
+    let chunk_len = unique.len().div_ceil(nthreads * 16);
 
-    assets::load_pool()
+    let outcomes: Vec<_> = assets::load_pool()
         .scope_with_executor(false, None, |scope| {
-            for chunk in jobs.chunks(chunk_len) {
+            for chunk in unique.chunks(chunk_len) {
                 let catalog = Arc::clone(&catalog);
                 let progress = Arc::clone(&progress);
                 scope.spawn(async move {
                     let mut out = Vec::with_capacity(chunk.len());
-                    for &job in chunk {
+                    for &(job, count) in chunk {
                         out.push(compile_one_job(&catalog, job));
-                        progress.fetch_add(1, Ordering::Relaxed);
+                        progress.fetch_add(count, Ordering::Relaxed);
                     }
                     out
                 });
@@ -89,6 +120,23 @@ fn compile_jobs_parallel(
         })
         .into_iter()
         .flatten()
+        .collect();
+    jobs.iter()
+        .zip(indices)
+        .map(|(job, index)| match outcomes[index].clone() {
+            PassOutcome::Port { port, .. } => PassOutcome::Port {
+                tech: job.tech,
+                port,
+            },
+            PassOutcome::Refused {
+                vertex_type, key, ..
+            } => PassOutcome::Refused {
+                tech: job.tech,
+                vertex_type,
+                key,
+            },
+            PassOutcome::Missing => PassOutcome::Missing,
+        })
         .collect()
 }
 
@@ -188,6 +236,7 @@ struct CompileJob {
     pass_i: usize,
 }
 
+#[derive(Clone)]
 enum PassOutcome {
     Missing,
     Port {

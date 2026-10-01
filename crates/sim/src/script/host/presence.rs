@@ -57,6 +57,29 @@ fn model_field(runtime: &mut Runtime, id: u64) -> Option<Arc<str>> {
     }
 }
 
+pub(crate) fn initialize_map_models(world: &mut World) {
+    let models: BTreeMap<ScriptModelId, Arc<str>> = FrameWorld::from_world(world)
+        .entity_collision_capabilities()
+        .iter()
+        .filter_map(|row| {
+            Some((
+                row.owner.script_model()?,
+                row.dobj.as_ref()?.current_model.as_str().into(),
+            ))
+        })
+        .collect();
+    let mut runtime = world.resource_mut::<Runtime>();
+    let objects: Vec<_> = runtime
+        .entities
+        .iter()
+        .filter(|(_, entity)| entity.kind == EntityKind::Map)
+        .filter_map(|(object, entity)| Some((*object, models.get(&entity.presence?)?.clone())))
+        .collect();
+    for (object, model) in objects {
+        runtime.set_object_field(object, "model", Value::String(model));
+    }
+}
+
 pub(crate) fn spawn_presence(world: &mut World, origin: [f32; 3]) -> Result<ScriptModelId, String> {
     let mut runtime = world.resource_mut::<Runtime>();
     let serial = runtime.next_spawned_presence;
@@ -429,25 +452,31 @@ const UNPRESENTED_LOOP_OWNER: u32 = 0x2000_0000;
 
 fn publish_loop_sounds(world: &mut World) {
     let mut runtime = world.resource_mut::<Runtime>();
-    let speaking: Vec<(u64, Option<ScriptModelId>, Arc<str>)> = runtime
+    let speaking: Vec<(u64, Option<ScriptModelId>, Arc<str>, i32)> = runtime
         .entities
         .iter()
-        .filter_map(|(object, e)| Some((*object, e.presence, e.loop_sound.clone()?)))
+        .filter_map(|(object, e)| Some((*object, e.presence, e.loop_sound.clone()?, e.number)))
         .collect();
-    let placed: Vec<(ScriptModelId, Arc<str>, [f32; 3])> = speaking
+    let placed: Vec<(ScriptModelId, Arc<str>, [f32; 3], Option<u32>)> = speaking
         .into_iter()
-        .map(|(object, presence, alias)| {
+        .map(|(object, presence, alias, number)| {
             let owner = presence.unwrap_or_else(|| {
                 ScriptModelId::from_wire(UNPRESENTED_LOOP_OWNER | (object as u32 & 0x0fff_ffff))
             });
-            (owner, alias, vector(&mut runtime, object, "origin"))
+            (
+                owner,
+                alias,
+                vector(&mut runtime, object, "origin"),
+                u32::try_from(number).ok(),
+            )
         })
         .collect();
     let mut frame = FrameWorld::from_world(world);
     let rows = placed
         .into_iter()
         .map(
-            |(owner, alias, origin)| crate::world_objects::DestructibleLoopSound {
+            |(owner, alias, origin, snd_ent)| crate::world_objects::DestructibleLoopSound {
+                snd_ent,
                 owner,
                 alias_index: frame.sound_alias_index(&alias),
                 origin,

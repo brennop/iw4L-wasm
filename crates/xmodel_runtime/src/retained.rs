@@ -51,9 +51,18 @@ pub struct RetainedModelCapability {
 
     pub coll_surfs: Vec<CollSurfCollision>,
 
+    pub movement_brushes: Vec<ModelMovementBrush>,
+
     pub bounds: Option<([f32; 3], [f32; 3])>,
 
     pub radius: Option<f32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModelMovementBrush {
+    pub planes: Vec<[f32; 4]>,
+    pub contents: u32,
+    pub plane_surface_flags: Vec<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

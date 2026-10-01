@@ -83,6 +83,7 @@ impl InputReceipt {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClientMatchState {
+    pub shield: Option<crate::ShieldAttachment>,
     pub weapon_lock: crate::WeaponLock,
     pub lifecycle: ClientLifecycle,
     pub input_receipt: InputReceipt,
@@ -151,7 +152,6 @@ pub struct ScriptControls {
     pub jump_disabled: bool,
     pub usability_disabled: bool,
     pub linked: bool,
-    pub stunned: bool,
     pub switch_to: u32,
 }
 
@@ -206,6 +206,8 @@ impl ClientMatchState {
 
     pub(crate) fn to_snapshot_meta(&self) -> ClientSnapshotMeta {
         ClientSnapshotMeta {
+            shield: self.shield,
+            shield_collision: None,
             controls: self.controls,
             weapon_lock: self.weapon_lock,
             killcam_hud: None,
@@ -261,6 +263,7 @@ impl ClientMatchState {
 
     pub(crate) fn adopt_snapshot_meta(&mut self, meta: &ClientSnapshotMeta) {
         self.controls = meta.controls;
+        self.shield = meta.shield;
         self.weapon_lock = meta.weapon_lock;
         self.lifecycle = meta.lifecycle;
         self.loadout = meta.loadout.clone();

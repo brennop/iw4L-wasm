@@ -166,6 +166,7 @@ impl Plugin for PlayerSoundPlugin {
             .init_resource::<PendingStarts>()
             .init_resource::<VoiceOccupancy>()
             .init_resource::<crate::ambient::MapAmbientBooted>()
+            .init_resource::<crate::script_ambient::ScriptAmbientPlayback>()
             .init_resource::<crate::ambient::SoundBankLoadAttempted>()
             .init_resource::<crate::ambient::ResidentSoundBank>()
             .init_resource::<crate::BobCycleTracker>()
@@ -180,6 +181,8 @@ impl Plugin for PlayerSoundPlugin {
                 Update,
                 (
                     crate::ambient::boot_map_ambient_once,
+                    crate::script_ambient::update_script_ambient
+                        .after(crate::ambient::boot_map_ambient_once),
                     reclaim_finished_voices
                         .before(drain_pending_oneshots)
                         .before(play_alias_messages)
@@ -196,7 +199,10 @@ impl Plugin for PlayerSoundPlugin {
                         .before(play_alias_messages)
                         .run_if(resource_exists::<LastAdoptedSnapshot>),
                     crate::shellshock::update_shellshock_tinnitus.before(play_alias_messages),
-                    play_alias_messages.after(FxSoundPublished),
+                    crate::breath::update.before(play_alias_messages),
+                    play_alias_messages
+                        .after(FxSoundPublished)
+                        .after(crate::ambient::update_map_emitter_gain),
                     play_footstep_messages,
                     crate::entity_events::play_viewmodel_notetrack_messages
                         .before(play_weapon_sound_messages)
@@ -329,6 +335,16 @@ fn apply_svc_local_sound(
     }
 }
 
+fn sound_entity(number: Option<u32>, local: sim::ClientId) -> Option<u32> {
+    number.map(|number| {
+        if number == SND_ENT_LOCAL {
+            local.0
+        } else {
+            number
+        }
+    })
+}
+
 fn play_alias_messages(
     mut events: MessageReader<AliasCommand>,
     mut commands: Commands,
@@ -343,12 +359,23 @@ fn play_alias_messages(
     bank: Option<Res<SoundBank>>,
     iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
+    local: Res<net::LocalPresentClient>,
     listeners: Query<&Transform, With<AmbientListener>>,
 ) {
     let pose = listener_pose(&listeners);
     let iwd = iwd.as_deref().map(|s| s.0.as_ref());
     for command in events.read() {
         let (event, pitch_scale) = match command {
+            AliasCommand::StopEntity { snd_ent } => {
+                pending.entries.retain(|entry| {
+                    entry.snd_ent != Some(*snd_ent)
+                        || entry.epoch != epoch.0
+                        || entry.class.scope() != crate::backend::AudioScope::Match
+                });
+                occupancy.take_sound_entity(*snd_ent);
+                crate::backend::stop_entity_match(&mut commands, *snd_ent, epoch.0);
+                continue;
+            }
             AliasCommand::Play(event) => (event, 1.0),
             AliasCommand::PlayPitched { sound, pitch } => (sound, *pitch),
             AliasCommand::Stop {
@@ -356,9 +383,10 @@ fn play_alias_messages(
                 alias,
                 snd_ent,
             } => {
-                pending.cancel_alias(*namespace, alias, *snd_ent, epoch.0);
+                let snd_ent = sound_entity(*snd_ent, local.0);
+                pending.cancel_alias(*namespace, alias, snd_ent, epoch.0);
                 let (namespace, alias, snd_ent, epoch) =
-                    (*namespace, alias.clone(), *snd_ent, epoch.0);
+                    (*namespace, alias.clone(), snd_ent, epoch.0);
                 // Ordered after prior spawns, including ones queued by Play in
                 // this same message batch; a later Play remains a new voice.
                 commands.queue(move |world: &mut World| {
@@ -401,7 +429,7 @@ fn play_alias_messages(
             &mut pending,
             &mut occupancy,
             &mut decisions,
-            event.snd_ent,
+            sound_entity(event.snd_ent, local.0),
             SoundClass::World,
             epoch.0,
             pitch_scale,
@@ -427,7 +455,7 @@ fn play_alias_messages(
                     &mut pending,
                     &mut occupancy,
                     &mut decisions,
-                    event.snd_ent,
+                    sound_entity(event.snd_ent, local.0),
                     SoundClass::World,
                     epoch.0,
                     pitch_scale,
@@ -549,6 +577,7 @@ fn play_bound_weapon_sounds(
     bank: Option<Res<SoundBank>>,
     iwd: Option<Res<SoundIwd>>,
     epoch: Res<MatchEpoch>,
+    local: Res<net::LocalPresentClient>,
     listeners: Query<&Transform, With<AmbientListener>>,
 ) {
     let Some(bank) = bank else {
@@ -581,7 +610,7 @@ fn play_bound_weapon_sounds(
             &mut pending,
             &mut occupancy,
             &mut decisions,
-            event.snd_ent,
+            sound_entity(event.snd_ent, local.0),
             SoundClass::Weapon,
             epoch.0,
             1.0,
@@ -1457,6 +1486,9 @@ fn submit_prepared_oneshot(
             );
             {
                 let mut spawned = commands.entity(entity);
+                if let Some(channel) = channel {
+                    spawned.insert(crate::backend::SoundChannel(channel));
+                }
                 spawned.insert(AliasPlayback {
                     namespace,
                     snd_ent,
@@ -1511,6 +1543,9 @@ fn submit_prepared_oneshot(
             );
             {
                 let mut spawned = commands.entity(entity);
+                if let Some(channel) = channel {
+                    spawned.insert(crate::backend::SoundChannel(channel));
+                }
                 spawned.insert(AliasPlayback {
                     namespace,
                     snd_ent,

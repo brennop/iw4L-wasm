@@ -8,6 +8,7 @@ pub mod model_lighting_cache;
 pub mod smodel_geom_cache;
 pub mod smodel_lighting;
 pub mod spawn;
+pub mod sun_stage;
 pub mod view_parms;
 pub mod world;
 pub mod world_gpu;

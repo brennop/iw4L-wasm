@@ -1,5 +1,7 @@
 pub mod adopt;
 pub mod bullet;
+mod shield;
+pub use shield::{ShieldAttachment, ShieldCarrierCollision};
 pub mod bullet_collision;
 mod carrier;
 pub mod collision_census;
@@ -138,12 +140,17 @@ pub use world_objects::{
 };
 
 mod scene_effects;
+mod time_scale;
 pub use scene_effects::{
     MAX_SCRIPT_EARTHQUAKES, ScriptEarthquake, ScriptFog, ScriptFogParams, ScriptSunFog,
 };
+pub use time_scale::ScriptSlowMotion;
 mod objectives;
 pub use objectives::{
     CompassObjective, CompassVehicle, ObjectiveMatch, ObjectiveState, ScriptEffect,
 };
 
 pub use world::{SimContent, SimContentBuilder, WeaponSetup};
+
+mod script_audio;
+pub use script_audio::{ScriptAmbient, ScriptAudioCommand};

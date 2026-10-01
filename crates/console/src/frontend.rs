@@ -17,6 +17,11 @@ pub(crate) struct FrontendState {
     map_hover: usize,
     browser_page: usize,
     adverts: Vec<net::MasterAdvert>,
+    browser_order: Vec<master_protocol::AdvertId>,
+    browser_notice: Option<(String, std::time::Instant)>,
+    password_advert: Option<net::MasterAdvert>,
+    password_joining: bool,
+    lobby_password: String,
     rules_seeded: bool,
 }
 
@@ -26,6 +31,7 @@ pub(crate) struct LobbyServices<'w> {
     browser: Option<Res<'w, net::MasterBrowser>>,
     bridge: Option<Res<'w, net::MasterBridge>>,
     action: Option<ResMut<'w, net::PendingMasterMenuAction>>,
+    menus: Option<Res<'w, hud::ScriptMenus>>,
 }
 
 impl LobbyServices<'_> {
@@ -61,9 +67,14 @@ pub(crate) fn register(registry: &mut ConsoleRegistry) {
         "ui_map_hover",
         "ui_select_map",
         "ui_select_mode",
+        "ui_password_open",
+        "ui_password_save",
+        "ui_password_cancel",
+        "ui_password_join",
         "ui_browser_refresh",
         "ui_browser_page",
         "ui_join_lobby",
+        "ui_join_lobby_selected",
         "ui_join_lobby_id",
     ] {
         if registry.resolve(name).is_none() {
@@ -142,7 +153,11 @@ pub(crate) fn route(
         seed_rules(&mut dvars, config);
         state.rules_seeded = true;
     }
+    let mut browser_page_changed = false;
     for command in events.read() {
+        if command.name.starts_with("ui_browser") || command.name.starts_with("ui_join_lobby") {
+            state.browser_notice = None;
+        }
         let result = (|| -> Result<(), String> {
             match command.name.as_str() {
                 "set" | "seta" => {
@@ -163,6 +178,7 @@ pub(crate) fn route(
                 }
                 "ui_create_lobby" => {
                     selected_game(&dvars, &maps)?;
+                    state.lobby_password.clear();
                     party.active = true;
                     party.in_lobby = true;
                     party.is_host = true;
@@ -189,6 +205,7 @@ pub(crate) fn route(
                         services.submit(net::MasterMenuAction::Host {
                             map,
                             mode: mode.token().into(),
+                            password: state.lobby_password.clone(),
                         })?;
                     }
                     state.public = !state.public;
@@ -289,19 +306,77 @@ pub(crate) fn route(
                         .into(),
                     ));
                 }
+                "ui_password_open" => {
+                    dvars.set("ui_password_input", state.lobby_password.clone());
+                    dvars.set("ui_password_status", "");
+                }
+                "ui_password_cancel" => {
+                    if state.password_joining {
+                        services.submit(net::MasterMenuAction::LeaveLobby)?;
+                    }
+                    state.password_joining = false;
+                    dvars.set("ui_password_input", "");
+                    state.password_advert = None;
+                }
+                "ui_password_save" => {
+                    if !party.in_lobby || !party.is_host {
+                        return Err("Only the host can change the password".into());
+                    }
+                    let password = dvars
+                        .get("ui_password_input")
+                        .unwrap_or_default()
+                        .to_owned();
+                    if password.len() > master_protocol::MAX_PASSWORD_BYTES {
+                        return Err("Password must be at most 64 bytes".into());
+                    }
+                    if state.public {
+                        services.submit(net::MasterMenuAction::SetPassword {
+                            password: password.clone(),
+                        })?;
+                    }
+                    state.lobby_password = password;
+                    dvars.set("ui_password_input", "");
+                    menus.write(UiMenuRequest::Close("lobby_password_setup".into()));
+                }
+                "ui_password_join" => {
+                    let advert = state
+                        .password_advert
+                        .clone()
+                        .ok_or("Lobby is no longer available")?;
+                    let password = dvars
+                        .get("ui_password_input")
+                        .unwrap_or_default()
+                        .to_owned();
+                    if password.len() > master_protocol::MAX_PASSWORD_BYTES {
+                        return Err("Password must be at most 64 bytes".into());
+                    }
+                    if state.password_joining {
+                        return Err("A join request is already pending".into());
+                    }
+                    services.submit(net::MasterMenuAction::Join {
+                        advert_id: advert.id,
+                        map: advert.map,
+                        mode: advert.mode,
+                        password,
+                    })?;
+                    dvars.set("ui_password_input", "");
+                    dvars.set("ui_password_status", "Joining...");
+                    state.password_joining = true;
+                    dvars.set("ui_password_pending", "1");
+                }
                 "ui_browser_refresh" => {
+                    browser_page_changed = true;
                     services.submit(net::MasterMenuAction::Refresh)?;
                     state.browser_page = 0;
+                    state.browser_order.clear();
                     dvars.set("ui_browser_status", "Refreshing lobbies...");
                 }
                 "ui_browser_page" => {
-                    let len = services
-                        .browser
-                        .as_ref()
-                        .map_or(0, |browser| browser.snapshot().adverts.len());
+                    browser_page_changed = true;
+                    let len = state.browser_order.len();
                     change_page(&mut state.browser_page, command, len);
                 }
-                "ui_join_lobby" | "ui_join_lobby_id" => {
+                "ui_join_lobby" | "ui_join_lobby_id" | "ui_join_lobby_selected" => {
                     let (advert_id, map, mode) = if command.name == "ui_join_lobby_id" {
                         let advert_id = command
                             .args
@@ -313,25 +388,64 @@ pub(crate) fn route(
                         let (map, mode) = selected_game(&dvars, &maps)?;
                         (advert_id, map, mode.token().into())
                     } else {
-                        let row = command
-                            .args
-                            .first()
-                            .and_then(|arg| arg.parse::<usize>().ok())
-                            .ok_or("Invalid lobby row")?;
-                        let advert = state
-                            .adverts
-                            .get(row)
+                        let id = if command.name == "ui_join_lobby_selected" {
+                            dvars
+                                .get("ui_browser_join_id")
+                                .unwrap_or_default()
+                                .parse()
+                                .map_err(|_| "Lobby is no longer available")?
+                        } else {
+                            let row = command
+                                .args
+                                .first()
+                                .and_then(|arg| arg.parse::<usize>().ok())
+                                .ok_or("Invalid lobby row")?;
+                            state
+                                .adverts
+                                .get(row)
+                                .ok_or("Lobby is no longer available")?
+                                .id
+                        };
+                        let advert = services
+                            .browser
+                            .as_ref()
+                            .and_then(|browser| {
+                                browser
+                                    .snapshot()
+                                    .adverts
+                                    .into_iter()
+                                    .find(|advert| advert.id == id)
+                            })
                             .ok_or("Lobby is no longer available")?;
                         if advert.locked
                             || advert.in_match
                             || advert.players >= advert.max_players
                             || !advert.missing.is_empty()
                         {
-                            return Err("Lobby is unavailable or requires missing content".into());
+                            return Err(if advert.locked {
+                                "Lobby closed".into()
+                            } else if advert.in_match {
+                                "Match already in progress".into()
+                            } else if advert.players >= advert.max_players {
+                                "Lobby is full".into()
+                            } else {
+                                format!(
+                                    "Requires {}",
+                                    net::content_names(advert.missing).to_uppercase()
+                                )
+                            });
+                        }
+                        if advert.password_protected {
+                            state.password_advert = Some(advert.clone());
+                            dvars.set("ui_password_input", "");
+                            dvars.set("ui_password_status", "");
+                            menus.write(UiMenuRequest::Open("lobby_password_join".into()));
+                            return Ok(());
                         }
                         (advert.id, advert.map.clone(), advert.mode.clone())
                     };
                     services.submit(net::MasterMenuAction::Join {
+                        password: String::new(),
                         advert_id,
                         map,
                         mode,
@@ -348,14 +462,63 @@ pub(crate) fn route(
             Ok(())
         })();
         if let Err(error) = result {
-            let status =
-                if command.name.starts_with("ui_browser") || command.name == "ui_join_lobby" {
-                    "ui_browser_status"
-                } else {
-                    "ui_frontend_status"
-                };
+            let status = if command.name.starts_with("ui_password") {
+                "ui_password_status"
+            } else if command.name.starts_with("ui_browser")
+                || command.name.starts_with("ui_join_lobby")
+            {
+                "ui_browser_status"
+            } else {
+                "ui_frontend_status"
+            };
+            if status == "ui_browser_status" {
+                state.browser_notice = Some((error.clone(), std::time::Instant::now()));
+            }
             dvars.set(status, &error);
             echo.write(format!("menu: {error}"));
+        }
+    }
+    if services.bridge.is_none() && !state.password_joining {
+        dvars.set("ui_password_pending", "0");
+    }
+    if state.password_joining
+        && let Some(bridge) = services.bridge.as_ref()
+    {
+        match bridge.state() {
+            net::MasterBridgeState::Joined { .. } => {
+                state.password_joining = false;
+                dvars.set("ui_password_pending", "0");
+                state.password_advert = None;
+                state.public = true;
+                party.active = true;
+                party.in_lobby = true;
+                party.is_host = false;
+                menus.write(UiMenuRequest::Close("lobby_password_join".into()));
+                menus.write(UiMenuRequest::Open("game_lobby".into()));
+            }
+            net::MasterBridgeState::Failed { error, .. } => {
+                dvars.set(
+                    "ui_password_status",
+                    if error.source.contains("IncorrectPassword") {
+                        "Incorrect password. Try again."
+                    } else {
+                        "Could not join lobby. Please try again."
+                    },
+                );
+                if services.submit(net::MasterMenuAction::LeaveLobby).is_ok() {
+                    state.password_joining = false;
+                }
+            }
+            net::MasterBridgeState::Closed { .. } | net::MasterBridgeState::Left { .. } => {
+                dvars.set(
+                    "ui_password_status",
+                    "Lobby closed. Cancel to return to the browser.",
+                );
+                if services.submit(net::MasterMenuAction::LeaveLobby).is_ok() {
+                    state.password_joining = false;
+                }
+            }
+            _ => {}
         }
     }
     let mut lobby_names = vec![settings.player_name.clone()];
@@ -486,19 +649,79 @@ pub(crate) fn route(
     }
     if let Some(browser) = services.browser.as_ref() {
         let snapshot = browser.snapshot();
+        let focused_row = services
+            .menus
+            .as_ref()
+            .and_then(|menus| menus.focused_item_in("find_lobbies"))
+            .and_then(|index| catalog.as_ref()?.get("find_lobbies")?.items.get(index))
+            .and_then(|item| item.name.strip_prefix("row"))
+            .and_then(|row| row.parse::<usize>().ok());
+        let focused_id = focused_row
+            .and_then(|row| state.adverts.get(row))
+            .map(|advert| advert.id);
+        state
+            .browser_order
+            .retain(|id| snapshot.adverts.iter().any(|advert| advert.id == *id));
+        for advert in &snapshot.adverts {
+            if !state.browser_order.contains(&advert.id) {
+                state.browser_order.push(advert.id);
+            }
+        }
+        if !browser_page_changed && let Some(id) = focused_id {
+            if let Some(index) = state
+                .browser_order
+                .iter()
+                .position(|candidate| *candidate == id)
+            {
+                state.browser_page = index / PAGE_SIZE;
+                let row = index % PAGE_SIZE;
+                if focused_row != Some(row) {
+                    menus.write(UiMenuRequest::Focus {
+                        menu: "find_lobbies".into(),
+                        item: format!("row{row}"),
+                    });
+                }
+            } else {
+                menus.write(UiMenuRequest::Focus {
+                    menu: "find_lobbies".into(),
+                    item: "back".into(),
+                });
+            }
+        }
         state.browser_page = state
             .browser_page
-            .min(snapshot.adverts.len().saturating_sub(1) / PAGE_SIZE);
-        state.adverts = snapshot
-            .adverts
-            .into_iter()
+            .min(state.browser_order.len().saturating_sub(1) / PAGE_SIZE);
+        state.adverts = state
+            .browser_order
+            .iter()
             .skip(state.browser_page * PAGE_SIZE)
             .take(PAGE_SIZE)
+            .filter_map(|id| {
+                snapshot
+                    .adverts
+                    .iter()
+                    .find(|advert| advert.id == *id)
+                    .cloned()
+            })
             .collect();
-        if let Some(error) = snapshot.error {
+        dvars.set(
+            "ui_browser_page",
+            format!(
+                "{} / {}",
+                state.browser_page + 1,
+                state.browser_order.len().div_ceil(PAGE_SIZE).max(1)
+            ),
+        );
+        if let Some((notice, _)) = state
+            .browser_notice
+            .as_ref()
+            .filter(|(_, since)| since.elapsed().as_secs() < 5)
+        {
+            dvars.set("ui_browser_status", notice);
+        } else if snapshot.error.is_some() {
             dvars.set(
                 "ui_browser_status",
-                format!("Could not refresh lobbies: {error}"),
+                "Could not refresh lobbies. Retrying automatically.",
             );
         } else if !snapshot.loading {
             dvars.set(
@@ -512,17 +735,85 @@ pub(crate) fn route(
         }
     }
     for row in 0..PAGE_SIZE {
-        let label = state
-            .adverts
-            .get(row)
+        let advert = state.adverts.get(row);
+        dvars.set(
+            &format!("ui_browser_{row}_visible"),
+            if advert.is_some() { "1" } else { "0" },
+        );
+        dvars.set(
+            &format!("ui_browser_{row}_id"),
+            advert
+                .map(|advert| advert.id.to_string())
+                .unwrap_or_default(),
+        );
+        let cells = advert
             .map(|advert| {
-                format!(
-                    "{}  {}  {}/{}",
-                    advert.name, advert.map, advert.players, advert.max_players
-                )
+                let status = if advert.locked {
+                    "CLOSED".into()
+                } else if !advert.missing.is_empty() {
+                    format!(
+                        "NEEDS {}",
+                        net::content_names(advert.missing).to_uppercase()
+                    )
+                } else if advert.in_match {
+                    "IN MATCH".into()
+                } else if advert.players >= advert.max_players {
+                    "FULL".into()
+                } else if advert.password_protected {
+                    "PASSWORD".into()
+                } else {
+                    "OPEN".into()
+                };
+                let mode = sim::HostGameModeSelection::from_token(&advert.mode)
+                    .map_or(advert.mode.as_str(), |mode| mode.display_name());
+                let map_key = advert
+                    .map
+                    .split_once(':')
+                    .filter(|(pack, _)| *pack == "iw4")
+                    .map(|(_, name)| {
+                        format!(
+                            "MPUI_{}",
+                            name.trim_start_matches("mp_").to_ascii_uppercase()
+                        )
+                    });
+                let fallback_map = map_label(&advert.map);
+                let map = map_key
+                    .as_ref()
+                    .and_then(|key| localize.as_ref()?.text(key))
+                    .unwrap_or(&fallback_map);
+                let assets = net::content_names(master_protocol::ContentFlags(
+                    advert.available.0 & !net::CONTENT_IW4,
+                ))
+                .to_uppercase();
+                [
+                    browser_cell(&advert.name, 22),
+                    browser_cell(map, 18),
+                    browser_cell(mode, 20),
+                    format!("{}/{}", advert.players, advert.max_players),
+                    if assets.is_empty() {
+                        "—".into()
+                    } else {
+                        assets
+                    },
+                    status,
+                ]
             })
             .unwrap_or_default();
-        dvars.set(&format!("ui_browser_{row}"), label);
+        for (key, value) in ["host", "map", "mode", "players", "assets", "state"]
+            .into_iter()
+            .zip(cells)
+        {
+            dvars.set(&format!("ui_browser_{row}_{key}"), value);
+        }
+    }
+}
+
+fn browser_cell(text: &str, limit: usize) -> String {
+    let plain: String = text.chars().filter(|ch| !ch.is_control()).collect();
+    if plain.chars().count() > limit {
+        format!("{}...", plain.chars().take(limit - 3).collect::<String>())
+    } else {
+        plain
     }
 }
 

@@ -31,6 +31,7 @@ pub(crate) fn spawn(
         _ => (origin, angles),
     };
     world.unlink_player_area(id);
+    world.client_meta_mut(id).shield = None;
     let mut ps = spawn_player_state(origin, angles);
     if let Some(max) = world
         .client_meta(id)
@@ -80,8 +81,7 @@ pub(crate) fn spawn(
     let life_sequence = {
         let meta = world.client_meta_mut(id);
         meta.lifecycle = lifecycle;
-        meta.controls.switch_to = 0;
-        meta.controls.linked = false;
+        meta.controls = crate::ScriptControls::default();
         if lifecycle != ClientLifecycle::Alive {
             return;
         }
@@ -136,7 +136,7 @@ fn means_of_death(world: &FrameWorld, intent: &DamageAttempt) -> &'static str {
         intent.source,
         intent.weapon,
         intent.hitloc,
-        intent.inflictor_origin.is_some(),
+        intent.splash,
     )
 }
 
@@ -160,6 +160,13 @@ pub(crate) fn means(
         DamageSource::Shot(_) => "MOD_RIFLE_BULLET",
         DamageSource::Projectile(_) if splash && grenade => "MOD_GRENADE_SPLASH",
         DamageSource::Projectile(_) if splash => "MOD_PROJECTILE_SPLASH",
+        DamageSource::Projectile(_)
+            if world
+                .equipment_facts_for(weapon)
+                .is_some_and(|f| f.impact_payload_weapon != 0) =>
+        {
+            "MOD_IMPACT"
+        }
         DamageSource::Projectile(_) if grenade => "MOD_GRENADE",
         DamageSource::Projectile(_) => "MOD_PROJECTILE",
         DamageSource::Radius(_) => "MOD_EXPLOSIVE",
@@ -186,9 +193,7 @@ pub(crate) fn damage(
         .inflictor_origin
         .or_else(|| world.player(intent.attacker).map(|ps| ps.origin))
         .unwrap_or(victim_origin);
-    let splash = matches!(intent.source, DamageSource::Radius(_))
-        || (matches!(intent.source, DamageSource::Projectile(_))
-            && intent.inflictor_origin.is_some());
+    let splash = intent.splash;
     let hit = Hit {
         victim: intent.target,
         attacker: Some(intent.attacker),
@@ -316,6 +321,7 @@ pub(crate) fn kill(
         meta.controls.switch_to = 0;
         meta.life_sequence
     };
+    crate::script::host::triggers::release_client_claims(world.ecs(), victim.0);
     crate::damage::play_death(world, victim, attacker, commit.as_ref());
     if let Some(ps) = world.player_mut(victim) {
         ps.health = 0;
@@ -455,7 +461,8 @@ pub(crate) fn give_weapon(
     let facts = world
         .combat_facts_for(weapon)
         .ok_or_else(|| format!("weapon {} has no combat data", weapon_name(world, weapon)))?;
-    let akimbo = akimbo || gsc_give_weapon_is_akimbo(world.weapon_script_name(weapon));
+    let akimbo =
+        akimbo || facts.dual_wield || gsc_give_weapon_is_akimbo(world.weapon_script_name(weapon));
     let offhand = world
         .equipment_facts_for(weapon)
         .filter(|eq| eq.is_offhand());
@@ -539,6 +546,39 @@ pub(crate) fn set_spawn_weapon(
     }
     meta.mirror_held_ammo(weapon);
     meta.controls.switch_to = 0;
+    Ok(())
+}
+
+pub(crate) fn switch_to_weapon_immediate(
+    world: &mut FrameWorld,
+    id: ClientId,
+    weapon: u32,
+) -> Result<(), String> {
+    if !has_weapon(world, id, weapon) {
+        return Err("player does not own that weapon".into());
+    }
+    set_spawn_weapon(world, id, weapon)?;
+    let ps = world
+        .player_mut(id)
+        .expect("set_spawn_weapon checked player");
+    ps.weaponstate_primary = weapon_iw4::WeaponState::Ready as i32;
+    ps.weaponstate_secondary = weapon_iw4::WeaponState::Ready as i32;
+    ps.weapon_time = 0;
+    ps.weapon_time_secondary = 0;
+    ps.weapon_delay = 0;
+    ps.weapon_delay_secondary = 0;
+    weapon_iw4::set_weap_anim(
+        &mut ps.weap_anim,
+        &mut ps.weap_anim_secondary,
+        ps.last_weapon_hand,
+        weapon_iw4::weap_anim_event::IDLE,
+    );
+    let meta = world.client_meta_mut(id);
+    meta.weapon_shot_count = 0;
+    meta.burst_latch = false;
+    meta.burst_latch_secondary = false;
+    meta.rechamber_pending = false;
+    meta.rechamber_pending_secondary = false;
     Ok(())
 }
 
@@ -671,6 +711,7 @@ fn perk_bits(name: &str) -> (u32, u32) {
         "specialty_marathon" => movement_iw4::PERK_MARATHON,
         "specialty_bulletaccuracy" => weapon_iw4::PERK_BULLETACCURACY,
         "specialty_pistoldeath" => playerstate_iw4::PERK_PISTOLDEATH,
+        "specialty_fastmantle" => playerstate_iw4::PERK_FASTMANTLE,
         _ => 0,
     };
     let e_flags = match name {
@@ -746,19 +787,7 @@ pub(crate) fn constrain_cmd(
     if controls.frozen {
         cmd.forwardmove = 0;
         cmd.rightmove = 0;
-        cmd.buttons &= !(buttons::JUMP
-            | buttons::SPRINT
-            | buttons::ATTACK
-            | buttons::MELEE_CHARGE
-            | buttons::FRAG
-            | buttons::SMOKE
-            | buttons::RELOAD
-            | buttons::USE_RELOAD);
-    }
-    if controls.stunned {
-        cmd.forwardmove /= 2;
-        cmd.rightmove /= 2;
-        cmd.buttons &= !(buttons::JUMP | buttons::SPRINT);
+        cmd.buttons &= buttons::PRONE | buttons::CROUCH | buttons::STANCE_HELD;
     }
     if controls.linked {
         cmd.forwardmove = 0;

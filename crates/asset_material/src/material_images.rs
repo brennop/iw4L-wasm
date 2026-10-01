@@ -79,12 +79,6 @@ impl DecodedMips {
         self.level_sizes.len() as u32
     }
 
-    /// The mip chain as the upload wants it. Borrowed: a second asker for the
-    /// same texels copies this once instead of decoding the entry again.
-    fn payload(&self) -> &[u8] {
-        &self.packed
-    }
-
     fn into_payload(self) -> Vec<u8> {
         self.packed
     }
@@ -315,7 +309,7 @@ pub fn decode_material_color_maps(
                 ..
             } => {
                 let slot = &mut catalog.images[image_index];
-                slot.decoded = Some(Arc::new(wrap_payload(&payload, wrap)));
+                slot.decoded = Some(wrap_payload(&payload, wrap));
                 slot.decoded_variant = variant;
                 slot.common_owned = false;
                 stats.decoded += 1;
@@ -408,7 +402,7 @@ pub fn decode_color_or_2d_for_keys(
         } = outcome
         {
             let slot = &mut catalog.images[image_index];
-            slot.decoded = Some(Arc::new(wrap_payload(&payload, wrap)));
+            slot.decoded = Some(wrap_payload(&payload, wrap));
             slot.decoded_variant = variant;
             slot.common_owned = false;
             n += 1;
@@ -513,7 +507,7 @@ pub fn decode_catalog_images_from_iwd(
         } = outcome
         {
             let slot = &mut catalog.images[image_index];
-            slot.decoded = Some(Arc::new(wrap_payload(&payload, wrap)));
+            slot.decoded = Some(wrap_payload(&payload, wrap));
             slot.decoded_variant = variant;
             n += 1;
         }
@@ -588,16 +582,14 @@ enum ImageOutcome {
 
 type ImageRequest = (usize, (u8, bool, bool, bool));
 
-/// The texels one archive entry decodes to, before anything is wrapped around
-/// them.
-///
-/// This is the object worth sharing. The `Image` built over it is not: it
-/// carries a `TextureFormat` and a sampler, and two materials that want the
-/// same file under a different colour space need different ones, so a registry
-/// keyed on the whole variant cannot share a decode between them.
 enum PreparedPayload {
-    Mips(DecodedMips),
+    Mips(std::sync::Mutex<PreparedMip>),
     Cubemap { size: u32, faces: Box<CubemapFaces> },
+}
+
+struct PreparedMip {
+    mips: DecodedMips,
+    images: Vec<(WrapRecipe, Arc<Image>)>,
 }
 
 /// Everything an asker wraps around shared texels, and nothing that decides
@@ -607,7 +599,7 @@ enum PreparedPayload {
 /// beside a texture, not inside it — and the colour space picks `Rgba8Unorm`
 /// over `Rgba8UnormSrgb` for the same bytes. Keeping them
 /// here, out of the payload, is what lets one decode answer several askers.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WrapRecipe {
     sampler_state: u8,
     is_normal: bool,
@@ -636,25 +628,28 @@ impl WrapRecipe {
 }
 
 impl PreparedPayload {
+    fn mips(mips: DecodedMips) -> Self {
+        Self::Mips(std::sync::Mutex::new(PreparedMip {
+            mips,
+            images: Vec::new(),
+        }))
+    }
+
     /// What holding this payload costs, which is what a second asker did not
     /// have to decode.
     fn bytes(&self) -> u64 {
         match self {
-            Self::Mips(mips) => mips.packed.len() as u64,
+            Self::Mips(state) => {
+                let state = state.lock().unwrap_or_else(|poison| poison.into_inner());
+                state
+                    .images
+                    .first()
+                    .map_or(state.mips.packed.len() as u64, |(_, image)| {
+                        image_bytes(image)
+                    })
+            }
             Self::Cubemap { faces, .. } => faces.iter().map(|face| face.len() as u64).sum(),
         }
-    }
-
-    /// Move the mip chain out, leaving the payload empty and giving up its
-    /// charge here rather than when the husk drops. `None` for a cubemap,
-    /// whose faces are packed rather than handed over.
-    fn take_packed(&mut self) -> Option<Vec<u8>> {
-        let Self::Mips(mips) = self else {
-            return None;
-        };
-        let packed = std::mem::take(&mut mips.packed);
-        RESIDENT_PAYLOAD_BYTES.fetch_sub(packed.len() as u64, Ordering::Relaxed);
-        Some(packed)
     }
 
     /// Take ownership of this payload's bytes against the resident total, and
@@ -942,7 +937,7 @@ fn prepare_unshared(
         u32::from(source.height),
         source.format,
     )
-    .map(PreparedPayload::Mips)
+    .map(PreparedPayload::mips)
     .map_err(|error| ImageOutcome::Unsupported {
         gap: format!("{}: {error}", source.name),
     })
@@ -979,7 +974,7 @@ fn prepare_payload(
         };
     }
     match index.decode(name) {
-        Some(Ok(mips)) => Ok(PreparedPayload::Mips(mips)),
+        Some(Ok(mips)) => Ok(PreparedPayload::mips(mips)),
         Some(Err(error)) => Err(ImageOutcome::Unsupported {
             gap: format!("{}: {error}", source.name),
         }),
@@ -989,52 +984,37 @@ fn prepare_payload(
     }
 }
 
-/// Build one asker's image around shared texels.
-///
-/// The copy is what an `Image` owning its data costs, and it is the whole of
-/// what a second asker pays: not the read, the inflate and the decode behind
-/// it. A discarded claim never reaches here at all.
-fn wrap_payload(payload: &PreparedPayload, wrap: WrapRecipe) -> Image {
-    let mips = match payload {
-        PreparedPayload::Cubemap { size, faces } => {
-            return pack_material_cubemap(*size, faces, wrap.use_srgb_reads && !wrap.force_linear);
+fn wrap_payload(payload: &PreparedPayload, wrap: WrapRecipe) -> Arc<Image> {
+    match payload {
+        PreparedPayload::Cubemap { size, faces } => Arc::new(pack_material_cubemap(
+            *size,
+            faces,
+            wrap.use_srgb_reads && !wrap.force_linear,
+        )),
+        PreparedPayload::Mips(state) => {
+            let mut state = state.lock().expect("prepared mip cache is not poisoned");
+            if let Some((_, image)) = state.images.iter().find(|(recipe, _)| *recipe == wrap) {
+                return Arc::clone(image);
+            }
+            if state.images.is_empty() {
+                // Keep the residency charge while the cached image owns these bytes.
+                let packed = std::mem::take(&mut state.mips.packed);
+                MOVED_BYTES.fetch_add(packed.len() as u64, Ordering::Relaxed);
+                let image = Arc::new(wrap_mips(&state.mips, packed, wrap));
+                state.images.push((wrap, Arc::clone(&image)));
+                return image;
+            }
+            let data = state.images[0]
+                .1
+                .data
+                .as_ref()
+                .expect("prepared image owns its payload")
+                .clone();
+            WRAPPED_BYTES.fetch_add(data.len() as u64, Ordering::Relaxed);
+            let image = Arc::new(wrap_mips(&state.mips, data, wrap));
+            image
         }
-        PreparedPayload::Mips(mips) => mips,
-    };
-    WRAPPED_BYTES.fetch_add(mips.packed.len() as u64, Ordering::Relaxed);
-    wrap_mips(mips, mips.payload().to_vec(), wrap)
-}
-
-/// Build the image around texels nobody else is holding.
-///
-/// The last asker for a payload does not have to copy it: the buffer the
-/// decode produced becomes the buffer the `Image` owns, and the charge against
-/// the resident total moves with it. Where somebody else is still pointing at
-/// the payload this falls back to the copy, which is what that second asker's
-/// claim is worth.
-///
-/// The registry's `Weak` is left where it is. Taking it out first — so that
-/// nothing could upgrade it while the buffer is being taken — costs far more
-/// than it saves: a merge runs while the next plan is still decoding, and
-/// forgetting the entries there throws away most of the sharing. `Arc` already
-/// settles the race: whoever gets there first
-/// wins, and the loser either copies or decodes the entry again.
-fn wrap_owned_payload(payload: Arc<PreparedPayload>, wrap: WrapRecipe) -> Image {
-    let mut owned = match Arc::try_unwrap(payload) {
-        Ok(owned) => owned,
-        Err(shared) => return wrap_payload(&shared, wrap),
-    };
-    if !matches!(owned, PreparedPayload::Mips(_)) {
-        return wrap_payload(&owned, wrap);
     }
-    let Some(packed) = owned.take_packed() else {
-        return wrap_payload(&owned, wrap);
-    };
-    MOVED_BYTES.fetch_add(packed.len() as u64, Ordering::Relaxed);
-    let PreparedPayload::Mips(mips) = &owned else {
-        unreachable!("the match above established this is a mip chain")
-    };
-    wrap_mips(mips, packed, wrap)
 }
 
 /// The image `mips` describes, over `data` — copied or moved, whichever the
@@ -2708,11 +2688,7 @@ impl DecodedImageBatch {
             let Some(first) = indices.next() else {
                 continue;
             };
-            // Built here rather than at decode time: this is where it is
-            // known that a row wants it — and where, if nobody else is holding
-            // the texels, the buffer moves into the image instead of being
-            // copied into it.
-            let image = Arc::new(wrap_owned_payload(prepared.payload, prepared.wrap));
+            let image = wrap_payload(&prepared.payload, prepared.wrap);
             census.final_cpu_bytes += image_bytes(&image);
             for index in indices {
                 if let Some(slot) = catalog.images.get_mut(index) {
@@ -2957,7 +2933,7 @@ fn decode_inline(
                 ..
             } => {
                 let slot = &mut catalog.images[image_index];
-                slot.decoded = Some(Arc::new(wrap_payload(&payload, wrap)));
+                slot.decoded = Some(wrap_payload(&payload, wrap));
                 slot.decoded_variant = variant;
                 stats.decoded += 1;
             }

@@ -375,7 +375,7 @@ pub fn sync_camera_from_presented(
             aim_down_sight: facts.aim_down_sight,
             idle: facts.idle,
             frametime: clock.frametime_secs(),
-            hold_breath_scale: 1.0,
+            hold_breath_scale: ps.hold_breath_scale,
             weap_idle_time: kick.weap_idle_time,
             view_last_idle_factor: kick.view_last_idle_factor,
         }),

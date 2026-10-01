@@ -233,6 +233,25 @@ impl MapXModelCatalog {
                     bullet_damage_scale: stream.f32_at(p, 0xf8).ok()?,
                     explosive_damage_scale: stream.f32_at(p, 0xfc).ok()?,
                     health: stream.i32_at(p, 0x110).ok()?,
+                    launch: match stream.ptr_at(p, 0x10c).ok()? {
+                        ZonePtr::Offset(c) => {
+                            let c = stream.resolve_alias(c);
+                            let data = c.at(8);
+                            if stream.u32_at(c, 4).ok()? > 0 && stream.i32_at(data, 4).ok()? == 7 {
+                                Some((
+                                    [
+                                        stream.f32_at(data, 116).ok()?,
+                                        stream.f32_at(data, 120).ok()?,
+                                        stream.f32_at(data, 124).ok()?,
+                                    ],
+                                    stream.f32_at(data, 112).ok()?,
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    },
                     hide_bones,
                 });
             }

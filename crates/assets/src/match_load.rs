@@ -60,10 +60,12 @@ pub struct PreparedMatchSound {
     pub common_profile_id: u64,
     pub products_id: u64,
     pub sound: Result<asset_audio::SoundCatalog, String>,
+    pub gaps: usize,
 }
 
 fn start_match_load(
     mut commands: Commands,
+    identity: Option<Res<LaunchIdentity>>,
     request: Option<Res<MatchLoadRequest>>,
     busy: Option<Res<MatchLoadTask>>,
     retiring: Option<Res<frame::Retiring>>,
@@ -130,14 +132,43 @@ fn start_match_load(
         cancel_handle.clone(),
     ));
 
+    let games = identity.map(|identity| asset_transport::GamesRoot(identity.games_root.clone()));
     let task = crate::session_load::load_pool().spawn(async move {
-        match load_prepared_match(zone_ff, common_mp, progress).await {
-            MatchLoadOutcome::Ready(prepared) => Some(PreparedMatchReady {
-                request_id,
-                load_key,
-                zone,
-                prepared,
-            }),
+        let sound_path = zone_ff.clone();
+        match load_prepared_match(zone_ff, common_mp, progress.clone()).await {
+            MatchLoadOutcome::Ready(mut prepared) => {
+                if progress.is_canceled() {
+                    return None;
+                }
+                prepared.sound = Some(match (games, sound_path) {
+                    (Some(games), Ok(path)) => {
+                        let sources = asset_audio::gather_sound_sources(&games, &path);
+                        let map = prepared
+                            .sound
+                            .take()
+                            .unwrap_or_else(|| Err("the map zone never opened".into()));
+                        let bank = asset_audio::compose_sound_bank(
+                            sources,
+                            &zone,
+                            asset_audio::namespace_for_zone(&games, &zone),
+                            map,
+                        );
+                        prepared.sound_gaps = bank.gaps.len();
+                        prepared.script_sound_aliases = Some(bank.catalog.script_alias_looping());
+                        Ok(bank.catalog)
+                    }
+                    _ => Err("no launch identity or map path to compose the sound bank".into()),
+                });
+                if progress.is_canceled() {
+                    return None;
+                }
+                Some(PreparedMatchReady {
+                    request_id,
+                    load_key,
+                    zone,
+                    prepared,
+                })
+            }
             MatchLoadOutcome::Canceled => None,
         }
     });
@@ -264,6 +295,7 @@ fn poll_match_load(
         zone: ready.zone.clone(),
         common_profile_id: ready.prepared.materials.common_profile_id,
         products_id: ready.prepared.materials.products_id,
+        gaps: ready.prepared.sound_gaps,
         sound: ready
             .prepared
             .sound

@@ -197,8 +197,11 @@ pub const WEAPON_DEF_MELEE_DAMAGE_OFF: usize = 0x240;
 pub const WEAPON_DEF_BOOL_PACK_OFF: usize = 0x768;
 pub const WEAPON_DEF_INHERITS_PERKS_OFF: usize = 0x76f;
 pub const WEAPON_DEF_RIFLE_BULLET_OFF: usize = 0x771;
+pub const WEAPON_DEF_RICOCHET_CHANCE_OFF: usize = 0x538;
+pub const WEAPON_DEF_EXPLOSIVE_BULLET_OFF: usize = 0x778;
 pub const WEAPON_DEF_BOLT_ACTION_OFF: usize = 0x773;
 pub const WEAPON_DEF_AIM_DOWN_SIGHT_OFF: usize = 0x774;
+pub const WEAPON_DEF_CAN_HOLD_BREATH_OFF: usize = 0x775;
 
 pub const WEAPON_DEF_RECHAMBER_WHILE_ADS_OFF: usize = 0x777;
 

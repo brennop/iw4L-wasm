@@ -296,7 +296,17 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
 
     register_body(registry);
     register_inventory(registry);
+    register_shield(registry);
     register_death(registry);
+
+    registry.register(Method, "sayall", |world, receiver, args| {
+        let client = player(world, receiver)?;
+        super::super::hud::chat(world, client, false, args)
+    });
+    registry.register(Method, "sayteam", |world, receiver, args| {
+        let client = player(world, receiver)?;
+        super::super::hud::chat(world, client, true, args)
+    });
 
     macro_rules! presented {
         ($($name:literal),* $(,)?) => {$(
@@ -311,21 +321,13 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         "setcardnameplate",
         "setweaponhudiconoverride",
         "pingplayer",
-        "sayall",
-        "sayteam",
-        "setspectatedefaults",
         "kc_regweaponforfxremoval",
         "setviewmodel",
         "playerhide",
         "forceusehinton",
         "forceusehintoff",
         "predictstreampos",
-        "attachshieldmodel",
-        "detachshieldmodel",
-        "moveshieldmodel",
         "playerforcedeathanim",
-        "clientclaimtrigger",
-        "clientreleasetrigger",
     );
     macro_rules! answers {
         ($value:expr => $($name:literal),* $(,)?) => {$(
@@ -336,8 +338,17 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         )*};
     }
     answers!(Value::Int(1) => "isitemunlocked");
-    answers!(Value::Int(0) => "isusingturret");
-    answers!(Value::Undefined => "getspectatingplayer");
+    registry.register(Method, "isusingturret", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let frame = FrameWorld::from_world(world);
+        let using = frame.player(id).is_some_and(|ps| {
+            ps.e_flags
+                & (playerstate_iw4::eflags::TURRET_ACTIVE_PRONE
+                    | playerstate_iw4::eflags::TURRET_ACTIVE_DUCK)
+                != 0
+        });
+        Ok(Value::Int(using.into()))
+    });
     answers!(Value::Vector([0.0; 3]) => "getthirdpersoncrosshairoffset");
 }
 
@@ -415,9 +426,24 @@ pub(crate) fn new_item_entity(
 fn register_death(registry: &mut NativeRegistry) {
     registry.register(Method, "finishplayerdamage", |world, receiver, args| {
         let client = player(world, receiver)?;
+        let now = super::super::players::now_ms(world);
+        if slot(world, client)?
+            .last_stand_until_ms
+            .is_some_and(|until| now < until)
+        {
+            return Ok(Value::Undefined);
+        }
         let id = ClientId(client);
         let attacker = maybe_player(world, args, 1);
+        let inflictor_entity = super::super::players::damage_entity(world, args.first());
+        let attacker_entity = super::super::players::damage_entity(world, args.get(1));
         let amount = int(args, 2)?;
+        if args
+            .get(8)
+            .is_some_and(|value| matches!(value, Value::String(s) if s.as_ref() == "shield"))
+        {
+            return Ok(Value::Undefined);
+        }
         let dir = match args.get(7) {
             Some(Value::Vector(v)) => Some(*v),
             _ => None,
@@ -432,8 +458,8 @@ fn register_death(registry: &mut NativeRegistry) {
         let owed = || -> Vec<Value> {
             let at = |i: usize| args.get(i).cloned().unwrap_or(Value::Undefined);
             vec![
-                at(0),
-                at(1),
+                inflictor_entity.clone(),
+                attacker_entity.clone(),
                 at(2),
                 at(4),
                 at(5),
@@ -454,6 +480,7 @@ fn register_death(registry: &mut NativeRegistry) {
         match finish {
             script_player::Finish::Hurt => {}
             script_player::Finish::LastStand => {
+                slot(world, client)?.last_stand_until_ms = Some(now + 500);
                 super::super::players::owe(world, client, super::super::players::LAST_STAND, owed())
             }
             script_player::Finish::Killed => {
@@ -470,6 +497,7 @@ fn register_death(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "laststandrevive", |world, receiver, _| {
         let id = client_of(world, receiver)?;
+        slot(world, id.0)?.last_stand_until_ms = None;
         script_player::revive(&mut FrameWorld::from_world(world), id);
         Ok(Value::Undefined)
     });
@@ -694,7 +722,27 @@ fn player_weapon(
     index: usize,
 ) -> Result<u32, String> {
     let weapon = weapon_arg(world, args, index)?;
-    Ok(super::super::players::bridged_weapon(world, id.0, weapon))
+    let native = super::super::players::bridged_weapon(world, id.0, weapon);
+    let frame = FrameWorld::from_world(world);
+    if frame
+        .weapon_combat_row(native)
+        .is_some_and(|facts| facts.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+        && let Some(ps) = frame.player(id)
+        && !ps.weapons.contains(&(native as i32))
+        && let Some(owned) = ps
+            .weapons
+            .iter()
+            .copied()
+            .filter_map(|weapon| u32::try_from(weapon).ok())
+            .find(|weapon| {
+                frame
+                    .weapon_combat_row(*weapon)
+                    .is_some_and(|facts| facts.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+            })
+    {
+        return Ok(owned);
+    }
+    Ok(native)
 }
 
 fn weapon_value(world: &mut World, weapon: u32) -> Value {
@@ -718,6 +766,7 @@ fn register_body(registry: &mut NativeRegistry) {
         let origin = vector(args, 0)?;
         let angles = vector(args, 1)?;
         let state = slot(world, client)?.sessionstate.clone();
+        slot(world, client)?.last_stand_until_ms = None;
         let tick = world.resource::<crate::step::StepRequest>().tick;
         script_player::spawn(
             &mut FrameWorld::from_world(world),
@@ -737,6 +786,56 @@ fn register_body(registry: &mut NativeRegistry) {
         let on = flag(args, 0)?;
         controls(world, receiver, |c| c.jump_disabled = !on)
     });
+    registry.register(Method, "canmantle", |world, receiver, args| {
+        if !args.is_empty() {
+            return Err("CanMantle expects no arguments".into());
+        }
+        let id = client_of(world, receiver)?;
+        Ok(Value::Int(
+            crate::step::script_mantle(&mut FrameWorld::from_world(world), id, false)?.into(),
+        ))
+    });
+    registry.register(Method, "forcemantle", |world, receiver, args| {
+        if !args.is_empty() {
+            return Err("ForceMantle expects no arguments".into());
+        }
+        let id = client_of(world, receiver)?;
+        if !crate::step::script_mantle(&mut FrameWorld::from_world(world), id, true)? {
+            return Err("player cannot mantle the current ledge".into());
+        }
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "allowads", |world, receiver, args| {
+        let allow = flag(args, 0)?;
+        let id = client_of(world, receiver)?;
+        let mut frame = FrameWorld::from_world(world);
+        let ps = frame.player_mut(id).ok_or("player has not spawned")?;
+        if allow {
+            ps.weap_flags &= !playerstate_iw4::weap_flags::NO_ADS;
+        } else {
+            ps.weap_flags |= playerstate_iw4::weap_flags::NO_ADS;
+        }
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "allowsprint", |world, receiver, args| {
+        let allow = flag(args, 0)?;
+        let id = client_of(world, receiver)?;
+        let mut frame = FrameWorld::from_world(world);
+        let ps = frame.player_mut(id).ok_or("player has not spawned")?;
+        if allow {
+            ps.pm_flags &= !playerstate_iw4::pm_flags::SPRINT_BLOCKED;
+        } else {
+            ps.pm_flags |= playerstate_iw4::pm_flags::SPRINT_BLOCKED;
+            movement_iw4::end_sprint(
+                ps,
+                &playerstate_iw4::UserCmd {
+                    server_time: ps.command_time,
+                    ..Default::default()
+                },
+            );
+        }
+        Ok(Value::Undefined)
+    });
     macro_rules! control {
         ($($name:literal => $field:ident = $value:literal),* $(,)?) => {$(
             registry.register(Method, $name, |world, receiver, _| {
@@ -754,13 +853,6 @@ fn register_body(registry: &mut NativeRegistry) {
         "disableusability" => usability_disabled = true,
         "enableusability" => usability_disabled = false,
     );
-    registry.register(Method, "allowspectateteam", |world, receiver, args| {
-        let client = player(world, receiver)?;
-        let team: Arc<str> = string(args, 0)?.into();
-        let on = flag(args, 1)?;
-        slot(world, client)?.spectate.insert(team, on);
-        Ok(Value::Undefined)
-    });
     registry.register(Method, "setmovespeedscale", |world, receiver, args| {
         let id = client_of(world, receiver)?;
         let scale = float(args, 0)?;
@@ -952,8 +1044,14 @@ fn register_body(registry: &mut NativeRegistry) {
         ps.shellshock_index = index;
         ps.shellshock_time = now;
         ps.shellshock_duration = (seconds * 1000.0) as i32;
-        ps.pm_flags |= playerstate_iw4::pm_flags::SHELLSHOCKED;
+        let alive = ps.health > 0;
+        if alive {
+            ps.pm_flags |= playerstate_iw4::pm_flags::SHELLSHOCKED;
+        }
         frame.client_meta_mut(id).shellshock = Some(shock);
+        if alive {
+            crate::combat::apply_player_anim_event(&mut frame, id, 20);
+        }
         Ok(Value::Undefined)
     });
     registry.register(Method, "stopshellshock", |world, receiver, _| {
@@ -975,6 +1073,67 @@ fn register_body(registry: &mut NativeRegistry) {
         let id = client_of(world, receiver)?;
         if let Some(ps) = FrameWorld::from_world(world).player_mut(id) {
             ps.e_flags &= !playerstate_iw4::eflags::RADAR_JAM;
+        }
+        Ok(Value::Undefined)
+    });
+}
+
+fn shield_tag(args: &[Value], index: usize) -> Result<bool, String> {
+    match string(args, index)?.as_str() {
+        "tag_weapon_left" => Ok(false),
+        "tag_shield_back" => Ok(true),
+        tag => Err(format!("unsupported shield tag '{tag}'")),
+    }
+}
+
+fn shield_weapon(frame: &FrameWorld, id: ClientId, model: &str) -> Option<u32> {
+    let attached = frame
+        .client_meta(id)
+        .and_then(|meta| meta.shield)
+        .map(|shield| shield.weapon as i32);
+    let owned = frame.player(id).map_or([0; 15], |ps| ps.weapons);
+    frame.shield_weapon_for_model(model, attached.into_iter().chain(owned))
+}
+
+fn register_shield(registry: &mut NativeRegistry) {
+    registry.register(Method, "attachshieldmodel", |world, receiver, args| {
+        let id = client_of(world, receiver)?;
+        let model = string(args, 0)?;
+        let on_back = shield_tag(args, 1)?;
+        let mut frame = FrameWorld::from_world(world);
+        let weapon = shield_weapon(&frame, id, &model)
+            .ok_or_else(|| format!("shield model '{model}' unavailable"))?;
+        frame.client_meta_mut(id).shield = Some(crate::ShieldAttachment { weapon, on_back });
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "moveshieldmodel", |world, receiver, args| {
+        let id = client_of(world, receiver)?;
+        let model = string(args, 0)?;
+        let from = shield_tag(args, 1)?;
+        let on_back = shield_tag(args, 2)?;
+        let mut frame = FrameWorld::from_world(world);
+        let weapon = shield_weapon(&frame, id, &model)
+            .ok_or_else(|| format!("shield model '{model}' unavailable"))?;
+        let attachment = &mut frame.client_meta_mut(id).shield;
+        if *attachment
+            == Some(crate::ShieldAttachment {
+                weapon,
+                on_back: from,
+            })
+        {
+            *attachment = Some(crate::ShieldAttachment { weapon, on_back });
+        }
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "detachshieldmodel", |world, receiver, args| {
+        let id = client_of(world, receiver)?;
+        let model = string(args, 0)?;
+        let on_back = shield_tag(args, 1)?;
+        let mut frame = FrameWorld::from_world(world);
+        let weapon = shield_weapon(&frame, id, &model);
+        let attachment = &mut frame.client_meta_mut(id).shield;
+        if attachment.is_some_and(|s| Some(s.weapon) == weapon && s.on_back == on_back) {
+            *attachment = None;
         }
         Ok(Value::Undefined)
     });
@@ -1045,6 +1204,57 @@ fn register_inventory(registry: &mut NativeRegistry) {
         let weapon = player_weapon(world, id, args, 0)?;
         script_player::switch_to_weapon(&mut FrameWorld::from_world(world), id, weapon);
         Ok(Value::Undefined)
+    });
+    registry.register(
+        Method,
+        "switchtoweaponimmediate",
+        |world, receiver, args| {
+            let id = client_of(world, receiver)?;
+            let weapon = player_weapon(world, id, args, 0)?;
+            script_player::switch_to_weapon_immediate(
+                &mut FrameWorld::from_world(world),
+                id,
+                weapon,
+            )?;
+            Ok(Value::Undefined)
+        },
+    );
+    registry.register(Method, "getcurrentweaponclipammo", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let frame = FrameWorld::from_world(world);
+        let weapon = frame.player(id).map_or(0, |ps| ps.weapon);
+        Ok(Value::Int(script_player::ammo_clip(&frame, id, weapon)))
+    });
+    registry.register(Method, "isreloading", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let frame = FrameWorld::from_world(world);
+        let reloading = frame.player(id).is_some_and(|ps| {
+            [ps.weaponstate_primary, ps.weaponstate_secondary]
+                .into_iter()
+                .any(|state| {
+                    weapon_iw4::WeaponState::from_i32(state)
+                        .is_ok_and(|state| state.is_reload_family())
+                })
+        });
+        Ok(Value::Int(reloading.into()))
+    });
+    registry.register(Method, "isswitchingweapon", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let frame = FrameWorld::from_world(world);
+        let switching = frame.player(id).is_some_and(|ps| {
+            [ps.weaponstate_primary, ps.weaponstate_secondary]
+                .into_iter()
+                .any(super::super::weapons::is_changing_weapon)
+        });
+        Ok(Value::Int(switching.into()))
+    });
+    registry.register(Method, "isdualwielding", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let frame = FrameWorld::from_world(world);
+        let dual = frame.player(id).is_some_and(|ps| {
+            weapon_iw4::num_hands_for_held(&ps.weapons, &ps.weapon_data, ps.weapon) != 0
+        });
+        Ok(Value::Int(dual.into()))
     });
     registry.register(Method, "getcurrentweapon", |world, receiver, _| {
         let id = client_of(world, receiver)?;
@@ -1222,6 +1432,18 @@ fn register_inventory(registry: &mut NativeRegistry) {
         "setoffhandsecondaryclass" => offhand_secondary,
         "switchtooffhand" => offhand_primary,
     );
+    registry.register(Method, "getoffhandprimaryclass", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let class = FrameWorld::from_world(world)
+            .player(id)
+            .map_or(0, |ps| ps.offhand_primary);
+        Ok(Value::string(
+            OFFHAND_CLASSES
+                .get(class as usize)
+                .copied()
+                .unwrap_or("none"),
+        ))
+    });
     registry.register(Method, "getoffhandsecondaryclass", |world, receiver, _| {
         let id = client_of(world, receiver)?;
         let class = FrameWorld::from_world(world)

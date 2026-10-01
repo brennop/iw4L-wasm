@@ -8,6 +8,7 @@ description = "Our console: input, parsing, execution, cvar storage, coverage re
 [dependencies]
 artifactfs.workspace = true
 web-time = { workspace = true }
+master_protocol.workspace = true
 diag.workspace = true
 bevy.workspace = true
 frame.workspace = true

@@ -21,6 +21,9 @@ pub mod weap_anim_event {
     pub const SPRINT_IN: u32 = 0x17;
     pub const SPRINT_LOOP: u32 = 0x18;
     pub const SPRINT_OUT: u32 = 0x19;
+    pub const STUNNED_START: u32 = 0x1a;
+    pub const STUNNED_LOOP: u32 = 0x1b;
+    pub const STUNNED_END: u32 = 0x1c;
     pub const HOLD_FIRE: u32 = 0x1d;
     pub const DETONATE: u32 = 0x1e;
     pub const RELOAD_QUICK: u32 = 0x21;

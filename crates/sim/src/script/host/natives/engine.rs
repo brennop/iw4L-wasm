@@ -351,6 +351,9 @@ fn start_motion(
 ) -> Result<Value, String> {
     let start_ms = now_ms(world);
     let object = entity_id(world, receiver)?;
+    if field == "origin" && world.resource::<Mechanics>().sliding(object) {
+        return Err("stop slide movement before starting an origin move".into());
+    }
     world.resource_mut::<Mechanics>().start(
         object,
         Motion {
@@ -379,6 +382,45 @@ fn ramp(args: &[Value], time: f32, from: [f32; 3], to: [f32; 3]) -> Result<Motio
         accel,
         decel,
     })
+}
+
+fn move_axis(
+    world: &mut World,
+    receiver: &Value,
+    args: &[Value],
+    axis: usize,
+) -> Result<Value, String> {
+    if !(2..=4).contains(&args.len()) {
+        return Err(
+            "axis move expects distance, seconds and optional acceleration/deceleration".into(),
+        );
+    }
+    let delta = float(args, 0)?;
+    let time = float(args, 1)?;
+    let accel = optional(args, 2, float)?.unwrap_or(0.0);
+    let decel = optional(args, 3, float)?.unwrap_or(0.0);
+    if !delta.is_finite() || !time.is_finite() || !accel.is_finite() || !decel.is_finite() {
+        return Err("axis move parameters must be finite".into());
+    }
+    let duration = seconds_ms(time)?;
+    let id = entity_id(world, receiver)?;
+    if world.resource::<Runtime>().player_client(id).is_some() {
+        return Err("axis moves require a non-player entity".into());
+    }
+    let from = vector_field(world, id, "origin");
+    let mut to = from;
+    to[axis] += delta;
+    if from.iter().chain(to.iter()).any(|v| !v.is_finite()) {
+        return Err("axis move pose must be finite".into());
+    }
+    start_motion(
+        world,
+        receiver,
+        "origin",
+        ramp(args, time, from, to)?,
+        duration,
+        "movedone",
+    )
 }
 
 fn rotate_by(
@@ -493,8 +535,18 @@ fn team_clients(world: &mut World, team: &str, except: Option<u32>) -> Vec<crate
         .collect()
 }
 
-pub(crate) fn play_sound_at(world: &mut World, origin: [f32; 3], alias: &str) {
+pub(crate) fn play_sound_at(
+    world: &mut World,
+    origin: [f32; 3],
+    alias: &str,
+) -> Result<(), String> {
+    if crate::frame::FrameWorld::from_world(world).script_sound_is_looping(alias)? {
+        return Err("cannot play a looping alias as a one-shot sound".into());
+    }
     let index = crate::frame::FrameWorld::from_world(world).sound_alias_index(alias);
+    if index == 0 {
+        return Err("sound alias configstring table is full".into());
+    }
     world_event(
         world,
         entity_iw4::EntityEventKind::SOUND_ALIAS,
@@ -502,6 +554,7 @@ pub(crate) fn play_sound_at(world: &mut World, origin: [f32; 3], alias: &str) {
         origin,
         ZERO,
     );
+    Ok(())
 }
 
 fn radius_damage(
@@ -700,9 +753,6 @@ fn register_entities(registry: &mut NativeRegistry) {
         let ids = classname_prefix(world, ids, "info_vehicle_node");
         objects(world, ids)
     });
-    registry.register(Function, "vehicle_getspawnerarray", |world, _, _| {
-        new_array(world, Vec::new())
-    });
     registry.register(Function, "isspawner", |_, _, _| Ok(Value::Int(0)));
     registry.register(Function, "getteamplayersalive", |world, _, args| {
         let team = team_key(args)?;
@@ -727,6 +777,50 @@ fn register_entities(registry: &mut NativeRegistry) {
             _ => 0.0,
         };
         Ok(Value::Int((health > 0.0).into()))
+    });
+    registry.register(Method, "piecestage", |world, receiver, args| {
+        let piece = int(args, 0)?;
+        let stage = int(args, 1)?;
+        let target = runtime(world)
+            .presence_of(receiver)
+            .ok_or("piecestage requires a model")?;
+        Ok(Value::Int(i32::from(
+            piece >= 0
+                && stage >= 0
+                && crate::t5_destructible::stage_matches(
+                    &crate::frame::FrameWorld::from_world(world),
+                    crate::AuthorityModelOwner::ScriptModel(target),
+                    piece as usize,
+                    stage as usize,
+                ),
+        )))
+    });
+    registry.register(Method, "damagepiece", |world, receiver, args| {
+        let amount = int(args, 0)?;
+        let piece = int(args, 1)?;
+        let target = runtime(world)
+            .presence_of(receiver)
+            .ok_or("damagepiece requires a model")?;
+        let attacker = args
+            .get(2)
+            .and_then(|v| runtime(world).player_client_of(v))
+            .map(crate::ClientId);
+        let origin = origin_of(world, receiver)?;
+        runtime(world)
+            .hits
+            .push(super::super::entity_damage::ScriptHit {
+                piece: Some(piece),
+                target: super::super::entity_damage::HitTarget::Entity(target),
+                amount,
+                origin,
+                attacker,
+                inflictor: Some(target),
+                means: "MOD_EXPLOSIVE",
+                weapon: 0,
+                flags: 1,
+                hitloc: 0,
+            });
+        Ok(Value::Undefined)
     });
     registry.register(Function, "spawn", |world, _, args| {
         let classname = string(args, 0)?;
@@ -973,6 +1067,21 @@ fn register_appearance(registry: &mut NativeRegistry) {
     });
 }
 
+fn slide_object(world: &mut World, receiver: &Value) -> Result<u64, String> {
+    let object = entity_id(world, receiver)?;
+    let entity = &world.resource::<Runtime>().entities[&object];
+    if !matches!(
+        &*entity.classname,
+        "script_model" | "script_brushmodel" | "script_origin" | "light"
+    ) {
+        return Err(
+            "slide movement requires a script_model, script_brushmodel, script_origin or light"
+                .into(),
+        );
+    }
+    Ok(object)
+}
+
 fn register_motion(registry: &mut NativeRegistry) {
     use Namespace::Method;
 
@@ -1039,6 +1148,104 @@ fn register_motion(registry: &mut NativeRegistry) {
             super::super::players::unlink_player(world, client);
         }
         with_entity(world, receiver, |e| e.linked_to = None)
+    });
+    registry.register(Method, "moveslide", |world, receiver, args| {
+        if args.len() != 3 {
+            return Err("MoveSlide expects center offset, radius and velocity".into());
+        }
+        let object = slide_object(world, receiver)?;
+        let center = vector(args, 0)?;
+        let radius = float(args, 1)?;
+        let velocity = vector(args, 2)?;
+        let origin = vector_field(world, object, "origin");
+        if !radius.is_finite()
+            || radius < 0.0
+            || center
+                .iter()
+                .chain(velocity.iter())
+                .chain(origin.iter())
+                .any(|v| !v.is_finite())
+        {
+            return Err(
+                "slide pose, bounds and velocity must be finite with a nonnegative radius".into(),
+            );
+        }
+        if center
+            .iter()
+            .any(|v| !(v - radius).is_finite() || !(v + radius).is_finite())
+        {
+            return Err("slide bounds must be finite".into());
+        }
+        world.resource_mut::<Mechanics>().slide(
+            object,
+            super::super::mechanics::Slide {
+                center,
+                radius,
+                velocity,
+            },
+        );
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "stopmoveslide", |world, receiver, args| {
+        if !args.is_empty() {
+            return Err("StopMoveSlide expects no arguments".into());
+        }
+        let object = slide_object(world, receiver)?;
+        world.resource_mut::<Mechanics>().stop_slide(object);
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "movex", |world, receiver, args| {
+        move_axis(world, receiver, args, 0)
+    });
+    registry.register(Method, "movey", |world, receiver, args| {
+        move_axis(world, receiver, args, 1)
+    });
+    registry.register(Method, "movez", |world, receiver, args| {
+        move_axis(world, receiver, args, 2)
+    });
+    registry.register(Method, "islinked", |world, receiver, _| {
+        let id = entity_id(world, receiver)?;
+        let runtime = world.resource::<Runtime>();
+        let parent = if let Some(client) = runtime.player_client_of(receiver) {
+            runtime
+                .players
+                .get(&client)
+                .and_then(|slot| slot.link.as_ref())
+                .map(|link| link.parent)
+        } else {
+            runtime.entities[&id]
+                .linked_to
+                .as_ref()
+                .map(|link| link.parent)
+        };
+        Ok(Value::Int(i32::from(
+            parent.is_some_and(|parent| runtime.live(&parent)),
+        )))
+    });
+    registry.register(Method, "localtoworldcoords", |world, receiver, args| {
+        if args.len() != 1 {
+            return Err("LocalToWorldCoords expects a local vector".into());
+        }
+        let local = vector(args, 0)?;
+        let id = entity_id(world, receiver)?;
+        let origin = vector_field(world, id, "origin");
+        let angles = vector_field(world, id, "angles");
+        if local
+            .iter()
+            .chain(origin.iter())
+            .chain(angles.iter())
+            .any(|v| !v.is_finite())
+        {
+            return Err("transform pose and vector must be finite".into());
+        }
+        let axis = math_iw4::angles_to_axis(angles);
+        let point = std::array::from_fn(|i| {
+            origin[i] + local[0] * axis[0][i] + local[1] * axis[1][i] + local[2] * axis[2][i]
+        });
+        if point.iter().any(|v: &f32| !v.is_finite()) {
+            return Err("transformed point must be finite".into());
+        }
+        Ok(Value::Vector(point))
     });
     registry.register(Method, "moveto", |world, receiver, args| {
         let to = vector(args, 0)?;
@@ -1279,7 +1486,7 @@ fn register_sound_and_fx(registry: &mut NativeRegistry) {
     registry.register(Function, "playsoundatpos", |world, _, args| {
         let origin = vector(args, 0)?;
         let alias = string(args, 1)?;
-        play_sound_at(world, origin, &alias);
+        play_sound_at(world, origin, &alias)?;
         Ok(Value::Undefined)
     });
     registry.register(Method, "playloopsound", |world, receiver, args| {
@@ -1289,25 +1496,18 @@ fn register_sound_and_fx(registry: &mut NativeRegistry) {
     registry.register(Method, "stoploopsound", |world, receiver, _| {
         with_entity(world, receiver, |e| e.loop_sound = None)
     });
-    registry.register(Method, "playsound", |world, receiver, args| {
-        let alias = string(args, 0)?;
-        let origin = origin_of(world, receiver)?;
-        let index = crate::frame::FrameWorld::from_world(world).sound_alias_index(&alias);
-        world_event(
-            world,
-            entity_iw4::EntityEventKind::SOUND_ALIAS,
-            index,
-            origin,
-            ZERO,
-        );
-        if let Some(name) = optional(args, 1, string)? {
-            let at = now_ms(world) + i64::from(crate::MATCH_TICK_MS);
-            runtime(world)
-                .timers
-                .push((at, receiver.clone(), name.into()));
-        }
-        Ok(Value::Undefined)
-    });
+    for name in ["playsound", "playsoundasmaster"] {
+        registry.register(Method, name, |world, receiver, args| {
+            entity_id(world, receiver)?;
+            let alias = string(args, 0)?;
+            let origin = origin_of(world, receiver)?;
+            play_sound_at(world, origin, &alias)?;
+            if args.len() != 1 {
+                return Err("expected one sound alias argument".into());
+            }
+            Ok(Value::Undefined)
+        });
+    }
     registry.register(Method, "playsoundtoplayer", |world, receiver, args| {
         let alias = string(args, 0)?;
         let client = super::player::player(world, arg(args, 1)?)?;
@@ -1363,9 +1563,8 @@ fn register_entity_state(registry: &mut NativeRegistry) {
         with_entity(world, receiver, |e| e.can_damage = on)
     });
     registry.register(Method, "setcanradiusdamage", |world, receiver, args| {
-        int(args, 0)?;
-        entity_id(world, receiver)?;
-        Ok(Value::Undefined)
+        let on = int(args, 0)? != 0;
+        with_entity(world, receiver, |e| e.can_radius_damage = on)
     });
     registry.register(Method, "hidepart", |world, receiver, args| {
         part(world, receiver, args, true)
@@ -1384,16 +1583,7 @@ fn register_entity_state(registry: &mut NativeRegistry) {
     registry.register(Method, "scriptmodelclearanim", |world, receiver, _| {
         with_entity(world, receiver, |e| e.anim_op = Some(None))
     });
-    entity_accepts![
-        "setteamfortrigger",
-        "releaseclaimedtrigger",
-        "enablegrenadetouchdamage",
-        "willneverchange",
-        "laseron",
-        "laseroff",
-        "playsoundasmaster",
-        "logstring",
-    ];
+    entity_accepts!["willneverchange", "laseron", "laseroff", "logstring",];
 }
 
 fn register_traces(registry: &mut NativeRegistry) {
@@ -1616,9 +1806,41 @@ fn register_match(registry: &mut NativeRegistry) {
 fn register_level(registry: &mut NativeRegistry) {
     use Namespace::{Function, Method};
 
-    registry.register(Function, "soundexists", |_, _, args| {
-        string(args, 0)?;
-        Ok(Value::Int(1))
+    registry.register(Function, "kick", |world, _, args| {
+        if !(1..=2).contains(&args.len()) {
+            return Err("Kick expects a client number and optional reason".into());
+        }
+        if !float(args, 0)?.is_finite() {
+            return Err("Kick client number must be finite".into());
+        }
+        let number = int(args, 0)?;
+        let client = u32::try_from(number).map_err(|_| "no client with that number")?;
+        if crate::frame::FrameWorld::from_world(world)
+            .client_meta(crate::ClientId(client))
+            .is_none()
+        {
+            return Err("no client with that number".into());
+        }
+        let reason = optional(args, 1, string)?.unwrap_or_else(|| "EXE_PLAYERKICKED".into());
+        if reason.is_empty() || reason.len() > 256 || reason.chars().any(char::is_control) {
+            return Err("Kick reason must be 1–256 bytes without control characters".into());
+        }
+        let mut runtime = runtime(world);
+        runtime.kicks.entry(client).or_insert(reason);
+        runtime.disconnects.insert(client);
+        Ok(Value::Undefined)
+    });
+
+    registry.register(Function, "soundexists", |world, _, args| {
+        let name = string(args, 0)?;
+        match crate::frame::FrameWorld::from_world(world).script_sound_exists(&name) {
+            Some(exists) => Ok(Value::Int(i32::from(exists))),
+            None => crate::script::host::registry::unavailable(
+                world,
+                "soundexists",
+                "sound alias catalog is not installed",
+            ),
+        }
     });
 
     for name in ["precacheturret", "precachevehicle", "precachefxteamthermal"] {
@@ -1705,31 +1927,30 @@ fn register_level(registry: &mut NativeRegistry) {
         )*};
     }
     registry.register(Function, "earthquake", super::scene_effects::earthquake);
+    registry.register(
+        Function,
+        "setslowmotion",
+        super::scene_effects::set_slow_motion,
+    );
     presented![
         "obituary",
         "playfxontagforclients",
         "stopfxontag",
-        "setslowmotion",
-        "setac130ambience",
-        "physicsexplosionsphere",
         "setclientnamemode",
     ];
-    macro_rules! platform {
-        ($($name:literal),* $(,)?) => {$(
-            registry.register(Function, $name, |_, _, _| Ok(Value::Undefined));
+    macro_rules! unavailable {
+        ($reason:literal: $($name:literal),* $(,)?) => {$(
+            registry.register(Function, $name, |world, _, _| {
+                super::super::registry::unavailable(world, $name, $reason)
+            });
         )*};
     }
-    platform![
-        "endlobby",
-        "endparty",
-        "sendranks",
-        "setplayerteamrank",
-        "updateskill",
-        "sendmatchdata",
-        "sendclientmatchdata",
-        "setmatchdatadef",
-        "setclientmatchdatadef",
-    ];
+    unavailable!("no script ranking service is connected": "sendranks", "setplayerteamrank");
+    unavailable!("no script skill-rating service is connected": "updateskill");
+    unavailable!("no script match-data upload service is connected": "sendmatchdata", "sendclientmatchdata");
+    unavailable!("IW4 definition schemas are not supported by the local match-data store": "setmatchdatadef", "setclientmatchdatadef");
+    unavailable!("IW4 lobby termination is not bound to the IW4L lobby lifecycle": "endlobby");
+    unavailable!("IW4 party termination is not bound to the IW4L party lifecycle": "endparty");
 }
 
 fn register_weapon_facts(registry: &mut NativeRegistry) {
@@ -1791,6 +2012,11 @@ fn register_weapon_facts(registry: &mut NativeRegistry) {
 fn register_damage(registry: &mut NativeRegistry) {
     use Namespace::{Function, Method};
 
+    registry.register(Function, "setplayerignoreradiusdamage", |world, _, args| {
+        let ignore = int(args, 0)? != 0;
+        runtime(world).engine.players_ignore_radius_damage = ignore;
+        Ok(Value::Undefined)
+    });
     registry.register(Function, "radiusdamage", |world, _, args| {
         radius_damage(world, None, args)
     });
@@ -1819,11 +2045,8 @@ fn register_refused(registry: &mut NativeRegistry) {
         => "animation data is not loaded in the simulation");
     refused!(Function: "getweaponmodel", "getweaponhidetags"
         => "weapon models are not loaded in the simulation");
-    refused!(Function: "kick" => "no client with that number");
     refused!(Method: "getcorpseanim", "startragdoll", "isragdoll" => "receiver is not a corpse");
     refused!(Method: "itemweaponsetammo" => "receiver is not a weapon item");
-    refused!(Method: "attachpath", "startpath", "vehicle_dospawn"
-        => "receiver is not a vehicle");
     refused!(Method: "allowjump", "allowspectateteam", "anyammoforweaponmodes", "attachshieldmodel",
         "attackbuttonpressed", "beginlocationselection", "buttonpressed", "cameralinkto",
         "cameraunlink", "canplayerplacesentry", "clearperks", "clientclaimtrigger",

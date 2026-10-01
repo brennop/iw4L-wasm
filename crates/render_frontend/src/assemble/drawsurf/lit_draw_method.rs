@@ -11,6 +11,36 @@ pub struct DrawMethodDfog(pub bool);
 #[derive(bevy::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SunShadowMapPresent(pub bool);
 
+#[derive(bevy::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SunShadowUnmatchedLights(pub [u64; 4]);
+
+impl SunShadowUnmatchedLights {
+    pub fn insert(&mut self, light: u8) {
+        self.0[usize::from(light >> 6)] |= 1 << (light & 63);
+    }
+
+    pub fn contains(self, light: u8) -> bool {
+        self.0[usize::from(light >> 6)] & (1 << (light & 63)) != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SunShadowReceivers {
+    pub present: bool,
+    pub unmatched: SunShadowUnmatchedLights,
+}
+
+impl SunShadowReceivers {
+    pub const NONE: Self = Self {
+        present: false,
+        unmatched: SunShadowUnmatchedLights([0; 4]),
+    };
+
+    pub fn shadows(self, light: u8) -> bool {
+        self.present && !self.unmatched.contains(light)
+    }
+}
+
 #[derive(bevy::prelude::Resource, Clone, Debug, Default)]
 pub struct SpotShadowMapLights(pub Vec<u8>);
 
@@ -25,7 +55,7 @@ pub fn colour_lit_technique(
     packed_drawsurf: u64,
     light_types: &[u8],
     dfog: bool,
-    sun_shadow_map: bool,
+    sun_shadow_map: SunShadowReceivers,
     spot_shadowed: &[u8],
 ) -> TechType {
     if base.0 != lighting_iw4::GFX_DRAW_METHOD_LIT_BEGIN {
@@ -45,7 +75,7 @@ pub fn colour_lit_technique(
         gfx_light_type
     };
     let has_shadow_map = match gfx_light_type {
-        lighting_iw4::GFX_LIGHT_TYPE_DIR => sun_shadow_map,
+        lighting_iw4::GFX_LIGHT_TYPE_DIR => sun_shadow_map.shadows(fields.scene_light_index),
         lighting_iw4::GFX_LIGHT_TYPE_SPOT => spot_shadowed
             .iter()
             .any(|&light| light == fields.scene_light_index),

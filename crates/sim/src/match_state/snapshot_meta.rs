@@ -11,6 +11,8 @@ use super::loadout::LoadoutSpec;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClientSnapshotMeta {
+    pub shield: Option<crate::ShieldAttachment>,
+    pub shield_collision: Option<crate::ShieldCarrierCollision>,
     pub controls: super::ScriptControls,
     pub weapon_lock: crate::WeaponLock,
     pub killcam_hud: Option<KillcamHud>,

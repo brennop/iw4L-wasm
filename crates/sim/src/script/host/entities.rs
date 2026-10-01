@@ -118,6 +118,10 @@ pub(crate) struct EngineState {
     pub team_radar_blocked: std::collections::BTreeSet<String>,
     pub match_data: BTreeMap<String, Value>,
     pub game_end_time: i32,
+    pub slow_motion: Option<crate::ScriptSlowMotion>,
+    pub ambient: Option<crate::ScriptAmbient>,
+    pub ac130_ambient: Option<crate::ScriptAmbient>,
+    pub players_ignore_radius_damage: bool,
     pub map_center: [f32; 3],
     pub winning_team: Option<String>,
     pub objectives: BTreeMap<u8, super::objectives::ScriptObjective>,
@@ -192,11 +196,21 @@ pub(crate) struct ScriptEntity {
     pub contents: i32,
     pub audience: HudAudience,
     pub presence: Option<crate::ScriptModelId>,
+    pub missile_owner: Option<u64>,
     pub can_damage: bool,
+    pub can_radius_damage: bool,
     pub part_ops: Vec<(Arc<str>, bool)>,
     pub anim_op: Option<Option<Arc<str>>>,
     pub loop_sound: Option<Arc<str>>,
     pub usable: Option<Usable>,
+    pub trigger_policy: super::triggers::TriggerPolicy,
+}
+
+impl ScriptEntity {
+    pub(crate) fn accepts_damage(&self, flags: i32) -> bool {
+        self.can_damage
+            && (flags & crate::script_player::IDFLAGS_RADIUS == 0 || self.can_radius_damage)
+    }
 }
 
 pub(crate) const SPAWNED_PRESENCE_BASE: u32 = 0x4000_0000;
@@ -292,11 +306,14 @@ impl Runtime {
                 contents: 0,
                 audience: HudAudience::All,
                 presence: None,
-                can_damage: false,
+                missile_owner: None,
+                can_damage: classname == "trigger_damage",
+                can_radius_damage: true,
                 part_ops: Vec::new(),
                 anim_op: None,
                 loop_sound: None,
                 usable: None,
+                trigger_policy: Default::default(),
             },
         );
         if kind != EntityKind::HudElem {
@@ -333,11 +350,14 @@ impl Runtime {
                 contents: 0,
                 audience: HudAudience::All,
                 presence: None,
+                missile_owner: None,
                 can_damage: true,
+                can_radius_damage: true,
                 part_ops: Vec::new(),
                 anim_op: None,
                 loop_sound: None,
                 usable: None,
+                trigger_policy: Default::default(),
             },
         );
         self.set_object_field(id, "classname", Value::string("player"));
@@ -360,6 +380,10 @@ impl Runtime {
     }
 
     pub(crate) fn delete_entity(&mut self, id: u64) {
+        if let Some(client) = self.player_client(id) {
+            self.release_trigger_claims(client);
+        }
+        self.use_selected.retain(|_, selected| *selected != id);
         if let Some(entity) = self.entities.remove(&id)
             && let Some(presence) = entity.presence
         {
@@ -459,12 +483,11 @@ impl Runtime {
                         );
                         continue;
                     }
-                    "spawnflags" | "count" | "health" | "dmg" | "maxhealth" => {
-                        Value::Int(super::natives::iw4::atoi(value))
-                    }
+                    "spawnflags" | "count" | "health" | "dmg" | "maxhealth" | "threshold"
+                    | "accumulate" => Value::Int(super::natives::iw4::atoi(value)),
                     // T5 compares exploder numbers as ints.
                     "script_exploder" if t5 => Value::Int(super::natives::iw4::atoi(value)),
-                    "speed" | "radius" | "height" => {
+                    "speed" | "radius" | "height" | "wait" => {
                         let number = super::natives::iw4::atof(value) as f32;
                         match key.as_str() {
                             "radius" => radius = Some(number),

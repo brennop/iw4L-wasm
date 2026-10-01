@@ -22,7 +22,11 @@ pub(crate) struct DestructibleLoop {
 pub(crate) fn update(
     mut commands: Commands,
     presented: Res<PresentedSnapshot>,
-    playing: Query<(Entity, &DestructibleLoop)>,
+    mut playing: Query<(
+        Entity,
+        &DestructibleLoop,
+        Option<&mut crate::backend::SoundEntity>,
+    )>,
     bank: Option<Res<SoundBank>>,
     namespace: Option<Res<SoundBankNamespace>>,
     mut clips: Option<ResMut<ClipStore>>,
@@ -48,7 +52,7 @@ pub(crate) fn update(
         })
         .collect();
 
-    for (entity, loop_sound) in &playing {
+    for (entity, loop_sound, _) in &playing {
         if !speaking.iter().any(|(row, alias)| {
             row.owner.to_wire() == loop_sound.owner && *alias == loop_sound.alias
         }) {
@@ -66,10 +70,24 @@ pub(crate) fn update(
     };
     let ns = namespace.map_or(AssetNamespace::Iw4, |map| map.namespace);
     for (row, alias) in speaking {
-        if playing
-            .iter()
-            .any(|(_, playing)| playing.owner == row.owner.to_wire() && playing.alias == alias)
+        if let Some((entity, _, current)) = playing
+            .iter_mut()
+            .find(|(_, playing, _)| playing.owner == row.owner.to_wire() && playing.alias == alias)
         {
+            match (row.snd_ent, current) {
+                (Some(number), Some(mut current)) => current.0 = number,
+                (Some(number), None) => {
+                    commands
+                        .entity(entity)
+                        .insert(crate::backend::SoundEntity(number));
+                }
+                (None, Some(_)) => {
+                    commands
+                        .entity(entity)
+                        .remove::<crate::backend::SoundEntity>();
+                }
+                (None, None) => {}
+            }
             continue;
         }
         let Some(key) = clip_keys_for_alias(&bank.0, ns, alias).into_iter().next() else {
@@ -80,16 +98,7 @@ pub(crate) fn update(
         let Some(Ok(audio)) = clips.ready(&key) else {
             continue;
         };
-        let Some(sound) = bank
-            .0
-            .sound_in(ns, alias)
-            .or_else(|| {
-                bank.0
-                    .index_unique(alias)
-                    .and_then(|index| bank.0.sounds.get(index))
-            })
-            .and_then(|s| s.aliases.first())
-        else {
+        let Some(sound) = crate::clip_store::alias_for_clip(&bank.0, ns, alias, &key) else {
             gaps.record(alias);
             continue;
         };
@@ -104,23 +113,35 @@ pub(crate) fn update(
                 "audio: destructible loop `{alias}` has no falloff curve (typed gap)"
             );
         }
-        commands.spawn((
-            DestructibleLoop {
-                owner: row.owner.to_wire(),
-                alias: alias.to_owned(),
-            },
-            MapAmbient,
-            MapEmitter {
-                origin_inches: row.origin,
-                dist_min: sound.dist_min,
-                dist_max: sound.dist_max,
-                knots,
-                base_gain: sound.vol_min.max(0.0),
-                pcm: pcm.add(audio),
-                live_pan: None,
-            },
-            Transform::from_translation(Vec3::from_array(row.origin)),
-        ));
+        let emitter = commands
+            .spawn((
+                DestructibleLoop {
+                    owner: row.owner.to_wire(),
+                    alias: alias.to_owned(),
+                },
+                MapAmbient,
+                MapEmitter {
+                    origin_inches: row.origin,
+                    dist_min: sound.dist_min,
+                    dist_max: sound.dist_max,
+                    knots,
+                    base_gain: sound.vol_min.max(0.0),
+                    pcm: pcm.add(audio),
+                    live_pan: None,
+                },
+                Transform::from_translation(Vec3::from_array(row.origin)),
+            ))
+            .id();
+        if let Some(flags) = sound.decoded_flags() {
+            commands
+                .entity(emitter)
+                .insert(crate::backend::SoundChannel(flags.channel()));
+        }
+        if let Some(number) = row.snd_ent {
+            commands
+                .entity(emitter)
+                .insert(crate::backend::SoundEntity(number));
+        }
         diag::info!(Audio, "audio: destructible loop `{alias}`");
     }
 }

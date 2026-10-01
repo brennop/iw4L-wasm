@@ -21,11 +21,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::Undefined)
     });
 
-    macro_rules! unsupported {
-        ($namespace:ident, $effect:literal: $($name:literal),* $(,)?) => {$(
-            registry.register($namespace, $name, |world, _, _| unsupported(world, $name, $effect));
-        )*};
-    }
     macro_rules! vision_channel {
         ($global:literal, $player:literal, $field:ident) => {
             registry.register(Function, $global, |world, _, args| {
@@ -76,8 +71,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         });
         Ok(Value::Undefined)
     });
-    unsupported!(Method, "script rumble": "playrumbleonentity", "stoprumble");
-    unsupported!(Function, "script rumble": "playrumbleonposition");
+    super::rumble::register(registry);
 }
 
 fn local_sound(
@@ -166,17 +160,4 @@ fn edit_view(world: &mut World, client: u32, edit: impl FnOnce(&mut crate::ViewE
     if frame.client_meta(ClientId(client)).is_some() {
         edit(&mut frame.client_meta_mut(ClientId(client)).view_effects);
     }
-}
-
-fn unsupported(world: &mut World, name: &'static str, effect: &str) -> Result<Value, String> {
-    let mut runtime = world.resource_mut::<Runtime>();
-    let hits = runtime.unsupported.entry(name).or_default();
-    *hits += 1;
-    if *hits == 1 {
-        diag::warn!(
-            Sim,
-            "gsc: {name} is unsupported: no {effect} executor on the client"
-        );
-    }
-    Ok(Value::Undefined)
 }

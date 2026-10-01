@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use perfetto_sdk::track_event::{EventContext, TrackEventDebugArg};
 use perfetto_sdk::{track_event_begin, track_event_end};
 
@@ -13,7 +15,13 @@ fn f64_arg(ctx: &mut EventContext, name: &'static str, value: f32) {
 }
 
 fn str_arg(ctx: &mut EventContext, name: &'static str, value: &str) {
-    ctx.add_debug_arg(name, TrackEventDebugArg::String(value));
+    // Perfetto debug strings require an interior-NUL-free C string.
+    let value = if value.contains('\0') {
+        Cow::Owned(value.replace('\0', "\\0"))
+    } else {
+        Cow::Borrowed(value)
+    };
+    ctx.add_debug_arg(name, TrackEventDebugArg::String(&value));
 }
 
 pub fn player_tick(
@@ -67,6 +75,16 @@ pub fn death(victim: u32, attacker: Option<u32>, suicide: u8, tick: u32) {
         }
         i64_arg(ctx, "suicide", i64::from(suicide));
         i64_arg(ctx, "tick", i64::from(tick));
+    });
+    track_event_end!("iw4l.sim");
+}
+
+pub fn projectile_phase(weapon: u32, projectile: u32, phase: &str, deadline_ms: i32) {
+    track_event_begin!("iw4l.sim", "projectile_phase", |ctx: &mut EventContext| {
+        i64_arg(ctx, "weapon", i64::from(weapon));
+        i64_arg(ctx, "projectile", i64::from(projectile));
+        str_arg(ctx, "phase", phase);
+        i64_arg(ctx, "deadline_ms", i64::from(deadline_ms));
     });
     track_event_end!("iw4l.sim");
 }

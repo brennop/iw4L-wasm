@@ -93,6 +93,8 @@ pub struct ModelSkel {
 
     pub coll_surfs: Vec<xmodel_runtime::CollSurfCollision>,
 
+    pub movement_brushes: Vec<xmodel_runtime::ModelMovementBrush>,
+
     pub lod: Option<crate::ModelLodSelector>,
 
     pub lod_smc: Option<[[u8; 4]; 4]>,
@@ -111,6 +113,7 @@ impl ModelSkel {
             contents: self.contents,
             coll_lod: self.coll_lod,
             coll_surfs: self.coll_surfs.clone(),
+            movement_brushes: self.movement_brushes.clone(),
             bounds: self.bounds,
             radius: self.radius,
         })
@@ -538,6 +541,7 @@ fn capture_model_skel_iw4(
         contents: Some(geometry.contents),
         coll_lod: geometry.coll_lod,
         coll_surfs: capture_coll_surfs(stream, geometry),
+        movement_brushes: Vec::new(),
         lod: Some(crate::ModelLodSelector::Iw4 {
             lod_start: geometry.lod_start,
             num_lods: geometry.num_lods,
@@ -1086,6 +1090,7 @@ fn capture_model_skel_t5(
         contents: Some(geometry.contents),
         coll_lod: geometry.coll_lod,
         coll_surfs,
+        movement_brushes: capture_movement_brushes_t5(stream, geometry)?,
         lod: Some(crate::ModelLodSelector::T5 {
             num_lods: geometry.num_lods,
             lod_dist: geometry.lod_dist,
@@ -1094,6 +1099,72 @@ fn capture_model_skel_t5(
         lod_part_bits: None,
         lod_surf_span: geometry.lod_surf_span,
     })
+}
+
+fn capture_movement_brushes_t5(
+    stream: &fastfile_t5::ZoneStream<'_>,
+    geometry: fastfile_t5::XModelGeometry,
+) -> Option<Vec<xmodel_runtime::ModelMovementBrush>> {
+    use fastfile_t5::{Ptr, ZonePtr, size};
+    let pointer = |p: Ptr, offset| match stream.ptr_at(p, offset).ok()? {
+        ZonePtr::Offset(p) => Some(stream.resolve_alias(p)),
+        _ => None,
+    };
+    if geometry.collision_map_count == 0 {
+        return Some(Vec::new());
+    }
+    let maps = geometry.collision_maps?;
+    if stream.ptr_at(maps, 0).ok()? == ZonePtr::Null {
+        return Some(Vec::new());
+    }
+    let list = pointer(maps, 0)?;
+    let count = stream.u32_at(list, 0).ok()? as usize;
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    let geoms = pointer(list, 4)?;
+    let mut brushes = Vec::new();
+    for i in 0..count {
+        let geom = geoms.at(i * size::PHYS_GEOM_INFO);
+        if stream.ptr_at(geom, 0).ok()? == ZonePtr::Null {
+            continue;
+        }
+        let brush = pointer(geom, 0)?;
+        let mut planes = Vec::new();
+        let mut plane_surface_flags = Vec::new();
+        for side in 0..2 {
+            for axis in 0..3 {
+                let mut plane = [0.0; 4];
+                plane[axis] = if side == 0 { -1.0 } else { 1.0 };
+                plane[3] = stream.f32_at(brush, side * 16 + axis * 4).ok()? * plane[axis];
+                planes.push(plane);
+                plane_surface_flags.push(stream.u32_at(brush, 60 + (side * 3 + axis) * 4).ok()?);
+            }
+        }
+        let side_count = stream
+            .u32_at(brush, size::BRUSH_WRAPPER_NUMSIDES_OFF)
+            .ok()? as usize;
+        if side_count != 0 {
+            let sides = pointer(brush, size::BRUSH_WRAPPER_SIDES_OFF)?;
+            for j in 0..side_count {
+                let side = sides.at(j * size::CBRUSH_SIDE);
+                let plane = pointer(side, 0)?;
+                planes.push([
+                    stream.f32_at(plane, 0).ok()?,
+                    stream.f32_at(plane, 4).ok()?,
+                    stream.f32_at(plane, 8).ok()?,
+                    stream.f32_at(plane, 12).ok()?,
+                ]);
+                plane_surface_flags.push(stream.u32_at(side, 8).ok()?);
+            }
+        }
+        brushes.push(xmodel_runtime::ModelMovementBrush {
+            planes,
+            contents: stream.u32_at(brush, 12).ok()?,
+            plane_surface_flags,
+        });
+    }
+    Some(brushes)
 }
 
 #[allow(clippy::type_complexity)]
@@ -1485,6 +1556,7 @@ fn capture_model_skel_iw5(
 
     let num_child = geometry.num_bones.saturating_sub(geometry.num_root_bones);
     let pose = capture_pose_src_iw5(stream, &geometry, &bone_name_strs, &bones, num_child);
+    let bone_collision = capture_bone_collision_iw5(stream, geometry);
     let material_at = |surface_index: usize| {
         geometry.material_handles.and_then(|handles| {
             materials?.material_index(Ptr {
@@ -1517,6 +1589,7 @@ fn capture_model_skel_iw5(
             tag_view,
             tag_weapon,
             pose,
+            bone_collision,
             surface_materials: (0..geometry.surface_count).map(material_at).collect(),
             radius: geometry.radius,
             ..(**source).clone()
@@ -1620,7 +1693,7 @@ fn capture_model_skel_iw5(
     Some(ModelSkel {
         name,
         bones,
-        bone_collision: Vec::new(),
+        bone_collision,
         bone_names: bone_name_strs,
         tag_view,
         tag_weapon,
@@ -1645,12 +1718,51 @@ fn capture_model_skel_iw5(
         contents: None,
         coll_lod: 0,
         coll_surfs: Vec::new(),
+        movement_brushes: Vec::new(),
 
         lod: None,
         lod_smc: None,
         lod_part_bits: None,
         lod_surf_span: [(0, 0); 4],
     })
+}
+
+fn capture_bone_collision_iw5(
+    stream: &fastfile_iw5::ZoneStream<'_>,
+    geometry: fastfile_iw5::XModelGeometry,
+) -> Vec<Option<BoneCollision>> {
+    let (Some(info), Some(classes)) = (geometry.bone_info, geometry.part_classification) else {
+        return Vec::new();
+    };
+    (0..geometry.num_bones)
+        .map(|bone| {
+            let row = info.at(bone * fastfile_iw5::size::XBONE_INFO);
+            let radius_sq = stream.f32_at(row, 24).ok()?;
+            let midpoint = [
+                stream.f32_at(row, 0).ok()?,
+                stream.f32_at(row, 4).ok()?,
+                stream.f32_at(row, 8).ok()?,
+            ];
+            let half_size = [
+                stream.f32_at(row, 12).ok()?,
+                stream.f32_at(row, 16).ok()?,
+                stream.f32_at(row, 20).ok()?,
+            ];
+            let finite = radius_sq.is_finite()
+                && radius_sq > 0.0
+                && midpoint.iter().all(|value| value.is_finite())
+                && half_size
+                    .iter()
+                    .all(|value| value.is_finite() && *value >= 0.0);
+            let part_classification = stream.u8_at(classes, bone).ok()?;
+            finite.then_some(BoneCollision {
+                midpoint,
+                half_size,
+                radius_sq,
+                part_classification,
+            })
+        })
+        .collect()
 }
 
 fn capture_pose_src_iw5(

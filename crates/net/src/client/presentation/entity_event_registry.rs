@@ -293,6 +293,26 @@ pub const EV_DISPATCH_REGISTRY: &[EntityEventRow] = &[
         dispatch: EntityEventDispatch::Observer(EntityEventAction::PlayFx),
     },
     EntityEventRow {
+        name: "EV_PHYS_EXPLOSION_SPHERE",
+        event: EntityEventKind::PHYS_EXPLOSION_SPHERE,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::PhysicsSphere),
+    },
+    EntityEventRow {
+        name: "EV_PLAY_RUMBLE_ON_ENT",
+        event: EntityEventKind::PLAY_RUMBLE_ON_ENT,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::Rumble),
+    },
+    EntityEventRow {
+        name: "EV_PLAY_RUMBLE_ON_POS",
+        event: EntityEventKind::PLAY_RUMBLE_ON_POS,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::Rumble),
+    },
+    EntityEventRow {
+        name: "EV_STOP_RUMBLE",
+        event: EntityEventKind::STOP_RUMBLE,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::Rumble),
+    },
+    EntityEventRow {
         name: "EV_OBITUARY",
         event: EntityEventKind::OBITUARY,
         dispatch: EntityEventDispatch::Observer(EntityEventAction::Obituary),

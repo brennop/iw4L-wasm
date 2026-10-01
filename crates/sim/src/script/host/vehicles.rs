@@ -13,8 +13,21 @@ const ARRIVED: f32 = 4.0;
 const GUNNER_RANGE: f32 = 8192.0;
 
 #[derive(Clone, Debug)]
+pub(crate) struct Plane {
+    owner: u32,
+    origin: [f32; 3],
+    velocity: [f32; 3],
+    compass: Option<([String; 2], [i32; 2])>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct Heli {
     goal: Option<[f32; 3]>,
+    path_node: Option<u64>,
+    path_running: bool,
+    velocity: [f32; 3],
+    turning: f32,
+    hover: Option<Hover>,
     stop_at_goal: bool,
     arrived: bool,
     near_goal: f32,
@@ -39,6 +52,37 @@ pub(crate) struct Heli {
     next_fire_ms: i32,
 }
 
+#[derive(Clone, Debug)]
+struct Hover {
+    radius: f32,
+    speed: f32,
+    accel: f32,
+    center: Option<[f32; 3]>,
+    velocity: [f32; 3],
+    phase: f32,
+}
+
+impl Hover {
+    fn advance(&mut self, origin: [f32; 3]) -> [f32; 3] {
+        let center = *self.center.get_or_insert(origin);
+        self.phase = (self.phase + self.speed / self.radius * TICK_S) % std::f32::consts::TAU;
+        let target = [
+            center[0] + self.radius * self.phase.cos(),
+            center[1] + self.radius * self.phase.sin(),
+            center[2],
+        ];
+        let delta = glam::Vec3::from_array(target) - glam::Vec3::from_array(origin);
+        let wanted = delta.normalize_or_zero() * self.speed.min(delta.length() / TICK_S);
+        let velocity = glam::Vec3::from_array(self.velocity);
+        let velocity = velocity + (wanted - velocity).clamp_length_max(self.accel * TICK_S);
+        let candidate = glam::Vec3::from_array(origin) + velocity * TICK_S;
+        let next = glam::Vec3::from_array(center)
+            + (candidate - glam::Vec3::from_array(center)).clamp_length_max(self.radius);
+        self.velocity = ((next - glam::Vec3::from_array(origin)) / TICK_S).to_array();
+        next.to_array()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum TurretAim {
     Entity(u64, [f32; 3]),
@@ -49,6 +93,11 @@ impl Default for Heli {
     fn default() -> Self {
         Self {
             goal: None,
+            path_node: None,
+            path_running: false,
+            velocity: [0.0; 3],
+            turning: 1.0,
+            hover: None,
             stop_at_goal: true,
             arrived: false,
             near_goal: 0.0,
@@ -198,7 +247,268 @@ fn spawn_vehicle(
     Ok(Value::Object(id))
 }
 
+fn set_goal(heli: &mut Heli, goal: [f32; 3], stop: bool) {
+    if let Some(hover) = &mut heli.hover {
+        hover.center = None;
+        hover.velocity = [0.0; 3];
+    }
+    heli.goal = Some(goal);
+    heli.stop_at_goal = stop;
+    heli.arrived = false;
+    heli.near_notified = false;
+}
+
+fn node(runtime: &mut Runtime, object: u64) -> Result<[f32; 3], String> {
+    if !runtime
+        .entities
+        .get(&object)
+        .is_some_and(|entity| entity.classname.starts_with("info_vehicle_node"))
+    {
+        return Err("parameter is not a vehicle node".into());
+    }
+    match runtime.object_field(object, "origin") {
+        Value::Vector(origin) => Ok(origin),
+        _ => Err("vehicle node has no origin".into()),
+    }
+}
+
+fn next_node(runtime: &mut Runtime, object: u64) -> Result<Option<u64>, String> {
+    node(runtime, object)?;
+    let target = match runtime.object_field(object, "target") {
+        Value::Undefined => return Ok(None),
+        Value::String(name) if name.is_empty() => return Ok(None),
+        Value::String(name) => name,
+        _ => return Err("vehicle node target must be a name".into()),
+    };
+    let candidates: Vec<u64> = runtime
+        .entities
+        .iter()
+        .filter(|(_, entity)| entity.classname.starts_with("info_vehicle_node"))
+        .map(|(id, _)| *id)
+        .collect();
+    let matches: Vec<u64> = candidates
+        .into_iter()
+        .filter(|id| runtime.object_field(*id, "targetname") == Value::String(target.clone()))
+        .collect();
+    match matches.as_slice() {
+        [object] => Ok(Some(*object)),
+        _ => Err(format!(
+            "vehicle path target '{target}' does not identify one node"
+        )),
+    }
+}
+
+fn vehicle_array(world: &mut World, prefix: Option<&str>) -> Result<Value, String> {
+    let runtime = world.resource::<Runtime>();
+    let ids = runtime
+        .entities
+        .iter()
+        .filter(|(_, entity)| match prefix {
+            Some(prefix) => {
+                entity.classname.starts_with(prefix)
+                    && (prefix != "script_vehicle" || entity.kind != EntityKind::Vehicle)
+            }
+            None => entity.kind == EntityKind::Vehicle,
+        })
+        .map(|(id, _)| Value::Object(*id))
+        .collect();
+    super::arrays::new_array(world, ids)
+}
+
 pub(crate) fn register(registry: &mut NativeRegistry) {
+    registry.register(Function, "getallvehiclenodes", |world, _, _| {
+        vehicle_array(world, Some("info_vehicle_node"))
+    });
+    registry.register(Function, "vehicle_getarray", |world, _, _| {
+        vehicle_array(world, None)
+    });
+    registry.register(Function, "getnumvehicles", |world, _, _| {
+        Ok(Value::Int(
+            world
+                .resource::<Runtime>()
+                .entities
+                .values()
+                .filter(|entity| entity.kind == EntityKind::Vehicle)
+                .count() as i32,
+        ))
+    });
+    registry.register(Function, "vehicle_getspawnerarray", |world, _, _| {
+        vehicle_array(world, Some("script_vehicle"))
+    });
+    registry.register(Method, "getvehicleowner", |world, receiver, _| {
+        let object = super::natives::engine::entity_id(world, receiver)?;
+        let owner = match world.resource::<Runtime>().planes.get(&object) {
+            Some(plane) => Some(plane.owner),
+            None => heli(world, receiver)?.owner,
+        };
+        Ok(owner.map_or(Value::Undefined, |client| {
+            super::players::player_object(world, client)
+        }))
+    });
+    registry.register(Method, "vehicle_getvelocity", |world, receiver, _| {
+        let object = super::natives::engine::entity_id(world, receiver)?;
+        let velocity = match world.resource::<Runtime>().planes.get(&object) {
+            Some(plane) => plane.velocity,
+            None => heli(world, receiver)?.velocity,
+        };
+        Ok(Value::Vector(velocity))
+    });
+    registry.register(Method, "setacceleration", |world, receiver, args| {
+        let value = float(args, 0)?;
+        if !value.is_finite() || value < 0.0 {
+            return Err("acceleration must be finite and nonnegative".into());
+        }
+        heli(world, receiver)?.accel = value * MPH;
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "setdeceleration", |world, receiver, args| {
+        let value = float(args, 0)?;
+        if !value.is_finite() || value < 0.0 {
+            return Err("deceleration must be finite and nonnegative".into());
+        }
+        heli(world, receiver)?.decel = value * MPH;
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "vehicle_teleport", |world, receiver, args| {
+        let origin = vector(args, 0)?;
+        let angles = vector(args, 1)?;
+        let object = super::natives::engine::entity_id(world, receiver)?;
+        {
+            let mut runtime = world.resource_mut::<Runtime>();
+            if let Some(plane) = runtime.planes.get_mut(&object) {
+                plane.origin = origin;
+                plane.velocity = [0.0; 3];
+            } else {
+                let vehicle = runtime
+                    .vehicles
+                    .get_mut(&object)
+                    .ok_or("receiver is not a vehicle")?;
+                vehicle.goal = None;
+                vehicle.path_running = false;
+                vehicle.speed = 0.0;
+                vehicle.velocity = [0.0; 3];
+                vehicle.heading = math_iw4::angle_vectors(angles).0;
+                if let Some(hover) = &mut vehicle.hover {
+                    hover.center = None;
+                    hover.velocity = [0.0; 3];
+                }
+            }
+            runtime.entities.get_mut(&object).unwrap().linked_to = None;
+            runtime.set_object_field(object, "origin", Value::Vector(origin));
+            runtime.set_object_field(object, "angles", Value::Vector(angles));
+            runtime.set_object_field(object, "veh_speed", Value::Float(0.0));
+        }
+        if let Some(mut mechanics) = world.get_resource_mut::<super::mechanics::Mechanics>() {
+            mechanics.cancel(object);
+        }
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "vehicledriveto", |world, receiver, args| {
+        let goal = vector(args, 0)?;
+        let speed = float(args, 1)?.max(0.0) * MPH;
+        let vehicle = heli(world, receiver)?;
+        vehicle.max_speed = speed;
+        vehicle.accel = vehicle.accel.max(speed);
+        vehicle.decel = vehicle.decel.max(speed);
+        vehicle.path_running = false;
+        set_goal(vehicle, goal, true);
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "attachpath", |world, receiver, args| {
+        heli(world, receiver)?;
+        let object = super::natives::engine::entity_id(world, arg(args, 0)?)?;
+        node(&mut world.resource_mut::<Runtime>(), object)?;
+        let vehicle = heli(world, receiver)?;
+        vehicle.path_node = Some(object);
+        vehicle.path_running = false;
+        vehicle.goal = None;
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "startpath", |world, receiver, args| {
+        let attached = heli(world, receiver)?.path_node;
+        let object = match args.first() {
+            Some(value) => super::natives::engine::entity_id(world, value)?,
+            None => attached.ok_or("vehicle has no attached path")?,
+        };
+        let origin = node(&mut world.resource_mut::<Runtime>(), object)?;
+        let vehicle = heli(world, receiver)?;
+        vehicle.path_node = Some(object);
+        vehicle.path_running = true;
+        set_goal(vehicle, origin, true);
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "vehicle_dospawn", |world, receiver, args| {
+        let object = super::natives::engine::entity_id(world, receiver)?;
+        let definition = string(args, 0)?;
+        let owner = world
+            .resource::<Runtime>()
+            .player_client_of(arg(args, 1)?)
+            .ok_or("vehicle owner is not a player")?;
+        let (origin, angles, model) = {
+            let mut runtime = world.resource_mut::<Runtime>();
+            if !runtime.entities[&object]
+                .classname
+                .starts_with("script_vehicle")
+                || runtime.entities[&object].kind == EntityKind::Vehicle
+            {
+                return Err("receiver is not a vehicle spawner".into());
+            }
+            (
+                vec_field(&mut runtime, object, "origin"),
+                vec_field(&mut runtime, object, "angles"),
+                runtime.object_field(object, "model"),
+            )
+        };
+        let Value::String(model) = model else {
+            return Err("vehicle spawner has no model".into());
+        };
+        let frame = crate::frame::FrameWorld::from_world(world);
+        let weapon = frame.vehicle_turret_weapon(&definition);
+        let compass = frame.vehicle_compass(&definition).cloned();
+        spawn_vehicle(
+            world,
+            "script_vehicle",
+            origin,
+            angles,
+            &model,
+            Some(Heli {
+                owner: Some(owner),
+                weapon,
+                compass,
+                ..Default::default()
+            }),
+        )
+    });
+    registry.register(Function, "spawnvehicle", |world, _, args| {
+        let model = string(args, 0)?;
+        let targetname = string(args, 1)?;
+        let definition = string(args, 2)?;
+        let origin = vector(args, 3)?;
+        let angles = vector(args, 4)?;
+        let frame = crate::frame::FrameWorld::from_world(world);
+        let weapon = frame.vehicle_turret_weapon(&definition);
+        let compass = frame.vehicle_compass(&definition).cloned();
+        let vehicle = spawn_vehicle(
+            world,
+            "script_vehicle",
+            origin,
+            angles,
+            &model,
+            Some(Heli {
+                weapon,
+                compass,
+                ..Default::default()
+            }),
+        )?;
+        if let Value::Object(object) = vehicle {
+            world.resource_mut::<Runtime>().set_object_field(
+                object,
+                "targetname",
+                Value::string(&targetname),
+            );
+        }
+        Ok(vehicle)
+    });
     registry.register(Function, "spawnhelicopter", |world, _, args| {
         let owner = world
             .resource::<Runtime>()
@@ -225,22 +535,36 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         )
     });
     registry.register(Function, "spawnplane", |world, _, args| {
-        world
+        let owner = world
             .resource::<Runtime>()
             .player_client_of(arg(args, 0)?)
             .ok_or("spawnPlane owner is not a player")?;
         let classname = string(args, 1)?;
         let origin = vector(args, 2)?;
-        spawn_vehicle(world, &classname, origin, [0.0; 3], "", None)
+        let friendly = optional(args, 3, string)?;
+        let enemy = optional(args, 4, string)?;
+        let compass =
+            friendly.map(|friendly| ([friendly.clone(), enemy.unwrap_or(friendly)], [32, 32]));
+        let vehicle = spawn_vehicle(world, &classname, origin, [0.0; 3], "", None)?;
+        if let Value::Object(object) = vehicle {
+            world.resource_mut::<Runtime>().planes.insert(
+                object,
+                Plane {
+                    owner,
+                    origin,
+                    velocity: [0.0; 3],
+                    compass,
+                },
+            );
+        }
+        Ok(vehicle)
     });
     registry.register(Method, "setvehgoalpos", |world, receiver, args| {
         let goal = vector(args, 0)?;
         let stop = optional(args, 1, int)?.unwrap_or(0) != 0;
         let heli = heli(world, receiver)?;
-        heli.goal = Some(goal);
-        heli.stop_at_goal = stop;
-        heli.arrived = false;
-        heli.near_notified = false;
+        heli.path_running = false;
+        set_goal(heli, goal, stop);
         Ok(Value::Undefined)
     });
     registry.register(Method, "vehicle_setspeed", |world, receiver, args| {
@@ -313,12 +637,47 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         heli(world, receiver)?.look_at = None;
         Ok(Value::Undefined)
     });
-    for name in ["sethoverparams", "setturningability", "setdamagestage"] {
-        registry.register(Method, name, |world, receiver, _| {
-            heli(world, receiver)?;
-            Ok(Value::Undefined)
-        });
-    }
+    registry.register(Method, "setturningability", |world, receiver, args| {
+        let ability = float(args, 0)?;
+        if !ability.is_finite() || !(0.0..=1.0).contains(&ability) {
+            return Err("turning ability must be between zero and one".into());
+        }
+        heli(world, receiver)?.turning = ability;
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "sethoverparams", |world, receiver, args| {
+        let (radius, speed, accel) = (float(args, 0)?, float(args, 1)?, float(args, 2)?);
+        if [radius, speed, accel]
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err(
+                "hover radius, speed and acceleration must be finite and nonnegative".into(),
+            );
+        }
+        heli(world, receiver)?.hover =
+            (radius > 0.0 && speed > 0.0 && accel > 0.0).then_some(Hover {
+                radius,
+                speed,
+                accel,
+                center: None,
+                velocity: [0.0; 3],
+                phase: 0.0,
+            });
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "setdamagestage", |world, receiver, args| {
+        heli(world, receiver)?;
+        if args.len() != 1 {
+            return Err("SetDamageStage expects an integer stage".into());
+        }
+        int(args, 0)?;
+        super::registry::unavailable(
+            world,
+            "setdamagestage",
+            "helicopter damage-stage presentation is not implemented",
+        )
+    });
     registry.register(Method, "vehicleturretcontrolon", |world, receiver, args| {
         let client = world
             .resource::<Runtime>()
@@ -471,6 +830,20 @@ fn approach_angle(from: f32, to: f32, step: f32) -> f32 {
 }
 
 pub(crate) fn advance(world: &mut World) {
+    {
+        let mut runtime = world.resource_mut::<Runtime>();
+        let ids: Vec<u64> = runtime.planes.keys().copied().collect();
+        for id in ids {
+            if !runtime.entities.contains_key(&id) {
+                runtime.planes.remove(&id);
+                continue;
+            }
+            let origin = vec_field(&mut runtime, id, "origin");
+            let plane = runtime.planes.get_mut(&id).unwrap();
+            plane.velocity = std::array::from_fn(|i| (origin[i] - plane.origin[i]) / TICK_S);
+            plane.origin = origin;
+        }
+    }
     let ids: Vec<u64> = world
         .resource::<Runtime>()
         .vehicles
@@ -520,16 +893,33 @@ pub(crate) fn advance(world: &mut World) {
                     (heli.speed - heli.decel * TICK_S).max(wanted)
                 };
                 if dist > f32::EPSILON {
-                    heli.heading = to.map(|v| v / dist);
+                    if heli.turning >= 1.0 {
+                        heli.heading = to.map(|v| v / dist);
+                    } else {
+                        let desired = math_iw4::vect_to_angles(to);
+                        let current = math_iw4::vect_to_angles(heli.heading);
+                        let step = 180.0 * heli.turning * TICK_S;
+                        heli.heading = math_iw4::angle_vectors([
+                            approach_angle(current[0], desired[0], step),
+                            approach_angle(current[1], desired[1], step),
+                            0.0,
+                        ])
+                        .0;
+                    }
                 }
                 let step = (heli.speed * TICK_S).min(dist);
                 next = std::array::from_fn(|i| origin[i] + heli.heading[i] * step);
-                let left = dist - step;
+                let left = next
+                    .iter()
+                    .zip(goal)
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
                 if heli.near_goal > 0.0 && !heli.near_notified && left <= heli.near_goal {
                     heli.near_notified = true;
                     notes.push("near_goal");
                 }
-                if !heli.arrived && left <= ARRIVED.max(heli.speed * TICK_S) {
+                if !heli.arrived && left <= ARRIVED {
                     heli.arrived = true;
                     if heli.stop_at_goal {
                         next = goal;
@@ -541,6 +931,11 @@ pub(crate) fn advance(world: &mut World) {
             None => {
                 heli.speed = (heli.speed - heli.decel * TICK_S).max(0.0);
                 next = std::array::from_fn(|i| origin[i] + heli.heading[i] * heli.speed * TICK_S);
+                if heli.speed <= f32::EPSILON
+                    && let Some(hover) = &mut heli.hover
+                {
+                    next = hover.advance(origin);
+                }
             }
         }
         let desired_yaw = heli
@@ -583,7 +978,41 @@ pub(crate) fn advance(world: &mut World) {
             heli.on_target = true;
             notes.push("turret_on_target");
         }
+        heli.velocity = std::array::from_fn(|i| (next[i] - origin[i]) / TICK_S);
+        let reached_node = (heli.path_running && heli.arrived)
+            .then_some(heli.path_node)
+            .flatten();
         let speed = heli.speed;
+        if let Some(reached) = reached_node {
+            let successor = next_node(&mut runtime, reached).and_then(|next| match next {
+                Some(next) => Ok(Some((next, node(&mut runtime, next)?))),
+                None => Ok(None),
+            });
+            match successor {
+                Ok(Some((node, goal))) => {
+                    let vehicle = runtime.vehicles.get_mut(&id).unwrap();
+                    vehicle.path_node = Some(node);
+                    set_goal(vehicle, goal, true);
+                }
+                Ok(None) => {
+                    runtime.vehicles.get_mut(&id).unwrap().path_running = false;
+                    notes.push("end_of_path");
+                }
+                Err(error) => {
+                    runtime.vehicles.get_mut(&id).unwrap().path_running = false;
+                    runtime.pending_notifies.push((
+                        Value::Object(id),
+                        "path_error".into(),
+                        vec![Value::string(&error)],
+                    ));
+                }
+            }
+            runtime.pending_notifies.push((
+                Value::Object(reached),
+                "trigger".into(),
+                vec![Value::Object(id)],
+            ));
+        }
         runtime.set_object_field(id, "origin", Value::Vector(next));
         runtime.set_object_field(id, "angles", Value::Vector([pitch, yaw, roll]));
         runtime.set_object_field(id, "veh_speed", Value::Float(speed / MPH));
@@ -595,12 +1024,18 @@ pub(crate) fn advance(world: &mut World) {
 }
 
 pub(crate) fn compass_rows(world: &mut World) -> Vec<crate::CompassVehicle> {
-    let mut rows: Vec<_> = world
-        .resource::<Runtime>()
+    let runtime = world.resource::<Runtime>();
+    let mut rows: Vec<_> = runtime
         .vehicles
         .iter()
         .filter_map(|(id, heli)| Some((*id, heli.owner?, heli.compass.clone()?)))
         .collect();
+    rows.extend(
+        runtime
+            .planes
+            .iter()
+            .filter_map(|(id, plane)| Some((*id, plane.owner, plane.compass.clone()?))),
+    );
     rows.sort_by_key(|(id, _, _)| *id);
     rows.into_iter()
         .filter_map(|(id, owner, (icons, size))| {
@@ -614,7 +1049,12 @@ pub(crate) fn compass_rows(world: &mut World) -> Vec<crate::CompassVehicle> {
                 Value::Vector(v) => v[1],
                 _ => 0.0,
             };
-            let team = match super::players::entity_field(world, id, "team") {
+            let mut team = super::players::entity_field(world, id, "team");
+            if team == Value::Undefined {
+                team = super::players::load_field(world, owner, "sessionteam")
+                    .unwrap_or(Value::Undefined);
+            }
+            let team = match team {
                 Value::String(team) if &*team == "axis" => entity_iw4::TEAM_AXIS,
                 Value::String(team) if &*team == "allies" => entity_iw4::TEAM_ALLIES,
                 _ => entity_iw4::TEAM_FREE,

@@ -632,6 +632,8 @@ pub struct MapEntsGeometry {
     pub trigger_slab_count: usize,
     pub entity_string: Option<Ptr>,
     pub entity_chars: usize,
+    pub stages: Option<Ptr>,
+    pub stage_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1204,6 +1206,8 @@ pub struct WeaponGeometry {
     pub penetrate_multiplier: f32,
 
     pub rifle_bullet: bool,
+    pub ricochet_chance: f32,
+    pub explosive_bullet: bool,
 
     pub inventory_type: i32,
 
@@ -1252,6 +1256,8 @@ pub struct WeaponGeometry {
     pub sprint_loop_time_ms: i32,
 
     pub sprint_drop_time_ms: i32,
+    pub stunned_start_time_ms: i32,
+    pub stunned_end_time_ms: i32,
 
     pub fuse_time_ms: i32,
     pub auto_aim_range: f32,

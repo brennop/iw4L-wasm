@@ -42,6 +42,7 @@ pub struct FpvAssembly {
     pub view_bone: usize,
     pub camera_bone: Option<usize>,
     pub paired_bones: usize,
+    pub combined_hands: bool,
     pub tags: FpvAssemblyTags,
 }
 
@@ -66,6 +67,7 @@ impl core::fmt::Display for FpvAssemblyError {
 pub struct FpvAssemblyKey {
     pub hands: FpvMeshIndex,
     pub gun: FpvMeshIndex,
+    pub secondary_gun: Option<FpvMeshIndex>,
     pub attachments: Vec<FpvMeshIndex>,
     pub rocket: Option<FpvMeshIndex>,
     pub knife: Option<FpvMeshIndex>,
@@ -133,12 +135,23 @@ impl FpvAssembly {
                 }),
             ),
         ];
+        if let Some(model) = mounts.secondary_gun {
+            parts.push((
+                model,
+                FpvPartRole::Gun,
+                Some(Attach {
+                    parent_model: 0,
+                    tag: "tag_weapon1".into(),
+                }),
+            ));
+        }
         for mount in &mounts.attachments {
             parts.push((
                 mount.model,
                 FpvPartRole::Attachment,
                 Some(Attach {
-                    parent_model: mount.parent_model,
+                    parent_model: mount.parent_model
+                        + usize::from(mounts.secondary_gun.is_some() && mount.parent_model >= 2),
                     tag: mount.tag.clone(),
                 }),
             ));
@@ -210,6 +223,7 @@ impl FpvAssembly {
             view_bone,
             camera_bone,
             paired_bones,
+            combined_hands: mounts.secondary_gun.is_some(),
             tags,
         })
     }

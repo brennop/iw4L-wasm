@@ -365,7 +365,7 @@ pub fn tick_equipped_fpv_with_extra_events(
             }
         }
     }
-    let crate::AdvanceResult { notifies } = equipped.controller.advance(dt_secs);
+    let crate::AdvanceResult { mut notifies } = equipped.controller.advance(dt_secs);
     let ads_frac = sample
         .map(|s| s.ads_frac)
         .or(present.last_ads_frac)
@@ -388,7 +388,11 @@ pub fn tick_equipped_fpv_with_extra_events(
                     report_dispatch_slot(slot, left.dispatch_sz_xanim_index(slot));
                 }
             }
-            let _ = left.advance(dt_secs);
+            for note in left.advance(dt_secs).notifies {
+                if !notifies.contains(&note) {
+                    notifies.push(note);
+                }
+            }
 
             left.apply_ads_overlay_frame(0.0);
         }

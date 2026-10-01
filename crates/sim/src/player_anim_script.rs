@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use anim_iw4::{
-    ANIM_COND_AKIMBO, ANIM_COND_PLAYERANIMTYPE, ANIM_COND_PLAYERANIMTYPEPRIMARY,
-    ANIM_COND_WEAPON_POSITION, ANIM_COND_WEAPONCLASS, ANIM_ET_DEATH, PLAYER_ANIM_INDEX_MASK,
-    PlayerAnimValue, anim_weapon_position_from_pm_flags, random,
+    ANIM_COND_AKIMBO, ANIM_COND_FASTMANTLE, ANIM_COND_FIRING, ANIM_COND_MOUNTED,
+    ANIM_COND_MOVETYPE, ANIM_COND_PERK, ANIM_COND_PLAYERANIMTYPE, ANIM_COND_PLAYERANIMTYPEPRIMARY,
+    ANIM_COND_RIOTSHIELDNEXT, ANIM_COND_STRAFING, ANIM_COND_WEAPON_POSITION, ANIM_COND_WEAPONCLASS,
+    ANIM_ET_DEATH, PLAYER_ANIM_INDEX_MASK, PlayerAnimValue, anim_weapon_position_from_pm_flags,
+    random,
 };
 use playerstate_iw4::{PlayerState, get_viewmodel_weapon_index};
 use weapon_iw4::WeaponCombatFacts;
@@ -34,7 +36,7 @@ pub struct AnimScriptItem {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AnimConditions {
     pub written: u32,
-    pub value: [u32; 18],
+    pub value: [u64; 18],
 }
 
 impl AnimConditions {
@@ -43,7 +45,7 @@ impl AnimConditions {
             return;
         }
         self.written |= 1 << cond;
-        self.value[cond as usize] = v;
+        self.value[cond as usize] = u64::from(v);
     }
 
     pub fn set_bit(&mut self, cond: u8, bit: u8) {
@@ -51,7 +53,7 @@ impl AnimConditions {
             return;
         }
         self.written |= 1 << cond;
-        self.value[cond as usize] |= 1 << bit;
+        self.value[cond as usize] |= 1u64 << bit;
     }
 }
 
@@ -59,8 +61,20 @@ pub fn anim_conditions_from_pmove(
     ps: &PlayerState,
     view_facts: Option<WeaponCombatFacts>,
     primary_facts: Option<WeaponCombatFacts>,
+    movetype: Option<u8>,
+    strafing: u8,
+    buttons: u32,
 ) -> AnimConditions {
     let mut conds = AnimConditions::default();
+    conds.set_value(ANIM_COND_MOUNTED, u32::from(ps.e_flags & 0xc00 != 0));
+    conds.set_value(
+        ANIM_COND_FIRING,
+        u32::from(buttons & playerstate_iw4::buttons::ATTACK != 0),
+    );
+    conds.set_value(
+        ANIM_COND_FASTMANTLE,
+        u32::from(ps.mantle_flags & playerstate_iw4::mantle_flags::FAST_MANTLE != 0),
+    );
     if let Some(facts) = view_facts {
         conds.set_bit(ANIM_COND_PLAYERANIMTYPE, bit_index(facts.player_anim_type));
         conds.set_bit(ANIM_COND_WEAPONCLASS, bit_index(facts.weap_class));
@@ -72,11 +86,40 @@ pub fn anim_conditions_from_pmove(
         );
     }
     conds.set_value(ANIM_COND_AKIMBO, u32::from(ps.last_weapon_hand == 1));
+    if let Some(movetype) = movetype {
+        conds.set_bit(ANIM_COND_MOVETYPE, movetype);
+    }
+    conds.set_value(ANIM_COND_STRAFING, u32::from(strafing));
+    conds.set_value(ANIM_COND_PERK, 0);
+    conds.set_value(ANIM_COND_RIOTSHIELDNEXT, 0);
     conds.set_value(
         ANIM_COND_WEAPON_POSITION,
         anim_weapon_position_from_pm_flags(ps.pm_flags),
     );
     conds
+}
+
+pub(crate) fn anim_strafing(ps: &PlayerState, forward: i8, right: i8) -> u8 {
+    let forward = f32::from(forward);
+    let right = f32::from(right);
+    let command_length = (forward * forward + right * right).sqrt();
+    let speed_sq = ps.velocity[0] * ps.velocity[0] + ps.velocity[1] * ps.velocity[1];
+    if command_length == 0.0 || speed_sq <= 100.0 || forward.abs() > command_length * 0.5 {
+        0
+    } else if right > 0.0 {
+        2
+    } else {
+        1
+    }
+}
+
+pub(crate) fn event_anim_movetype(ps: &PlayerState, previous: Option<u8>) -> u8 {
+    let last_stand = ps.pm_flags & playerstate_iw4::pm_flags::LAST_STAND != 0;
+    previous
+        .filter(|movetype| last_stand == matches!(*movetype, 51..=53))
+        .unwrap_or_else(|| {
+            movement_iw4::footsteps_anim_move_type(ps, 0, 0, true).unwrap_or(anim_iw4::ANIM_MT_IDLE)
+        })
 }
 
 fn bit_index(v: i32) -> u8 {
@@ -121,29 +164,33 @@ impl PlayerAnimScript {
             .unwrap_or(&[])
     }
 
-    pub fn matches_movetype(&self, movetype: u8, conditions: &AnimConditions) -> bool {
-        self.items(0, movetype)
-            .iter()
-            .any(|item| !item.skip && !item.commands.is_empty() && item_matches(item, conditions))
-    }
-
     pub fn apply(
         &self,
         ps: &mut PlayerState,
         movetype: u8,
         client_num: u32,
         conditions: &AnimConditions,
-    ) -> bool {
+        force: bool,
+    ) -> Option<u8> {
         if ps.pm_type >= 8 {
-            return false;
+            return None;
         }
-        if self.apply_movetype(ps, movetype, client_num, conditions) {
-            return true;
+        let selected = self
+            .matching_item(self.items(0, movetype), conditions)
+            .map(|item| (movetype, item))
+            .or_else(|| {
+                (movetype != 1)
+                    .then(|| self.matching_item(self.items(0, 1), conditions))
+                    .flatten()
+                    .map(|item| (1, item))
+            });
+        let (movetype, item) = selected?;
+        if item.commands.is_empty() {
+            return None;
         }
-        if movetype != 1 {
-            return self.apply_movetype(ps, 1, client_num, conditions);
-        }
-        false
+        let cmd = item.commands[client_num as usize % item.commands.len()];
+        execute_command(ps, cmd, false, true, force);
+        Some(movetype)
     }
 
     pub fn apply_event(
@@ -152,49 +199,30 @@ impl PlayerAnimScript {
         event: u8,
         conditions: &AnimConditions,
         seed: &mut u32,
+        force: bool,
     ) -> bool {
         if event != ANIM_ET_DEATH && ps.pm_type >= 8 {
             return false;
         }
-        if self.event_items(event).is_empty() {
+        let Some(item) = self.matching_item(self.event_items(event), conditions) else {
+            return false;
+        };
+        if item.commands.is_empty() {
             return false;
         }
-        for item in self.event_items(event) {
-            if item.skip || item.commands.is_empty() {
-                continue;
-            }
-            if !item_matches(item, conditions) {
-                continue;
-            }
-            let n = item.commands.len();
-            let pick = (random(seed) as usize) % n;
-            let cmd = item.commands[pick];
-            execute_command(ps, cmd, true, false, true);
-            return true;
-        }
-        false
+        let pick = (random(seed) as usize) % item.commands.len();
+        execute_command(ps, item.commands[pick], true, false, force);
+        true
     }
 
-    fn apply_movetype(
+    fn matching_item<'a>(
         &self,
-        ps: &mut PlayerState,
-        movetype: u8,
-        client_num: u32,
+        items: &'a [AnimScriptItem],
         conditions: &AnimConditions,
-    ) -> bool {
-        for item in self.items(0, movetype) {
-            if item.skip || item.commands.is_empty() {
-                continue;
-            }
-            if !item_matches(item, conditions) {
-                continue;
-            }
-            let n = item.commands.len();
-            let cmd = item.commands[client_num as usize % n];
-            execute_command(ps, cmd, false, true, false);
-            return true;
-        }
-        false
+    ) -> Option<&'a AnimScriptItem> {
+        items
+            .iter()
+            .find(|item| !item.skip && item_matches(item, conditions))
     }
 }
 
@@ -205,7 +233,7 @@ fn item_matches(item: &AnimScriptItem, conditions: &AnimConditions) -> bool {
             return false;
         }
         if cond.bitflags {
-            if (cond.bits & u64::from(conditions.value[idx])) == 0 {
+            if (cond.bits & conditions.value[idx]) == 0 {
                 return false;
             }
         } else {
@@ -298,4 +326,5 @@ fn play_anim(
 
 pub(crate) fn reset_stance_torso(ps: &mut PlayerState) {
     play_anim(ps, 0, false, 0, false, true, true);
+    ps.torso_timer = 0;
 }

@@ -153,7 +153,7 @@ impl Parser {
                     let field = self.symbol(&field);
                     self.emit(Op::LoadField(field));
                 }
-            } else if self.is("[") && !self.tokens.get(self.pos + 1).is_some_and(|t| t.text == "[")
+            } else if self.is("[") && !self.tokens.get(self.pos + 1).is_some_and(|t| t.is("["))
             {
                 self.pos += 1;
                 self.expression(0)?;
@@ -173,10 +173,10 @@ impl Parser {
                     && self
                         .tokens
                         .get(self.pos + 1)
-                        .is_some_and(|t| t.text == "(" || t.text == "::");
+                        .is_some_and(|t| t.is("(") || t.is("::"));
                 if receiver_call
                     || (self.is("[")
-                        && self.tokens.get(self.pos + 1).is_some_and(|t| t.text == "["))
+                        && self.tokens.get(self.pos + 1).is_some_and(|t| t.is("[")))
                 {
                     self.invocation(true, false)?;
                 } else {
@@ -185,6 +185,9 @@ impl Parser {
             }
         }
         loop {
+            if self.tokens[self.pos].string {
+                break;
+            }
             let op = self.tokens[self.pos].text.clone();
             let (power, binary) = match op.as_str() {
                 "||" => (1, None),

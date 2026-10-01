@@ -41,6 +41,7 @@ impl ActionVerdict {
 pub enum ReliableRow {
     Failure(String),
     Sound(crate::SvcSound),
+    ScriptAudio(sim::ScriptAudioCommand),
     Card(crate::SvcCardSlot),
     Menu(crate::SvcOpenMenu),
     Splash(crate::SvcHudSplash),
@@ -167,6 +168,10 @@ pub fn encode_reliable_payload(
     for (seq, row) in rows {
         out.put_u16(*seq);
         match row {
+            ReliableRow::ScriptAudio(value) => {
+                out.put_u8(9);
+                crate::svc_script_audio::encode_script_audio(out, value);
+            }
             ReliableRow::Sound(value) => {
                 out.put_u8(2);
                 crate::svc_sound::encode_svc_sounds(out, std::slice::from_ref(value));
@@ -229,6 +234,7 @@ pub fn decode_reliable_payload(input: &mut WireReader<'_>) -> Result<ReliablePay
                     verdict,
                 }
             }
+            9 => ReliableRow::ScriptAudio(crate::svc_script_audio::decode_script_audio(input)?),
             2 => {
                 let mut values = crate::svc_sound::decode_svc_sounds(input)?;
                 if values.len() != 1 {

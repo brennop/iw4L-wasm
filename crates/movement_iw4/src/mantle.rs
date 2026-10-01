@@ -536,7 +536,7 @@ pub fn enter(
     ps.mantle_trans_index = find_transition(results.start_pos[2], results.ledge_pos[2]);
     ps.mantle_flags = results.flags & !0x20;
 
-    if (ps.perks[0] & 0x8_0000) != 0 {
+    if (ps.perks[0] & playerstate_iw4::PERK_FASTMANTLE) != 0 {
         ps.mantle_flags |= playerstate_iw4::mantle_flags::FAST_MANTLE;
     }
     let duration = duration(ps, lengths);

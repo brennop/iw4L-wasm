@@ -26,6 +26,7 @@ pub enum MissingCombatFacts {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CapturedCombatInput {
+    pub dual_wield: bool,
     pub fire_time_ms: i32,
     pub fire_delay_ms: i32,
     pub raise_time_ms: i32,
@@ -73,6 +74,8 @@ pub struct CapturedCombatInput {
     pub no_partial_reload: bool,
     pub sprint_raise_time_ms: i32,
     pub sprint_drop_time_ms: i32,
+    pub stunned_start_time_ms: i32,
+    pub stunned_end_time_ms: i32,
     pub damage: i32,
     pub min_damage: i32,
     pub max_damage_range: f32,
@@ -108,6 +111,7 @@ pub struct CapturedCombatInput {
 
     pub melee_damage: i32,
 
+    pub can_hold_breath: bool,
     pub overlay_reticle: i32,
 
     pub melee_time_ms: i32,
@@ -157,6 +161,7 @@ impl AimAssistRanges {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeaponCombatFacts {
     pub aim_assist: AimAssistRanges,
+    pub dual_wield: bool,
     pub fire_time_ms: i32,
     pub fire_delay_ms: i32,
     pub raise_time_ms: i32,
@@ -218,6 +223,8 @@ pub struct WeaponCombatFacts {
     pub sprint_raise_time_ms: i32,
 
     pub sprint_drop_time_ms: i32,
+    pub stunned_start_time_ms: i32,
+    pub stunned_end_time_ms: i32,
     pub damage: i32,
     pub min_damage: i32,
     pub max_damage_range: f32,
@@ -251,6 +258,7 @@ pub struct WeaponCombatFacts {
 
     pub melee_damage: i32,
 
+    pub can_hold_breath: bool,
     pub overlay_reticle: i32,
 
     pub melee_time_ms: i32,
@@ -292,6 +300,7 @@ impl WeaponCombatFacts {
     pub const fn none() -> Self {
         Self {
             aim_assist: AimAssistRanges::NONE,
+            dual_wield: false,
             fire_time_ms: 0,
             fire_delay_ms: 0,
             raise_time_ms: 0,
@@ -329,6 +338,8 @@ impl WeaponCombatFacts {
             no_partial_reload: false,
             sprint_raise_time_ms: 0,
             sprint_drop_time_ms: 0,
+            stunned_start_time_ms: 0,
+            stunned_end_time_ms: 0,
             damage: 0,
             min_damage: 0,
             max_damage_range: 0.0,
@@ -355,6 +366,7 @@ impl WeaponCombatFacts {
             rechamber_while_ads: true,
             ads_fire_only: false,
             melee_damage: 0,
+            can_hold_breath: false,
             overlay_reticle: 0,
             melee_time_ms: 0,
             melee_delay_ms: 0,
@@ -401,6 +413,7 @@ impl WeaponCombatFacts {
         }
         Ok(Self {
             aim_assist: AimAssistRanges::NONE,
+            dual_wield: input.dual_wield,
             fire_time_ms: input.fire_time_ms,
             fire_delay_ms: input.fire_delay_ms,
             raise_time_ms: input.raise_time_ms,
@@ -439,6 +452,8 @@ impl WeaponCombatFacts {
             inherits_perks: input.inherits_perks,
             sprint_raise_time_ms: input.sprint_raise_time_ms,
             sprint_drop_time_ms: input.sprint_drop_time_ms,
+            stunned_start_time_ms: input.stunned_start_time_ms,
+            stunned_end_time_ms: input.stunned_end_time_ms,
             damage: input.damage,
             min_damage: input.min_damage,
             max_damage_range: input.max_damage_range,
@@ -464,6 +479,7 @@ impl WeaponCombatFacts {
             rechamber_while_ads: input.rechamber_while_ads,
             ads_fire_only: input.ads_fire_only,
             melee_damage: input.melee_damage,
+            can_hold_breath: input.can_hold_breath,
             overlay_reticle: input.overlay_reticle,
             melee_time_ms: input.melee_time_ms,
             melee_delay_ms: input.melee_delay_ms,
@@ -611,6 +627,8 @@ pub struct WeaponHandState {
 #[derive(Clone, Copy, Debug)]
 pub struct WeaponCmd {
     pub msec: i32,
+    pub server_time: i32,
+    pub stun_time: i32,
     pub buttons: u32,
     pub old_buttons: u32,
 
@@ -665,6 +683,8 @@ impl Default for WeaponCmd {
     fn default() -> Self {
         Self {
             msec: 0,
+            server_time: 0,
+            stun_time: 0,
             buttons: 0,
             old_buttons: 0,
             cmd_weapon: 0,
@@ -741,6 +761,7 @@ pub fn ads_fire_only_delay_ms(frac: f32, ads_in_rate: f32) -> i32 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WeaponTickEvent {
+    StunnedStarted,
     Detonated {
         weapon: u32,
     },
@@ -846,7 +867,7 @@ fn prepare_weapon_tick(
         cmd.cmd_weapon = hand.weapon as u16;
     }
 
-    if facts.fire_time_ms <= 0 && hand.weapon != 0 {
+    if facts.fire_time_ms <= 0 && hand.weapon != 0 && facts.weap_type != crate::WEAPTYPE_SHIELD {
         if matches!(
             WeaponState::from_i32(hand.weaponstate),
             Ok(WeaponState::Raising | WeaponState::RaisingAltswitch)
@@ -1358,6 +1379,39 @@ pub fn weapon_hands(
     last_hand: i32,
 ) -> [Option<(u8, WeaponTickEvent)>; 2] {
     let mut out = [None, None];
+    let last = last_hand.clamp(0, 1) as usize;
+    let n = hands.len().min(last + 1);
+    let transition = check_stunned(&mut hands[..n], facts, cmd);
+    let started = transition == Some(WeaponState::StunnedStart);
+    if started
+        || hands[..n]
+            .iter()
+            .any(|hand| matches!(hand.weaponstate, 26..=28))
+    {
+        for hand in &mut hands[..n] {
+            if transition.is_none() {
+                hand.weapon_time = (hand.weapon_time - cmd.msec).max(0);
+                hand.weapon_delay = (hand.weapon_delay - cmd.msec).max(0);
+            }
+            hand.weapon_restrict_kick_time = (hand.weapon_restrict_kick_time - cmd.msec).max(0);
+            if hand.weapon_time == 0 && hand.weapon_delay == 0 {
+                match WeaponState::from_i32(hand.weaponstate) {
+                    Ok(WeaponState::StunnedStart) => {
+                        set_stunned_state(hand, WeaponState::StunnedLoop, 0, cmd.pm_type)
+                    }
+                    Ok(WeaponState::StunnedEnd) => {
+                        hand.weaponstate = WeaponState::Ready as i32;
+                        crate::weap_anim::weapon_idle_weap_anim(&mut hand.weap_anim, cmd.pm_type);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if started {
+            out[0] = Some((0, WeaponTickEvent::StunnedStarted));
+        }
+        return out;
+    }
 
     cmd.melee_charge.pm_flags = cmd.pm_flags;
     cmd.melee_charge.pm_type = cmd.pm_type;
@@ -1376,8 +1430,6 @@ pub fn weapon_hands(
         cmd.player_melee_range,
     );
     cmd.pm_flags = cmd.melee_charge.pm_flags;
-    let last = last_hand.clamp(0, 1) as usize;
-    let n = hands.len().min(last + 1);
     let mut prepared = [PreparedWeaponTick::Complete(None); 2];
     for i in 0..n {
         hands[i].hand_index = i as u8;
@@ -1511,5 +1563,53 @@ pub fn spawn_weapon_hand(weapon: u32, facts: &WeaponCombatFacts) -> WeaponHandSt
         delayed_rechamber: false,
         weapon_restrict_kick_time: 0,
         quick_reload: facts.dual_mag.is_some(),
+    }
+}
+
+fn check_stunned(
+    hands: &mut [WeaponHandState],
+    facts: &WeaponCombatFacts,
+    cmd: &WeaponCmd,
+) -> Option<WeaponState> {
+    let Some(primary) = hands.first() else {
+        return None;
+    };
+    if cmd.cmd_weapon == 0 || matches!(primary.weaponstate, 1..=5 | 16..=21 | 29..=30) {
+        return None;
+    }
+    let active = cmd.server_time <= cmd.stun_time;
+    let ongoing = matches!(primary.weaponstate, 26 | 27);
+    if active && !ongoing {
+        for hand in hands {
+            set_stunned_state(
+                hand,
+                WeaponState::StunnedStart,
+                facts.stunned_start_time_ms,
+                cmd.pm_type,
+            );
+        }
+        Some(WeaponState::StunnedStart)
+    } else {
+        if !active && ongoing {
+            for hand in hands {
+                set_stunned_state(
+                    hand,
+                    WeaponState::StunnedEnd,
+                    facts.stunned_end_time_ms,
+                    cmd.pm_type,
+                );
+            }
+            return Some(WeaponState::StunnedEnd);
+        }
+        None
+    }
+}
+
+fn set_stunned_state(hand: &mut WeaponHandState, state: WeaponState, time: i32, pm_type: i32) {
+    hand.weaponstate = state as i32;
+    hand.weapon_time = time;
+    hand.weapon_delay = 0;
+    if pm_type < 8 {
+        crate::weap_anim::start_weapon_anim(&mut hand.weap_anim, state as u32);
     }
 }

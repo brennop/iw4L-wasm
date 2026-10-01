@@ -12,6 +12,7 @@ game. Keep them this short: nobody opens a long file twice.
 | [`DUO.md`](DUO.md) | `make duo`: two windows, fresh lobby ID, per-client console commands | reproducing multiplayer bugs locally |
 | [`MASTER.md`](MASTER.md) | your own master over ssh from the machine with the clone: `cargo xtask master install`, a self-signed certificate with no domain, what to hand players | standing up a relay for yourself or your friends |
 | [`PERF.md`](PERF.md) | native `.pftrace` — the only runtime truth; picking a UUID, the manifest, `IW4L_PERF`, SQL | traces, scenario SQL, why a frame took 80 ms |
+| [`FFI.md`](FFI.md) | native data ownership, lifetimes, nullability and Perfetto adapters | changing a native boundary or diagnosing trace failures |
 | [`BENCH.md`](BENCH.md) | `make bench`: the map-load waterfall and stage `exclusive` time, frame time as a span tree, the render/GPU/work counters, and the run package (`manifest.json`, `summary.json`); in-process, no trace needed | "where did this run spend its time" |
 | [`RENDER.md`](RENDER.md) | the nine crates of the island, the frame path `IR → cull → one drawsurf list → tess → material → SM3 → wgpu`, GPU-side ownership, the `d3d9_*` border | touching the picture, techsets, lighting |
 | [`ANIM.md`](ANIM.md) | three floors: `anim_iw4` (facts and curves), `xmodel_runtime` (tree and pose), who picks the clip (`sim` / `render_frontend/adapters/anim/`) | viewmodel, skeleton, bone hits |

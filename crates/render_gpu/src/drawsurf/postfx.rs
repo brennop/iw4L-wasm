@@ -288,6 +288,7 @@ impl PostFxTargets {
 struct ExactPostFxGpu {
     prepared: Vec<PreparedPostFxGpu>,
     inactive: Vec<PreparedPostFxGpu>,
+    pipelines: PostFxPipelines,
     steps: Vec<FilterStep>,
     targets: Option<PostFxTargets>,
     depth_sampler: Option<bevy::render::render_resource::Sampler>,
@@ -318,10 +319,20 @@ fn prepare_postfx_gpu(
     ) else {
         gpu.prepared.clear();
         gpu.inactive.clear();
+        gpu.pipelines.clear();
         gpu.steps.clear();
         gpu.targets = None;
         return;
     };
+    // A plan change mid-match (a vision lerp moves the bloom radius onto another
+    // gaussian width) must find its pipeline compiled: a pending one refuses the
+    // whole post-fx frame, film grade included.
+    let generation = film.generation;
+    gpu.pipelines.retain(|(_, g), _| *g == generation);
+    for film in &extracted.films {
+        let ExactPostFxGpu { pipelines, .. } = &mut *gpu;
+        let _ = postfx_pipeline(film, &cache, pipelines);
+    }
     let Some(view) = views.iter().find(|v| v.viewport.z > 0 && v.viewport.w > 0) else {
         return;
     };
@@ -381,7 +392,7 @@ fn prepare_postfx_gpu(
                 prepared.push(available.swap_remove(index));
                 continue;
             }
-            match create_postfx_gpu(film.clone(), sampler, &device, &cache) {
+            match create_postfx_gpu(film.clone(), sampler, &device, &cache, &mut gpu.pipelines) {
                 Ok(p) => prepared.push(p),
                 Err(e) => {
                     if glow_ready
@@ -423,12 +434,40 @@ fn prepare_postfx_gpu(
         gpu.depth_sampler = Some(device.create_sampler(&depth_sampler.descriptor()));
     }
 }
-fn create_postfx_gpu(
-    film: ExtractedFilm,
-    sampler: super::DecodedSampler,
-    device: &RenderDevice,
+type PostFxPipelines =
+    HashMap<(&'static str, MaterialGenerationId), Result<CachedRenderPipelineId, PostFxGpuRefusal>>;
+
+fn postfx_pipeline(
+    film: &ExtractedFilm,
     cache: &PipelineCache,
-) -> Result<PreparedPostFxGpu, PostFxGpuRefusal> {
+    pipelines: &mut PostFxPipelines,
+) -> Result<CachedRenderPipelineId, PostFxGpuRefusal> {
+    pipelines
+        .entry((film.name, film.generation))
+        .or_insert_with(|| queue_postfx_pipeline(film, cache))
+        .clone()
+}
+
+fn postfx_layouts(film: &ExtractedFilm) -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
+    let (constant_entries, texture_entries) = split_bind_layout(film.port.wgpu_layout());
+    (
+        super::colour_submit::bind_group_layout_from_entries(
+            "iw4_postfx_constants",
+            &constant_entries,
+            false,
+        ),
+        super::colour_submit::bind_group_layout_from_entries(
+            "iw4_postfx_textures",
+            &texture_entries,
+            false,
+        ),
+    )
+}
+
+fn queue_postfx_pipeline(
+    film: &ExtractedFilm,
+    cache: &PipelineCache,
+) -> Result<CachedRenderPipelineId, PostFxGpuRefusal> {
     let state = super::state::GfxPassState::from_bits(film.shell.passes[0].state);
     if let Some(fields) = state.unsupported_host_fields() {
         return Err(PostFxGpuRefusal::UnsupportedState {
@@ -447,26 +486,57 @@ fn create_postfx_gpu(
     {
         return Err(PostFxGpuRefusal::VertexLayout);
     }
-    let vertex_size = film.port.module().vertex_constant_len * 16;
-    let pixel_size = film.port.module().pixel_constant_len * 16;
-    if vertex_size + pixel_size == 0 {
+    if film.port.module().vertex_constant_len + film.port.module().pixel_constant_len == 0 {
         return Err(PostFxGpuRefusal::EmptyConstantBlock);
     }
+    let (constants_layout, textures_layout) = postfx_layouts(film);
+    let host_state = state.apply_change_state_0_host(AlphaMode::Opaque, false);
+    Ok(cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("iw4_postfx_film".into()),
+        layout: vec![constants_layout, textures_layout],
+        immediate_size: 0,
+        vertex: VertexState {
+            shader: film.shader.clone(),
+            shader_defs: Vec::new(),
+            entry_point: Some(PASS_VERTEX_ENTRY.into()),
+            buffers: vertex_layouts,
+        },
+        fragment: Some(FragmentState {
+            shader: film.shader.clone(),
+            shader_defs: Vec::new(),
+            entry_point: Some(PASS_FRAGMENT_ENTRY.into()),
+            targets: vec![Some(ColorTargetState {
+                format: if state.srgb_write_enable() {
+                    TextureFormat::Rgba8UnormSrgb
+                } else {
+                    TextureFormat::Rgba8Unorm
+                },
+                blend: host_state.blend.blend_state(),
+                write_mask: host_state.colour_writes(),
+            })],
+        }),
+        primitive: super::colour_submit::exact_primitive_state(
+            host_state.cull,
+            host_state.line_fill,
+        ),
+        depth_stencil: None,
+        multisample: default(),
+        zero_initialize_workgroup_memory: false,
+    }))
+}
 
-    let total_size = vertex_size
-        + pixel_size
-        + d3d9_sm3::texture_slot_rows(film.port.module().sampler_count) * 16;
-    let (constant_entries, texture_entries) = split_bind_layout(film.port.wgpu_layout());
-    let constants_layout = super::colour_submit::bind_group_layout_from_entries(
-        "iw4_postfx_constants",
-        &constant_entries,
-        false,
-    );
-    let textures_layout = super::colour_submit::bind_group_layout_from_entries(
-        "iw4_postfx_textures",
-        &texture_entries,
-        false,
-    );
+fn create_postfx_gpu(
+    film: ExtractedFilm,
+    sampler: super::DecodedSampler,
+    device: &RenderDevice,
+    cache: &PipelineCache,
+    pipelines: &mut PostFxPipelines,
+) -> Result<PreparedPostFxGpu, PostFxGpuRefusal> {
+    let pipeline = postfx_pipeline(&film, cache, pipelines)?;
+    let module = film.port.module();
+    let total_size = (module.vertex_constant_len + module.pixel_constant_len) * 16
+        + d3d9_sm3::texture_slot_rows(module.sampler_count) * 16;
+    let (constants_layout, textures_layout) = postfx_layouts(&film);
     let constants_arena = device.create_buffer(&BufferDescriptor {
         label: Some("iw4_postfx_constant_arena"),
         size: total_size as u64,
@@ -496,39 +566,6 @@ fn create_postfx_gpu(
         label: Some("iw4_postfx_indices"),
         contents: bytemuck::cast_slice(&hud_iw4::RB_DRAW_STRETCHPIC_INDICES),
         usage: BufferUsages::INDEX,
-    });
-    let host_state = state.apply_change_state_0_host(AlphaMode::Opaque, false);
-    let pipeline = cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("iw4_postfx_film".into()),
-        layout: vec![constants_layout, textures_layout.clone()],
-        immediate_size: 0,
-        vertex: VertexState {
-            shader: film.shader.clone(),
-            shader_defs: Vec::new(),
-            entry_point: Some(PASS_VERTEX_ENTRY.into()),
-            buffers: vertex_layouts,
-        },
-        fragment: Some(FragmentState {
-            shader: film.shader.clone(),
-            shader_defs: Vec::new(),
-            entry_point: Some(PASS_FRAGMENT_ENTRY.into()),
-            targets: vec![Some(ColorTargetState {
-                format: if state.srgb_write_enable() {
-                    TextureFormat::Rgba8UnormSrgb
-                } else {
-                    TextureFormat::Rgba8Unorm
-                },
-                blend: host_state.blend.blend_state(),
-                write_mask: host_state.colour_writes(),
-            })],
-        }),
-        primitive: super::colour_submit::exact_primitive_state(
-            host_state.cull,
-            host_state.line_fill,
-        ),
-        depth_stencil: None,
-        multisample: default(),
-        zero_initialize_workgroup_memory: false,
     });
     Ok(PreparedPostFxGpu {
         film,

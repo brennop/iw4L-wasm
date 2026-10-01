@@ -145,6 +145,8 @@ pub fn explosion_fx_names<'a>(
     let surf = surf_type as usize;
     let flesh = (surf == FX_SURF_TYPE_FLESH).then_some(0);
     let table = row.and_then(|row| table.and_then(|t| t.effect_name(row, surf, flesh)));
+    let table = table.filter(|name| slot.is_none_or(|slot| slot.namespace == name.namespace));
+    let slot = slot.filter(|name| Some(*name) != table);
     ExplosionFxNames { table, slot, row }
 }
 

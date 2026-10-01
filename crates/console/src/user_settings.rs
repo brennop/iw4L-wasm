@@ -43,7 +43,14 @@ pub(crate) fn load_user_settings(
     match artifactfs::read_to_string(&path) {
         Ok(source) => parse_settings(&source, &mut settings, &mut binds),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => warn!("could not read {}: {error}", path.display()),
+        Err(error) => {
+            // Do not replace settings we could not read with session defaults.
+            persistence.path = None;
+            warn!(
+                "could not read {}: {error}; user settings are session-only, file preserved",
+                path.display()
+            );
+        }
     }
     settings.sanitize();
     persistence.last_payload = Some(serialize_settings(&settings, &binds));

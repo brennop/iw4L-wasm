@@ -212,7 +212,7 @@ pub fn build_iw5_world_draw(
         min,
         max,
 
-        bounds: None,
+        bounds: geometry.bounds.map(|bits| bits.map(f32::from_bits)),
     };
 
     let lightmap = decode_lightmaps(s, geometry);
@@ -287,6 +287,7 @@ pub fn build_iw5_world_draw(
             primary_lights,
             light_defs,
             sun_primary_light_count: geometry.sun_primary_light_count as u32,
+            sun_stages: crate::sun_stages_iw5(s),
             light_region_hulls,
             shadow_geometry: Vec::new(),
             reflection_probes,

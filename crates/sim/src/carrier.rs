@@ -247,6 +247,13 @@ impl SimWorld {
         crate::frame::player_row_count(&self.ecs)
     }
 
+    pub fn take_script_kicks(&mut self) -> Vec<(ClientId, String)> {
+        std::mem::take(&mut self.ecs.resource_mut::<crate::script::Runtime>().kicks)
+            .into_iter()
+            .map(|(client, reason)| (ClientId(client), reason))
+            .collect()
+    }
+
     pub fn retire_client(&mut self, id: ClientId) {
         let mut runtime = self.ecs.resource_mut::<crate::script::Runtime>();
         if runtime.players.contains_key(&id.0) {
@@ -296,6 +303,13 @@ impl SimWorld {
             collect_script_movers(&self.ecs),
             collect_dropped_items(&self.ecs),
         )
+    }
+
+    pub fn slow_motion(&self) -> Option<crate::ScriptSlowMotion> {
+        self.ecs
+            .resource::<crate::script::Runtime>()
+            .engine
+            .slow_motion
     }
 
     pub fn adopt_snapshot(&mut self, snapshot: &Snapshot) -> crate::AdoptReport {

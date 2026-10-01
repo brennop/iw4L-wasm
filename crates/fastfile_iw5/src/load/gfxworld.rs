@@ -108,6 +108,11 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
         brush_model_count,
     )?;
 
+    let mut bounds = [0u32; 6];
+    for (i, word) in bounds.iter_mut().enumerate() {
+        *word = s.f32_at(p, s.layout(0xe4, 392) + i * 4)?.to_bits();
+    }
+
     let material_memory = s.layout(sz::MATERIAL_MEMORY, 16);
     let material_memory_count = s.i32_at(p, s.layout(0x100, 420))?.max(0) as usize;
     if let Some(memories) = s.plain_array(
@@ -240,6 +245,7 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
     s.pop()?;
 
     s.record_gfx_world(GfxWorldGeometry {
+        bounds: Some(bounds),
         vertices: draw.vertices,
         vertex_count: draw.vertex_count,
         vertex_layer: draw.vertex_layer,

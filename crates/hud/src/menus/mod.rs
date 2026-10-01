@@ -281,6 +281,16 @@ pub(crate) fn update_script_menus(
             UiMenuRequest::Toggle => pressed.escape = true,
             UiMenuRequest::Open(name) => runner.open(&name),
             UiMenuRequest::Close(name) => runner.close(&name),
+            UiMenuRequest::Focus { menu, item } => {
+                if let Some(index) = runner.catalog.get(&menu).and_then(|definition| {
+                    definition
+                        .items
+                        .iter()
+                        .position(|candidate| candidate.name == item)
+                }) {
+                    runner.set_focus(&menu, index);
+                }
+            }
             UiMenuRequest::Key(UiMenuKey::Escape) => pressed.escape = true,
             UiMenuRequest::Key(UiMenuKey::Enter) => pressed.enter = true,
             UiMenuRequest::Key(UiMenuKey::Up) => pressed.up = true,
@@ -392,6 +402,9 @@ pub(crate) fn update_script_menus(
             }
             if item.item_type == 4 && !item.dvar.is_empty() {
                 item.text_key = out.dvars.get(&item.dvar).unwrap_or("").to_owned();
+                if item.edit_field.as_ref().is_some_and(|field| field.masked) {
+                    item.text_key = "*".repeat(item.text_key.chars().count());
+                }
                 item.text_literal = true;
                 item.text_exp.clear();
             }
@@ -462,7 +475,11 @@ pub(crate) fn update_script_menus(
             && edit.menu == open.name
             && let Some(item) = painted.items.get_mut(edit.item)
         {
-            let mut text = edit.buffer.clone();
+            let mut text = if item.edit_field.as_ref().is_some_and(|field| field.masked) {
+                vec!['*'; edit.buffer.len()]
+            } else {
+                edit.buffer.clone()
+            };
             text.insert(edit.cursor.min(text.len()), '|');
             item.text_key = text.into_iter().collect();
             item.text_exp.clear();
@@ -594,10 +611,12 @@ fn handle_input(
                     .set(&item.dvar, edit.buffer.iter().collect::<String>());
                 let value: String = edit.buffer.iter().collect();
                 let value = value.replace('\\', "\\\\").replace('"', "\\\"");
-                runner
-                    .menus
-                    .exec
-                    .push(format!("set {} \"{}\"", item.dvar, value));
+                if !item.edit_field.as_ref().is_some_and(|field| field.masked) {
+                    runner
+                        .menus
+                        .exec
+                        .push(format!("set {} \"{}\"", item.dvar, value));
+                }
                 runner.run_events(&edit.menu, Some(edit.item), &item.handlers.accept);
             }
             return;

@@ -4,6 +4,10 @@ use bevy::prelude::Resource;
 
 pub trait ArgCompleter: Send + Sync {
     fn complete(&self, prefix: &str) -> Vec<String>;
+
+    fn complete_with_context(&self, prefix: &str, _args: &[&str]) -> Vec<String> {
+        self.complete(prefix)
+    }
 }
 
 #[derive(Clone)]
@@ -144,7 +148,7 @@ impl ConsoleRegistry {
         };
         spec.args
             .get(arg_index)
-            .map(|completer| completer.complete(prefix))
+            .map(|completer| completer.complete_with_context(prefix, &tokens[1..arg_index + 1]))
             .unwrap_or_default()
     }
 }

@@ -130,6 +130,12 @@ fn entity_event_sound(
     mut play: MessageWriter<crate::AliasCommand>,
 ) {
     let event = sound.event.event;
+    if event == EntityEventKind::STOPSOUNDS {
+        if let Some(snd_ent) = ent_from_number(sound.event.payload.number) {
+            play.write(crate::AliasCommand::StopEntity { snd_ent });
+        }
+        return;
+    }
     if event == EntityEventKind::SOUND_ALIAS {
         play_cs_sound_alias(&sound.event, adopted.as_deref(), &mut play);
         return;
@@ -369,6 +375,7 @@ enum NotetrackSound {
 struct BoundNotetrack {
     sound: Option<NotetrackSound>,
     rumble: Option<Result<Arc<crate::rumble::Rumble>, String>>,
+    rumble_alias: Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -417,6 +424,13 @@ impl NotetrackSoundTable {
                     (weapon, note.to_owned()),
                     BoundNotetrack {
                         sound,
+                        rumble_alias: action.rumble_alias.as_ref().map(|alias| {
+                            if namespace == asset_core::AssetNamespace::Iw4 {
+                                alias.clone()
+                            } else {
+                                format!("{}:{alias}", namespace.as_str())
+                            }
+                        }),
                         rumble: action.rumble_alias.as_ref().map(|alias| {
                             rumbles
                                 .entry((namespace, alias.clone()))
@@ -551,6 +565,7 @@ fn apply_viewmodel_notetrack(
         match rumble {
             Ok(rumble) => {
                 rumbles.write(crate::rumble::PlayRumble {
+                    alias: action.rumble_alias.clone(),
                     bank_revision: bank.revision(),
                     rumble: Arc::clone(rumble),
                 });

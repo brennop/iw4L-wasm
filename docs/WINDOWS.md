@@ -34,11 +34,6 @@ build is `iw4launcher.exe update` (or `IW4L_UPDATE=1` for a shortcut that cannot
 pass an argument), which needs `IW4L_UPDATE_URL` in the portable `.env`. No
 build replaces its own binary on its own. Publishing is [`DEPLOY.md`](DEPLOY.md).
 
-Steam shipped MW2 and MW3 re-releases whose FastFiles are serialized with 64-bit
-pointers. MW2 is read in both serializations; **MW3 x64 zones are detected and
-refused**, so an MW3 shortcut to such an install contributes no weapons and no
-maps, and says so in the log (`IW5 zone is serialized x64 (Steam re-release)`).
-
 The folder holding the two executables is the process working directory even
 when Explorer supplies another; `IW4L_GAMES` defaults to it, and `.lnk` targets
 inside it are additional read-only search roots. `.env` is loaded before

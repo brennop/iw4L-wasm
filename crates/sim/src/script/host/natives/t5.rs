@@ -344,6 +344,7 @@ fn do_damage(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Valu
         .resource_mut::<Runtime>()
         .hits
         .push(crate::script::ScriptHit {
+            piece: None,
             target,
             amount,
             origin,
@@ -869,7 +870,7 @@ fn register_script(registry: &mut NativeRegistry) {
     registry.register(Function, "playsoundatposition", |world, _, args| {
         let alias = string(args, 0)?;
         let origin = vector(args, 1)?;
-        super::engine::play_sound_at(world, origin, &alias);
+        super::engine::play_sound_at(world, origin, &alias)?;
         Ok(Value::Undefined)
     });
     registry.register(Function, "getdroppedweapons", |world, _, _| {
@@ -1463,8 +1464,8 @@ fn register_refused(registry: &mut NativeRegistry) {
     refused!(Function: "getcustomclassloadoutitem", "getcustomclassmodifier"
         => "custom game mode classes are not loaded");
 
-    refused!(Function: "getmaxvehicles", "spawnvehicle"
-        => "vehicles are not simulated");
+    refused!(Function: "getmaxvehicles"
+        => "T5 vehicle limits are not configured");
     refused!(Method: "getoccupantseat", "getseatoccupant", "getvehoccupants", "usevehicle",
         "launchvehicle", "makevehicleunusable", "setvehicleteam", "vehgetmodel",
         "gettreadhealth", "getspeed", "getspeedmph", "setspeed", "isvehicleimmunetodamage",

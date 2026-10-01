@@ -8,6 +8,25 @@ pub(super) struct Token {
     pub(super) column: usize,
 }
 
+impl Token {
+    pub(super) fn is(&self, text: &str) -> bool {
+        !self.string && self.text == text
+    }
+
+    pub(super) fn assignment_operator(&self) -> Option<&str> {
+        if !self.string
+            && [
+                "=", "+=", "-=", "*=", "/=", "|=", "&=", "^=", "%=", "++", "--",
+            ]
+            .contains(&self.text.as_str())
+        {
+            Some(&self.text)
+        } else {
+            None
+        }
+    }
+}
+
 pub(super) fn lex(module: &str, source: &str) -> Result<Vec<Token>, Fault> {
     let chars: Vec<char> = source.chars().collect();
     let (mut i, mut line, mut column) = (0, 1, 1);

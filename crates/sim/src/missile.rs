@@ -166,12 +166,12 @@ fn fire_missile(
     let velocity = truncated_tr_delta([
         dir[0] * speed + gun_vel[0],
         dir[1] * speed + gun_vel[1],
-        dir[2] * speed + gun_vel[2],
+        dir[2] * speed + facts.projectile_speed_up as f32 + gun_vel[2],
     ]);
     let raw_speed = vec3_length([
         dir[0] * speed + gun_vel[0],
         dir[1] * speed + gun_vel[1],
-        dir[2] * speed + gun_vel[2],
+        dir[2] * speed + facts.projectile_speed_up as f32 + gun_vel[2],
     ]);
     let pos = Trajectory {
         tr_time: time_ms,
@@ -204,6 +204,7 @@ fn fire_missile(
         stuck_pane: None,
         grounded: false,
         guide,
+        attached_to: None,
     };
     world.push_projectile(projectile);
     Some(projectile)

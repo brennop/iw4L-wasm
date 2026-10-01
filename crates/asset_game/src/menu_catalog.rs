@@ -82,11 +82,15 @@ pub struct ItemHandlers {
 #[serde(default, deny_unknown_fields)]
 pub struct MenuEditField {
     pub max_chars: usize,
+    pub masked: bool,
 }
 
 impl Default for MenuEditField {
     fn default() -> Self {
-        Self { max_chars: 32 }
+        Self {
+            max_chars: 32,
+            masked: false,
+        }
     }
 }
 

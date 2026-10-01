@@ -415,12 +415,12 @@ fn fire_weapon_count_in(entity_events: &[EntityEventRecord], subject: ClientId) 
     entity_events
         .iter()
         .filter(|record| {
-            record.event == entity_iw4::EntityEventKind::FIRE_WEAPON
+            (record.event == entity_iw4::EntityEventKind::FIRE_WEAPON
                 || record.event == entity_iw4::EntityEventKind::FIRE_WEAPON_LASTSHOT
                 || record.event == entity_iw4::EntityEventKind::FIRE_WEAPON_LEFT
-                || record.event == entity_iw4::EntityEventKind::FIRE_WEAPON_LASTSHOT_LEFT
-                    && record.payload.number == subject.0 as i32
-                    && record.audience.projects_to(subject)
+                || record.event == entity_iw4::EntityEventKind::FIRE_WEAPON_LASTSHOT_LEFT)
+                && record.payload.number == subject.0 as i32
+                && record.audience.projects_to(subject)
         })
         .count() as u32
 }
@@ -428,6 +428,8 @@ fn fire_weapon_count_in(entity_events: &[EntityEventRecord], subject: ClientId) 
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct ViewweaponAim {
     pub live: bool,
+    pub weapon: u32,
+    pub angle_offset: [f32; 2],
     pub gun_pitch: f32,
     pub gun_yaw: f32,
     pub xhair_x: f32,

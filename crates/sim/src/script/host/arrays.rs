@@ -30,3 +30,32 @@ pub(crate) fn new_array(world: &mut World, values: Vec<Value>) -> Result<Value, 
     );
     Ok(Value::Array(id))
 }
+
+pub(crate) fn iteration_key(
+    world: &World,
+    value: &Value,
+    previous: Option<&Value>,
+) -> Result<Value, String> {
+    let Value::Array(id) = value else {
+        return Err(format!("{} is not an array", kind(value)));
+    };
+    let runtime = world.resource::<Runtime>();
+    let array = runtime.arrays.get(id).ok_or("invalid array reference")?;
+    let entry = if let Some(previous) = previous {
+        let key = match previous {
+            Value::Int(n) => ArrayKey::Integer(*n),
+            Value::String(s) => ArrayKey::String(s.clone()),
+            _ => return Err("array key must be an int or string".into()),
+        };
+        if !array.contains_key(&key) {
+            return Err("array key does not exist".into());
+        }
+        array.range(..key).next_back()
+    } else {
+        array.last_key_value()
+    };
+    Ok(entry.map_or(Value::Undefined, |(key, _)| match key {
+        ArrayKey::Integer(n) => Value::Int(*n),
+        ArrayKey::String(s) => Value::String(s.clone()),
+    }))
+}

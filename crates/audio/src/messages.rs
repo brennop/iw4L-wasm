@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use asset_core::AssetNamespace;
 
-pub const SND_ENT_LOCAL: u32 = 0;
+pub const SND_ENT_LOCAL: u32 = u32::MAX;
 
 #[derive(Clone, Debug)]
 pub struct PlayAlias {
@@ -20,6 +20,9 @@ pub enum AliasCommand {
     PlayPitched {
         sound: PlayAlias,
         pitch: f32,
+    },
+    StopEntity {
+        snd_ent: u32,
     },
     Stop {
         namespace: AssetNamespace,

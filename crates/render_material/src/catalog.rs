@@ -123,6 +123,9 @@ impl PortId {
             vertex_type,
         );
         id.arguments_hash ^= pass.color_space.port_mix();
+        if pass.hardware_shadow_compare {
+            id.arguments_hash ^= 0x5AD0_C0DE;
+        }
         Some(id)
     }
 
@@ -269,6 +272,8 @@ pub struct RuntimePass {
     pub arguments: Vec<RuntimeArgumentBinding>,
 
     pub color_space: crate::PassColorSpace,
+
+    pub hardware_shadow_compare: bool,
 }
 
 impl RuntimePass {
@@ -278,6 +283,7 @@ impl RuntimePass {
             && self.t5_custom_sampler_flags == other.t5_custom_sampler_flags
             && self.arguments == other.arguments
             && self.color_space == other.color_space
+            && self.hardware_shadow_compare == other.hardware_shadow_compare
     }
 }
 

@@ -11,7 +11,9 @@ use crate::adapters::fx::world_mark::FrontendFxScene;
 use crate::prepare::scene::cull::DynEntModelEntity;
 use crate::prepare::scene::world::{WorldDynEntInstance, WorldScene};
 use assets::PreparedWeapons;
-use net::{ClientPredictionState, EntityBulletHit, EntityEventSound, EntityExplosion};
+use net::{
+    ClientPredictionState, EntityBulletHit, EntityEventSound, EntityExplosion, EntityPhysicsSphere,
+};
 use render_fx::{EntityMarks, HostFxSystem, PreparedFxCatalog};
 
 pub const DYNENT_BULLET_FORCE: f32 = 1000.0;
@@ -266,9 +268,15 @@ pub(crate) fn explosion_impulse(
     cylinder: bool,
     dvars: ExplosionDvars,
 ) -> Option<Vec3> {
+    if !origin.is_finite() || !pose.is_finite() {
+        return None;
+    }
     let dist = pose.distance(origin);
     let scale = explosion_falloff(dist, inner_radius, outer_radius, in_scale)?;
     let force = scale * explosive_scale * dvars.force;
+    if !force.is_finite() {
+        return None;
+    }
     let dir = if explicit.length_squared() > 0.0 {
         explicit
     } else {
@@ -279,7 +287,7 @@ pub(crate) fn explosion_impulse(
         if cylinder {
             diff.z = 0.0;
         }
-        let mut n = diff.try_normalize()?;
+        let mut n = diff.try_normalize().unwrap_or(Vec3::Z);
         n.z += dvars.upbias;
         n.try_normalize()?
     };
@@ -859,9 +867,45 @@ pub(crate) fn wake_player_overlap(
     }
 }
 
+fn on_physics_sphere(
+    sphere: On<EntityPhysicsSphere>,
+    instances: Query<(Entity, &WorldDynEntInstance, &Transform), With<DynEntModelEntity>>,
+    mut impulses: MessageWriter<DynEntPhysImpulse>,
+) {
+    if !sphere.origin.iter().all(|v| v.is_finite())
+        || !sphere.outer_radius.is_finite()
+        || !sphere.inner_radius.is_finite()
+        || !sphere.magnitude.is_finite()
+        || sphere.inner_radius < 0.0
+        || sphere.outer_radius < sphere.inner_radius
+    {
+        return;
+    }
+    let origin = Vec3::from_array(sphere.origin);
+    for (entity, inst, transform) in &instances {
+        let Some(preset) = can_wake(inst) else {
+            continue;
+        };
+        if let Some(impulse) = explosion_impulse(
+            origin,
+            transform.translation,
+            sphere.inner_radius,
+            sphere.outer_radius,
+            sphere.magnitude,
+            preset.explosive_force_scale,
+            Vec3::ZERO,
+            false,
+            GRENADE_EXPLODE_DVARS,
+        ) {
+            impulses.write(DynEntPhysImpulse { entity, impulse });
+        }
+    }
+}
+
 pub fn register_dyn_ent_wake(app: &mut App) {
     app.init_resource::<DynEntWakeBroadphase>()
         .add_observer(on_entity_explosion)
+        .add_observer(on_physics_sphere)
         .add_observer(on_entity_bullet_hit)
         .add_observer(on_entity_event_sound)
         .add_systems(

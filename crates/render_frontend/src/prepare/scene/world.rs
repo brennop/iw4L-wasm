@@ -242,6 +242,12 @@ pub struct WorldScene {
 
     pub dir_primary_light: Option<MapDirPrimaryLight>,
 
+    pub sun_stages: Vec<asset_world::MapSunStage>,
+
+    pub sun_lights: Vec<(u8, MapDirPrimaryLight)>,
+
+    pub active_sun_light: Option<u8>,
+
     pub t5_sun_parse_exposure: Option<f32>,
 
     pub t5_sky_dynamic_intensity: Option<[f32; 4]>,
@@ -721,6 +727,9 @@ impl WorldScene {
             film_visions: Default::default(),
             createart_name: None,
             dir_primary_light: None,
+            sun_stages: Vec::new(),
+            sun_lights: Vec::new(),
+            active_sun_light: None,
             t5_sun_parse_exposure: None,
             t5_sky_dynamic_intensity: None,
             t5_tree_scatter_intensity: None,
@@ -812,6 +821,9 @@ impl WorldScene {
             film_visions: Default::default(),
             createart_name: None,
             dir_primary_light: None,
+            sun_stages: Vec::new(),
+            sun_lights: Vec::new(),
+            active_sun_light: None,
             t5_sun_parse_exposure: None,
             t5_sky_dynamic_intensity: None,
             t5_tree_scatter_intensity: None,
@@ -1311,8 +1323,17 @@ pub fn world_scene_from_draw(
         .iter()
         .find(|light| light.is_sun && light.light_type == lighting_iw4::GFX_LIGHT_TYPE_DIR)
     {
-        bake_cell_caster_bits(&mut dpvs, light.direction);
+        dpvs.cell_caster_bits = cell_caster_bits(&dpvs, light.direction);
     }
+    let sun_lights: Vec<(u8, MapDirPrimaryLight)> = draw
+        .primary_lights
+        .iter()
+        .enumerate()
+        .filter(|(_, light)| light.is_sun && light.light_type == lighting_iw4::GFX_LIGHT_TYPE_DIR)
+        .filter_map(|(index, light)| {
+            Some((u8::try_from(index).ok()?, map_dir_primary_light(light)))
+        })
+        .collect();
 
     let batches = draw
         .batches
@@ -1439,15 +1460,7 @@ pub fn world_scene_from_draw(
             draw.primary_lights
                 .iter()
                 .find(|light| light.is_sun && light.light_type == lighting_iw4::GFX_LIGHT_TYPE_DIR)
-                .map(|light| MapDirPrimaryLight {
-                    light_type: light.light_type,
-                    direction: light.direction,
-                    color: light.color,
-                    diffuse_color_scale: lighting_iw4::R_COLOR_SCALE_DEFAULT,
-                    specular_color_scale: lighting_iw4::R_COLOR_SCALE_DEFAULT,
-                    t5_diffuse_color: light.t5_diffuse_color,
-                    t5_specular_color: light.t5_specular_color,
-                })
+                .map(map_dir_primary_light)
         });
 
     let mut map_xmodel_scene_assets = world.map_xmodel_scene_assets;
@@ -1555,6 +1568,8 @@ pub fn world_scene_from_draw(
     scene.film_visions = world.film_visions;
     scene.createart_name = world.createart_name;
     scene.dir_primary_light = dir_primary_light;
+    scene.sun_stages = draw.sun_stages;
+    scene.sun_lights = sun_lights;
     scene.t5_sun_parse_exposure = draw.t5_sun_parse_exposure;
     scene.t5_sky_dynamic_intensity = draw.t5_sky_dynamic_intensity;
     scene.t5_tree_scatter_intensity = draw.t5_tree_scatter_intensity;
@@ -1638,11 +1653,22 @@ pub fn world_scene_from_draw(
     Ok(scene)
 }
 
-fn bake_cell_caster_bits(dpvs: &mut WorldDpvs, sun_dir: [f32; 3]) {
+fn map_dir_primary_light(light: &asset_world::WorldPrimaryLight) -> MapDirPrimaryLight {
+    MapDirPrimaryLight {
+        light_type: light.light_type,
+        direction: light.direction,
+        color: light.color,
+        diffuse_color_scale: lighting_iw4::R_COLOR_SCALE_DEFAULT,
+        specular_color_scale: lighting_iw4::R_COLOR_SCALE_DEFAULT,
+        t5_diffuse_color: light.t5_diffuse_color,
+        t5_specular_color: light.t5_specular_color,
+    }
+}
+
+pub(crate) fn cell_caster_bits(dpvs: &WorldDpvs, sun_dir: [f32; 3]) -> Vec<u32> {
     let len_sq = sun_dir[0] * sun_dir[0] + sun_dir[1] * sun_dir[1] + sun_dir[2] * sun_dir[2];
     if len_sq < 1e-12 {
-        dpvs.cell_caster_bits.clear();
-        return;
+        return Vec::new();
     }
     let view_dir = [-sun_dir[0], -sun_dir[1], -sun_dir[2]];
     let mut per_cell: Vec<Vec<PortalView<'_>>> = Vec::with_capacity(dpvs.cell_count);
@@ -1664,5 +1690,5 @@ fn bake_cell_caster_bits(dpvs: &mut WorldDpvs, sun_dir: [f32; 3]) {
     let graph = CellPortalGraph { portals: &slices };
     let mut bits = vec![0u32; cell_caster_matrix_words(dpvs.cell_count)];
     generate_shadow_map_caster_cells(&graph, view_dir, &mut bits);
-    dpvs.cell_caster_bits = bits;
+    bits
 }

@@ -1,3 +1,6 @@
+pub const BREATH_HOLD_TIME_MS: i32 = 4500;
+pub const BREATH_GASP_TIME_MS: i32 = 1000;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerState {
     pub command_time: i32,
@@ -90,6 +93,8 @@ pub struct PlayerState {
     pub weapon_primary: u32,
     pub weap_flags: u32,
     pub f_weapon_pos_frac: f32,
+    pub hold_breath_timer: i32,
+    pub hold_breath_scale: f32,
     pub aim_spread_scale: f32,
     pub ads_delay_time: i32,
     pub spread_override: i32,
@@ -107,6 +112,7 @@ pub struct PlayerState {
     pub shellshock_index: i32,
     pub shellshock_time: i32,
     pub shellshock_duration: i32,
+    pub stun_time: i32,
     pub objectives: [u8; 0x380],
     pub delta_time: i32,
     pub kill_cam_entity: i32,
@@ -124,10 +130,16 @@ pub mod eflags {
 
     pub const KILLCAM_PRESERVED: u32 = 0x80;
 
+    pub const TURRET_ACTIVE_PRONE: u32 = 0x400;
+
+    pub const TURRET_ACTIVE_DUCK: u32 = 0x800;
+
     pub const RADAR_JAM: u32 = 0x200000;
 }
 
 pub mod other_flags {
+    pub const AC130: u32 = 0x8000;
+
     pub const DEAD_KILLCAM_TPV: u32 = 0x800;
 
     pub const PLAYER: u32 = 0x1000;
@@ -168,6 +180,8 @@ pub mod pm_flags {
 }
 
 pub mod weap_flags {
+    pub const HOLD_BREATH: u32 = 0x4;
+
     pub const NIGHT_VISION: u32 = 0x40;
 
     pub const OFFHAND_VIEW: u32 = 0x2;
@@ -291,6 +305,8 @@ impl PlayerState {
         weapon_primary: 0,
         weap_flags: 0,
         f_weapon_pos_frac: 0.0,
+        hold_breath_timer: 0,
+        hold_breath_scale: 1.0,
         aim_spread_scale: 0.0,
         ads_delay_time: 0,
         spread_override: 0,
@@ -308,6 +324,7 @@ impl PlayerState {
         shellshock_index: 0,
         shellshock_time: 0,
         shellshock_duration: 0,
+        stun_time: 0,
         objectives: [0; 0x380],
         delta_time: 0,
         kill_cam_entity: 0,
@@ -327,6 +344,8 @@ impl PlayerState {
 pub const PERK_PISTOLDEATH: u32 = 1 << 7;
 
 pub const PERK_QUIETER: u32 = 1 << 8;
+
+pub const PERK_FASTMANTLE: u32 = 1 << 19;
 
 pub const PERK_SCAVENGER: u32 = 1 << 22;
 

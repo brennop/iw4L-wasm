@@ -5,8 +5,8 @@ use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
-use asset_core::AssetNamespace;
 use asset_audio::SoundCatalog;
+use asset_core::AssetNamespace;
 use assets::NamespaceSoundIwd;
 use bevy::prelude::*;
 
@@ -1068,4 +1068,39 @@ fn prepare_streamed(
         channels: pcm.channel_count(),
         sample_rate: pcm.rate(),
     }))
+}
+
+pub(crate) fn alias_for_clip<'a>(
+    bank: &'a SoundCatalog,
+    namespace: AssetNamespace,
+    alias: &str,
+    key: &ClipKey,
+) -> Option<&'a asset_audio::CapturedAlias> {
+    fn find<'a>(
+        bank: &'a SoundCatalog,
+        namespace: AssetNamespace,
+        alias: &str,
+        key: &ClipKey,
+        depth: u8,
+        seen: &mut HashSet<String>,
+    ) -> Option<&'a asset_audio::CapturedAlias> {
+        if depth > 10 || !seen.insert(alias.to_owned()) {
+            return None;
+        }
+        let sound = bank.sound_in(namespace, alias)?;
+        for (variant, row) in sound.aliases.iter().enumerate() {
+            if clip_key_for_variant(bank, namespace, alias, None, variant, None, None).as_ref()
+                == Some(key)
+            {
+                return Some(row);
+            }
+            if let Some(secondary) = row.secondary.as_deref()
+                && let Some(row) = find(bank, namespace, secondary, key, depth + 1, seen)
+            {
+                return Some(row);
+            }
+        }
+        None
+    }
+    find(bank, namespace, alias, key, 0, &mut HashSet::new())
 }

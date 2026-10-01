@@ -65,7 +65,7 @@ pub fn check_ladder_move(
     ps: &mut PlayerState,
     context: CheckLadderContext,
     backend: &mut impl LadderAttachBackend,
-) {
+) -> bool {
     if context.walking {
         ps.pm_flags &= !pm_flags::LADDER_FALL;
     }
@@ -73,7 +73,7 @@ pub fn check_ladder_move(
     let early_ok =
         ps.pm_time == 0 || (ps.pm_flags & pm_flags::LADDER) != 0 || (ps.pm_flags & 0x180) == 0;
     if !early_ok {
-        return;
+        return false;
     }
 
     let fell_off_in_air =
@@ -112,7 +112,7 @@ pub fn check_ladder_move(
     if ps.pm_type >= 8 {
         ps.ground_entity_num = ENTITYNUM_NONE;
         clear_ladder_flag(ps);
-        return;
+        return false;
     }
 
     if (ps.pm_flags & pm_flags::LADDER_FALL) != 0
@@ -120,24 +120,24 @@ pub fn check_ladder_move(
         || context.server_time.wrapping_sub(ps.jump_time) < LADDER_JUMP_BLOCK_MS
     {
         clear_ladder_flag(ps);
-        return;
+        return false;
     }
 
     let Some(hit) = backend.ladder_trace(ps.origin, check_dir, tracedist) else {
         clear_ladder_flag(ps);
-        return;
+        return fell_off_in_air;
     };
     if hit.fraction >= 1.0
         || (hit.surface_flags & SURF_LADDER) == 0
         || (context.walking && context.forwardmove <= 0)
     {
         clear_ladder_flag(ps);
-        return;
+        return fell_off_in_air;
     }
 
     if (ps.pm_flags & pm_flags::LADDER) != 0 {
         set_ladder_flag(ps);
-        return;
+        return false;
     }
 
     ps.v_ladder_vec = hit.normal;
@@ -148,13 +148,14 @@ pub fn check_ladder_move(
     ];
     let Some(hit2) = backend.ladder_trace(ps.origin, recheck, tracedist) else {
         clear_ladder_flag(ps);
-        return;
+        return fell_off_in_air;
     };
     if hit2.fraction < 1.0 && (hit2.surface_flags & SURF_LADDER) != 0 {
         set_ladder_flag(ps);
+        false
     } else {
         clear_ladder_flag(ps);
-        let _ = fell_off_in_air;
+        fell_off_in_air
     }
 }
 

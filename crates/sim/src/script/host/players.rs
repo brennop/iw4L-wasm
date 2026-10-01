@@ -25,7 +25,14 @@ pub(crate) fn player_object(world: &World, client: u32) -> Value {
 
 pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::script_player::Hit) {
     let victim = player_object(world, hit.victim.0);
-    if victim == Value::Undefined {
+    let Value::Object(object) = victim else {
+        return;
+    };
+    let runtime = world.resource::<Runtime>();
+    if !runtime.entities[&object].accepts_damage(hit.flags)
+        || runtime.engine.players_ignore_radius_damage
+            && hit.flags & crate::script_player::IDFLAGS_RADIUS != 0
+    {
         return;
     }
     let attacker = match hit.attacker.map(|a| player_object(world, a.0)) {
@@ -70,6 +77,19 @@ fn world_entity(world: &World) -> Value {
         .engine
         .world
         .map_or(Value::Undefined, Value::Object)
+}
+
+pub(crate) fn damage_entity(world: &World, value: Option<&Value>) -> Value {
+    let runtime = world.resource::<Runtime>();
+    match value {
+        Some(Value::Object(object))
+            if runtime.entities.contains_key(object)
+                || runtime.player_client(*object).is_some() =>
+        {
+            Value::Object(*object)
+        }
+        _ => world_entity(world),
+    }
 }
 
 fn projectile_entity(
@@ -298,6 +318,13 @@ pub(crate) fn stand_in_for(world: &mut World, slot: usize, weapon: u32) -> Optio
     let setup = frame.weapon_setup(weapon).filter(|_| weapon != 0)?;
     if setup.realm == realm {
         return None;
+    }
+    if realm == crate::script::Realm::Iw4
+        && frame
+            .weapon_combat_row(weapon)
+            .is_some_and(|facts| facts.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+    {
+        return frame.weapon_index_by_script_name("riotshield_mp");
     }
     let stand_ins = if realm == crate::script::Realm::T5 {
         T5_STAND_INS
@@ -530,9 +557,11 @@ pub(crate) struct PlayerSlot {
     pub presented: BTreeMap<&'static str, Vec<Value>>,
     pub perks: std::collections::BTreeSet<Arc<str>>,
     pub spectate: BTreeMap<Arc<str>, bool>,
+    pub spectator: super::spectators::Spectator,
     pub seat: crate::ScriptSeat,
     pub weapon: u32,
     pub switching: bool,
+    pub last_stand_until_ms: Option<i64>,
     pub has_radar: bool,
     pub radar_mode: crate::RadarMode,
     pub radar_blocked: bool,
@@ -570,9 +599,11 @@ impl PlayerSlot {
             presented: BTreeMap::new(),
             perks: Default::default(),
             spectate: BTreeMap::new(),
+            spectator: Default::default(),
             seat: crate::ScriptSeat::default(),
             weapon: 0,
             switching: false,
+            last_stand_until_ms: None,
             has_radar: false,
             radar_mode: crate::RadarMode::Normal,
             radar_blocked: false,
@@ -586,12 +617,12 @@ pub(crate) fn script_seats(world: &World) -> Vec<(ClientId, crate::ScriptSeat)> 
         .resource::<Runtime>()
         .players
         .iter()
-        .filter(|(_, slot)| {
-            &*slot.sessionstate == "spectator"
-                && slot.seat.archive_ms > 0
-                && slot.seat.spectator_client >= 0
+        .filter(|(_, slot)| &*slot.sessionstate == "spectator" && slot.spectator.target.is_some())
+        .map(|(client, slot)| {
+            let mut seat = slot.seat;
+            seat.spectator_client = slot.spectator.target.unwrap() as i32;
+            (ClientId(*client), seat)
         })
-        .map(|(client, slot)| (ClientId(*client), slot.seat))
         .collect()
 }
 
@@ -678,6 +709,7 @@ pub(crate) fn apply_disconnects(world: &mut World) {
 }
 
 pub(crate) fn disconnect_player(world: &mut World, client: u32) {
+    super::triggers::release_client_claims(world, client);
     {
         let mut runtime = world.resource_mut::<Runtime>();
         runtime
@@ -797,7 +829,7 @@ pub(crate) fn sync_players(world: &mut World) {
     settle_deaths(world);
 }
 
-fn team_name(team: i32) -> &'static str {
+pub(crate) fn team_name(team: i32) -> &'static str {
     match team {
         entity_iw4::TEAM_AXIS => "axis",
         entity_iw4::TEAM_ALLIES => "allies",
@@ -980,8 +1012,11 @@ pub(crate) fn store_field(
                 }
             }
         }
-        "sessionteam" => {
+        "sessionteam" | "team" => {
             let Value::String(team) = value else {
+                if name == "team" {
+                    return Ok(false);
+                }
                 return Err("sessionteam takes a string".into());
             };
             let team = match &**team {
@@ -989,9 +1024,18 @@ pub(crate) fn store_field(
                 "allies" => entity_iw4::TEAM_ALLIES,
                 "spectator" => entity_iw4::TEAM_SPECTATOR,
                 "none" => entity_iw4::TEAM_FREE,
+                _ if name == "team" => return Ok(false),
                 other => return Err(format!("invalid sessionteam '{other}'")),
             };
             let mut frame = FrameWorld::from_world(world);
+            let team = if name == "team"
+                && !frame.bootstrap_ref().kind.is_team()
+                && team != entity_iw4::TEAM_SPECTATOR
+            {
+                entity_iw4::TEAM_FREE
+            } else {
+                team
+            };
             if frame.client_meta(id).is_some() {
                 let meta = frame.client_meta_mut(id);
                 meta.client_state_team = team;
@@ -1006,7 +1050,7 @@ pub(crate) fn store_field(
         "name" => return Err("player field name is read-only".into()),
         _ => return Ok(false),
     }
-    Ok(true)
+    Ok(name != "team")
 }
 
 const PM_TYPE_NORMAL: i32 = 0;

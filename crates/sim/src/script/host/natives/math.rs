@@ -1,6 +1,6 @@
 use super::super::args::{arg, float, int, kind, optional, string, vector};
-use super::super::arrays::{array_values, new_array};
-use super::super::tables::{table, table_lookup, table_search};
+use super::super::arrays::{array_values, iteration_key, new_array};
+use super::super::tables::{table, table_lookup, table_lookup_by_row, table_search};
 use super::iw4::atoi;
 use crate::script::{ArrayKey, Namespace, NativeRegistry, Runtime, Value};
 use bevy_ecs::prelude::World;
@@ -260,6 +260,18 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             .collect();
         new_array(world, tokens)
     });
+    registry.register(Function, "getfirstarraykey", |world, _, args| {
+        if args.len() != 1 {
+            return Err("GetFirstArrayKey expects an array".into());
+        }
+        iteration_key(world, arg(args, 0)?, None)
+    });
+    registry.register(Function, "getnextarraykey", |world, _, args| {
+        if args.len() != 2 {
+            return Err("GetNextArrayKey expects an array and previous key".into());
+        }
+        iteration_key(world, arg(args, 0)?, Some(arg(args, 1)?))
+    });
     registry.register(Function, "getarraykeys", |world, _, args| {
         let Value::Array(id) = arg(args, 0)? else {
             return Err("getarraykeys expects an array".into());
@@ -285,14 +297,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::LocalizedString(table_lookup(world, args)?.into()))
     });
     registry.register(Function, "tablelookupbyrow", |world, _, args| {
-        let tables = world.resource::<Runtime>().tables.clone();
-        let name = string(args, 0)?;
-        let (row, column) = (int(args, 1)?, int(args, 2)?);
-        let value = table(&tables, &name)
-            .filter(|_| row >= 0 && column >= 0)
-            .and_then(|t| t.cell(row as usize, column as usize))
-            .unwrap_or("");
-        Ok(Value::string(value))
+        Ok(Value::String(table_lookup_by_row(world, args)?))
+    });
+    registry.register(Function, "tablelookupistringbyrow", |world, _, args| {
+        Ok(Value::LocalizedString(table_lookup_by_row(world, args)?))
     });
     registry.register(Function, "tablelookuprownum", |world, _, args| {
         let tables = world.resource::<Runtime>().tables.clone();

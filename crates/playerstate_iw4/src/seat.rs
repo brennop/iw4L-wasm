@@ -28,6 +28,7 @@ pub fn rebase_archived_timers(ps: &mut PlayerState, delta_ms: i32) {
         &mut ps.jump_time,
         &mut ps.view_height_lerp_time,
         &mut ps.shellshock_time,
+        &mut ps.stun_time,
     ] {
         if *timer != 0 {
             *timer = timer.wrapping_add(delta_ms);

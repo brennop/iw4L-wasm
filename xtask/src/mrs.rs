@@ -415,6 +415,18 @@ fn fmt_touched(clone: &Path, name: &str) -> Res<()> {
         return Ok(());
     }
     fmt::format_paths(clone, &files)?;
+    // rustfmt follows `mod` items out of a touched mod.rs into children the
+    // branch never opened; the clone was clean, so put those back.
+    let strays: Vec<String> = git_out(clone, &["diff", "--name-only"])?
+        .lines()
+        .filter(|line| !line.is_empty() && !files.iter().any(|file| file == line))
+        .map(str::to_string)
+        .collect();
+    if !strays.is_empty() {
+        let mut args = vec!["restore", "--"];
+        args.extend(strays.iter().map(String::as_str));
+        git(clone, &args)?;
+    }
     if !tracked_dirty(clone)? {
         println!("    already formatted");
         return Ok(());

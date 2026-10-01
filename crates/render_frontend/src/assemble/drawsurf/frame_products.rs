@@ -359,7 +359,7 @@ struct CameraFillStamp {
     colour_tech: u8,
     emissive_tech: u8,
     dfog: bool,
-    sun_present: bool,
+    sun_present: super::SunShadowReceivers,
     distortion_enabled: bool,
     distortion_sort_key: Option<u32>,
     light_types_id: u64,
@@ -400,7 +400,10 @@ impl CameraFillStamp {
         super::list::mix_content_id(&mut id, u64::from(self.colour_tech));
         super::list::mix_content_id(&mut id, u64::from(self.emissive_tech));
         super::list::mix_content_id(&mut id, u64::from(self.dfog));
-        super::list::mix_content_id(&mut id, u64::from(self.sun_present));
+        super::list::mix_content_id(&mut id, u64::from(self.sun_present.present));
+        for word in self.sun_present.unmatched.0 {
+            super::list::mix_content_id(&mut id, word);
+        }
         super::list::mix_content_id(&mut id, u64::from(self.distortion_enabled));
         super::list::mix_content_id(
             &mut id,
@@ -554,7 +557,7 @@ fn apply_camera_list(
     light_types: &[u8],
     dfog: bool,
     remap_lit: bool,
-    sun_shadow_map: bool,
+    sun_shadow_map: super::SunShadowReceivers,
     spot_shadowed: &[u8],
     target: ProductTarget,
     catalog: &RuntimeMaterialCatalog,
@@ -591,7 +594,7 @@ fn compact_product_draws(
     remap_lit: bool,
     light_types: &[u8],
     dfog: bool,
-    sun_shadow_map: bool,
+    sun_shadow_map: super::SunShadowReceivers,
     spot_shadowed: &[u8],
     persist: &mut ProductBindPersist,
     catalog: &RuntimeMaterialCatalog,
@@ -741,7 +744,7 @@ fn colour_list_keep(
     remap_lit: bool,
     light_types: &[u8],
     dfog: bool,
-    sun_shadow_map: bool,
+    sun_shadow_map: super::SunShadowReceivers,
     spot_shadowed: &[u8],
     catalog: &RuntimeMaterialCatalog,
 ) -> bool {
@@ -819,7 +822,7 @@ fn fill_product_list(
     light_types: &[u8],
     dfog: bool,
     remap_lit: bool,
-    sun_shadow_map: bool,
+    sun_shadow_map: super::SunShadowReceivers,
     spot_shadowed: &[u8],
     target: ProductTarget,
     persist: &mut ProductBindPersist,
@@ -1456,7 +1459,7 @@ pub(crate) fn execute_sun_product(
         light_types,
         inputs.dfog,
         false,
-        false,
+        super::SunShadowReceivers::NONE,
         &[],
         ProductTarget::SunShadowFallbackAtlas,
         persist,
@@ -1616,7 +1619,7 @@ pub(crate) fn execute_spot_product(
         light_types,
         inputs.dfog,
         false,
-        false,
+        super::SunShadowReceivers::NONE,
         &[],
         ProductTarget::SpotShadowMaps,
         persist,
@@ -1643,6 +1646,7 @@ pub(crate) fn execute_camera_products(
     scene: Option<Res<crate::prepare::scene::world::WorldScene>>,
     gfx: Option<Res<crate::prepare::scene::gfx_scene::HostGfxScene>>,
     sun_present: Res<super::SunShadowMapPresent>,
+    sun_unmatched: Res<super::SunShadowUnmatchedLights>,
     spot_lights: Res<super::SpotShadowMapLights>,
     published: Res<RenderFrameProducts>,
     mut owner: ResMut<CameraProducts>,
@@ -1660,6 +1664,10 @@ pub(crate) fn execute_camera_products(
         .map(|lights| lights.types.as_slice())
         .unwrap_or(&[]);
     let light_types_owned = super::dlight_receivers::combined_light_types(map_types, &inputs);
+    let sun_receivers = super::SunShadowReceivers {
+        present: sun_present.0,
+        unmatched: *sun_unmatched,
+    };
     let light_types = map_types;
     let stamp = CameraFillStamp {
         static_membership: if retained.world_generation == inputs.world_generation {
@@ -1676,7 +1684,7 @@ pub(crate) fn execute_camera_products(
         colour_tech: draw_method.tech_type().0,
         emissive_tech: draw_method.emissive_tech_type().0,
         dfog: inputs.dfog,
-        sun_present: sun_present.0,
+        sun_present: sun_receivers,
         distortion_enabled: distortion_settings.enabled,
         distortion_sort_key: sort_key_distortion,
         light_types_id: light_types_id(light_types),
@@ -1756,7 +1764,7 @@ pub(crate) fn execute_camera_products(
                     true,
                     light_types,
                     inputs.dfog,
-                    sun_present.0,
+                    sun_receivers,
                     &spot_lights.0,
                     &generation.catalog,
                 )
@@ -1769,7 +1777,7 @@ pub(crate) fn execute_camera_products(
                     false,
                     light_types,
                     inputs.dfog,
-                    false,
+                    super::SunShadowReceivers::NONE,
                     &[],
                     &generation.catalog,
                 )
@@ -1835,7 +1843,11 @@ pub(crate) fn execute_camera_products(
                         remap,
                         light_types,
                         inputs.dfog,
-                        if remap { sun_present.0 } else { false },
+                        if remap {
+                            sun_receivers
+                        } else {
+                            super::SunShadowReceivers::NONE
+                        },
                         if remap { spot_lights.0.as_slice() } else { &[] },
                         &generation.catalog,
                     )
@@ -1850,7 +1862,7 @@ pub(crate) fn execute_camera_products(
             light_types,
             inputs.dfog,
             true,
-            sun_present.0,
+            sun_receivers,
             &spot_lights.0,
             ProductTarget::Core3dViewColour,
             &generation.catalog,
@@ -1866,7 +1878,7 @@ pub(crate) fn execute_camera_products(
             light_types,
             inputs.dfog,
             false,
-            false,
+            super::SunShadowReceivers::NONE,
             &[],
             ProductTarget::Core3dViewColour,
             &generation.catalog,
@@ -2005,7 +2017,7 @@ fn fill_dlight_light(
         light_types,
         dfog,
         true,
-        false,
+        super::SunShadowReceivers::NONE,
         spot_shadowed,
         ProductTarget::Core3dViewColour,
         catalog,

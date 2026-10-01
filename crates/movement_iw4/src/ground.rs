@@ -9,13 +9,22 @@ pub fn complete_ground_trace<C: CollisionBackend>(
     ps: &mut PlayerState,
     pml: &mut Pml,
     bounds: MoveBounds,
+    forwardmove: i8,
     collision: &C,
 ) {
     let origin = ps.origin;
-    let probe_depth = if (ps.e_flags & 0xc00) == 0 { 0.25 } else { 0.0 };
+    let mounted = (ps.e_flags & 0xc00) != 0;
     let input = GroundTraceInput {
-        start: [origin[0], origin[1], origin[2] + probe_depth],
-        end: [origin[0], origin[1], origin[2] - probe_depth],
+        start: [
+            origin[0],
+            origin[1],
+            origin[2] + if mounted { 0.0 } else { 0.25 },
+        ],
+        end: [
+            origin[0],
+            origin[1],
+            origin[2] - if mounted { 1.0 } else { 0.25 },
+        ],
         mins: bounds.mins,
         maxs: bounds.maxs,
         tracemask: bounds.tracemask,
@@ -51,14 +60,33 @@ pub fn complete_ground_trace<C: CollisionBackend>(
     }
 
     if trace.fraction == 1.0 {
+        let was_grounded = ps.ground_entity_num != ENTITYNUM_NONE;
+        let depth = if was_grounded { 64.0 } else { 1.0 };
+        let below = collision.trace(GroundTraceInput {
+            start: ps.origin,
+            end: [ps.origin[0], ps.origin[1], ps.origin[2] - depth],
+            ..input
+        });
+        if was_grounded && below.fraction == 1.0 {
+            pml.record_jump_animation(jump_animation(forwardmove), true);
+        }
         clear_ground_state(ps, pml);
+        pml.almost_ground_plane = u32::from(if was_grounded {
+            below.fraction < 1.0 / 64.0
+        } else {
+            below.fraction != 1.0
+        });
         return;
     }
 
     let velocity_dot_normal = ps.velocity[2] * trace.normal[2]
         + trace.normal[0] * ps.velocity[0]
         + ps.velocity[1] * trace.normal[1];
-    if (ps.pm_flags & 8) == 0 && ps.velocity[2] > 0.0 && 10.0 < velocity_dot_normal {}
+    if (ps.pm_flags & 8) == 0 && ps.velocity[2] > 0.0 && 10.0 < velocity_dot_normal {
+        pml.record_jump_animation(jump_animation(forwardmove), false);
+        clear_ground_state(ps, pml);
+        return;
+    }
 
     if trace.walkable != 0 && trace.contents != 0x0200_0000 {
         pml.ground_plane = 1;
@@ -109,4 +137,12 @@ fn trace_entity_id(trace: &Trace) -> i32 {
         trace.hit_type,
         trace.hit_id,
     ))
+}
+
+fn jump_animation(forwardmove: i8) -> crate::JumpAnimation {
+    if forwardmove < 0 {
+        crate::JumpAnimation::Backward
+    } else {
+        crate::JumpAnimation::Forward
+    }
 }

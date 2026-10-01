@@ -51,6 +51,8 @@ on host and clients — the host records authority, a client the snapshots it
 received plus its own presented state; `demo LATEST` plays it back.
 
 * ADS is `hold +speed_throw`, not `+speed`;
+* Hold Shift (`+breath_sprint`) or bind `+holdbreath` to steady eligible sights
+  at full ADS. Breath lasts 4.5 seconds; releasing or exhausting it requires recovery.
 * Aim binding: `bind MOUSE2 +speed_throw` aims only while held;
   `bind MOUSE2 +toggleads_throw` toggles aim on each press. Both are available
   under Options → Controls → Actions, and the chosen bind is saved in settings.
@@ -59,7 +61,10 @@ received plus its own presented state; `demo LATEST` plays it back.
 * `look` without `LookState` only writes `ps.viewangles` — no aiming;
 * Use (`+activate` or `+usereload`) retrieves your settled C4, claymores and
   deployable gadgets when there is room in their equipment ammo slot.
-* `give` takes a namespace: `give t5:weapon/psg1_acog`, `give iw5:weapon/msr`.
+* `give` searches one completion list: `give ammo`, `give killstreak/uav`, or `give weapon/iw5:msr [attachment...]`. Search by any part of the name, then accept the suggested item.
+* `give killstreak/care_package` and `give killstreak/pave_low` acquire rewards without activating them. Available familiar names appear alongside script names in autocomplete.
+* `give ammo` refills carried reserves and equipment; reload magazines normally. Supply commands require a live player and a host allowing debug actions.
+* `bot` hints follow the subcommand: counts, on/off, current bot IDs, weapons, and `tp … above`.
 * custom classes live in `iw4l-artifacts/profile/classes.txt` (one tab-separated
   row per class); `spawn 0` selects the first slot. Delete the file to generate
   five available classes again.

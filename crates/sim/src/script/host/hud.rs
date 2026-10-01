@@ -404,6 +404,64 @@ fn print(
     Ok(Value::Undefined)
 }
 
+pub(crate) fn chat(
+    world: &mut World,
+    sender: u32,
+    team_only: bool,
+    args: &[Value],
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("chat expects one message".into());
+    }
+    let message = arg(args, 0)?;
+    if !matches!(message, Value::String(_) | Value::LocalizedString(_)) {
+        return Err("chat message must be a string".into());
+    }
+    let name =
+        super::players::load_field(world, sender, "name").ok_or("chat sender is not connected")?;
+    let text = format!(
+        "{}{}{}",
+        print_text(world, &name),
+        crate::HUD_PRINT_ARG_SEPARATOR,
+        print_text(world, message)
+    );
+    let recipients = if team_only {
+        let clients: Vec<u32> = world
+            .resource::<Runtime>()
+            .players
+            .keys()
+            .copied()
+            .collect();
+        let frame = FrameWorld::from_world(world);
+        let team = frame
+            .client_meta(crate::ClientId(sender))
+            .ok_or("chat sender is not connected")?
+            .client_state_team;
+        clients
+            .into_iter()
+            .filter(|client| {
+                frame
+                    .client_meta(crate::ClientId(*client))
+                    .is_some_and(|meta| meta.client_state_team == team)
+            })
+            .map(|client| Some(crate::ClientId(client)))
+            .collect::<Vec<_>>()
+    } else {
+        vec![None]
+    };
+    let template = format!("{}&&1^7: &&2", crate::HUD_STRING_PLAIN);
+    let mut frame = FrameWorld::from_world(world);
+    for recipient in recipients {
+        frame.push_print(crate::PendingPrint {
+            recipient,
+            bold: false,
+            template: template.clone(),
+            arg: text.clone(),
+        });
+    }
+    Ok(Value::Undefined)
+}
+
 pub(crate) fn register(registry: &mut NativeRegistry) {
     use Namespace::{Function, Method};
     registry.register(Function, "iprintln", |world, _, args| {

@@ -9,8 +9,8 @@ use crate::match_state::{ClientLifecycle, EventAudience};
 use crate::world::{ClientId, Tick};
 use crate::world_objects::glass_piece_is_solid;
 use anim_iw4::{
-    ANIM_ET_FIREWEAPON, ANIM_ET_KNIFE_MELEE, ANIM_ET_KNIFE_MELEE_CHARGE, ANIM_ET_MELEEATTACK,
-    ANIM_ET_RELOAD,
+    ANIM_COND_RIOTSHIELDNEXT, ANIM_ET_DROPWEAPON, ANIM_ET_FIREWEAPON, ANIM_ET_KNIFE_MELEE,
+    ANIM_ET_KNIFE_MELEE_CHARGE, ANIM_ET_MELEEATTACK, ANIM_ET_RAISEWEAPON, ANIM_ET_RELOAD,
 };
 use entity_iw4::glass_add_damage;
 use movement_iw4::{Pml, is_in_air, mantle::is_weapon_inactive};
@@ -54,6 +54,7 @@ pub struct AcceptedShot {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Emission {
+    pub combat_seed: u32,
     pub shot_id: ShotId,
     pub pellet: PelletId,
     pub attacker: ClientId,
@@ -322,6 +323,8 @@ pub(crate) fn advance_weapon_command(
         let marker_offhand_class = i32::MAX;
         let mut wcmd = WeaponCmd {
             msec,
+            server_time: cmd.server_time,
+            stun_time: ps.stun_time,
             buttons: fire_buttons
                 | if selected_airdrop_marker && cmd.buttons & playerstate_iw4::buttons::ATTACK != 0
                 {
@@ -366,6 +369,9 @@ pub(crate) fn advance_weapon_command(
                     previous_origin: [0.0; 3],
                     previous_velocity: [0.0; 3],
                     holdrand: 0,
+                    jump_animations: [None; 4],
+                    mantle_movetype: None,
+                    landing_animation: false,
                 };
                 is_in_air(&ps, &pml)
             },
@@ -483,6 +489,31 @@ pub(crate) fn advance_weapon_command(
         let clip_before = hands[0].clip;
         let events = weapon_hands(&mut hands, &facts, &mut wcmd, last_hand);
         let hand0 = hands[0];
+        for &(hand, event) in events.iter().flatten() {
+            if hand != 0 {
+                continue;
+            }
+            match event {
+                WeaponTickEvent::PutawayStarted
+                    if ps.pm_flags & playerstate_iw4::pm_flags::MANTLE == 0 =>
+                {
+                    apply_player_anim_event_with_target(
+                        world,
+                        *id,
+                        ANIM_ET_DROPWEAPON,
+                        Some(u32::from(wcmd.cmd_weapon)),
+                    );
+                }
+                WeaponTickEvent::RaiseStarted
+                    if started_weapon != 0
+                        && hand0.weaponstate
+                            != weapon_iw4::WeaponState::RaisingAltswitch as i32 =>
+                {
+                    apply_player_anim_event(world, *id, ANIM_ET_RAISEWEAPON);
+                }
+                _ => {}
+            }
+        }
         if let Some(charge) = wcmd.melee_started {
             if let Some(ps_mut) = world.player_mut(*id) {
                 movement_iw4::add_predictable_event(
@@ -647,6 +678,12 @@ pub(crate) fn advance_weapon_command(
                         ps.origin[2] + ps.view_height_current,
                     ];
 
+                    let mut shot_angles = ps.viewangles;
+                    for (angle, offset) in shot_angles.iter_mut().zip(cmd.gun_angle_offset) {
+                        if offset.is_finite() {
+                            *angle += offset.clamp(-45.0, 45.0);
+                        }
+                    }
                     let last_shot = hand.clip == 0 && facts.fire_type != 5;
                     world.push_entity_event(
                         tick,
@@ -657,7 +694,7 @@ pub(crate) fn advance_weapon_command(
                             weapon,
                             correlation: shot_id.0,
                             origin,
-                            direction: ps.viewangles,
+                            direction: shot_angles,
                             ..Default::default()
                         },
                     );
@@ -699,7 +736,7 @@ pub(crate) fn advance_weapon_command(
                         weapon,
                         ammo_used,
                         origin,
-                        angles: ps.viewangles,
+                        angles: shot_angles,
                         ads_frac,
                         view_height_current: ps.view_height_current,
                         aim_spread_scale,
@@ -881,6 +918,9 @@ pub(crate) fn advance_weapon_command(
                         fire_weapon_melee(world, tick, *id, life, weapon, origin, ps.viewangles);
                     }
                 }
+                WeaponTickEvent::StunnedStarted => {
+                    apply_player_anim_event(world, *id, 21);
+                }
                 WeaponTickEvent::RaiseFinished | WeaponTickEvent::DropFinished => {}
             }
         }
@@ -889,24 +929,76 @@ pub(crate) fn advance_weapon_command(
 }
 
 pub(crate) fn apply_player_anim_event(world: &mut FrameWorld, id: ClientId, event: u8) {
+    apply_player_anim_event_with_target(world, id, event, None);
+}
+
+fn apply_player_anim_event_with_target(
+    world: &mut FrameWorld,
+    id: ClientId,
+    event: u8,
+    next_weapon: Option<u32>,
+) {
+    apply_player_anim_event_inner(
+        world,
+        id,
+        event,
+        next_weapon,
+        !matches!(event, ANIM_ET_RAISEWEAPON | 11..=16),
+    );
+}
+
+pub(crate) fn apply_player_anim_event_forced(
+    world: &mut FrameWorld,
+    id: ClientId,
+    event: u8,
+    force: bool,
+) {
+    apply_player_anim_event_inner(world, id, event, None, force);
+}
+
+fn apply_player_anim_event_inner(
+    world: &mut FrameWorld,
+    id: ClientId,
+    event: u8,
+    next_weapon: Option<u32>,
+    force: bool,
+) {
     let Some(script) = world.player_anim_script() else {
         return;
     };
     let mut seed = world.anim_event_seed();
-    let (view_w, primary) = {
-        let Some(ps) = world.player_mut(id) else {
-            return;
-        };
-        crate::pmove_anim_weapon_ids(ps)
+    let Some(ps) = world.player(id).copied() else {
+        return;
     };
+    let (view_w, primary) = crate::pmove_anim_weapon_ids(&ps);
     let view_facts = world.combat_facts_for(view_w);
     let primary_facts = world.combat_facts_for(primary);
+    let movetype =
+        crate::player_anim_script::event_anim_movetype(&ps, world.last_anim_movetype(id));
+    let strafing = world.last_anim_strafing(id);
+    let mut conds = crate::anim_conditions_from_pmove(
+        &ps,
+        view_facts,
+        primary_facts,
+        Some(movetype),
+        strafing,
+        world.anim_command_buttons(id),
+    );
+    if let Some(next_weapon) = next_weapon {
+        conds.set_value(
+            ANIM_COND_RIOTSHIELDNEXT,
+            u32::from(
+                world
+                    .combat_facts_for(next_weapon)
+                    .is_some_and(|facts| facts.player_anim_type == 15),
+            ),
+        );
+    }
     {
         let Some(ps) = world.player_mut(id) else {
             return;
         };
-        let conds = crate::anim_conditions_from_pmove(ps, view_facts, primary_facts);
-        script.apply_event(ps, event, &conds, &mut seed);
+        script.apply_event(ps, event, &conds, &mut seed, force);
     }
     world.set_anim_event_seed(seed);
 }
@@ -965,6 +1057,7 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
         let pellet_count = facts.pellet_count().clamp(1, u16::MAX as i32) as u16;
         for pellet in 0..pellet_count {
             out.push(Emission {
+                combat_seed: shot.combat_seed,
                 shot_id: shot.shot_id,
                 pellet: PelletId(pellet),
                 attacker: shot.attacker,
@@ -981,13 +1074,25 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
     out
 }
 
+fn segment_is_shield(collider: Option<ColliderId>) -> bool {
+    matches!(
+        collider,
+        Some(ColliderId::Player {
+            hitloc: crate::shield::HITLOC,
+            ..
+        })
+    )
+}
+
 pub(crate) fn phase_trace(
     world: &mut FrameWorld,
     tick: Tick,
     emissions: &[Emission],
 ) -> TracePhaseOutput {
     let mut output = TracePhaseOutput::default();
-    for em in emissions {
+    let mut pending: std::collections::VecDeque<_> =
+        emissions.iter().copied().map(|em| (em, 0u8)).collect();
+    while let Some((em, bounces)) = pending.pop_front() {
         let Some(facts) = world.combat_facts_for(em.weapon) else {
             continue;
         };
@@ -1051,6 +1156,33 @@ pub(crate) fn phase_trace(
             },
             Some(&on_glass_hit),
         );
+        if bounces < 8
+            && facts.weap_type == weapon_iw4::WEAPTYPE_BULLET
+            && facts.weap_class != weapon_iw4::WEAPCLASS_SPREAD
+            && !pen.explosive_bullet
+            && let Some(hit) = segments
+                .last()
+                .filter(|hit| !hit.startsolid && segment_is_shield(hit.collider))
+        {
+            let mut rng = MatchRng::new(
+                u64::from(em.combat_seed) ^ (u64::from(em.pellet.0) << 32) ^ u64::from(bounces),
+            );
+            let chance = (pen.ricochet_chance * 0.5).clamp(0.0, 1.0);
+            let roll = (rng.next_u32() >> 8) as f32 / 16_777_216.0;
+            if roll <= chance
+                && chance > 0.0
+                && let Some(direction) = crate::shield::ricochet_direction(em.direction, hit.normal)
+            {
+                pending.push_back((
+                    Emission {
+                        origin: std::array::from_fn(|i| hit.end[i] + direction[i]),
+                        direction,
+                        ..em
+                    },
+                    bounces + 1,
+                ));
+            }
+        }
         let entity_epoch = entity_collision_epoch(terminal, &query.entities.rows);
         let startsolid = segments.first().is_some_and(|s| s.startsolid);
         let impact_n = segments
@@ -1061,7 +1193,15 @@ pub(crate) fn phase_trace(
             .iter()
             .filter(|s| {
                 bullet_process_on_hit(s.collider)
-                    && entity_iw4::bullet_hit_event(facts.impact_type, false).is_some()
+                    && entity_iw4::bullet_hit_event(
+                        if segment_is_shield(s.collider) {
+                            3
+                        } else {
+                            facts.impact_type
+                        },
+                        false,
+                    )
+                    .is_some()
             })
             .count() as u32;
         let (bone_center, bone_half_size, xmodel_contents, model_key) =
@@ -1101,6 +1241,24 @@ pub(crate) fn phase_trace(
             };
             let scaled =
                 ((bullet_damage_at_distance(&facts, dist) as f32) * segment.damage_mult) as i32;
+            if !exit && world.publishes_snapshot() {
+                let means = crate::script_player::means(
+                    world,
+                    DamageSource::Shot(em.shot_id),
+                    em.weapon,
+                    0,
+                    false,
+                );
+                crate::script::host::triggers::damage_line(
+                    world.ecs(),
+                    segment.start,
+                    segment.end,
+                    scaled,
+                    em.attacker,
+                    None,
+                    means,
+                );
+            }
             let mut flesh_flags = 0u8;
             if !exit
                 && let Some(ColliderId::Player {
@@ -1117,6 +1275,7 @@ pub(crate) fn phase_trace(
                     && vmeta.lifecycle == ClientLifecycle::Alive
                 {
                     let attempt = crate::DamageAttempt {
+                        splash: false,
                         source: DamageSource::Shot(em.shot_id),
                         pellet: em.pellet,
                         attacker: em.attacker,
@@ -1134,7 +1293,9 @@ pub(crate) fn phase_trace(
                         crate::DamageOutcome::Died(_)
                     );
                 }
-                flesh_flags = fx_iw4::flesh_hit_flags(head, fatal) as u8;
+                if hitloc != crate::shield::HITLOC {
+                    flesh_flags = fx_iw4::flesh_hit_flags(head, fatal) as u8;
+                }
             }
             let payload = crate::EntityEventPayload {
                 number: em.attacker.0 as i32,
@@ -1167,13 +1328,26 @@ pub(crate) fn phase_trace(
                 _ => None,
             };
             if bullet_process_on_hit(segment.collider) {
-                if let Some(world_event) = entity_iw4::bullet_hit_event(facts.impact_type, false) {
+                if let Some(world_event) = entity_iw4::bullet_hit_event(
+                    if segment_is_shield(segment.collider) {
+                        3
+                    } else {
+                        facts.impact_type
+                    },
+                    false,
+                ) {
                     let world_audience =
                         victim.map_or(EventAudience::All, EventAudience::AllExcept);
                     world.push_entity_event(tick, world_audience, world_event, payload);
                     if let Some(victim) = victim
-                        && let Some(local_event) =
-                            entity_iw4::bullet_hit_event(facts.impact_type, true)
+                        && let Some(local_event) = entity_iw4::bullet_hit_event(
+                            if segment_is_shield(segment.collider) {
+                                3
+                            } else {
+                                facts.impact_type
+                            },
+                            true,
+                        )
                     {
                         world.push_entity_event(
                             tick,
@@ -1214,6 +1388,7 @@ pub(crate) fn phase_trace(
                             owner,
                             bone,
                             scaled as u32,
+                            Some(em.attacker),
                         )
                     {
                         continue;
@@ -1309,7 +1484,7 @@ fn fire_weapon_melee(
     let mut best_frac = 1.0f32;
     let mut best_hit: Option<crate::bullet_collision::BulletTraceSegment> = None;
     let n = melee_trace_count(width, height);
-    for offset in MELEE_TRACE_OFFSETS.iter().take(n) {
+    for (index, offset) in MELEE_TRACE_OFFSETS.iter().take(n).enumerate() {
         let end = melee_trace_end(origin, forward, right, up, range, width, height, *offset);
         let (segments, _) = bullet_trace_segments_filtered(
             world.clip_brushes(),
@@ -1331,6 +1506,20 @@ fn fire_weapon_melee(
             &is_solid,
             None,
         );
+        if index == 0
+            && world.publishes_snapshot()
+            && let Some(segment) = segments.first()
+        {
+            crate::script::host::triggers::damage_line(
+                world.ecs(),
+                origin,
+                segment.end,
+                facts.melee_damage,
+                attacker,
+                None,
+                "MOD_MELEE",
+            );
+        }
         let Some(segment) = segments.iter().find(|s| s.collider.is_some()) else {
             continue;
         };
@@ -1394,6 +1583,7 @@ fn fire_weapon_melee(
                 && vmeta.lifecycle == ClientLifecycle::Alive
             {
                 let attempt = crate::DamageAttempt {
+                    splash: false,
                     source: DamageSource::Melee,
                     pellet: PelletId(0),
                     attacker,
