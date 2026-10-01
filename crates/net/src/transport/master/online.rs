@@ -244,12 +244,15 @@ fn arm_master_browser(
     browser: Option<Res<MasterBrowser>>,
     mut commands: Commands,
 ) {
+    let MasterLaunchMode::Browser(browser_config) = &intent.0 else {
+        if browser.is_some() {
+            commands.remove_resource::<MasterBrowser>();
+        }
+        return;
+    };
     if browser.is_some() {
         return;
     }
-    let MasterLaunchMode::Browser(browser_config) = &intent.0 else {
-        return;
-    };
     let state = Arc::new(Mutex::new(MasterBrowserSnapshot {
         loading: true,
         have: browser_config.have,
@@ -804,6 +807,29 @@ fn observe_master_bridge(
         }
         _ => diag::info!(Net, "master relay: {current:?}"),
     }
+    if let Some(path) = std::env::var_os("IW4L_MASTER_STATUS_FILE") {
+        let path = PathBuf::from(path);
+        let state = match &current {
+            MasterBridgeState::Hosting { .. } => "hosting",
+            MasterBridgeState::Joined { .. } => "joined",
+            MasterBridgeState::Failed { .. } => "failed",
+            MasterBridgeState::Closed { .. } => "closed",
+            MasterBridgeState::Left { .. } => "left",
+            _ => "connecting",
+        };
+        let body = format!(
+            "state={state}\nroom={}\nmembers={}\nin_match={}\n",
+            identity.room_id,
+            current.members().len(),
+            current.in_match()
+        );
+        let temporary = path.with_extension("tmp");
+        if let Err(error) =
+            std::fs::write(&temporary, body).and_then(|()| std::fs::rename(&temporary, &path))
+        {
+            diag::warn!(Net, "master status file: {error}");
+        }
+    }
     *previous = Some(current);
 }
 
@@ -1236,7 +1262,10 @@ async fn session_main(
                     }
                 }
             }
-            (recv, frame) = &mut next_control => {
+            (recv, frame) = async {
+                mailbox.wait_control_inbound_capacity().await;
+                (&mut next_control).await
+            } => {
                 next_control.set(read_owned_frame(recv));
                 match frame {
                     Ok(ControlFrame::Relay(bytes)) => {
