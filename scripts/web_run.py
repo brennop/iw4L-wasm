@@ -91,6 +91,11 @@ def rebuild_pack(pack, record, image_cap):
         sys.exit(f"record not found: {record}")
     cache_rec = pack.with_name(pack.stem + "_cache.rec")
     new = pack.with_name(pack.name + ".new")
+    # The launcher writes iw4l-artifacts beside its exe (make's PROFILE, default play).
+    profile = os.environ.get("PROFILE", "play")
+    artifacts = ROOT / "target" / ("debug" if profile == "dev" else profile) / "iw4l-artifacts"
+    # IW4L_CACHE_RECORD is append-only: entries from earlier runs may be gone from the cache.
+    cache_rec.unlink(missing_ok=True)
     env = dict(
         os.environ,
         IW4L_GPU_PROFILE="webgpu",
@@ -101,7 +106,7 @@ def rebuild_pack(pack, record, image_cap):
         (["make", "map", "mp_rust"], env),
         (
             ["cargo", "xtask", "web-pack", "--root", games, "--cache-record", str(cache_rec),
-             "--image-cap", str(image_cap), str(record), str(new)],
+             "--artifacts", str(artifacts), "--image-cap", str(image_cap), str(record), str(new)],
             os.environ,
         ),
     ]

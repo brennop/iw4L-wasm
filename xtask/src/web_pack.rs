@@ -1,9 +1,11 @@
-//! `web-pack [--root DIR] [--cache-record FILE] [--image-cap PX] [--stub PATH]... <record> <out.pack>`: turn an
+//! `web-pack [--root DIR] [--cache-record FILE] [--artifacts DIR] [--image-cap PX] [--stub PATH]... <record> <out.pack>`: turn an
 //! `IW4L_FS_RECORD` log into a pack. Paths are stored relative to the games root
 //! (`--root`, default `IW4L_GAMES`), so the pack works wherever the app mounts it.
 //! `--cache-record` is an `IW4L_CACHE_RECORD` log; the artifact-cache entries it
 //! names (wgsl, nav, localize) are stored zlib-compressed as ordinary pack files
 //! under `.iw4l-cache/<kind>/<key>`, read back by `asset_transport::cache_get`.
+//! `--artifacts DIR` is the `iw4l-artifacts` the recording run wrote (the launcher
+//! writes it beside its exe, e.g. `target/play/iw4l-artifacts`); default `iw4l-artifacts`.
 //! `--image-cap PX` shrinks fully-read IWI textures in IWDs to at most PX on the
 //! largest side by dropping top mips in place (see `web_pack_cap`).
 //! `--stub PATH` (games-root relative, repeatable) keeps the file's length and name in
@@ -39,16 +41,18 @@ fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 }
 
 pub fn run(env: &Env, args: &[String]) -> Res<()> {
-    let usage = "usage: web-pack [--root GAMES_ROOT] [--cache-record FILE] [--image-cap PX] [--stub PATH]... <record> <out.pack>";
+    let usage = "usage: web-pack [--root GAMES_ROOT] [--cache-record FILE] [--artifacts DIR] [--image-cap PX] [--stub PATH]... <record> <out.pack>";
     let mut args = args;
     let mut root = None;
     let mut cache_record = None;
+    let mut artifacts = PathBuf::from("iw4l-artifacts");
     let mut image_cap = None;
     let mut stubs = Vec::new();
     while let [flag, value, rest @ ..] = args {
         match flag.as_str() {
             "--root" => root = Some(value.clone()),
             "--cache-record" => cache_record = Some(value.clone()),
+            "--artifacts" => artifacts = PathBuf::from(value),
             "--stub" => stubs.push(PathBuf::from(value)),
             "--image-cap" => {
                 image_cap = Some(
@@ -153,7 +157,7 @@ pub fn run(env: &Env, args: &[String]) -> Res<()> {
         );
     }
     let baked = match &cache_record {
-        Some(record) => bake_cache(record)?,
+        Some(record) => bake_cache(record, &artifacts)?,
         None => BTreeMap::new(),
     };
     let baked_bytes: u64 = baked.values().map(|b| b.len() as u64).sum();
@@ -213,7 +217,7 @@ const PACKED_KINDS: [&str; 3] = ["wgsl", "nav", "localize"];
 /// Reads the native cache entries an `IW4L_CACHE_RECORD` log names and returns
 /// them compressed, keyed by their pack path. An entry the record names but the
 /// cache lacks is an error: the recording run must leave every entry on disk.
-fn bake_cache(record: &str) -> Res<BTreeMap<PathBuf, Vec<u8>>> {
+fn bake_cache(record: &str, artifacts: &Path) -> Res<BTreeMap<PathBuf, Vec<u8>>> {
     let log = std::fs::read_to_string(record).map_err(|e| format!("read {record}: {e}"))?;
     let wanted: BTreeSet<(&str, &str)> = log
         .lines()
@@ -222,7 +226,7 @@ fn bake_cache(record: &str) -> Res<BTreeMap<PathBuf, Vec<u8>>> {
         .collect();
     let mut baked = BTreeMap::new();
     for (kind, key) in wanted {
-        let source = Path::new("iw4l-artifacts")
+        let source = artifacts
             .join("cache")
             .join(kind)
             .join(&key[..2.min(key.len())])
