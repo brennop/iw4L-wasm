@@ -58,7 +58,7 @@ pub struct FxImpactTable {
 pub const FX_IMPACT_EXIT_SURFACE_FLAG: u32 = 1 << 2;
 
 #[inline]
-pub fn fx_impact_table_row(impact_type: i32, exit: bool) -> Option<usize> {
+pub fn impact_table_row(impact_type: i32, exit: bool) -> Option<usize> {
     match ImpactType::from_i32(impact_type)? {
         ImpactType::None => None,
         ImpactType::BulletSmall => Some(if exit { 1 } else { 0 }),
@@ -75,7 +75,7 @@ pub fn fx_impact_table_row(impact_type: i32, exit: bool) -> Option<usize> {
 }
 
 #[inline]
-pub fn fx_flesh_effect_index(hit_flags: u32) -> usize {
+pub fn flesh_effect_index(hit_flags: u32) -> usize {
     let mut idx = (hit_flags & 1) * 2;
     if hit_flags & 2 != 0 {
         idx |= 1;
@@ -84,20 +84,17 @@ pub fn fx_flesh_effect_index(hit_flags: u32) -> usize {
 }
 
 #[inline]
-pub const fn fx_flesh_hit_flags(head: bool, fatal: bool) -> u32 {
+pub const fn flesh_hit_flags(head: bool, fatal: bool) -> u32 {
     (head as u32) | ((fatal as u32) << 1)
 }
 
 #[inline]
-pub const fn fx_surface_type_index(surface_flags: u32) -> usize {
+pub const fn surface_type_index(surface_flags: u32) -> usize {
     ((surface_flags >> 20) & 0x1f) as usize
 }
 
 #[inline]
-pub fn fx_impact_entry_cell_offset(
-    surface_type: usize,
-    flesh_slot: Option<usize>,
-) -> Option<usize> {
+pub fn impact_entry_cell_offset(surface_type: usize, flesh_slot: Option<usize>) -> Option<usize> {
     if let Some(slot) = flesh_slot {
         if slot >= FX_IMPACT_FLESH_COUNT {
             return None;

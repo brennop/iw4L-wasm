@@ -1,9 +1,9 @@
-use playerstate_iw4::{ENTITYNUM_NONE, PlayerState};
+use playerstate_iw4::{ENTITYNUM_NONE, PlayerState, pm_flags};
 
 use crate::{
     ANIM_MT_FLINCH_FORWARD, CmdScaleWalkContext, LADDER_JUMP_BLOCK_MS,
-    PLAYER_DMGTIMER_FLINCH_TIME_MS, PLAYER_DMGTIMER_STUMBLE_TIME_MS, PMF_CROUCH, PMF_LADDER,
-    PMF_PRONE, add_predictable_event, pm_damage_window_open, stance_speed_scale,
+    PLAYER_DMGTIMER_FLINCH_TIME_MS, PLAYER_DMGTIMER_STUMBLE_TIME_MS, add_predictable_event,
+    damage_window_open, stance_speed_scale,
 };
 
 pub const SURFACE_TYPE_NAMES: [&str; 31] = [
@@ -93,11 +93,7 @@ const PLAYER_MOVE_THRESHHOLD: f32 = 10.0;
 
 const PLAYER_SPRINT_CAMERA_BOB: f32 = 0.5;
 
-const PMF_WALKING: u32 = 0x40;
-
 const EFLAGS_TURRET: u32 = 0xc00;
-
-const PMF_BACKWARDS_RUN: u32 = 0x20;
 
 const ANIM_MT_IDLE: u8 = 1;
 const ANIM_MT_IDLECR: u8 = 2;
@@ -111,7 +107,7 @@ const PM_MOVE_ANIM_TABLE: [u8; 32] = [
     41, 53, 53, 53, 53,
 ];
 
-pub fn pm_get_bob_max_speed(
+pub fn get_bob_max_speed(
     ps: &PlayerState,
     forwardmove: i8,
     rightmove: i8,
@@ -146,7 +142,7 @@ pub fn pm_get_bob_max_speed(
         max_speed *= scales.player_sprint_speed_scale;
     }
     if ps.weapon != 0 {
-        let lean_flag = (ps.pm_flags & PMF_WALKING) != 0;
+        let lean_flag = (ps.pm_flags & pm_flags::WALKING) != 0;
         if scales.weapon_move_speed_scale > 0.0 && !lean_flag {
             max_speed *= scales.weapon_move_speed_scale;
         } else if scales.weapon_ads_move_speed_scale > 0.0 {
@@ -156,7 +152,7 @@ pub fn pm_get_bob_max_speed(
     max_speed * stance_speed_scale(ps, server_time, scales.player_last_stand_crawl_speed_scale)
 }
 
-pub fn pm_footsteps_bob_cycle(
+pub fn footsteps_bob_cycle(
     ps: &mut PlayerState,
     msec: i32,
     forwardmove: i8,
@@ -192,14 +188,14 @@ pub fn pm_footsteps_bob_cycle(
         0x0b => 1,
         _ => 0,
     };
-    let walking = (ps.pm_flags & PMF_WALKING) != 0 || ps.leanf != 0.0;
-    let sprinting = (ps.pm_flags & crate::PMF_SPRINTING) != 0;
+    let walking = (ps.pm_flags & pm_flags::WALKING) != 0 || ps.leanf != 0.0;
+    let sprinting = (ps.pm_flags & pm_flags::SPRINTING) != 0;
     let bob_factor = if stance == 0 && sprinting {
         PLAYER_SPRINT_CAMERA_BOB
     } else {
         BOB_FACTOR_TABLE[stance][usize::from(walking)]
     };
-    let max_speed = pm_get_bob_max_speed(
+    let max_speed = get_bob_max_speed(
         ps,
         forwardmove,
         rightmove,
@@ -217,7 +213,7 @@ pub fn pm_footsteps_bob_cycle(
     ps.bob_cycle = i32::from(new);
 }
 
-pub fn pm_footsteps_anim_move_type(
+pub fn footsteps_anim_move_type(
     ps: &PlayerState,
     forwardmove: i8,
     rightmove: i8,
@@ -238,13 +234,13 @@ pub fn pm_footsteps_anim_move_type(
     }
     let xyspeed = libm::sqrtf(ps.velocity[0] * ps.velocity[0] + ps.velocity[1] * ps.velocity[1]);
     let stance = stance_from_height_target(ps.view_height_target);
-    let stumbling = pm_damage_window_open(
+    let stumbling = damage_window_open(
         ps.damage_timer,
         ps.damage_duration,
         PLAYER_DMGTIMER_STUMBLE_TIME_MS,
     );
     if xyspeed <= PLAYER_MOVE_THRESHHOLD || ps.pm_type == 1 {
-        let flinching = pm_damage_window_open(
+        let flinching = damage_window_open(
             ps.damage_timer,
             ps.damage_duration,
             PLAYER_DMGTIMER_FLINCH_TIME_MS,
@@ -261,9 +257,9 @@ pub fn pm_footsteps_anim_move_type(
         return Some(not_trying_to_move_anim(ps));
     }
 
-    let walking = (ps.pm_flags & PMF_WALKING) != 0 || ps.leanf != 0.0;
-    let sprinting = (ps.pm_flags & crate::PMF_SPRINTING) != 0;
-    let backward = (ps.pm_flags & PMF_BACKWARDS_RUN) != 0;
+    let walking = (ps.pm_flags & pm_flags::WALKING) != 0 || ps.leanf != 0.0;
+    let sprinting = (ps.pm_flags & pm_flags::SPRINTING) != 0;
+    let backward = (ps.pm_flags & pm_flags::BACKWARDS_RUN) != 0;
     if stance == 0 && !backward && sprinting {
         return Some(if stumbling {
             ANIM_MT_STUMBLE_SPRINT_FORWARD
@@ -305,26 +301,26 @@ fn not_trying_to_move_anim(ps: &PlayerState) -> u8 {
     }
 }
 
-fn pm_is_sprinting_timestamps(ps: &PlayerState) -> bool {
+fn is_sprinting_timestamps(ps: &PlayerState) -> bool {
     ps.last_sprint_start != 0 && ps.last_sprint_end < ps.last_sprint_start
 }
 
-pub fn pm_should_make_footsteps(ps: &PlayerState) -> bool {
+pub fn should_make_footsteps(ps: &PlayerState) -> bool {
     match ps.view_height_target {
         0x16 | 0x28 | 0x0b => false,
-        _ => (ps.pm_flags & PMF_WALKING) == 0,
+        _ => (ps.pm_flags & pm_flags::WALKING) == 0,
     }
 }
 
-pub fn pm_footstep_event_type(ps: &PlayerState, surface_flags: u32) -> i32 {
+pub fn footstep_event_type(ps: &PlayerState, surface_flags: u32) -> i32 {
     if (surface_flags & SURF_NOSTEPS) != 0 || surface_type_index(surface_flags) == 0 {
         return 0;
     }
-    if (ps.pm_flags & PMF_PRONE) != 0 {
+    if (ps.pm_flags & pm_flags::PRONE) != 0 {
         return EV_FOOTSTEP_PRONE;
     }
-    if (ps.pm_flags & (PMF_WALKING | PMF_CROUCH)) == 0 && ps.leanf == 0.0 {
-        if pm_is_sprinting_timestamps(ps) {
+    if (ps.pm_flags & (pm_flags::WALKING | pm_flags::CROUCH)) == 0 && ps.leanf == 0.0 {
+        if is_sprinting_timestamps(ps) {
             return EV_FOOTSTEP_SPRINT;
         }
         return EV_FOOTSTEP_RUN;
@@ -332,7 +328,7 @@ pub fn pm_footstep_event_type(ps: &PlayerState, surface_flags: u32) -> i32 {
     EV_FOOTSTEP_WALK
 }
 
-pub fn pm_footstep_event(
+pub fn footstep_event(
     ps: &mut PlayerState,
     old: u8,
     new: u8,
@@ -348,7 +344,7 @@ pub fn pm_footstep_event(
     if !b_footstep {
         return false;
     }
-    let event = pm_footstep_event_type(ps, surface_flags);
+    let event = footstep_event_type(ps, surface_flags);
     if event == 0 {
         return false;
     }
@@ -356,8 +352,8 @@ pub fn pm_footstep_event(
     true
 }
 
-pub fn pm_ladder_footsteps(ps: &mut PlayerState, msec: i32, server_time: i32) -> bool {
-    if (ps.pm_flags & PMF_LADDER) == 0 {
+pub fn ladder_footsteps(ps: &mut PlayerState, msec: i32, server_time: i32) -> bool {
+    if (ps.pm_flags & pm_flags::LADDER) == 0 {
         return false;
     }
     if server_time.wrapping_sub(ps.jump_time) < LADDER_JUMP_BLOCK_MS {
@@ -379,7 +375,7 @@ pub fn pm_ladder_footsteps(ps: &mut PlayerState, msec: i32, server_time: i32) ->
     if !bob_cycle_wrapped(old, new) {
         return false;
     }
-    if ps.ground_entity_num != ENTITYNUM_NONE || (ps.pm_flags & PMF_LADDER) == 0 {
+    if ps.ground_entity_num != ENTITYNUM_NONE || (ps.pm_flags & pm_flags::LADDER) == 0 {
         return false;
     }
     add_predictable_event(ps, EV_FOOTSTEP_RUN, LADDER_SURFACE_TYPE as i32);

@@ -3,7 +3,7 @@ use asset_iw4::size as sz;
 use super::{AssetLinkSink, asset_ptr_at, asset_ptr_at_linked, copy_linked_material, follow_name};
 use crate::asset_type::AssetType;
 use crate::zone::{
-    ComWorldGeometry, FxWorldGeometry, GGlassDataGeometry, GfxLightDefGeometry, MapEntsGeometry,
+    ComWorldGeometry, FxWorldGeometry, GfxLightDefGeometry, GlassDataGeometry, MapEntsGeometry,
     Ptr, Result, XFILE_BLOCK_RUNTIME, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream,
 };
 
@@ -177,7 +177,7 @@ pub(super) fn load_gameworld_mp(s: &mut ZoneStream<'_>) -> Result<()> {
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
 
-    let mut geometry = GGlassDataGeometry::default();
+    let mut geometry = GlassDataGeometry::default();
     if s.begin_body(p.at(s.layout(4, 8)))? {
         let glass = s.alloc_load(4, s.layout(sz::G_GLASS_DATA, 144))?;
         let piece_count = s.u32_at(glass, s.layout(4, 8))? as usize;
@@ -198,7 +198,7 @@ pub(super) fn load_gameworld_mp(s: &mut ZoneStream<'_>) -> Result<()> {
                 _ => None,
             }
         };
-        geometry = GGlassDataGeometry {
+        geometry = GlassDataGeometry {
             data: Some(glass),
             piece_count,
             name_count,
@@ -207,7 +207,7 @@ pub(super) fn load_gameworld_mp(s: &mut ZoneStream<'_>) -> Result<()> {
         };
     } else if let ZonePtr::Offset(q) = s.ptr_at(p, s.layout(4, 8))? {
         let glass = s.resolve_alias(q);
-        geometry = GGlassDataGeometry {
+        geometry = GlassDataGeometry {
             data: Some(glass),
             piece_count: s.u32_at(glass, s.layout(4, 8))? as usize,
             name_count: s.u32_at(glass, s.layout(12, 16))? as usize,
@@ -360,7 +360,6 @@ fn load_vehicle_segment(s: &mut ZoneStream<'_>, seg: Ptr) -> Result<()> {
     Ok(())
 }
 
-/// Pointer form of `G_GlassData`, shared with `GameWorldMp`'s inline variant.
 fn load_glass_ptr(s: &mut ZoneStream<'_>, p: Ptr, field: usize) -> Result<()> {
     if !s.begin_body(p.at(field))? {
         return Ok(());

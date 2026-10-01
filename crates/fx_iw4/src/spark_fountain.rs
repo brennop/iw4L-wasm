@@ -1,5 +1,5 @@
-use crate::particle_cloud::{GfxPosTexVertex, fx_particle_spark_cell_indices};
-use crate::vec::fx_vec3_normalize;
+use crate::particle_cloud::{GfxPosTexVertex, particle_spark_cell_indices};
+use crate::vec::vec3_normalize;
 
 pub const FX_SPARK_FOUNTAIN_CLUSTER_STRIDE: usize = 0x40;
 
@@ -68,12 +68,12 @@ pub const FX_SPARK_FOUNTAIN_DEF_SIZE: usize = 52;
 pub const FX_SPARK_FOUNTAIN_DEF_OFF_SPARK_COUNT: usize = 0x14;
 
 #[inline]
-pub fn fx_spark_fountain_handle_for_slot(slot: u32) -> u16 {
+pub fn spark_fountain_handle_for_slot(slot: u32) -> u16 {
     (slot as usize * FX_SPARK_FOUNTAIN_CLUSTER_STRIDE) as u16
 }
 
 #[inline]
-pub fn fx_spark_fountain_slot_for_handle(handle: u16) -> Option<usize> {
+pub fn spark_fountain_slot_for_handle(handle: u16) -> Option<usize> {
     if handle == FX_SPARK_FOUNTAIN_HANDLE_NONE {
         return None;
     }
@@ -86,22 +86,22 @@ pub fn fx_spark_fountain_slot_for_handle(handle: u16) -> Option<usize> {
 }
 
 #[inline]
-pub fn fx_spark_fountain_reserve_verts(spark_count: u32) -> u32 {
+pub fn spark_fountain_reserve_verts(spark_count: u32) -> u32 {
     spark_count << 9
 }
 
 #[inline]
-pub fn fx_spark_fountain_index_count(cells_emitted: u32) -> u32 {
+pub fn spark_fountain_index_count(cells_emitted: u32) -> u32 {
     cells_emitted * FX_SPARK_FOUNTAIN_INDICES_PER_CELL
 }
 
 #[inline]
-pub fn fx_spark_fountain_prim_count(cells_emitted: u32) -> u32 {
-    fx_spark_fountain_index_count(cells_emitted) / 3
+pub fn spark_fountain_prim_count(cells_emitted: u32) -> u32 {
+    spark_fountain_index_count(cells_emitted) / 3
 }
 
 #[inline]
-pub fn fx_spark_fountain_def_allows_draw(spark_count: i32) -> bool {
+pub fn spark_fountain_def_allows_draw(spark_count: i32) -> bool {
     spark_count != 0
 }
 
@@ -118,17 +118,17 @@ pub const FX_SPARK_FOUNTAIN_CONE_DOT_GATE: f32 = 0.0;
 pub const FX_SPARK_FOUNTAIN_CONE_FLIP: f32 = -1.0;
 
 #[inline]
-pub fn fx_spark_fountain_draw_clouds_allows(draw_clouds: bool, scale: f32) -> bool {
+pub fn spark_fountain_draw_clouds_allows(draw_clouds: bool, scale: f32) -> bool {
     draw_clouds && scale != 0.0
 }
 
 #[inline]
-pub fn fx_spark_fountain_cluster_draw_allows(ready: u8, spark_n: u8, spark_count: i32) -> bool {
-    ready != 0 && spark_n != 0 && fx_spark_fountain_def_allows_draw(spark_count)
+pub fn spark_fountain_cluster_draw_allows(ready: u8, spark_n: u8, spark_count: i32) -> bool {
+    ready != 0 && spark_n != 0 && spark_fountain_def_allows_draw(spark_count)
 }
 
 #[inline]
-pub fn fx_spark_fountain_mark_ready(spark_n: u8, flags: i32) -> (u8, u8, u8) {
+pub fn spark_fountain_mark_ready(spark_n: u8, flags: i32) -> (u8, u8, u8) {
     let write = if (flags as u32 & FX_ELEM_FLAG_FOUNTAIN_WRITE_SPARK_N) != 0 {
         spark_n
     } else {
@@ -138,20 +138,20 @@ pub fn fx_spark_fountain_mark_ready(spark_n: u8, flags: i32) -> (u8, u8, u8) {
 }
 
 #[inline]
-pub fn fx_spark_fountain_accel_from_gravity(gravity: f32) -> [f32; 3] {
+pub fn spark_fountain_accel_from_gravity(gravity: f32) -> [f32; 3] {
     [0.0, 0.0, gravity]
 }
 
 #[inline]
-pub fn fx_spark_fountain_integrate_cell_begin(keyframe: u8) -> u32 {
+pub fn spark_fountain_integrate_cell_begin(keyframe: u8) -> u32 {
     u32::from(keyframe)
 }
 
-pub fn fx_spark_fountain_integrate_miss_cell(
+pub fn spark_fountain_integrate_miss_cell(
     origin: [f32; 3],
     vel: [f32; 3],
 ) -> ([f32; 4], [[f32; 3]; 4], [[f32; 3]; 4]) {
-    fx_spark_fountain_integrate_cell(
+    spark_fountain_integrate_cell(
         origin,
         vel,
         [0.0; 3],
@@ -161,7 +161,7 @@ pub fn fx_spark_fountain_integrate_miss_cell(
     )
 }
 
-pub fn fx_spark_fountain_integrate_cell(
+pub fn spark_fountain_integrate_cell(
     mut origin: [f32; 3],
     mut vel: [f32; 3],
     accel: [f32; 3],
@@ -183,7 +183,7 @@ pub fn fx_spark_fountain_integrate_cell(
             if i + 1 == FX_SPARK_FOUNTAIN_SAMPLES {
                 break;
             }
-            match fx_spark_fountain_trace_until_miss_or_hit(
+            match spark_fountain_trace_until_miss_or_hit(
                 remaining - t,
                 origin,
                 vel,
@@ -199,8 +199,8 @@ pub fn fx_spark_fountain_integrate_cell(
                 } => {
                     t += time;
                     origin = hit_o;
-                    let v_hit = fx_spark_fountain_vel_at_time(vel, accel, time);
-                    vel = fx_spark_fountain_bounce_vel(v_hit, normal, bounce_frac);
+                    let v_hit = spark_fountain_vel_at_time(vel, accel, time);
+                    vel = spark_fountain_bounce_vel(v_hit, normal, bounce_frac);
                 }
             }
         }
@@ -210,7 +210,7 @@ pub fn fx_spark_fountain_integrate_cell(
 }
 
 #[inline]
-pub fn fx_spark_fountain_trace_start(origin: [f32; 3], vel: [f32; 3], accel: [f32; 3]) -> [f32; 3] {
+pub fn spark_fountain_trace_start(origin: [f32; 3], vel: [f32; 3], accel: [f32; 3]) -> [f32; 3] {
     [
         origin[0]
             + vel[0] * FX_SPARK_FOUNTAIN_TRACE_LOOKAHEAD_VEL
@@ -225,7 +225,7 @@ pub fn fx_spark_fountain_trace_start(origin: [f32; 3], vel: [f32; 3], accel: [f3
 }
 
 #[inline]
-pub fn fx_spark_fountain_ballistic(
+pub fn spark_fountain_ballistic(
     origin: [f32; 3],
     vel: [f32; 3],
     accel: [f32; 3],
@@ -240,7 +240,7 @@ pub fn fx_spark_fountain_ballistic(
 }
 
 #[inline]
-pub fn fx_spark_fountain_hit_time(a: f32, b: f32, c: f32) -> f32 {
+pub fn spark_fountain_hit_time(a: f32, b: f32, c: f32) -> f32 {
     if FX_SPARK_FOUNTAIN_HIT_TIME_EPS <= libm::fabsf(a) {
         let disc = b * b - a * FX_SPARK_FOUNTAIN_HIT_TIME_FOUR * c;
         if disc < 0.0 {
@@ -268,7 +268,7 @@ pub fn fx_spark_fountain_hit_time(a: f32, b: f32, c: f32) -> f32 {
 }
 
 #[inline]
-pub fn fx_spark_fountain_hit_time_abs(
+pub fn spark_fountain_hit_time_abs(
     vel: [f32; 3],
     accel: [f32; 3],
     start: [f32; 3],
@@ -278,11 +278,11 @@ pub fn fx_spark_fountain_hit_time_abs(
     let a = accel[2] * FX_SPARK_FOUNTAIN_BALLISTIC_HALF;
     let b = accel[2] * prev_dt + vel[2];
     let c = start[2] - hit[2];
-    fx_spark_fountain_hit_time(a, b, c) + prev_dt
+    spark_fountain_hit_time(a, b, c) + prev_dt
 }
 
 #[inline]
-pub fn fx_spark_fountain_vel_at_time(vel: [f32; 3], accel: [f32; 3], t: f32) -> [f32; 3] {
+pub fn spark_fountain_vel_at_time(vel: [f32; 3], accel: [f32; 3], t: f32) -> [f32; 3] {
     [
         vel[0] + t * accel[0],
         vel[1] + t * accel[1],
@@ -291,7 +291,7 @@ pub fn fx_spark_fountain_vel_at_time(vel: [f32; 3], accel: [f32; 3], t: f32) -> 
 }
 
 #[inline]
-pub fn fx_spark_fountain_bounce_vel(vel: [f32; 3], normal: [f32; 3], bounce_frac: f32) -> [f32; 3] {
+pub fn spark_fountain_bounce_vel(vel: [f32; 3], normal: [f32; 3], bounce_frac: f32) -> [f32; 3] {
     let dot = vel[0] * normal[0] + vel[1] * normal[1] + vel[2] * normal[2];
     let s = (-bounce_frac + -bounce_frac) * dot;
     [
@@ -312,7 +312,7 @@ pub enum FxSparkFountainTrace {
     },
 }
 
-pub fn fx_spark_fountain_trace_until_miss_or_hit(
+pub fn spark_fountain_trace_until_miss_or_hit(
     remaining: f32,
     origin: [f32; 3],
     vel: [f32; 3],
@@ -321,12 +321,12 @@ pub fn fx_spark_fountain_trace_until_miss_or_hit(
 ) -> FxSparkFountainTrace {
     let mut dt = FX_SPARK_FOUNTAIN_TRACE_SUBSTEP;
     let mut prev_dt = FX_SPARK_FOUNTAIN_TRACE_LOOKAHEAD_VEL;
-    let mut start = fx_spark_fountain_trace_start(origin, vel, accel);
+    let mut start = spark_fountain_trace_start(origin, vel, accel);
     loop {
         if remaining <= dt {
             dt = remaining;
         }
-        let end = fx_spark_fountain_ballistic(origin, vel, accel, dt);
+        let end = spark_fountain_ballistic(origin, vel, accel, dt);
         let (fraction, normal) = on_trace(start, end);
         if fraction != 1.0 {
             let hit = [
@@ -334,7 +334,7 @@ pub fn fx_spark_fountain_trace_until_miss_or_hit(
                 start[1] + fraction * (end[1] - start[1]),
                 start[2] + fraction * (end[2] - start[2]),
             ];
-            let time = fx_spark_fountain_hit_time_abs(vel, accel, start, hit, prev_dt);
+            let time = spark_fountain_hit_time_abs(vel, accel, start, hit, prev_dt);
             return FxSparkFountainTrace::Hit {
                 fraction,
                 time,
@@ -351,7 +351,7 @@ pub fn fx_spark_fountain_trace_until_miss_or_hit(
     }
 }
 
-pub fn fx_spark_fountain_boost(boost_time: f32, boost_factor: f32, age: f32) -> (f32, f32) {
+pub fn spark_fountain_boost(boost_time: f32, boost_factor: f32, age: f32) -> (f32, f32) {
     if !(boost_time > 0.0) {
         return (age, 1.0);
     }
@@ -369,7 +369,7 @@ pub fn fx_spark_fountain_boost(boost_time: f32, boost_factor: f32, age: f32) -> 
     (warped, length_scale)
 }
 
-pub fn fx_spark_fountain_wrap_loop_time(t: f32, loop_time: f32) -> f32 {
+pub fn spark_fountain_wrap_loop_time(t: f32, loop_time: f32) -> f32 {
     if !(loop_time > 0.0) {
         return t;
     }
@@ -380,26 +380,26 @@ pub fn fx_spark_fountain_wrap_loop_time(t: f32, loop_time: f32) -> f32 {
     out
 }
 
-pub fn fx_spark_fountain_same_sample_ribbon(
+pub fn spark_fountain_same_sample_ribbon(
     origin: [f32; 3],
     vel: [f32; 3],
     gravity: f32,
     t0: f32,
     t_step: f32,
 ) -> [[f32; 3]; 4] {
-    let accel = fx_spark_fountain_accel_from_gravity(gravity);
+    let accel = spark_fountain_accel_from_gravity(gravity);
     let mut out = [[0.0f32; 3]; 4];
     let mut t = t0;
     let mut i = 0usize;
     while i < 4 {
-        out[i] = fx_spark_fountain_ballistic(origin, vel, accel, t);
+        out[i] = spark_fountain_ballistic(origin, vel, accel, t);
         t += t_step;
         i += 1;
     }
     out
 }
 
-pub fn fx_spark_fountain_sample_window(
+pub fn spark_fountain_sample_window(
     times: [f32; 4],
     t0: f32,
     wrapped: f32,
@@ -426,7 +426,7 @@ pub fn fx_spark_fountain_sample_window(
     Some((i13, i12, t0))
 }
 
-pub fn fx_spark_fountain_generate_ribbon(
+pub fn spark_fountain_generate_ribbon(
     times: [f32; 4],
     origins: [[f32; 3]; 4],
     vels: [[f32; 3]; 4],
@@ -434,7 +434,7 @@ pub fn fx_spark_fountain_generate_ribbon(
     t0: f32,
     wrapped: f32,
 ) -> Option<([[f32; 3]; 4], [f32; 4])> {
-    let (i13, i12, t0) = fx_spark_fountain_sample_window(times, t0, wrapped)?;
+    let (i13, i12, t0) = spark_fountain_sample_window(times, t0, wrapped)?;
     if i13 == i12 {
         if i12 == 4 {
             let p = origins[3];
@@ -444,7 +444,7 @@ pub fn fx_spark_fountain_generate_ribbon(
         let g = if i13 == 4 { 0.0 } else { gravity };
         let dt0 = t0 - times[si];
         let t_step = (wrapped - t0) / FX_SPARK_FOUNTAIN_TRACE_GROW;
-        let ribbon = fx_spark_fountain_same_sample_ribbon(origins[si], vels[si], g, dt0, t_step);
+        let ribbon = spark_fountain_same_sample_ribbon(origins[si], vels[si], g, dt0, t_step);
         return Some((ribbon, [0.0; 4]));
     }
     let a = i13 - 1;
@@ -452,7 +452,7 @@ pub fn fx_spark_fountain_generate_ribbon(
     let inv_len = 1.0 / (wrapped - t0);
     let dt_step_a = (t_mid - t0) * FX_SPARK_FOUNTAIN_BALLISTIC_HALF;
     let g_a = if i13 != 4 { gravity } else { 0.0 };
-    let accel_a = fx_spark_fountain_accel_from_gravity(g_a);
+    let accel_a = spark_fountain_accel_from_gravity(g_a);
     let mut dt = t0 - times[a];
     let mut uv = 0.0f32;
     let mut ribbon = [[0.0f32; 3]; 4];
@@ -460,7 +460,7 @@ pub fn fx_spark_fountain_generate_ribbon(
     let mut i = 0usize;
     while i < 2 {
         uv_v_lerp[i] = uv;
-        ribbon[i] = fx_spark_fountain_ballistic(origins[a], vels[a], accel_a, dt);
+        ribbon[i] = spark_fountain_ballistic(origins[a], vels[a], accel_a, dt);
         dt += dt_step_a;
         uv += dt_step_a * inv_len;
         i += 1;
@@ -479,7 +479,7 @@ pub fn fx_spark_fountain_generate_ribbon(
         let mut dt_b = 0.0f32;
         while i < 4 {
             uv_v_lerp[i] = uv;
-            ribbon[i] = fx_spark_fountain_ballistic(origins[b], vels[b], [0.0; 3], dt_b);
+            ribbon[i] = spark_fountain_ballistic(origins[b], vels[b], [0.0; 3], dt_b);
             dt_b += dt_step_b;
             uv += dt_step_b * inv_len;
             i += 1;
@@ -489,7 +489,7 @@ pub fn fx_spark_fountain_generate_ribbon(
 }
 
 #[inline]
-pub fn fx_spark_fountain_update_keyframe_cursor(
+pub fn spark_fountain_update_keyframe_cursor(
     write_spark: u8,
     keyframe: u8,
     spark_n: u8,
@@ -506,13 +506,13 @@ pub fn fx_spark_fountain_update_keyframe_cursor(
 }
 
 #[inline]
-pub fn fx_spark_fountain_cone_is_isotropic(vel_cone_frac: f32) -> bool {
+pub fn spark_fountain_cone_is_isotropic(vel_cone_frac: f32) -> bool {
     vel_cone_frac == 1.0
 }
 
 #[inline]
-pub fn fx_spark_fountain_isotropic_dir(rand_xyz: [i32; 3]) -> [f32; 3] {
-    crate::vec::fx_vec3_normalize([
+pub fn spark_fountain_isotropic_dir(rand_xyz: [i32; 3]) -> [f32; 3] {
+    crate::vec::vec3_normalize([
         rand_xyz[0] as f32 * FX_SPARK_FOUNTAIN_RAND_CUBE - 1.0,
         rand_xyz[1] as f32 * FX_SPARK_FOUNTAIN_RAND_CUBE - 1.0,
         rand_xyz[2] as f32 * FX_SPARK_FOUNTAIN_RAND_CUBE - 1.0,
@@ -520,9 +520,9 @@ pub fn fx_spark_fountain_isotropic_dir(rand_xyz: [i32; 3]) -> [f32; 3] {
 }
 
 #[inline]
-pub fn fx_spark_fountain_cone_dir(axis: [f32; 3], cube: [f32; 3], vel_cone_frac: f32) -> [f32; 3] {
-    let axis = fx_vec3_normalize(axis);
-    let cube = fx_vec3_normalize(cube);
+pub fn spark_fountain_cone_dir(axis: [f32; 3], cube: [f32; 3], vel_cone_frac: f32) -> [f32; 3] {
+    let axis = vec3_normalize(axis);
+    let cube = vec3_normalize(cube);
     let dot = cube[0] * axis[0] + cube[1] * axis[1] + cube[2] * axis[2];
     let sign = if FX_SPARK_FOUNTAIN_CONE_DOT_GATE <= dot {
         1.0
@@ -531,7 +531,7 @@ pub fn fx_spark_fountain_cone_dir(axis: [f32; 3], cube: [f32; 3], vel_cone_frac:
     };
     let keep = 1.0 - vel_cone_frac;
     let mix = vel_cone_frac * sign;
-    fx_vec3_normalize([
+    vec3_normalize([
         keep * axis[0] + mix * cube[0],
         keep * axis[1] + mix * cube[1],
         keep * axis[2] + mix * cube[2],
@@ -539,27 +539,27 @@ pub fn fx_spark_fountain_cone_dir(axis: [f32; 3], cube: [f32; 3], vel_cone_frac:
 }
 
 #[inline]
-pub fn fx_spark_fountain_spray_dir(
+pub fn spark_fountain_spray_dir(
     axis: [f32; 3],
     rand_xyz: [i32; 3],
     vel_cone_frac: f32,
 ) -> [f32; 3] {
-    let cube = fx_spark_fountain_isotropic_dir(rand_xyz);
-    if fx_spark_fountain_cone_is_isotropic(vel_cone_frac) {
+    let cube = spark_fountain_isotropic_dir(rand_xyz);
+    if spark_fountain_cone_is_isotropic(vel_cone_frac) {
         cube
     } else {
-        fx_spark_fountain_cone_dir(axis, cube, vel_cone_frac)
+        spark_fountain_cone_dir(axis, cube, vel_cone_frac)
     }
 }
 
 #[inline]
-pub fn fx_spark_fountain_speed(rand: i32, vel_min: f32, vel_max: f32) -> f32 {
+pub fn spark_fountain_speed(rand: i32, vel_min: f32, vel_max: f32) -> f32 {
     (rand as f32 / crate::particle_cloud::FX_PARTICLE_CLOUD_CRT_RAND_MAX) * (vel_max - vel_min)
         + vel_min
 }
 
 #[inline]
-pub fn fx_spark_fountain_spark_n_clamped(spark_count: i32) -> u8 {
+pub fn spark_fountain_spark_n_clamped(spark_count: i32) -> u8 {
     if spark_count <= 0 {
         0
     } else {
@@ -568,7 +568,7 @@ pub fn fx_spark_fountain_spark_n_clamped(spark_count: i32) -> u8 {
 }
 
 #[inline]
-pub fn fx_spark_fountain_atlas_uv(col_bits: u8, row_bits: u8, cell: u32) -> [f32; 4] {
+pub fn spark_fountain_atlas_uv(col_bits: u8, row_bits: u8, cell: u32) -> [f32; 4] {
     let cols = 1u32 << (col_bits & 0x1f);
     let rows = 1u32 << (row_bits & 0x1f);
     let u_span = 1.0 / cols as f32;
@@ -581,12 +581,12 @@ pub fn fx_spark_fountain_atlas_uv(col_bits: u8, row_bits: u8, cell: u32) -> [f32
 pub const R_PARTICLE_CLOUD_CUSTOM_CAP: u32 = 0x40;
 
 #[inline]
-pub fn r_add_particle_cloud_custom_allows(live: u32) -> bool {
+pub fn add_particle_cloud_custom_allows(live: u32) -> bool {
     live < R_PARTICLE_CLOUD_CUSTOM_CAP
 }
 
 #[inline]
-pub fn r_reserve_particle_cloud_verts_allows(
+pub fn reserve_particle_cloud_verts_allows(
     used: u32,
     vert_stride: u32,
     vert_count: u32,
@@ -606,7 +606,7 @@ const FX_SPARK_FOUNTAIN_HALF: f32 = 0.5;
 const FX_SPARK_FOUNTAIN_SIDE_NUDGE: f32 = 0.01;
 
 #[inline]
-fn fx_cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -614,7 +614,7 @@ fn fx_cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-pub fn fx_spark_fountain_cell_verts(
+pub fn spark_fountain_cell_verts(
     ribbon: [[f32; 3]; 4],
     camera: [f32; 3],
     size0: f32,
@@ -634,17 +634,17 @@ pub fn fx_spark_fountain_cell_verts(
             ribbon[i + 1][1] - ribbon[i][1],
             ribbon[i + 1][2] - ribbon[i][2],
         ];
-        let d = fx_vec3_normalize(d);
+        let d = vec3_normalize(d);
         let to_cam = [
             camera[0] - ribbon[i][0],
             camera[1] - ribbon[i][1],
             camera[2] - ribbon[i][2],
         ];
-        let mut s = fx_cross(d, to_cam);
+        let mut s = cross(d, to_cam);
         s[0] += FX_SPARK_FOUNTAIN_SIDE_NUDGE;
-        s = fx_vec3_normalize(s);
-        let mut n = fx_cross(to_cam, s);
-        n = fx_vec3_normalize(n);
+        s = vec3_normalize(s);
+        let mut n = cross(to_cam, s);
+        n = vec3_normalize(n);
         side[i] = [s[0] * half, s[1] * half, s[2] * half];
         nrm[i] = [n[0] * half, n[1] * half, n[2] * half];
         i += 1;
@@ -714,6 +714,6 @@ pub fn fx_spark_fountain_cell_verts(
 }
 
 #[inline]
-pub fn fx_spark_fountain_cell_indices(cell: u32) -> [u16; 18] {
-    fx_particle_spark_cell_indices(cell)
+pub fn spark_fountain_cell_indices(cell: u32) -> [u16; 18] {
+    particle_spark_cell_indices(cell)
 }

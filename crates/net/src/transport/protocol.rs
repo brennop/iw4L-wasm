@@ -154,7 +154,7 @@ impl core::fmt::Display for HandshakeReject {
             ),
             Self::ClassRegistry { ours, theirs } => write!(
                 f,
-                "class table mismatch ours={ours:016x} theirs={theirs:016x}"
+                "class catalog mismatch ours={ours:016x} theirs={theirs:016x}"
             ),
             Self::TickRate { ours, theirs } => {
                 write!(f, "tick rate ours={ours} theirs={theirs}")

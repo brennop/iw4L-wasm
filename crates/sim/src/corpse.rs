@@ -1,9 +1,9 @@
 use crate::frame::FrameWorld;
 use crate::world::ClientId;
-use entity_iw4::{TR_GRAVITY, TR_INTERPOLATE, Trajectory, bg_evaluate_trajectory};
+use entity_iw4::{TR_GRAVITY, TR_INTERPOLATE, Trajectory, evaluate_trajectory};
 use playerstate_iw4::{
-    AnimPair, LINK_FLAGS_FORCE_THIRD_PERSON, MAX_CLIENT_CORPSES, PLAYER_CORPSE_ENTITY_BASE,
-    PlayerState,
+    AnimPair, ENTITYNUM_NONE, LINK_FLAGS_FORCE_THIRD_PERSON, MAX_CLIENT_CORPSES,
+    PLAYER_CORPSE_ENTITY_BASE, PlayerState,
 };
 
 use crate::bullet_collision::{MASK_PLAYER_SOLID, PLAYER_MAXS, PLAYER_MINS};
@@ -54,7 +54,7 @@ impl Default for PlayerCorpseSlot {
             tr_delta: [0.0; 3],
             tr_base: [0.0; 3],
             falling: false,
-            ground_entity_num: i32::from(trace_iw4::ENTITYNUM_NONE),
+            ground_entity_num: ENTITYNUM_NONE,
         }
     }
 }
@@ -257,7 +257,7 @@ pub(crate) fn phase_run_corpse_move(world: &mut FrameWorld, time_ms: i32) {
             continue;
         }
 
-        let mut desired = bg_evaluate_trajectory(&slot.trajectory(), time_ms);
+        let mut desired = evaluate_trajectory(&slot.trajectory(), time_ms);
         let world_delta = anim_delta.map(|delta| corpse_anim_world_delta(slot.viewangles, delta));
         if let Some(world_delta) = world_delta {
             for axis in 0..3 {
@@ -418,7 +418,7 @@ pub(crate) fn sync_corpse_info_player_anims(world: &mut FrameWorld, slot: usize)
         torso_pitch: 0,
         waist_pitch: 0,
     };
-    let Some(copied) = entity_iw4::g_corpse_info_copy_player_anims(false, src) else {
+    let Some(copied) = entity_iw4::corpse_info::copy_player_anims(false, src) else {
         return;
     };
     let slot = &mut world.corpses_mut().slots[slot];

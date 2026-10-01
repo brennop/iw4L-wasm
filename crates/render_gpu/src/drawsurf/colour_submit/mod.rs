@@ -32,9 +32,8 @@ use bevy::render::{Render, RenderSystems};
 use super::ExtractedRenderFrameProducts;
 use super::backend::{
     ModelIndexRingCopyRefuse, ModelIndexStream, PackDraw, PackedEmit, PackedListKind,
-    SmodelRigidFlush, pack_sun_shadow_frontend, prim_args_from_world_flush,
-    prim_args_u32_index_span, r_draw_spot_shadow_map, r_draw_sun_shadow_map_forced,
-    r_draw_surf_list_work_colour,
+    SmodelRigidFlush, draw_spot_shadow_map, draw_sun_shadow_map_forced, draw_surf_list_work_colour,
+    pack_sun_shadow_frontend, prim_args_from_world_flush, prim_args_u32_index_span,
 };
 use super::depth_range::{
     GFX_DEPTH_RANGE_VIEWMODEL, depth_range_type_for_draw, reverse_z_viewport_depth,
@@ -50,7 +49,7 @@ use super::gpu_prepare::{
     ConstantPackRefusal, PassConstantBuffers, overlay_packed_code_on_banks, split_bind_layout,
 };
 use super::gpu_resources::{
-    RetailSamplerTable, RuntimeProgramPortGpuExt, RuntimeUploadedImageRegistry, TextureBindRefusal,
+    RuntimeProgramPortGpuExt, RuntimeUploadedImageRegistry, SamplerTable, TextureBindRefusal,
     UploadedTextureBind, padded_upload_len, write_buffer_padded,
 };
 use super::shadowmap_spot_gpu::{
@@ -106,11 +105,11 @@ pub struct ExtractedStaticGeometry {
     pub world_layer: Arc<Vec<u8>>,
     pub world_indices: Arc<Vec<u32>>,
     pub world_surface_ranges: Arc<Vec<(u32, u32)>>,
-    pub world_vertex_refusal: Option<render_frame::RetailWorldVertexRefusal>,
+    pub world_vertex_refusal: Option<render_frame::WorldVertexRefusal>,
     pub smodel_vertices: Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>,
     pub smodel_indices: Arc<Vec<u32>>,
     pub smodel_surface_ranges: Arc<Vec<(u32, u32)>>,
-    pub smodel_vertex_refusal: Option<render_frame::RetailPackedVertexRefusal>,
+    pub smodel_vertex_refusal: Option<render_frame::PackedVertexRefusal>,
     pub smodel_cached_vertices: Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>,
     pub smodel_surface_verts: Arc<Vec<(u32, u32)>>,
 }
@@ -145,7 +144,7 @@ pub struct RenderWorldData {
     pub smodel_pretess_indices: std::sync::Arc<Vec<u16>>,
     pub smodel_index_layout_revision: u64,
     pub smc_index_baked: Arc<Vec<u16>>,
-    pub sampler_table: Option<RetailSamplerTable>,
+    pub sampler_table: Option<SamplerTable>,
     pub image_handles: super::gpu_resources::RuntimeImageHandles,
     pub catalog: Option<Arc<RuntimeMaterialCatalog>>,
     pub prepared: Option<Arc<PreparedMaterialTable>>,
@@ -199,11 +198,11 @@ pub struct RenderFrameData {
     pub xmodel_vertices: Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>,
     pub xmodel_indices: Arc<Vec<u32>>,
     pub xmodel_surface_ranges: Arc<Vec<(u32, u32)>>,
-    pub xmodel_vertex_refusal: Option<render_frame::RetailPackedVertexRefusal>,
+    pub xmodel_vertex_refusal: Option<render_frame::PackedVertexRefusal>,
     pub fx_vertices: Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>,
     pub fx_indices: Arc<Vec<u32>>,
     pub fx_surface_ranges: Arc<Vec<(u32, u32)>>,
-    pub fx_vertex_refusal: Option<render_frame::RetailPackedVertexRefusal>,
+    pub fx_vertex_refusal: Option<render_frame::PackedVertexRefusal>,
     pub fx_revision: u64,
     pub xmodel_revision: u64,
     pub xmodel_topology_revision: u64,
@@ -221,7 +220,7 @@ pub struct RenderFrameData {
     pub glass_mesh_indices: Arc<Vec<u32>>,
     pub glass_mesh_surface_ranges: Arc<Vec<(u32, u32)>>,
     pub glass_mesh_revision: u64,
-    pub glass_mesh_vertex_refusal: Option<render_frame::RetailPackedVertexRefusal>,
+    pub glass_mesh_vertex_refusal: Option<render_frame::PackedVertexRefusal>,
     pub glass_mesh_bounds: Arc<Vec<[f32; 4]>>,
     pub exec_frame: MaterialExecFrame,
 }
@@ -256,6 +255,7 @@ struct ExactColourGeometry {
     world_products: frame::WorldProducts,
     world_vertex: Option<Buffer>,
     world_layer: Option<Buffer>,
+    world_effect: Option<Buffer>,
     world_index: Option<Buffer>,
     world_surface_ranges: Vec<(u32, u32)>,
     world_vertex_count: usize,
@@ -722,8 +722,8 @@ enum GpuSubmitRefusal {
     MultipleCameraViews {
         views: u32,
     },
-    WorldVertex(render_frame::RetailWorldVertexRefusal),
-    PackedVertex(render_frame::RetailPackedVertexRefusal),
+    WorldVertex(render_frame::WorldVertexRefusal),
+    PackedVertex(render_frame::PackedVertexRefusal),
     MissingSurfaceRange {
         surf: u16,
     },
@@ -804,76 +804,80 @@ pub(super) struct ExactColourSubmitCensus {
     ready_draws: u32,
     refused_draws: u32,
     log_frame: u32,
-
     pub submitted_keys: Vec<u64>,
-
     pub world_exec_ready_keys: Vec<u64>,
+    gpu_ready: Option<u32>,
+    pub set_bind_group0_n: Option<u32>,
+    pub set_bind_group1_n: Option<u32>,
+    pub material_runs_n: Option<u32>,
+    pub pass_setups_n: Option<u32>,
+    pub obj_binds_n: Option<u32>,
+    pub shell_hits_n: Option<u32>,
+    pub shell_misses_n: Option<u32>,
+    pub overlay_const_writes_n: Option<u32>,
+    pub overlay_need_known_n: Option<u32>,
+    code_mesh_gpu_kind: Option<i32>,
+    sun_shadow_prepare_ms: Option<f32>,
+    sun_shadow_patch_ms: Option<f32>,
+    sun_shadow_arena_ms: Option<f32>,
+    sun_shadow_record_ms: Option<f32>,
+    sun_shadow_finish_ms: Option<f32>,
+    sun_shadow_queue_ms: Option<f32>,
+    sun_shadow_unnamed_ms: Option<f32>,
+    sun_shadow_static_hit: Option<u32>,
+    sun_shadow_static_n: Option<u32>,
+    sun_shadow_dynamic_n: Option<u32>,
+    sun_shadow_wvp_intern_hit: Option<u32>,
+    sun_shadow_wvp_intern_miss: Option<u32>,
+    sun_shadow_wvp_intern_n: Option<u32>,
+    sun_shadow_wvp_unique_base: Option<u32>,
+    sun_shadow_wvp_unique_wvp: Option<u32>,
+    sun_shadow_state_pipe_n: Option<u32>,
+    sun_shadow_state_tess_n: Option<u32>,
+    sun_shadow_state_bind_n: Option<u32>,
+    sun_shadow_state_off_n: Option<u32>,
+    sun_shadow_state_group_n: Option<u32>,
+    sun_shadow_state_run_n: Option<u32>,
+    sun_shadow_state_run_max: Option<u32>,
+    sun_shadow_state_top10: Option<u32>,
+    frame: ExactColourFrameCensus,
+}
 
+#[derive(Default)]
+struct ExactColourFrameCensus {
     pub bsp_submitted_surfaces: [u32; 4],
-
     pub bsp_submit_refused_surfaces: [u32; 4],
-
     pub bsp_drawn_surfaces: [u32; 4],
-
     pub bsp_draw_refused_surfaces: [u32; 4],
     submit_prepare_ms: Option<f32>,
-
     colour_submit_ms: Option<f32>,
-
     submit_encode_ms: Option<f32>,
-
     submit_gather_ms: Option<f32>,
-
     pass_end_ms: Option<f32>,
-
     encoder_finish_ms: Option<f32>,
-
     submit_arena_ms: Option<f32>,
-
     submit_record_ms: Option<f32>,
-
     pack_intern_hit_n: Option<u32>,
-
     pack_intern_miss_n: Option<u32>,
-
     pack_arena_share_n: Option<u32>,
-
     gpu_exec_reuse_n: Option<u32>,
-
     gpu_exec_unique_n: Option<u32>,
-
     pack_overlay_n: Option<u32>,
-
     pack_overlay_row_n: Option<u32>,
-
     pack_overlay_pixel_share_n: Option<u32>,
-
     pack_arena_vertex_n: Option<u32>,
-
     pack_arena_pixel_n: Option<u32>,
-
     pack_seed_n: Option<u32>,
-
     pack_walk_n: Option<u32>,
-
     tex_bind_hit_n: Option<u32>,
-
     tex_bind_miss_n: Option<u32>,
-
     markmesh_hits: Option<u32>,
-
     markmesh_prepared: Option<u32>,
-
     last_markmesh_refusal: Option<String>,
-
     last_markmesh_exec_skip: Option<String>,
-
     markmesh_missing_58: Option<u32>,
-
     last_mark_packed_custom: Option<u8>,
-
     last_mark_packed_scene_light: Option<u8>,
-
     last_mark_lmap_sampler: Option<u32>,
     glassmesh_hits: Option<u32>,
     glassmesh_prepared: Option<u32>,
@@ -881,308 +885,77 @@ pub(super) struct ExactColourSubmitCensus {
     last_glassmesh_refusal: Option<String>,
     last_glass_packed_probe: Option<u8>,
     last_glass_probe_sampler: Option<u32>,
-
-    gpu_ready: Option<u32>,
-
-    pub set_bind_group0_n: Option<u32>,
-
-    pub set_bind_group1_n: Option<u32>,
-
-    pub material_runs_n: Option<u32>,
-
-    pub pass_setups_n: Option<u32>,
-
-    pub obj_binds_n: Option<u32>,
-
-    pub shell_hits_n: Option<u32>,
-
-    pub shell_misses_n: Option<u32>,
-
-    pub overlay_const_writes_n: Option<u32>,
-
-    pub overlay_need_known_n: Option<u32>,
-
     set_bind_group_n: Option<u32>,
-
     pub set_state_n: Option<u32>,
-
     pub multi_draw_n: Option<u32>,
     pub multi_draw_commands_n: Option<u32>,
-
     gpu_prepared: Option<u32>,
-
     gpu_world_ready: Option<u32>,
-
     gpu_smodel_ready: Option<u32>,
-
     gpu_xmodel_ready: Option<u32>,
-
     end_depth_restore_n: Option<u32>,
-
     end_depth_range_type: Option<i32>,
-
-    code_mesh_gpu_kind: Option<i32>,
-
     sun_shadow_gpu: Option<u32>,
-
     sun_shadow_gpu_miss: Option<u32>,
-
     sun_shadow_gpu_cause: Option<String>,
-
     sun_shadow_gpu_causes: Option<String>,
-
     spot_shadow_gpu: Option<u32>,
     spot_shadow_gpu_miss: Option<u32>,
     spot_shadow_gpu_cause: Option<String>,
     spot_shadow_slot_n: Option<u32>,
-
     sun_shadow_submit_ms: Option<f32>,
-
-    sun_shadow_prepare_ms: Option<f32>,
-
-    sun_shadow_patch_ms: Option<f32>,
-
-    sun_shadow_arena_ms: Option<f32>,
-
-    sun_shadow_record_ms: Option<f32>,
-
-    sun_shadow_finish_ms: Option<f32>,
-
-    sun_shadow_queue_ms: Option<f32>,
-
-    sun_shadow_unnamed_ms: Option<f32>,
-
-    sun_shadow_static_hit: Option<u32>,
-
     sun_shadow_world_ib_n: Option<u32>,
-
-    sun_shadow_static_n: Option<u32>,
-
-    sun_shadow_dynamic_n: Option<u32>,
-
-    sun_shadow_wvp_intern_hit: Option<u32>,
-
-    sun_shadow_wvp_intern_miss: Option<u32>,
-
-    sun_shadow_wvp_intern_n: Option<u32>,
-
-    sun_shadow_wvp_unique_base: Option<u32>,
-
-    sun_shadow_wvp_unique_wvp: Option<u32>,
-
-    sun_shadow_state_pipe_n: Option<u32>,
-
-    sun_shadow_state_tess_n: Option<u32>,
-
-    sun_shadow_state_bind_n: Option<u32>,
-
-    sun_shadow_state_off_n: Option<u32>,
-
-    sun_shadow_state_group_n: Option<u32>,
-
-    sun_shadow_state_run_n: Option<u32>,
-
-    sun_shadow_state_run_max: Option<u32>,
-
-    sun_shadow_state_top10: Option<u32>,
-
     world_index_gaps: Option<u32>,
-
     world_run_indices_n: Option<u32>,
-
     world_material_runs: Option<u32>,
-
     world_material_runs_seq: Option<u32>,
-
     world_key_runs: Option<u32>,
-
     world_key_runs_seq: Option<u32>,
-
     world_mixed_breaks: Option<u32>,
-
     world_gathered: Option<u32>,
-
     world_ib_skip: Option<u32>,
-
     world_gpu_runs: Option<u32>,
-
     world_gpu_runs_seq: Option<u32>,
-
     world_sampler_runs_seq: Option<u32>,
-
     world_probe_runs_seq: Option<u32>,
-
     world_light_runs_seq: Option<u32>,
-
     smodel_reuse_n: Option<u32>,
-
     xmodel_reuse_n: Option<u32>,
-
     xmodel_material_runs: Option<u32>,
-
     smodel_index_gaps: Option<u32>,
-
     smodel_material_runs: Option<u32>,
-
     smodel_material_runs_seq: Option<u32>,
-
     smodel_material_run_max: Option<u32>,
-
     smodel_same_surface_n: Option<u32>,
-
     smodel_unique_surfaces: Option<u32>,
-
     smodel_hits: Option<u32>,
-
     smodel_lighting_runs: Option<u32>,
     smodel_lighting_run_max: Option<u32>,
-
     smodel_pretess_runs: Option<u32>,
     smodel_pretess_hits: Option<u32>,
     smodel_pretess_verts: Option<u32>,
     smodel_pretess_indices: Option<u32>,
-
     smodel_cached_lighting: Option<u32>,
-
     smodel_pretess_local: Option<u32>,
-
     smodel_pretess_length1: Option<u32>,
-
     smodel_pretess_skip: Option<u32>,
-
     submit_cause: Option<String>,
-
     submit_cause2: Option<String>,
-
     gpu_not_ready_n: Option<u32>,
-
     gpu_no_port_n: Option<u32>,
-
     pnr_smodel_mat: Option<String>,
-
     pnr_world_mat: Option<String>,
-
     pnr_smodel_ps: Option<String>,
-
     pnr_world_ps: Option<String>,
-
     pnr_smodel_key_n: Option<u32>,
-
     pnr_world_key_n: Option<u32>,
-
     pnr_port_n: Option<u32>,
-
     gpu_smodel_bind_mat: Option<String>,
 }
 
 fn reset_exact_colour_census(census: &mut ExactColourSubmitCensus) {
     census.submitted_keys.clear();
-    census.bsp_submitted_surfaces = [0; 4];
-    census.bsp_submit_refused_surfaces = [0; 4];
-    census.bsp_drawn_surfaces = [0; 4];
-    census.bsp_draw_refused_surfaces = [0; 4];
-    census.submit_prepare_ms = None;
-    census.colour_submit_ms = None;
-    census.submit_encode_ms = None;
-    census.submit_gather_ms = None;
-    census.pass_end_ms = None;
-    census.encoder_finish_ms = None;
-    census.submit_arena_ms = None;
-    census.submit_record_ms = None;
-    census.pack_intern_hit_n = None;
-    census.pack_intern_miss_n = None;
-    census.pack_arena_share_n = None;
-    census.gpu_exec_reuse_n = None;
-    census.gpu_exec_unique_n = None;
-    census.pack_overlay_n = None;
-    census.pack_overlay_row_n = None;
-    census.pack_overlay_pixel_share_n = None;
-    census.pack_arena_vertex_n = None;
-    census.pack_arena_pixel_n = None;
-    census.pack_seed_n = None;
-    census.pack_walk_n = None;
-    census.tex_bind_hit_n = None;
-    census.tex_bind_miss_n = None;
-    census.markmesh_hits = None;
-    census.markmesh_prepared = None;
-    census.last_markmesh_refusal = None;
-    census.last_markmesh_exec_skip = None;
-    census.markmesh_missing_58 = None;
-    census.last_mark_packed_custom = None;
-    census.last_mark_packed_scene_light = None;
-    census.last_mark_lmap_sampler = None;
-    census.glassmesh_hits = None;
-    census.glassmesh_prepared = None;
-    census.last_glassmesh_exec_skip = None;
-    census.last_glassmesh_refusal = None;
-    census.last_glass_packed_probe = None;
-    census.last_glass_probe_sampler = None;
-    census.gpu_prepared = None;
-    census.gpu_world_ready = None;
-    census.gpu_smodel_ready = None;
-    census.gpu_xmodel_ready = None;
-    census.end_depth_restore_n = None;
-    census.end_depth_range_type = None;
-    census.submit_cause = None;
-    census.submit_cause2 = None;
-    census.gpu_not_ready_n = None;
-    census.gpu_no_port_n = None;
-    census.pnr_smodel_mat = None;
-    census.pnr_world_mat = None;
-    census.pnr_smodel_ps = None;
-    census.pnr_world_ps = None;
-    census.pnr_smodel_key_n = None;
-    census.pnr_world_key_n = None;
-    census.pnr_port_n = None;
-    census.gpu_smodel_bind_mat = None;
-    census.world_index_gaps = None;
-    census.world_run_indices_n = None;
-    census.world_material_runs = None;
-    census.world_material_runs_seq = None;
-    census.world_key_runs = None;
-    census.world_key_runs_seq = None;
-    census.world_mixed_breaks = None;
-    census.world_gathered = None;
-    census.world_ib_skip = None;
-    census.world_gpu_runs = None;
-    census.world_gpu_runs_seq = None;
-    census.world_sampler_runs_seq = None;
-    census.world_probe_runs_seq = None;
-    census.world_light_runs_seq = None;
-    census.smodel_reuse_n = None;
-    census.xmodel_reuse_n = None;
-    census.xmodel_material_runs = None;
-    census.smodel_index_gaps = None;
-    census.smodel_material_runs = None;
-    census.smodel_material_runs_seq = None;
-    census.smodel_material_run_max = None;
-    census.smodel_same_surface_n = None;
-    census.smodel_unique_surfaces = None;
-    census.smodel_hits = None;
-    census.smodel_lighting_runs = None;
-    census.smodel_lighting_run_max = None;
-    census.smodel_pretess_runs = None;
-    census.smodel_pretess_hits = None;
-    census.smodel_pretess_verts = None;
-    census.smodel_pretess_indices = None;
-    census.smodel_cached_lighting = None;
-    census.smodel_pretess_local = None;
-    census.smodel_pretess_length1 = None;
-    census.smodel_pretess_skip = None;
-    census.set_bind_group_n = None;
-    census.set_state_n = None;
-    census.multi_draw_n = None;
-    census.multi_draw_commands_n = None;
-    census.sun_shadow_gpu = None;
-    census.sun_shadow_submit_ms = None;
-    census.sun_shadow_gpu_miss = None;
-    census.sun_shadow_gpu_cause = None;
-    census.sun_shadow_gpu_causes = None;
-    census.spot_shadow_gpu = None;
-    census.spot_shadow_gpu_miss = None;
-    census.spot_shadow_gpu_cause = None;
-    census.spot_shadow_slot_n = None;
-    census.sun_shadow_world_ib_n = None;
+    census.frame = ExactColourFrameCensus::default();
 }
 
 fn exec_tables(
@@ -1488,27 +1261,44 @@ pub fn bind_group_layout_from_entries(
 pub fn vertex_layouts_from_contract(
     layout: &super::gpu_contract::WgpuPassLayout,
 ) -> Vec<VertexBufferLayout> {
-    layout
+    let last_stream = layout
         .vertex_buffers
         .iter()
-        .map(|buffer| VertexBufferLayout {
-            array_stride: buffer.array_stride,
-            step_mode: VertexStepMode::Vertex,
-            attributes: buffer
-                .attributes
+        .map(|buffer| buffer.stream)
+        .max();
+    (0..last_stream.map_or(0, |stream| usize::from(stream) + 1))
+        .map(|stream| {
+            let Some(buffer) = layout
+                .vertex_buffers
                 .iter()
-                .map(|attribute| VertexAttribute {
-                    format: match attribute.format {
-                        WgpuVertexFormat::Float32x2 => VertexFormat::Float32x2,
-                        WgpuVertexFormat::Float32x3 => VertexFormat::Float32x3,
-                        WgpuVertexFormat::Float32x4 => VertexFormat::Float32x4,
-                        WgpuVertexFormat::Unorm8x4 => VertexFormat::Unorm8x4,
-                        WgpuVertexFormat::Uint8x4 => VertexFormat::Uint8x4,
-                    },
-                    offset: attribute.offset,
-                    shader_location: attribute.location,
-                })
-                .collect(),
+                .find(|buffer| usize::from(buffer.stream) == stream)
+            else {
+                return VertexBufferLayout {
+                    array_stride: 0,
+                    step_mode: VertexStepMode::Vertex,
+                    attributes: Vec::new(),
+                };
+            };
+            VertexBufferLayout {
+                array_stride: buffer.array_stride,
+                step_mode: VertexStepMode::Vertex,
+                attributes: buffer
+                    .attributes
+                    .iter()
+                    .map(|attribute| VertexAttribute {
+                        format: match attribute.format {
+                            WgpuVertexFormat::Float32x2 => VertexFormat::Float32x2,
+                            WgpuVertexFormat::Float16x2 => VertexFormat::Float16x2,
+                            WgpuVertexFormat::Float32x3 => VertexFormat::Float32x3,
+                            WgpuVertexFormat::Float32x4 => VertexFormat::Float32x4,
+                            WgpuVertexFormat::Unorm8x4 => VertexFormat::Unorm8x4,
+                            WgpuVertexFormat::Uint8x4 => VertexFormat::Uint8x4,
+                        },
+                        offset: attribute.offset,
+                        shader_location: attribute.location,
+                    })
+                    .collect(),
+            }
         })
         .collect()
 }
@@ -2558,7 +2348,7 @@ struct ExactPrepare<'a> {
     uploaded: &'a RuntimeUploadedImageRegistry,
 
     spot_shadow_select: Option<u8>,
-    sampler_table: &'a RetailSamplerTable,
+    sampler_table: &'a SamplerTable,
 
     textures: PrepareTextureTables<'a>,
 
@@ -3539,6 +3329,11 @@ fn submit_exact_draw_run<'a>(
                 vertex.slice(..)
             };
             pass.set_vertex_buffer(0, vertex_slice);
+            if draw.tess == ExactTessBind::World
+                && let Some(effect) = geometry.world_effect.as_ref()
+            {
+                pass.set_vertex_buffer(2, effect.slice(..));
+            }
             record_n.state = record_n.state.saturating_add(2);
             if draw.tess == ExactTessBind::World {
                 if let Some(layer) = geometry.world_layer.as_ref() {
@@ -4509,6 +4304,11 @@ fn record_shadowmap_draws<'a>(
         {
             pass.set_render_pipeline(gpu_pipeline);
             pass.set_vertex_buffer(0, vertex.slice(..));
+            if draw.tess == ExactTessBind::World
+                && let Some(effect) = geometry.world_effect.as_ref()
+            {
+                pass.set_vertex_buffer(2, effect.slice(..));
+            }
             record_n.state = record_n.state.saturating_add(2);
             if draw.tess == ExactTessBind::World
                 && let Some(layer) = geometry.world_layer.as_ref()
@@ -4698,7 +4498,7 @@ fn prepare_shadowmap_spot(
     texture_table: &mut ExactTextureTable,
     shadow_arena: &mut ShadowmapSpotArena,
     shadowmap: &mut ShadowmapSpotGpu,
-    sampler_table: &RetailSamplerTable,
+    sampler_table: &SamplerTable,
     shadow_exec: &mut ShadowExecScratch,
     skinned_tess: &mut smodel_skinned::SmodelSkinnedTess,
 ) -> PreparedSpotWork {
@@ -4769,7 +4569,7 @@ fn prepare_shadowmap_spot(
                 .or_default() += 1;
             continue;
         };
-        let envelope = r_draw_spot_shadow_map(emitted.slot_index, emitted.plan, Some(&slot.packed));
+        let envelope = draw_spot_shadow_map(emitted.slot_index, emitted.plan, Some(&slot.packed));
         let Some(work) = envelope.work.as_ref() else {
             miss = miss.saturating_add(1);
             *miss_rows.entry("MissingSpotShadowWork".into()).or_default() += 1;
@@ -5150,7 +4950,7 @@ fn prepare_shadowmap_sun(
     shadow_arena: &mut ShadowmapSunArena,
     shadowmap: &mut ShadowmapSunGpu,
     static_draws: &mut ResidentShadowStaticDraws,
-    sampler_table: &RetailSamplerTable,
+    sampler_table: &SamplerTable,
     shadow_exec: &mut ShadowExecScratch,
     skinned_tess: &mut smodel_skinned::SmodelSkinnedTess,
 ) -> PreparedSunWork {
@@ -5168,7 +4968,7 @@ fn prepare_shadowmap_sun(
     let Some(depth_view) = shadowmap.depth_view().cloned() else {
         return PreparedSunWork::done(SunShadowSubmit::refused("ShadowmapSunDepthMissing"));
     };
-    if r_draw_sun_shadow_map_forced(0, None).is_none() {
+    if draw_sun_shadow_map_forced(0, None).is_none() {
         return PreparedSunWork::done(SunShadowSubmit::refused("ShadowmapSunPartitionMissing"));
     }
     let generation = extracted.world.generation.0;
@@ -5262,7 +5062,7 @@ fn prepare_shadowmap_sun(
                 &packed_fallback
             }
         };
-        let Some(envelope) = r_draw_sun_shadow_map_forced(partition, Some(&packed)) else {
+        let Some(envelope) = draw_sun_shadow_map_forced(partition, Some(&packed)) else {
             continue;
         };
         let Some(work) = envelope.work.as_ref() else {
@@ -5823,7 +5623,7 @@ impl ExactPrepare<'_> {
                 }
                 if self.geometry.world_vertex.is_none() || self.geometry.world_index.is_none() {
                     return Err(GpuSubmitRefusal::WorldVertex(
-                        render_frame::RetailWorldVertexRefusal::ForeignLayout {
+                        render_frame::WorldVertexRefusal::ForeignLayout {
                             source_layout: "exact colour world buffers absent",
                         },
                     ));
@@ -5877,7 +5677,7 @@ impl ExactPrepare<'_> {
                     if self.geometry.smodel_vertex.is_none() || self.geometry.smodel_index.is_none()
                     {
                         return Err(GpuSubmitRefusal::PackedVertex(
-                            render_frame::RetailPackedVertexRefusal::ForeignLayout {
+                            render_frame::PackedVertexRefusal::ForeignLayout {
                                 source_layout: "exact colour smodel buffers absent",
                             },
                         ));
@@ -5927,7 +5727,7 @@ impl ExactPrepare<'_> {
                 }
                 if !self.geometry.xmodel.drawable() {
                     return Err(GpuSubmitRefusal::PackedVertex(
-                        render_frame::RetailPackedVertexRefusal::ForeignLayout {
+                        render_frame::PackedVertexRefusal::ForeignLayout {
                             source_layout: "exact colour xmodel buffers absent",
                         },
                     ));
@@ -5953,7 +5753,7 @@ impl ExactPrepare<'_> {
                 }
                 if self.geometry.fx_vertex.is_none() || self.geometry.fx_index.is_none() {
                     return Err(GpuSubmitRefusal::PackedVertex(
-                        render_frame::RetailPackedVertexRefusal::ForeignLayout {
+                        render_frame::PackedVertexRefusal::ForeignLayout {
                             source_layout: "exact colour code-mesh buffers absent",
                         },
                     ));
@@ -5976,7 +5776,7 @@ impl ExactPrepare<'_> {
                 }
                 if !self.geometry.particle_cloud.drawable() {
                     return Err(GpuSubmitRefusal::PackedVertex(
-                        render_frame::RetailPackedVertexRefusal::ForeignLayout {
+                        render_frame::PackedVertexRefusal::ForeignLayout {
                             source_layout: "exact colour particle-cloud buffers absent",
                         },
                     ));
@@ -5999,7 +5799,7 @@ impl ExactPrepare<'_> {
                 }
                 if !self.geometry.mark_mesh.drawable() {
                     return Err(GpuSubmitRefusal::WorldVertex(
-                        render_frame::RetailWorldVertexRefusal::ForeignLayout {
+                        render_frame::WorldVertexRefusal::ForeignLayout {
                             source_layout: "exact colour mark-mesh buffers absent",
                         },
                     ));
@@ -6029,7 +5829,7 @@ impl ExactPrepare<'_> {
                 }
                 if !self.geometry.glass_mesh.drawable() {
                     return Err(GpuSubmitRefusal::PackedVertex(
-                        render_frame::RetailPackedVertexRefusal::ForeignLayout {
+                        render_frame::PackedVertexRefusal::ForeignLayout {
                             source_layout: "exact colour glass-mesh buffers absent",
                         },
                     ));
@@ -6050,7 +5850,7 @@ impl ExactPrepare<'_> {
             } = kind
             {
                 u64::from(
-                    lighting_iw4::r_smc_stream_source_byte_offset(cache_index)
+                    lighting_iw4::smc_stream_source_byte_offset(cache_index)
                         .ok_or(GpuSubmitRefusal::SmodelCacheIndicesMissing { cache_index })?,
                 )
             } else {

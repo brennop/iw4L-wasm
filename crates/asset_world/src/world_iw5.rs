@@ -8,8 +8,8 @@ use fastfile_iw5::{GfxImageGeometry, GfxWorldGeometry, MAX_LIGHTMAP_PAGES, ZoneP
 
 use crate::world_draw::{
     CameraRangeKind, CameraSurfRange, CameraSurfRanges, CapturedLightDef, DpvsWorldData,
-    OwnedPortal, RetailWorldVertexPayload, SurfaceDrawFields, WorldDraw, WorldLightRegionHull,
-    WorldLightmap, WorldLightmapGap, WorldPrimaryLight, WorldReflectionProbe,
+    OwnedPortal, SurfaceDrawFields, WorldDraw, WorldLightRegionHull, WorldLightmap,
+    WorldLightmapGap, WorldPrimaryLight, WorldReflectionProbe, WorldVertexPayload,
     make_material_batches, primary_mask_payload, scatter_vertex_layer_type3,
     secondary_page_payloads,
 };
@@ -38,7 +38,7 @@ pub fn build_iw5_world_draw(
         return Err(WorldMeshError::NoGeometry);
     };
 
-    let mut retail_vertices = Vec::with_capacity(geometry.vertex_count);
+    let mut packed_vertices = Vec::with_capacity(geometry.vertex_count);
     let mut positions = Vec::with_capacity(geometry.vertex_count);
     let mut normals = Vec::with_capacity(geometry.vertex_count);
     let mut tangents = Vec::with_capacity(geometry.vertex_count);
@@ -50,11 +50,11 @@ pub fn build_iw5_world_draw(
 
     for i in 0..geometry.vertex_count {
         let v = vertices.at(i * sz::GFX_WORLD_VERTEX);
-        let mut retail = [0u8; sz::GFX_WORLD_VERTEX];
-        for (offset, byte) in retail.iter_mut().enumerate() {
+        let mut packed = [0u8; sz::GFX_WORLD_VERTEX];
+        for (offset, byte) in packed.iter_mut().enumerate() {
             *byte = s.u8_at(v, offset).map_err(WorldMeshError::from)?;
         }
-        retail_vertices.push(retail);
+        packed_vertices.push(packed);
         let xyz = [
             s.f32_at(v, 0).map_err(WorldMeshError::from)?,
             s.f32_at(v, 4).map_err(WorldMeshError::from)?,
@@ -261,7 +261,7 @@ pub fn build_iw5_world_draw(
             batches,
             lightmap,
             stats,
-            retail_vertices: RetailWorldVertexPayload::Iw5(retail_vertices),
+            packed_vertices: WorldVertexPayload::Iw5(packed_vertices),
             vertex_layer,
             surface_vertex_layer,
             surface_first_vertex,

@@ -64,7 +64,7 @@ pub fn quat_mul(a: Quat, b: Quat) -> Quat {
 }
 
 #[must_use]
-pub fn xanim_apply_additive(
+pub fn apply_additive(
     dest_rot: Quat,
     dest_trans: Vec3,
     add_rot: Quat,

@@ -469,7 +469,7 @@ pub struct PreSkinSummary {
 
 #[must_use]
 pub fn scene_ent_surface_hidden(part_bits: &[u32; 6], hide: &[u32; 6], bone_base: u32) -> bool {
-    anim_iw4::dobj_surface_hidden(part_bits, hide, bone_base)
+    anim_iw4::surface_hidden(part_bits, hide, bone_base)
 }
 
 pub fn pre_skin_scene_ent(

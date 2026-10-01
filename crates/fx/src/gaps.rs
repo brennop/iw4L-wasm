@@ -227,13 +227,13 @@ impl fmt::Display for FxGapCause {
             FxGapCause::ElemDecalSpawnSkipped { def_index } => {
                 write!(
                     f,
-                    "elem {def_index} SpawnDecal sampled; FX_ImpactMark did not enter"
+                    "elem {def_index} SpawnDecal sampled; impact mark did not enter"
                 )
             }
             FxGapCause::MarkFragmentsSkipped { def_index } => {
                 write!(
                     f,
-                    "elem {def_index} FX_ImpactMark entered Generate; R_MarkFragments_Go / AllocMark not ported"
+                    "elem {def_index} impact mark entered Generate; mark fragments are not supported"
                 )
             }
             FxGapCause::ElemRunnerSpawnSkipped { def_index } => {

@@ -371,6 +371,7 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
     )?;
 
     s.record_gfx_world(GfxWorldGeometry {
+        terrain_scorch_images: Some(p.at(sz::GFX_WORLD_DRAW_OFF + 0x20)),
         vertices,
         vertex_count,
         vertex_layer,

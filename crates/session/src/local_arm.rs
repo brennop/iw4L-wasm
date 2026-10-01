@@ -1,9 +1,8 @@
 use bevy::prelude::*;
-use frame::{AppScreen, ClassEquipResolved, HasWorld, LaunchReport};
+use frame::{AppScreen, ClassEquipResolved, HasWorld, LaunchReport, RuntimeRole};
 use net::{
     AuthorityInputGate, AuthorityLoadHold, ClientActionInbox, ClientPredictionState, ClientSet,
-    LocalPresentClient, LookState, PresentedSnapshot, RuntimeRole, SignonState,
-    look_angles_from_degrees,
+    LocalPresentClient, LookState, PresentedSnapshot, SignonState, look_angles_from_degrees,
 };
 use sim::ClientAction;
 
@@ -86,10 +85,12 @@ pub fn join_local_on_class_select(
     if hold.is_some_and(|h| h.0) {
         return;
     }
+    // The authority lists a client as Connecting before it joins; only a
+    // later lifecycle means the join landed.
     if presented
         .snapshot()
         .and_then(|s| s.meta.for_client(local.0))
-        .is_some()
+        .is_some_and(|meta| meta.lifecycle != sim::ClientLifecycle::Connecting)
     {
         *joining = None;
         return;

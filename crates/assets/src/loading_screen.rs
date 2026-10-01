@@ -4,7 +4,7 @@ use web_time::Instant;
 
 use bevy::prelude::Resource;
 
-use crate::progress::LoadProgress;
+use asset_transport::progress::LoadProgress;
 
 #[derive(Resource)]
 pub struct LoadingScreen {

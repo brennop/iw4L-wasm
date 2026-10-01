@@ -5,13 +5,15 @@ pub const EVENT_SEQUENCE_MASK: i32 = 0x7ff;
 pub const EVENT_SEQUENCE_WRAP_WINDOW: i32 = 0x200;
 pub const EVENT_RING_LEN: i32 = 4;
 
+pub const LOCAL_SOUND_ENTITY: i32 = 0x7ff;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct EntityEventKind(pub i32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EntityEventFact {
-    pub retail_name: &'static str,
+    pub name: &'static str,
     pub event: EntityEventKind,
 }
 
@@ -22,7 +24,7 @@ macro_rules! entity_events {
 
             pub const TAXONOMY: &'static [EntityEventFact] = &[
                 $(EntityEventFact {
-                    retail_name: concat!("EV_", stringify!($name)),
+                    name: concat!("EV_", stringify!($name)),
                     event: EntityEventKind($value),
                 },)*
             ];
@@ -83,6 +85,7 @@ entity_events! {
     ROCKET_EXPLODE_NOMARKS = 0x4a;
     FLASHBANG_EXPLODE = 0x4b;
     PLAY_FX = 0x53;
+    DETONATE = 0x5e;
     OBITUARY = 0x62;
     FOOTSTEP_SPRINT = 0x6b;
     FOOTSTEP_RUN = 0x6c;
@@ -193,7 +196,7 @@ impl EntityEventKind {
         Self::TAXONOMY
             .iter()
             .find(|fact| fact.event.0 == self.0)
-            .map(|fact| fact.retail_name)
+            .map(|fact| fact.name)
     }
 
     pub const fn is_landing_pain(self) -> bool {
@@ -222,7 +225,7 @@ pub enum EntityEventAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnsupportedEntityEvent(pub EntityEventKind);
 
-pub fn cg_entity_event_action(
+pub fn entity_event_action(
     event: EntityEventKind,
 ) -> Result<EntityEventAction, UnsupportedEntityEvent> {
     Ok(match event {
@@ -248,6 +251,7 @@ pub fn cg_entity_event_action(
         | EntityEventKind::RECHAMBER_WEAPON
         | EntityEventKind::PREP_OFFHAND
         | EntityEventKind::USE_OFFHAND
+        | EntityEventKind::DETONATE
         | EntityEventKind::MELEE_SWIPE
         | EntityEventKind::MELEE_HIT
         | EntityEventKind::MELEE_MISS => EntityEventAction::Sound,
@@ -295,17 +299,17 @@ pub fn cg_entity_event_action(
 }
 
 #[must_use]
-pub const fn bg_is_left_hand_fire_event(event: EntityEventKind) -> bool {
+pub const fn is_left_hand_fire_event(event: EntityEventKind) -> bool {
     matches!(event.0, 0x23 | 0x24 | 0x25 | 0x28 | 0x29 | 0x2c | 0x2d)
 }
 
 #[must_use]
-pub const fn bg_is_weapon_fire_last_shot_event(event: EntityEventKind) -> bool {
+pub const fn is_weapon_fire_last_shot_event(event: EntityEventKind) -> bool {
     matches!(event.0, 0x1f | 0x24 | 0x27 | 0x29 | 0x2b | 0x2d)
 }
 
 #[must_use]
-pub const fn cg_predicted_weapon_fire_event(hand: i32, last_shot: bool) -> EntityEventKind {
+pub const fn predicted_weapon_fire_event(hand: i32, last_shot: bool) -> EntityEventKind {
     match (hand != 0, last_shot) {
         (false, false) => EntityEventKind::FIRE_WEAPON,
         (false, true) => EntityEventKind::FIRE_WEAPON_LASTSHOT,
@@ -314,7 +318,7 @@ pub const fn cg_predicted_weapon_fire_event(hand: i32, last_shot: bool) -> Entit
     }
 }
 
-pub const fn bg_bullet_hit_event(impact_type: i32, local_client: bool) -> Option<EntityEventKind> {
+pub const fn bullet_hit_event(impact_type: i32, local_client: bool) -> Option<EntityEventKind> {
     if local_client {
         match impact_type {
             1 | 9 => Some(EntityEventKind::BULLET_HIT_CLIENT_SMALL),
@@ -348,7 +352,7 @@ pub fn add_entity_event(state: &mut EntityState, event: EntityEventKind, event_p
     state.event_sequence = state.event_sequence.wrapping_add(1) & EVENT_SEQUENCE_MASK;
 }
 
-pub fn cg_packet_entity_uses_event_ring(e_type: i32) -> bool {
+pub fn packet_entity_uses_event_ring(e_type: i32) -> bool {
     e_type != 8 && e_type != 9 && e_type < ET_EVENTS
 }
 

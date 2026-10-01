@@ -6,7 +6,7 @@ pub struct FxInsertSortElem {
 }
 
 #[inline]
-pub fn fx_sort_dist_to_cam_sq(camera_origin: [f32; 3], pos_world: [f32; 3]) -> f32 {
+pub fn sort_dist_to_cam_sq(camera_origin: [f32; 3], pos_world: [f32; 3]) -> f32 {
     let dx = camera_origin[0] - pos_world[0];
     let dy = camera_origin[1] - pos_world[1];
     let dz = camera_origin[2] - pos_world[2];
@@ -14,7 +14,7 @@ pub fn fx_sort_dist_to_cam_sq(camera_origin: [f32; 3], pos_world: [f32; 3]) -> f
 }
 
 #[inline]
-pub fn fx_existing_elem_sorts_before_new(
+pub fn existing_elem_sorts_before_new(
     existing_elem_type: u8,
     existing_visual_count: u8,
     existing_sort_order: u8,

@@ -22,6 +22,7 @@ mod impact_fx_catalog;
 mod localize;
 mod lochit;
 mod menu_catalog;
+mod menu_source;
 mod penetration;
 mod tracer_catalog;
 mod weapon_anim_dispatch;
@@ -49,21 +50,4 @@ pub use weapon_families::*;
 
 pub mod asset_graph {
     pub(crate) use crate::graph_support::*;
-    pub use asset_core::*;
-    pub use asset_model::link::*;
-}
-pub mod discover {
-    pub use asset_transport::*;
-}
-pub mod material_catalog {
-    pub use asset_material::*;
-}
-pub mod material_images {
-    pub use asset_material::*;
-}
-pub mod model_skel {
-    pub use asset_model::*;
-}
-pub mod zone {
-    pub use asset_transport::*;
 }

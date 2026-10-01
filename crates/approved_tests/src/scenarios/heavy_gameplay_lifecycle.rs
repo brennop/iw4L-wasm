@@ -9,7 +9,7 @@ pub const SCENARIO: Scenario = Scenario {
     name: "heavy_gameplay_lifecycle",
     gametype: "dm",
     players: 16,
-    class: "assault",
+    class: "0",
     map_a: "mp_overgrown",
     map_b: MapB::FromInstalled { game: "iw4" },
     scenes: SCENES,

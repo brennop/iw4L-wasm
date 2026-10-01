@@ -7,7 +7,7 @@ use crate::ambient::{MapAmbient, MapEmitter, SoundBankNamespace};
 use crate::clip_store::{ClipStore, clip_keys_for_alias};
 use crate::pcm::PcmAudio;
 use crate::playback::{MissingAliasGaps, SharedPlayAssets, SoundBank};
-use assets::AssetNamespace;
+use asset_core::AssetNamespace;
 use bevy::prelude::*;
 use net::PresentedSnapshot;
 use sim::DestructibleLoopSound;

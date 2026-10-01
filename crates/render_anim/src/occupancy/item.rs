@@ -5,10 +5,11 @@ use crate::anim::xmodel_pose::PosedModelSurface;
 use crate::occupancy::script_model::pose_script_dobj_with_materials;
 use crate::{
     ItemAssetDraw, ItemDrawPlan, ItemOwnerDraw, XMODEL_OBJECT_ID_ITEM_BASE, append_item_surfaces,
-    dobj_lighting_box_half, stamp_plan_geometry, topology_fingerprint,
+    lighting_box_half, stamp_plan_geometry, topology_fingerprint,
 };
 use anim_iw4::DOBJ_RADIUS_PARENT_ROOT;
-use entity_iw4::{ET_ITEM, Trajectory, bg_evaluate_trajectory};
+use entity_iw4::{ET_ITEM, Trajectory, evaluate_trajectory};
+use playerstate_iw4::PERK_SCAVENGER;
 use render_scene::{
     HostGfxScene, ModelLightingOwner, ModelLightingRequest, ModelLightingRequests,
     SmodelPassMaterial, TessMaterials, WorldModelLightingAtlas, WorldPresentFacts,
@@ -22,7 +23,7 @@ struct ItemComposition {
     model: assets::WorldWeaponIndex,
     attachments: Vec<assets::WorldWeaponIndex>,
     key: String,
-    dobj: assets::DObj,
+    dobj: xmodel_runtime::DObj,
 }
 
 #[derive(Resource, Default)]
@@ -46,8 +47,8 @@ impl PreparedItemCompositions {
 }
 
 fn compose_item(
-    registry: &assets::WeaponRegistry,
-    catalog: &assets::WorldWeaponCatalog,
+    registry: &asset_game::WeaponRegistry,
+    catalog: &asset_model::WorldWeaponCatalog,
     weapon: u32,
 ) -> Option<ItemComposition> {
     let entry = registry.world_model_entry(weapon, catalog)?;
@@ -66,13 +67,13 @@ fn compose_item(
         attachment_models.push(attachment.index);
         dobj_models.push((
             pose,
-            Some(assets::Attach {
+            Some(xmodel_runtime::Attach {
                 parent_model: 0,
                 tag: attachment.tag.to_owned(),
             }),
         ));
     }
-    let dobj = assets::DObj::build(&dobj_models).ok()?;
+    let dobj = xmodel_runtime::DObj::build(&dobj_models).ok()?;
     Some(ItemComposition {
         name: entry.skel.name.clone(),
         model: assets::WorldWeaponIndex::from_order(model_index),
@@ -220,8 +221,6 @@ fn item_world_from_local(origin: [f32; 3], angles: [f32; 3]) -> Mat4 {
     .to_matrix()
 }
 
-const PERK_SCAVENGER: u32 = 1 << 22;
-
 fn item_is_scavenger(snapshot: &sim::Snapshot, entnum: i32) -> bool {
     snapshot
         .meta
@@ -251,7 +250,7 @@ fn occupy_item_scene_ents(
     mut occupancy: ResMut<ItemOccupancy>,
     mut scene_skels: ResMut<AnimDObjSceneSkels>,
     mut scene_submissions: MessageWriter<AnimDObjSceneSubmission>,
-    cg_clock: Option<Res<net::CgFrameClock>>,
+    cg_clock: Option<Res<net::FrameClock>>,
 ) {
     occupancy.rows.clear();
     let Some(presented_inner) = presented.as_deref() else {
@@ -317,7 +316,7 @@ fn occupy_item_scene_ents(
             tr_delta: es.apos_tr_delta,
             tr_base: es.apos_tr_base,
         };
-        let angles = bg_evaluate_trajectory(&apos, at_time);
+        let angles = evaluate_trajectory(&apos, at_time);
         let entnum = u32::try_from(es.number).unwrap_or(0);
         scene_submissions.write(AnimDObjSceneSubmission {
             render_fx_flags: 0,
@@ -392,7 +391,7 @@ fn pose_items(
             }
             let dobj = &composition.dobj;
             let dobj_state =
-                assets::dobj::DObjSemanticState::bind_pose(composition.name.clone(), 1, 1);
+                xmodel_runtime::DObjSemanticState::bind_pose(composition.name.clone(), 1, 1);
             let Ok(request) = dobj_state.resolve_request(|_| None) else {
                 continue;
             };
@@ -520,7 +519,7 @@ fn append_item_draws(
         let box_half = entry
             .skel
             .radius
-            .and_then(|radius| dobj_lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
+            .and_then(|radius| lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
         let lookup_fallback = atpoint.fallback(row.lighting_origin, box_half);
         let pending_lighting = Some(lighting_requests.request(ModelLightingRequest {
             owner: ModelLightingOwner::Item(row.entnum),
@@ -576,5 +575,5 @@ fn evaluate_origin(es: &entity_iw4::EntityState, at_time: i32) -> [f32; 3] {
         tr_delta: es.tr_delta,
         tr_base: es.tr_base,
     };
-    bg_evaluate_trajectory(&traj, at_time)
+    evaluate_trajectory(&traj, at_time)
 }

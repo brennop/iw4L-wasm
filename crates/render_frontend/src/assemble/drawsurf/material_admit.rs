@@ -43,7 +43,7 @@ pub struct MaterialProgramAdmit {
     exact_shaders: Vec<Handle<Shader>>,
     pending: std::collections::HashMap<AssetId<Shader>, PendingShader>,
     requests: Vec<AssetId<Shader>>,
-    stage: Option<assets::StageHandle>,
+    stage: Option<asset_transport::StageHandle>,
 }
 
 impl MaterialProgramAdmit {
@@ -66,7 +66,7 @@ impl MaterialProgramAdmit {
         )
     }
 
-    pub fn take_stage(&mut self) -> Option<assets::StageHandle> {
+    pub fn take_stage(&mut self) -> Option<asset_transport::StageHandle> {
         self.stage.take()
     }
 
@@ -89,7 +89,7 @@ impl MaterialProgramAdmit {
     pub fn arm(
         &mut self,
         compile: &mut MaterialProgramCompile,
-        progress: Option<&assets::LoadProgress>,
+        progress: Option<&asset_transport::LoadProgress>,
     ) {
         // Admission is its own operation: what the compiler produced is one
         // thing, what this generation accepts into the registry is another.
@@ -97,7 +97,7 @@ impl MaterialProgramAdmit {
             stage.cancel();
         }
         if let Some(progress) = progress {
-            self.stage = Some(progress.begin(assets::StageId::Shaders, None));
+            self.stage = Some(progress.begin(asset_transport::StageId::Shaders, None));
         }
         let ports = compile.take_ports();
         let world_port_count = ports

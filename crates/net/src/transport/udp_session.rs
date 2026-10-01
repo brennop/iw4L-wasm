@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::Resource;
@@ -21,18 +20,20 @@ use crate::transport::loopback_live::ReceivedTick;
 use crate::transport::meta_wire::WorldObjectSyncDecoder;
 use crate::transport::protocol::{
     ClientPacket, ConnectionId, ConnectionTable, HandshakeHello, HandshakeReject, PacketHeader,
-    ProtocolLimits, ServerPacket, decode_client_packet, decode_server_packet, evaluate_handshake,
+    ProtocolLimits, ServerPacket, decode_client_packet, decode_server_packet,
 };
-use crate::transport::udp_socket::{DEFAULT_RECV_BUDGET_PER_TICK, UdpDatagramSocket, UdpSendError};
+use crate::transport::udp_socket::UdpSendError;
 use crate::transport::wire::WireReader;
 
 const RELAY_MAIL_CAP: usize = 64;
+pub(crate) const CMDS_PER_PACKET: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct RelayMailbox {
     inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     control_inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
+    control_inbound_drained: Arc<tokio::sync::Notify>,
     control_outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     cap: usize,
 }
@@ -43,6 +44,7 @@ impl RelayMailbox {
             inbound: Arc::new(Mutex::new(Vec::new())),
             outbound: Arc::new(Mutex::new(Vec::new())),
             control_inbound: Arc::new(Mutex::new(Vec::new())),
+            control_inbound_drained: Arc::new(tokio::sync::Notify::new()),
             control_outbound: Arc::new(Mutex::new(Vec::new())),
             cap,
         }
@@ -56,7 +58,27 @@ impl RelayMailbox {
         push_mail(&self.control_inbound, self.cap, member, bytes)
     }
     pub fn take_control_inbound(&self) -> Vec<(MemberId, Vec<u8>)> {
-        take_mail(&self.control_inbound)
+        let packets = take_mail(&self.control_inbound);
+        self.control_inbound_drained.notify_one();
+        packets
+    }
+
+    // The control reader is the sole producer. Keep the capacity wait in its
+    // select loop so cancellation and local commands still run under pressure.
+    pub(crate) async fn wait_control_inbound_capacity(&self) {
+        loop {
+            let drained = self.control_inbound_drained.notified();
+            if self
+                .control_inbound
+                .lock()
+                .expect("relay mailbox poisoned")
+                .len()
+                < self.cap
+            {
+                return;
+            }
+            drained.await;
+        }
     }
     pub fn push_control_outbound(
         &self,
@@ -113,12 +135,6 @@ fn relay_send_error(message: &'static str) -> UdpSendError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PeerTarget {
-    Udp(SocketAddr),
-    Relay(MemberId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommittedAdmission {
     pub member_id: MemberId,
     pub epoch: u32,
@@ -130,20 +146,15 @@ pub struct CommittedAdmission {
 
 #[derive(Resource)]
 pub struct UdpAuthorityHub {
-    socket: Option<UdpDatagramSocket>,
-    relay: Option<RelayMailbox>,
+    relay: RelayMailbox,
     pub hello: HandshakeHello,
     pub limits: ProtocolLimits,
     pub connections: ConnectionTable,
-    peers: HashMap<ConnectionId, PeerTarget>,
-    by_addr: HashMap<SocketAddr, ConnectionId>,
-
-    pending_replies: Vec<(SocketAddr, ServerPacket)>,
+    peers: HashMap<ConnectionId, MemberId>,
     replication: HashMap<ConnectionId, PeerReplicationState>,
 
     bootstrap: Option<Arc<BootstrapLane>>,
     next_bootstrap_id: HashMap<ConnectionId, u32>,
-    member_by_addr: HashMap<SocketAddr, master_protocol::MemberId>,
     member_by_conn: HashMap<ConnectionId, master_protocol::MemberId>,
     committed_admissions: Vec<CommittedAdmission>,
 
@@ -160,6 +171,8 @@ struct PeerReplicationState {
     last_full: Option<Tick>,
     sent_ticks: std::collections::VecDeque<Tick>,
     admission: PeerAdmission,
+    last_control_seq: Option<u16>,
+    control_drops_sent: u32,
 }
 
 #[derive(Debug)]
@@ -192,7 +205,49 @@ impl PeerReplicationState {
             last_full: None,
             sent_ticks: std::collections::VecDeque::new(),
             admission: PeerAdmission::Uncommitted,
+            last_control_seq: None,
+            control_drops_sent: 0,
         }
+    }
+
+    fn queue_control(
+        &mut self,
+        mailbox: &RelayMailbox,
+        member: MemberId,
+        connection: ConnectionId,
+        epoch: u32,
+        mut payload: crate::ReliablePayload,
+    ) -> Result<(), UdpSendError> {
+        // QUIC control is ordered and reliable. Keep rows until their application
+        // ACK, but enqueue each only once instead of repeating the pending window.
+        payload.rows.retain(|(seq, _)| {
+            self.last_control_seq
+                .is_none_or(|last| crate::transport::reliable::seq_after(*seq, last))
+        });
+        if payload.rows.is_empty() && payload.dropped_oldest == self.control_drops_sent {
+            return Ok(());
+        }
+        let last = payload
+            .rows
+            .last()
+            .map(|(seq, _)| *seq)
+            .or(self.last_control_seq);
+        let dropped = payload.dropped_oldest;
+        let packet = ServerPacket::Control {
+            header: PacketHeader {
+                connection,
+                sequence: 0,
+                ack: 0,
+                epoch,
+            },
+            payload,
+        };
+        mailbox
+            .push_control_outbound(member, packet.to_bytes())
+            .map_err(relay_send_error)?;
+        self.last_control_seq = last;
+        self.control_drops_sent = dropped;
+        Ok(())
     }
 
     fn reset_match(&mut self) {
@@ -231,57 +286,24 @@ fn applied_action(
 }
 
 impl UdpAuthorityHub {
-    pub fn bind(addr: SocketAddr, hello: HandshakeHello) -> std::io::Result<Self> {
-        Self::bind_with_first_client(addr, hello, 0)
-    }
-
-    pub fn bind_with_first_client(
-        addr: SocketAddr,
-        hello: HandshakeHello,
-        first_client: u32,
-    ) -> std::io::Result<Self> {
-        let limits = hello.limits;
-        Ok(Self {
-            socket: Some(UdpDatagramSocket::bind(addr, &limits)?),
-            relay: None,
-            hello,
-            limits,
-            connections: ConnectionTable::starting_at(first_client),
-            peers: HashMap::new(),
-            by_addr: HashMap::new(),
-            pending_replies: Vec::new(),
-            replication: HashMap::new(),
-            bootstrap: None,
-            next_bootstrap_id: HashMap::new(),
-            member_by_addr: HashMap::new(),
-            member_by_conn: HashMap::new(),
-            committed_admissions: Vec::new(),
-            denied: HashSet::new(),
-        })
-    }
-
     pub fn relay(hello: HandshakeHello, first_client: u32, mailbox: RelayMailbox) -> Self {
         let limits = hello.limits;
         Self {
-            socket: None,
-            relay: Some(mailbox),
+            relay: mailbox,
             hello,
             limits,
             connections: ConnectionTable::starting_at(first_client),
             peers: HashMap::new(),
-            by_addr: HashMap::new(),
-            pending_replies: Vec::new(),
             replication: HashMap::new(),
             bootstrap: None,
             next_bootstrap_id: HashMap::new(),
-            member_by_addr: HashMap::new(),
             member_by_conn: HashMap::new(),
             committed_admissions: Vec::new(),
             denied: HashSet::new(),
         }
     }
 
-    pub fn mailbox(&self) -> Option<RelayMailbox> {
+    pub fn mailbox(&self) -> RelayMailbox {
         self.relay.clone()
     }
 
@@ -289,28 +311,18 @@ impl UdpAuthorityHub {
         self.bootstrap = Some(lane);
     }
 
-    pub fn note_member_addr(&mut self, member_id: master_protocol::MemberId, addr: SocketAddr) {
-        self.member_by_addr.insert(addr, member_id);
-        if let Some(conn) = self.by_addr.get(&addr).copied() {
-            self.member_by_conn.insert(conn, member_id);
-        }
-    }
-
     fn enroll_relay_member(&mut self, member_id: MemberId) -> ConnectionId {
         if let Some((conn, _)) = self.member_by_conn.iter().find(|(_, id)| **id == member_id) {
             return *conn;
         }
         let (conn, _) = self.connections.accept_new();
-        self.peers.insert(conn, PeerTarget::Relay(member_id));
+        self.peers.insert(conn, member_id);
         self.replication.insert(conn, PeerReplicationState::new());
         self.member_by_conn.insert(conn, member_id);
         conn
     }
 
     pub fn reconcile_relay_membership(&mut self, members: &[MemberId], local: MemberId) {
-        if self.relay.is_none() {
-            return;
-        }
         for member_id in members {
             if *member_id == local || self.denied.contains(member_id) {
                 continue;
@@ -342,11 +354,7 @@ impl UdpAuthorityHub {
         let conn = self
             .member_by_conn
             .iter()
-            .find_map(|(conn, id)| (*id == member_id).then_some(*conn));
-        let Some(conn) = conn else {
-            self.member_by_addr.retain(|_, id| *id != member_id);
-            return None;
-        };
+            .find_map(|(conn, id)| (*id == member_id).then_some(*conn))?;
         self.retire_connection(conn)
     }
 
@@ -364,23 +372,21 @@ impl UdpAuthorityHub {
             return false;
         };
         if let Some(member) = self.member_by_conn.get(&conn).copied() {
-            if let Some(mailbox) = &self.relay {
-                let packet = ServerPacket::Control {
-                    header: PacketHeader {
-                        connection: conn,
-                        sequence: 0,
-                        ack: 0,
-                        epoch: self.live_packet_epoch(),
-                    },
-                    payload: crate::ReliablePayload {
-                        ack_through: 0,
-                        rows: vec![(1, crate::ReliableRow::Failure(reason.to_owned()))],
-                        dropped_oldest: 0,
-                    },
-                };
-                if let Err(error) = mailbox.push_control_outbound(member, packet.to_bytes()) {
-                    diag::warn!(Net, "retire control: {error}");
-                }
+            let packet = ServerPacket::Control {
+                header: PacketHeader {
+                    connection: conn,
+                    sequence: 0,
+                    ack: 0,
+                    epoch: self.live_packet_epoch(),
+                },
+                payload: crate::ReliablePayload {
+                    ack_through: 0,
+                    rows: vec![(1, crate::ReliableRow::Failure(reason.to_owned()))],
+                    dropped_oldest: 0,
+                },
+            };
+            if let Err(error) = self.relay.push_control_outbound(member, packet.to_bytes()) {
+                diag::warn!(Net, "retire control: {error}");
             }
             self.denied.insert(member);
         }
@@ -389,44 +395,17 @@ impl UdpAuthorityHub {
 
     pub fn retire_connection(&mut self, conn: ConnectionId) -> Option<ClientId> {
         let client = self.connections.retire(conn).map(ClientId);
-        if let Some(PeerTarget::Udp(addr)) = self.peers.remove(&conn) {
-            self.by_addr.remove(&addr);
-            self.member_by_addr.remove(&addr);
-        }
+        self.peers.remove(&conn);
         self.member_by_conn.remove(&conn);
         self.replication.remove(&conn);
         self.next_bootstrap_id.remove(&conn);
-        self.pending_replies
-            .retain(|(addr, _)| self.by_addr.contains_key(addr));
         client
     }
 
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.socket
-            .as_ref()
-            .ok_or_else(|| io::Error::other("relay hub has no UDP socket"))?
-            .local_addr()
-    }
-
-    fn send_outgoing(&mut self, target: PeerTarget, bytes: &[u8]) -> Result<(), UdpSendError> {
-        match target {
-            PeerTarget::Udp(addr) => {
-                let socket = self
-                    .socket
-                    .as_mut()
-                    .ok_or_else(|| relay_send_error("udp hub has no socket"))?;
-                socket.send_to(bytes, addr)
-            }
-            PeerTarget::Relay(member) => {
-                let mailbox = self
-                    .relay
-                    .as_ref()
-                    .ok_or_else(|| relay_send_error("relay hub has no mailbox"))?;
-                mailbox
-                    .push_outbound(member, bytes.to_vec())
-                    .map_err(relay_send_error)
-            }
-        }
+    fn send_outgoing(&mut self, member: MemberId, bytes: &[u8]) -> Result<(), UdpSendError> {
+        self.relay
+            .push_outbound(member, bytes.to_vec())
+            .map_err(relay_send_error)
     }
 
     fn live_packet_epoch(&self) -> u32 {
@@ -437,7 +416,6 @@ impl UdpAuthorityHub {
     }
 
     pub fn reset_match(&mut self) {
-        self.pending_replies.clear();
         self.next_bootstrap_id.clear();
         self.committed_admissions.clear();
         self.denied.clear();
@@ -457,25 +435,12 @@ impl UdpAuthorityHub {
         mut reliable: Option<&mut crate::ReliableEventHub>,
     ) -> Result<(), String> {
         self.apply_admission_acks();
-        let mut datagrams = Vec::new();
-        if let Some(socket) = self.socket.as_mut() {
-            socket
-                .recv_budget(DEFAULT_RECV_BUDGET_PER_TICK, &mut datagrams)
-                .map_err(|e| e.to_string())?;
+        let mut packets: Vec<(Vec<u8>, MemberId, bool)> = Vec::new();
+        for (member, bytes) in self.relay.take_inbound() {
+            packets.push((bytes, member, false));
         }
-        let mut packets: Vec<(Vec<u8>, PeerTarget, bool)> = datagrams
-            .into_iter()
-            .map(|(bytes, addr)| (bytes, PeerTarget::Udp(addr), false))
-            .collect();
-        if let Some(mailbox) = &self.relay {
-            for (member, bytes) in mailbox.take_inbound() {
-                packets.push((bytes, PeerTarget::Relay(member), false));
-            }
-        }
-        if let Some(mailbox) = &self.relay {
-            for (member, bytes) in mailbox.take_control_inbound() {
-                packets.push((bytes, PeerTarget::Relay(member), true));
-            }
+        for (member, bytes) in self.relay.take_control_inbound() {
+            packets.push((bytes, member, true));
         }
         for (bytes, from, control) in packets {
             let packet = match decode_client_packet(&bytes, &self.limits) {
@@ -483,44 +448,7 @@ impl UdpAuthorityHub {
                 Err(_) => continue,
             };
             match packet {
-                ClientPacket::Connect(client_hello) => {
-                    let PeerTarget::Udp(addr) = from else {
-                        continue;
-                    };
-                    match evaluate_handshake(&self.hello, &client_hello) {
-                        Ok(()) => {
-                            let (conn, client) =
-                                if let Some(conn) = self.by_addr.get(&addr).copied() {
-                                    let client = self
-                                        .connections
-                                        .resolve(conn, 0)
-                                        .expect("address map must name a live connection");
-                                    (conn, client)
-                                } else {
-                                    let (conn, client) = self.connections.accept_new();
-                                    self.peers.insert(conn, PeerTarget::Udp(addr));
-                                    self.by_addr.insert(addr, conn);
-                                    self.replication.insert(conn, PeerReplicationState::new());
-                                    if let Some(member) = self.member_by_addr.get(&addr).copied() {
-                                        self.member_by_conn.insert(conn, member);
-                                    }
-                                    (conn, client)
-                                };
-                            self.pending_replies.push((
-                                addr,
-                                ServerPacket::Accept {
-                                    connection: conn,
-                                    assigned_client: client,
-                                    hello: self.hello,
-                                },
-                            ));
-                        }
-                        Err(reject) => {
-                            self.pending_replies
-                                .push((addr, ServerPacket::Reject(reject)));
-                        }
-                    }
-                }
+                ClientPacket::Connect(_) => {}
                 ClientPacket::Commands {
                     header,
                     claimed_client,
@@ -731,15 +659,6 @@ impl UdpAuthorityHub {
         scores_due: bool,
     ) -> Result<(), UdpSendError> {
         let mut last_err = None;
-        if let Some(socket) = self.socket.as_mut() {
-            for (addr, packet) in self.pending_replies.drain(..) {
-                if let Err(e) = socket.send_to(&packet.to_bytes(), addr) {
-                    last_err = Some(e);
-                }
-            }
-        } else {
-            self.pending_replies.clear();
-        }
         let live_epoch = self.live_packet_epoch();
         let peer_ids: Vec<ConnectionId> = self.peers.keys().copied().collect();
         for conn in peer_ids {
@@ -751,12 +670,12 @@ impl UdpAuthorityHub {
             };
             // Do not capture a bootstrap while the peer is loading content. The
             // snapshot's clock starts when admission is ready to send it.
-            if let (Some(lane), PeerTarget::Relay(member)) = (&self.bootstrap, target)
+            if let Some(lane) = &self.bootstrap
                 && !lane
                     .host_map_ready
                     .lock()
                     .expect("bootstrap readiness poisoned")
-                    .contains(&member)
+                    .contains(&target)
             {
                 continue;
             }
@@ -766,24 +685,15 @@ impl UdpAuthorityHub {
                 .entry(conn)
                 .or_insert_with(PeerReplicationState::new);
             if peer.admits_gameplay(self.bootstrap.is_some()) {
-                if let (Some(mailbox), PeerTarget::Relay(member), Some(reliable)) =
-                    (&self.relay, target, reliable)
-                {
-                    let payload = reliable.payload(client);
-                    if !payload.rows.is_empty() {
-                        let packet = ServerPacket::Control {
-                            header: PacketHeader {
-                                connection: conn,
-                                sequence: 0,
-                                ack: 0,
-                                epoch: live_epoch,
-                            },
-                            payload,
-                        };
-                        if let Err(error) = mailbox.push_control_outbound(member, packet.to_bytes())
-                        {
-                            last_err = Some(relay_send_error(error));
-                        }
+                if let Some(reliable) = reliable {
+                    if let Err(error) = peer.queue_control(
+                        &self.relay,
+                        target,
+                        conn,
+                        live_epoch,
+                        reliable.payload(client),
+                    ) {
+                        last_err = Some(error);
                     }
                 }
             }
@@ -840,7 +750,7 @@ impl UdpAuthorityHub {
                 frame.svc_hud_splashes = splashes;
             }
             if let Some(pending) = pending_gamenotify.as_mut() {
-                frame.svc_game_notifies = pending.take_broadcast();
+                frame.svc_game_notifies = pending.take_for(client);
             }
 
             frame
@@ -911,11 +821,7 @@ impl UdpAuthorityHub {
                             "bootstrap-io session=host event=bootstrap offer encoded peer={target:?} epoch={epoch} bootstrap_id={bootstrap_id} snapshot_seq={snapshot_seq} bytes={}",
                             txn.offer_bytes.len()
                         );
-                        let member = match target {
-                            PeerTarget::Relay(member) => Some(member),
-                            PeerTarget::Udp(_) => self.member_by_conn.get(&conn).copied(),
-                        };
-                        if let Err(error) = lane.push_to_worker(member, txn.offer_bytes) {
+                        if let Err(error) = lane.push_to_worker(Some(target), txn.offer_bytes) {
                             diag::warn!(Net, "bootstrap offer dropped for {target:?}: {error}");
                         } else {
                             peer.sent_ticks.push_back(snapshot.tick);
@@ -948,9 +854,7 @@ impl UdpAuthorityHub {
 
 #[derive(Resource)]
 pub struct UdpClientLink {
-    socket: Option<UdpDatagramSocket>,
-    relay: Option<RelayMailbox>,
-    pub server: SocketAddr,
+    relay: RelayMailbox,
     pub hello: HandshakeHello,
     pub limits: ProtocolLimits,
     pub connection: Option<ConnectionId>,
@@ -960,6 +864,7 @@ pub struct UdpClientLink {
     out_seq: u32,
     in_ack: u32,
     last_snapshot_seq: Option<u32>,
+    required_baseline_seq: u32,
     applied_bootstrap_id: Option<u32>,
     last_applied_offer: Option<(u32, u32)>,
     pending_applied: Vec<BootstrapMessage>,
@@ -973,38 +878,10 @@ pub struct UdpClientLink {
 }
 
 impl UdpClientLink {
-    pub fn connect(server: SocketAddr, hello: HandshakeHello) -> std::io::Result<Self> {
-        let limits = hello.limits;
-        let socket = UdpDatagramSocket::bind("0.0.0.0:0", &limits)?;
-        Ok(Self {
-            socket: Some(socket),
-            relay: None,
-            server,
-            hello,
-            limits,
-            connection: None,
-            assigned_client: None,
-            baselines: BTreeMap::new(),
-            out_seq: 0,
-            in_ack: 0,
-            last_snapshot_seq: None,
-            applied_bootstrap_id: None,
-            last_applied_offer: None,
-            pending_applied: Vec::new(),
-            controls: Vec::new(),
-            sent_actions: HashSet::new(),
-            held_bootstrap: Vec::new(),
-            failed: None,
-            bootstrap: None,
-        })
-    }
-
     pub fn relay(hello: HandshakeHello, mailbox: RelayMailbox) -> Self {
         let limits = hello.limits;
         Self {
-            socket: None,
-            relay: Some(mailbox),
-            server: "0.0.0.0:0".parse().expect("literal"),
+            relay: mailbox,
             hello,
             limits,
             connection: None,
@@ -1013,6 +890,7 @@ impl UdpClientLink {
             out_seq: 0,
             in_ack: 0,
             last_snapshot_seq: None,
+            required_baseline_seq: 0,
             applied_bootstrap_id: None,
             last_applied_offer: None,
             pending_applied: Vec::new(),
@@ -1024,19 +902,12 @@ impl UdpClientLink {
         }
     }
 
-    pub fn mailbox(&self) -> Option<RelayMailbox> {
+    pub fn mailbox(&self) -> RelayMailbox {
         self.relay.clone()
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), UdpSendError> {
-        if let Some(socket) = self.socket.as_mut() {
-            return socket.send_to(bytes, self.server);
-        }
-        let mailbox = self
-            .relay
-            .as_ref()
-            .ok_or_else(|| relay_send_error("client link has no carrier"))?;
-        mailbox
+        self.relay
             .push_outbound(MemberId([0; 16]), bytes.to_vec())
             .map_err(relay_send_error)
     }
@@ -1045,20 +916,12 @@ impl UdpClientLink {
         self.bootstrap = Some(lane);
     }
 
-    pub fn should_offer_connect(&self) -> bool {
-        self.relay.is_none() && self.connection.is_none() && self.failed.is_none()
-    }
-
     pub fn handshake_reject(&self) -> Option<HandshakeReject> {
         self.failed
     }
 
     pub fn has_applied_snapshot(&self) -> bool {
         self.last_snapshot_seq.is_some()
-    }
-
-    pub fn has_applied_direct_snapshot(&self) -> bool {
-        self.relay.is_none() && self.connection.is_some() && self.has_applied_snapshot()
     }
 
     pub fn match_epoch(&self) -> u32 {
@@ -1099,7 +962,10 @@ impl UdpClientLink {
     }
 
     pub fn note_applied_snapshot(&mut self, snapshot_seq: u32) {
-        self.last_snapshot_seq.replace(snapshot_seq);
+        self.last_snapshot_seq = Some(
+            self.last_snapshot_seq
+                .map_or(snapshot_seq, |last| last.max(snapshot_seq)),
+        );
     }
 
     pub fn flush_applied_after_adopt(&mut self) {
@@ -1143,6 +1009,7 @@ impl UdpClientLink {
         self.out_seq = 0;
         self.in_ack = 0;
         self.last_snapshot_seq = None;
+        self.required_baseline_seq = 0;
         self.applied_bootstrap_id = None;
         self.last_applied_offer = None;
         self.pending_applied.clear();
@@ -1155,14 +1022,6 @@ impl UdpClientLink {
         }
     }
 
-    pub fn ensure_connected(&mut self) -> Result<(), UdpSendError> {
-        if !self.should_offer_connect() {
-            return Ok(());
-        }
-        let bytes = ClientPacket::Connect(self.hello).to_bytes();
-        self.send_bytes(&bytes)
-    }
-
     pub fn take_controls(&mut self) -> Vec<crate::ReliablePayload> {
         std::mem::take(&mut self.controls)
     }
@@ -1170,21 +1029,7 @@ impl UdpClientLink {
     pub fn recv_ticks(&mut self) -> Result<Vec<ReceivedTick>, String> {
         let mut ticks = Vec::new();
         let mut snap_acks = Vec::new();
-        let mut datagrams = Vec::new();
-        if let Some(socket) = self.socket.as_mut() {
-            socket
-                .recv_budget(DEFAULT_RECV_BUDGET_PER_TICK, &mut datagrams)
-                .map_err(|e| e.to_string())?;
-        }
-        let mut packets: Vec<Vec<u8>> = datagrams
-            .into_iter()
-            .filter(|(_, source)| *source == self.server)
-            .map(|(bytes, _)| bytes)
-            .collect();
-        if let Some(mailbox) = &self.relay {
-            packets.extend(mailbox.take_inbound().into_iter().map(|(_, bytes)| bytes));
-        }
-        for bytes in packets {
+        for (_, bytes) in self.relay.take_inbound() {
             let packet = match decode_server_packet(&bytes, &self.limits) {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -1194,17 +1039,14 @@ impl UdpClientLink {
             }
         }
         self.drain_bootstrap_offers(&mut ticks, &mut snap_acks)?;
-        if let Some(mailbox) = self.relay.clone() {
-            for (_, bytes) in mailbox.take_control_inbound() {
-                let packet =
-                    decode_server_packet(&bytes, &self.limits).map_err(|e| e.to_string())?;
-                if matches!(packet, ServerPacket::Control { .. }) {
-                    self.apply_server_packet(packet, &mut ticks, &mut snap_acks)?;
-                }
+        for (_, bytes) in self.relay.take_control_inbound() {
+            let packet = decode_server_packet(&bytes, &self.limits).map_err(|e| e.to_string())?;
+            if matches!(packet, ServerPacket::Control { .. }) {
+                self.apply_server_packet(packet, &mut ticks, &mut snap_acks)?;
             }
         }
         self.adopt_entered_client();
-        if self.bootstrap.is_none() {
+        if self.bootstrap.is_none() || self.has_entered_match() {
             for seq in snap_acks {
                 let _ = self.send_snapshot_ack(seq);
             }
@@ -1398,6 +1240,7 @@ impl UdpClientLink {
                 snapshot.meta = frame.snapshot_meta.clone();
                 self.note_applied_snapshot(snapshot_seq);
                 self.baselines.insert(snapshot_seq, snapshot.clone());
+                self.required_baseline_seq = self.required_baseline_seq.max(baseline_seq);
                 self.retain_applied_baseline();
                 snap_acks.push(snapshot_seq);
                 ticks.push(ReceivedTick { snapshot, frame });
@@ -1413,7 +1256,7 @@ impl UdpClientLink {
                 .baselines
                 .keys()
                 .copied()
-                .find(|seq| Some(*seq) != pinned);
+                .find(|seq| Some(*seq) != pinned && *seq != self.required_baseline_seq);
             match oldest {
                 Some(seq) => {
                     self.baselines.remove(&seq);
@@ -1459,7 +1302,6 @@ impl UdpClientLink {
             let _ = self.send_snapshot_ack(seq);
         }
 
-        const CMDS_PER_PACKET: usize = 16;
         let count = CMDS_PER_PACKET.min(usize::from(self.limits.max_cmds_per_tick));
         if count == 0 {
             return Err(relay_send_error("peer permits no commands per packet"));
@@ -1511,17 +1353,9 @@ impl UdpClientLink {
             reliable_ack,
         };
         if cmds.is_empty() {
-            if let Some(mailbox) = &self.relay {
-                mailbox
-                    .push_control_outbound(MemberId([0; 16]), packet.to_bytes())
-                    .map_err(relay_send_error)
-            } else if actions.is_empty() {
-                self.send_bytes(&packet.to_bytes())
-            } else {
-                Err(relay_send_error(
-                    "transaction requires the QUIC control carrier",
-                ))
-            }
+            self.relay
+                .push_control_outbound(MemberId([0; 16]), packet.to_bytes())
+                .map_err(relay_send_error)
         } else {
             self.send_bytes(&packet.to_bytes())
         }

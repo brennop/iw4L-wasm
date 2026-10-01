@@ -143,21 +143,21 @@ impl GlassShatterSeed {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct CgGlassPiece {
+pub struct ClientGlassPiece {
     pub applied: u8,
     pub pending: u8,
     pub impact_dir: u8,
     pub impact_pos: [u8; 2],
 }
 
-const _: [(); 5] = [(); core::mem::size_of::<CgGlassPiece>()];
-const _: [(); 0] = [(); core::mem::offset_of!(CgGlassPiece, applied)];
-const _: [(); 1] = [(); core::mem::offset_of!(CgGlassPiece, pending)];
-const _: [(); 2] = [(); core::mem::offset_of!(CgGlassPiece, impact_dir)];
-const _: [(); 3] = [(); core::mem::offset_of!(CgGlassPiece, impact_pos)];
+const _: [(); 5] = [(); core::mem::size_of::<ClientGlassPiece>()];
+const _: [(); 0] = [(); core::mem::offset_of!(ClientGlassPiece, applied)];
+const _: [(); 1] = [(); core::mem::offset_of!(ClientGlassPiece, pending)];
+const _: [(); 2] = [(); core::mem::offset_of!(ClientGlassPiece, impact_dir)];
+const _: [(); 3] = [(); core::mem::offset_of!(ClientGlassPiece, impact_pos)];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum CgGlassApplyAction {
+pub enum GlassApplyAction {
     None,
     Weaken,
 
@@ -178,7 +178,7 @@ pub struct GlassPaneBasis {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub struct GGlassPiece {
+pub struct ServerGlassPiece {
     pub damage: u16,
 
     pub collapse_time: u16,
@@ -192,7 +192,7 @@ pub struct GGlassPiece {
     _gap_0b: u8,
 }
 
-impl Default for GGlassPiece {
+impl Default for ServerGlassPiece {
     fn default() -> Self {
         Self {
             damage: 0,
@@ -205,7 +205,7 @@ impl Default for GGlassPiece {
     }
 }
 
-impl GGlassPiece {
+impl ServerGlassPiece {
     pub fn state(self) -> GlassPieceState {
         glass_state_from_damage(self.damage)
     }
@@ -218,12 +218,12 @@ impl GGlassPiece {
     }
 }
 
-const _: [(); 0x0c] = [(); core::mem::size_of::<GGlassPiece>()];
-const _: [(); 0x00] = [(); core::mem::offset_of!(GGlassPiece, damage)];
-const _: [(); 0x02] = [(); core::mem::offset_of!(GGlassPiece, collapse_time)];
-const _: [(); 0x04] = [(); core::mem::offset_of!(GGlassPiece, last_state_change_time)];
-const _: [(); 0x08] = [(); core::mem::offset_of!(GGlassPiece, impact_dir)];
-const _: [(); 0x09] = [(); core::mem::offset_of!(GGlassPiece, impact_pos)];
+const _: [(); 0x0c] = [(); core::mem::size_of::<ServerGlassPiece>()];
+const _: [(); 0x00] = [(); core::mem::offset_of!(ServerGlassPiece, damage)];
+const _: [(); 0x02] = [(); core::mem::offset_of!(ServerGlassPiece, collapse_time)];
+const _: [(); 0x04] = [(); core::mem::offset_of!(ServerGlassPiece, last_state_change_time)];
+const _: [(); 0x08] = [(); core::mem::offset_of!(ServerGlassPiece, impact_dir)];
+const _: [(); 0x09] = [(); core::mem::offset_of!(ServerGlassPiece, impact_pos)];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlassStateChange {
@@ -232,7 +232,7 @@ pub struct GlassStateChange {
 }
 
 pub fn glass_apply_damage(
-    piece: &mut GGlassPiece,
+    piece: &mut ServerGlassPiece,
     added: u32,
     at_time_ms: i32,
     weakened_collapse_time_cs: Option<u16>,
@@ -384,8 +384,8 @@ pub fn glass_shatter_impact_from_seed(
     (hit, dir)
 }
 
-pub fn cg_glass_read_change(
-    row: &mut CgGlassPiece,
+pub fn glass_read_change(
+    row: &mut ClientGlassPiece,
     pending: GlassPieceState,
     seed: Option<GlassShatterSeed>,
 ) {
@@ -404,25 +404,21 @@ pub fn cg_glass_read_change(
     }
 }
 
-pub fn cg_glass_is_solid(row: CgGlassPiece) -> bool {
-    row.applied < GlassPieceState::Shattered.as_u8()
-}
-
-pub fn cg_glass_apply_state(
-    row: &mut CgGlassPiece,
+pub fn glass_apply_state(
+    row: &mut ClientGlassPiece,
     pane: Option<GlassPaneBasis>,
-) -> CgGlassApplyAction {
+) -> GlassApplyAction {
     if i32::from(row.applied) >= i32::from(row.pending) {
-        return CgGlassApplyAction::None;
+        return GlassApplyAction::None;
     }
     if row.pending == GlassPieceState::Deleted.as_u8() {
         row.applied = GlassPieceState::Deleted.as_u8();
-        return CgGlassApplyAction::Delete;
+        return GlassApplyAction::Delete;
     }
     let weakened_first = row.pending > 0 && row.applied == 0;
     if weakened_first && row.pending == GlassPieceState::Weakened.as_u8() {
         row.applied = GlassPieceState::Weakened.as_u8();
-        return CgGlassApplyAction::Weaken;
+        return GlassApplyAction::Weaken;
     }
     if row.pending > GlassPieceState::Weakened.as_u8() {
         let (hit, dir) = match pane {
@@ -430,23 +426,23 @@ pub fn cg_glass_apply_state(
             None => ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
         };
         row.applied = row.pending;
-        return CgGlassApplyAction::Shatter {
+        return GlassApplyAction::Shatter {
             hit,
             dir,
             weakened_first,
         };
     }
     row.applied = row.pending;
-    CgGlassApplyAction::None
+    GlassApplyAction::None
 }
 
-pub fn cg_glass_update(
-    rows: &mut [CgGlassPiece],
+pub fn glass_update(
+    rows: &mut [ClientGlassPiece],
     pane_at: impl Fn(usize) -> Option<GlassPaneBasis>,
 ) {
     for (i, row) in rows.iter_mut().enumerate() {
         if row.applied < row.pending {
-            let _ = cg_glass_apply_state(row, pane_at(i));
+            let _ = glass_apply_state(row, pane_at(i));
         }
     }
 }
@@ -508,7 +504,7 @@ pub fn glass_weakened_collapse_time_cs(next_random: &mut impl FnMut() -> f32) ->
     (ms / 100) as u16
 }
 
-pub fn glass_collapse_due(piece: GGlassPiece, level_time_ms: i32) -> bool {
+pub fn glass_collapse_due(piece: ServerGlassPiece, level_time_ms: i32) -> bool {
     if piece.collapse_time == 0 {
         return false;
     }
@@ -521,7 +517,10 @@ pub fn glass_collapse_due(piece: GGlassPiece, level_time_ms: i32) -> bool {
     deadline < level_time_ms
 }
 
-pub fn glass_collapse_piece(piece: &mut GGlassPiece, at_time_ms: i32) -> Option<GlassStateChange> {
+pub fn glass_collapse_piece(
+    piece: &mut ServerGlassPiece,
+    at_time_ms: i32,
+) -> Option<GlassStateChange> {
     if !glass_collapse_due(*piece, at_time_ms) {
         return None;
     }

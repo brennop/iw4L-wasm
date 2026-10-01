@@ -56,15 +56,15 @@ pub use snd_alias::{
     SND_CURVE_DEFAULT_ASSET_NAME, SND_CURVE_EVAL_OUT_OF_RANGE, SND_CURVE_FILENAME,
     SND_CURVE_KNOT_COUNT, SND_CURVE_KNOT_STRIDE, SND_CURVE_KNOTS, SND_CURVE_MAX_KNOTS,
     SND_ENTCHANNEL_DEFAULT_MAX_VOICES, SND_ENTCHANNEL_FILE, SND_ENTCHANNEL_MAX, SndAliasFlags,
-    SndAliasSampleKind, snd_attenuate, snd_curve_eval,
+    SndAliasSampleKind, attenuate, curve_eval,
 };
 pub use snd_pick::{
-    SND_LCG_ADD, SND_LCG_MUL, SND_LCG_UNIT_SCALE, lerp_range, pick_weighted_variant_index,
-    snd_advance_lcg, snd_unit_random,
+    SND_LCG_ADD, SND_LCG_MUL, SND_LCG_UNIT_SCALE, advance_lcg, lerp_range,
+    pick_weighted_variant_index, unit_random,
 };
 pub use snd_voice::{
-    SND_VOICE_FINISHED_FRACTION, SndVoiceOccupant, SndVoiceRequest, snd_entity_channel_matches,
-    snd_has_free_voice, snd_pick_voice_slot, snd_voice_metric_2d,
+    SND_VOICE_FINISHED_FRACTION, SndVoiceOccupant, SndVoiceRequest, entity_channel_matches,
+    has_free_voice, pick_voice_slot, voice_metric_2d,
 };
 pub use state_bits::{
     AlphaTest, D3DCULL_CCW, D3DCULL_CW, D3DCULL_NONE, D3DRS_ALPHAFUNC, D3DRS_ALPHAREF,

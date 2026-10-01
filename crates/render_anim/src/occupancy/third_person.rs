@@ -1,8 +1,8 @@
-use assets::ClipCollision;
+use asset_world::ClipCollision;
 use net::PresentedSnapshot;
 use playerstate_iw4::{
     CG_CAMERA_PULLBACK_BOX_HALF, CG_CAMERA_PULLBACK_CLIPMASK, CG_THIRD_PERSON_RANGE_DEFAULT,
-    CgIsThirdPersonViewInputs, KillCamMode, OffsetThirdPersonViewInputs, cg_is_third_person_view,
+    KillCamMode, OffsetThirdPersonViewInputs, ThirdPersonViewInputs, is_third_person_view,
     offset_third_person_view,
 };
 use sim::ClientId;
@@ -25,7 +25,7 @@ pub fn presented_is_third_person(
     if remote_missile_camera(presented, local, 0).is_some() {
         return true;
     }
-    cg_is_third_person_view(CgIsThirdPersonViewInputs {
+    is_third_person_view(ThirdPersonViewInputs {
         pm_type: ps.pm_type,
         other_flags: ps.other_flags,
         link_flags: ps.link_flags,

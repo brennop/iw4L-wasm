@@ -10,12 +10,12 @@ impl FxElemVec3Range {
     fn sampled(self, seed: u32) -> [f32; 3] {
         core::array::from_fn(|axis| {
             self.base[axis]
-                + self.amplitude[axis] * crate::random::fx_random_table_f32(seed, axis as u32)
+                + self.amplitude[axis] * crate::random::random_table_f32(seed, axis as u32)
         })
     }
 }
 
-pub fn fx_integrate_velocity_graph(
+pub fn integrate_velocity_graph(
     samples: &[FxElemVec3Range],
     start_age01: f32,
     end_age01: f32,
@@ -56,7 +56,7 @@ pub fn fx_integrate_velocity_graph(
 }
 
 #[inline]
-pub fn fx_sample_vel_graph_at_age(samples: &[FxElemVec3Range], age01: f32, seed: u32) -> [f32; 3] {
+pub fn sample_vel_graph_at_age(samples: &[FxElemVec3Range], age01: f32, seed: u32) -> [f32; 3] {
     sample_lerp(samples, age01, seed)
 }
 
@@ -91,7 +91,7 @@ pub const FX_SPARKCLOUD_HISTORY_NEAR_MS: f64 = 500.0;
 pub const FX_SPARKCLOUD_HISTORY_FAR_MS: f64 = 1000.0;
 
 #[inline]
-pub fn fx_sparkcloud_history_lookback_ms(size1: f32, far: bool) -> f32 {
+pub fn sparkcloud_history_lookback_ms(size1: f32, far: bool) -> f32 {
     let k = if far {
         FX_SPARKCLOUD_HISTORY_FAR_MS
     } else {
@@ -101,6 +101,6 @@ pub fn fx_sparkcloud_history_lookback_ms(size1: f32, far: bool) -> f32 {
 }
 
 #[inline]
-pub const fn fx_particle_cloud_cell_count(flags: i32) -> usize {
+pub const fn particle_cloud_cell_count(flags: i32) -> usize {
     1024usize >> (((flags as u32) >> 29) & 3)
 }

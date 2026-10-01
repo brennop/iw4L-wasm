@@ -4,7 +4,7 @@ pub const XANIM_WEIGHT_FLOOR: f32 = f32::from_bits(0x358637be);
 
 pub const XANIM_WEIGHT_FLOOR_SCALE: f32 = 0.001;
 
-pub fn xanim_advance_leaf_time(
+pub fn advance_leaf_time(
     old_time: f32,
     cycle_count: i16,
     rate: f32,
@@ -33,7 +33,7 @@ pub fn xanim_advance_leaf_time(
     (time, cycle)
 }
 
-pub fn xanim_advance_goal_weight(
+pub fn advance_goal_weight(
     weight: f32,
     goal_weight: f32,
     goal_time: f32,

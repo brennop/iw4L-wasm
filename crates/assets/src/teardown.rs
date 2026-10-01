@@ -2,12 +2,15 @@ use bevy::prelude::*;
 use frame::{ClientSet, MatchTornDown, ReturnedToMenu, SessionSwapApplied};
 
 use crate::{
-    AssetRefDumpCensus, MapXModelSceneCatalog, MatchType10SoundHints, PlayerAnimSources,
-    PreparedBodies, PreparedBodyClips, PreparedDestructibleDeath, PreparedFpvMeshes,
-    PreparedLocalizedStrings, PreparedProjectileMeshes, PreparedWeapons, PreparedWorldWeapons,
-    PreparedXAnims, PreparedXModelWalkCensus, SessionCompass, SessionMapScriptSound,
-    SessionTeamSettings,
+    MatchType10SoundHints, PreparedBodies, PreparedBodyClips, PreparedDestructibleDeath,
+    PreparedFpvMeshes, PreparedLocalizedStrings, PreparedProjectileMeshes, PreparedWeapons,
+    PreparedWorldWeapons, PreparedXAnims, PreparedXModelWalkCensus, SessionCompass,
 };
+use asset_anim::PlayerAnimSources;
+use asset_audio::SessionMapScriptSound;
+use asset_game::SessionTeamSettings;
+use asset_material::AssetRefDumpCensus;
+use asset_world::MapXModelSceneCatalog;
 
 pub(crate) fn drop_match_catalogs_on_teardown(
     mut torn: MessageReader<MatchTornDown>,

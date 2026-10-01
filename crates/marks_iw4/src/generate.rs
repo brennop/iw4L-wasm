@@ -24,22 +24,22 @@ pub enum MarkReceiver {
 }
 
 #[inline]
-pub const fn fx_impact_mark_outer_gate(fx_marks: bool, no_marks: bool) -> bool {
+pub const fn impact_mark_outer_gate(fx_marks: bool, no_marks: bool) -> bool {
     fx_marks && !no_marks
 }
 
 #[inline]
-pub const fn fx_impact_mark_skip_world_from_stored_bolt(bolt: u8) -> bool {
+pub const fn impact_mark_skip_world_from_stored_bolt(bolt: u8) -> bool {
     bolt != 0xff
 }
 
 #[inline]
-pub const fn fx_impact_mark_models_generate(fx_marks_ents: bool, fx_marks_smodels: bool) -> bool {
+pub const fn impact_mark_models_generate(fx_marks_ents: bool, fx_marks_smodels: bool) -> bool {
     fx_marks_ents || fx_marks_smodels
 }
 
 #[inline]
-pub const fn fx_impact_mark_calls_box_surfaces() -> bool {
+pub const fn impact_mark_calls_box_surfaces() -> bool {
     true
 }
 
@@ -51,7 +51,7 @@ pub enum MarkWorldMesh {
 }
 
 #[inline]
-pub const fn fx_impact_mark_add_entity(fx_marks_ents: bool) -> bool {
+pub const fn impact_mark_add_entity(fx_marks_ents: bool) -> bool {
     fx_marks_ents
 }
 
@@ -63,7 +63,7 @@ pub enum MarkGoDispatch {
 }
 
 #[inline]
-pub const fn fx_mark_go_dispatch(against: MarkFragmentsAgainst) -> MarkGoDispatch {
+pub const fn mark_go_dispatch(against: MarkFragmentsAgainst) -> MarkGoDispatch {
     match against {
         MarkFragmentsAgainst::WorldBrushes => MarkGoDispatch::WorldBrushesThenClip,
         MarkFragmentsAgainst::Models => MarkGoDispatch::Models,
@@ -79,7 +79,7 @@ pub enum MarkGenerateAddEntity {
 }
 
 #[inline]
-pub fn fx_impact_mark_material<'a>(
+pub fn impact_mark_material<'a>(
     materials: [Option<&'a str>; 2],
     against: MarkFragmentsAgainst,
 ) -> Option<&'a str> {
@@ -90,7 +90,7 @@ pub fn fx_impact_mark_material<'a>(
 }
 
 #[inline]
-pub const fn fx_impact_mark_generate_add_entity(
+pub const fn impact_mark_generate_add_entity(
     fx_marks_ents: bool,
     against: MarkFragmentsAgainst,
     generate_local_dobj: bool,
@@ -118,7 +118,7 @@ pub struct FxGenerateMarkVertsPacked {
 }
 
 #[inline]
-pub const fn fx_fill_generate_mark_verts_cmd(
+pub const fn fill_generate_mark_verts_cmd(
     fx_marks: bool,
     fx_marks_smodels: bool,
     fx_marks_ents: bool,
@@ -131,6 +131,6 @@ pub const fn fx_fill_generate_mark_verts_cmd(
 }
 
 #[inline]
-pub const fn fx_dyn_mark_verts_worker_gate(cmd: FxGenerateMarkVertsPacked) -> bool {
+pub const fn dyn_mark_verts_worker_gate(cmd: FxGenerateMarkVertsPacked) -> bool {
     cmd.fx_marks && (cmd.fx_marks_smodels || cmd.fx_marks_ents)
 }

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferUsages};
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use lighting_iw4::{
-    SMC_BANK_VB_BYTES, SMC_INDEX_U16_N, SMC_VB_BYTES, SmcPatchLock, r_smc_stream_source_byte_offset,
+    SMC_BANK_VB_BYTES, SMC_INDEX_U16_N, SMC_VB_BYTES, SmcPatchLock, smc_stream_source_byte_offset,
 };
 
 use crate::drawsurf::backend::DYNAMIC_INDEX_BUFFER_CAPACITY;
@@ -90,7 +90,7 @@ impl SmodelCacheGpu {
     }
 
     pub fn bank_byte_range(cache_index: u16) -> Option<(u64, u64)> {
-        let start = u64::from(r_smc_stream_source_byte_offset(cache_index)?);
+        let start = u64::from(smc_stream_source_byte_offset(cache_index)?);
         Some((start, start + u64::from(SMC_BANK_VB_BYTES)))
     }
 

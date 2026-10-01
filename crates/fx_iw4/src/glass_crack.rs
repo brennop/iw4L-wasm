@@ -8,9 +8,9 @@
 //! points, 512 directed edges, 32 loops and 32 pending branches.
 
 use crate::glass::FX_GLASS_VERT_SCALE;
-use crate::glass_shatter::{FX_GLASS_SHATTER_TWO_PI, fx_glass_interior_branch_count};
+use crate::glass_shatter::{FX_GLASS_SHATTER_TWO_PI, glass_interior_branch_count};
 use crate::pool::FX_RAND_TABLE_MOD;
-use crate::random::fx_random_table_f32;
+use crate::random::random_table_f32;
 
 pub const FX_GLASS_CRACK_PT_MAX: usize = 255;
 pub const FX_GLASS_CRACK_EDGE_MAX: usize = 512;
@@ -159,7 +159,7 @@ impl FxGlassCrackRand {
         if self.cursor == FX_RAND_TABLE_MOD {
             self.cursor = 0;
         }
-        fx_random_table_f32(self.cursor, 0)
+        random_table_f32(self.cursor, 0)
     }
 
     fn lerp(&mut self, min: f32, max: f32) -> f32 {
@@ -389,7 +389,7 @@ impl FxGlassCrackWork {
         }
         // Authored contours can have either winding. Crack faces require the
         // interior on the left; keep vertex zero and reverse clockwise contours.
-        let clockwise = crate::glass_geo::fx_glass_contour_area_x2(verts) < 0;
+        let clockwise = crate::glass_geo::glass_contour_area_x2(verts) < 0;
         for i in 0..n {
             let source = if clockwise { (n - i) % n } else { i };
             let v = verts[source];
@@ -1106,7 +1106,7 @@ impl FxGlassCrackWork {
     pub fn create_cracks(&mut self) -> bool {
         let (after_edge, seed_dir) = self.pick_seed_dir();
         let (count, step, mut dir) = if after_edge == FX_GLASS_EDGE_NONE {
-            let n = fx_glass_interior_branch_count(self.rand.next());
+            let n = glass_interior_branch_count(self.rand.next());
             (n, FX_GLASS_SHATTER_TWO_PI / n as f32, seed_dir)
         } else {
             let row = self.edge(after_edge);

@@ -1,11 +1,6 @@
-use playerstate_iw4::{ENTITYNUM_NONE, PlayerState};
+use playerstate_iw4::{ENTITYNUM_NONE, PlayerState, pm_flags};
 
-use crate::{
-    CollisionBackend, GroundTraceInput, PMF_LADDER, PMF_PRONE, Pml, jump_clear_state,
-    jump_get_step_height,
-};
-
-const PMF_JUMPING: u32 = 0x2000;
+use crate::{CollisionBackend, GroundTraceInput, Pml, jump};
 
 const OVERCLIP: f32 = 1.001;
 
@@ -31,7 +26,7 @@ const DUPLICATE_PLANE_DOT: f64 = 0.999_000_012_874_603_3;
 
 const PLANE_INTO: f32 = 0.1;
 
-pub fn pm_slide_move<C: CollisionBackend>(
+pub fn slide_move<C: CollisionBackend>(
     ps: &mut PlayerState,
     pml: &Pml,
     collision: &C,
@@ -182,7 +177,7 @@ pub fn pm_slide_move<C: CollisionBackend>(
     bumped
 }
 
-pub fn pm_step_slide_move<C: CollisionBackend>(
+pub fn step_slide_move<C: CollisionBackend>(
     ps: &mut PlayerState,
     pml: &Pml,
     collision: &C,
@@ -191,14 +186,14 @@ pub fn pm_step_slide_move<C: CollisionBackend>(
     tracemask: u32,
     gravity: Option<f32>,
 ) {
-    let had_ground = if (ps.pm_flags & PMF_LADDER) != 0 {
-        jump_clear_state(ps);
+    let had_ground = if (ps.pm_flags & pm_flags::LADDER) != 0 {
+        jump::clear_state(ps);
         false
     } else if pml.ground_plane != 0 {
         true
     } else {
-        if (ps.pm_flags & PMF_JUMPING) != 0 && ps.pm_time != 0 {
-            jump_clear_state(ps);
+        if (ps.pm_flags & pm_flags::JUMPING) != 0 && ps.pm_time != 0 {
+            jump::clear_state(ps);
         }
         false
     };
@@ -206,24 +201,24 @@ pub fn pm_step_slide_move<C: CollisionBackend>(
     let start_origin = ps.origin;
     let start_velocity = ps.velocity;
 
-    let bumped = pm_slide_move(ps, pml, collision, mins, maxs, tracemask, gravity);
+    let bumped = slide_move(ps, pml, collision, mins, maxs, tracemask, gravity);
     let down_origin = ps.origin;
     let down_velocity = ps.velocity;
 
-    let mut step_size = if (ps.pm_flags & PMF_PRONE) != 0 {
+    let mut step_size = if (ps.pm_flags & pm_flags::PRONE) != 0 {
         PRONE_STEP_SIZE
     } else {
         STEP_SIZE
     };
 
     if ps.ground_entity_num == ENTITYNUM_NONE {
-        if (ps.pm_flags & PMF_JUMPING) != 0 && ps.pm_time != 0 {
-            jump_clear_state(ps);
+        if (ps.pm_flags & pm_flags::JUMPING) != 0 && ps.pm_time != 0 {
+            jump::clear_state(ps);
         }
-        let jumping = (ps.pm_flags & PMF_JUMPING) != 0;
-        let ladder_up = (ps.pm_flags & PMF_LADDER) != 0 && ps.velocity[2] > 0.0;
+        let jumping = (ps.pm_flags & pm_flags::JUMPING) != 0;
+        let ladder_up = (ps.pm_flags & pm_flags::LADDER) != 0 && ps.velocity[2] > 0.0;
         if bumped && jumping {
-            match jump_get_step_height(ps, start_origin) {
+            match jump::get_step_height(ps, start_origin) {
                 Some(height) if height < 1.0 => return,
                 Some(height) => step_size = height,
                 None if !ladder_up => return,
@@ -260,7 +255,7 @@ pub fn pm_step_slide_move<C: CollisionBackend>(
                 start_origin[2] + step_amount,
             ];
             ps.velocity = start_velocity;
-            let _ = pm_slide_move(ps, pml, collision, mins, maxs, tracemask, gravity);
+            let _ = slide_move(ps, pml, collision, mins, maxs, tracemask, gravity);
         }
     }
 
@@ -284,7 +279,7 @@ pub fn pm_step_slide_move<C: CollisionBackend>(
         } else if down.walkable != 0 || down.normal[2] >= SECONDARY_LANDING_NORMAL_Z {
             ps.origin = down.endpos;
 
-            pm_project_velocity(&mut ps.velocity, &down.normal);
+            project_velocity(&mut ps.velocity, &down.normal);
         } else {
             ps.origin = down_origin;
             ps.velocity = down_velocity;
@@ -322,7 +317,7 @@ pub fn pm_step_slide_move<C: CollisionBackend>(
     }
 }
 
-pub(crate) fn pm_project_velocity(velocity: &mut [f32; 3], normal: &[f32; 3]) {
+pub(crate) fn project_velocity(velocity: &mut [f32; 3], normal: &[f32; 3]) {
     let length_sq_2d = velocity[0] * velocity[0] + velocity[1] * velocity[1];
     if libm::fabsf(normal[2]) < PROJECT_NORMAL_Z_EPSILON || length_sq_2d == 0.0 {
         return;

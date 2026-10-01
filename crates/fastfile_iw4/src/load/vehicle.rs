@@ -7,21 +7,32 @@ use crate::zone::{Ptr, Result, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream};
 pub(super) fn load_vehicle(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
     let p = s.alloc_load(4, s.layout(sz::VEHICLE_DEF, 1008))?;
     s.push(XFILE_BLOCK_VIRTUAL)?;
-    follow_name(s, p, 0)?;
+    let name = s.follow_string(p, 0)?;
     s.follow_string(p, s.layout(8, 16))?;
 
     s.follow_string(p, s.layout(172, 192))?;
     asset_ptr_at(s, links, AssetType::PhysPreset, p.at(s.layout(176, 200)))?;
     s.follow_string(p, s.layout(180, 208))?;
 
-    s.follow_string(p, s.layout(408, 448))?;
+    let turret_weapon = s.follow_string(p, s.layout(408, 448))?;
+    s.record_vehicle(name, turret_weapon);
     asset_ptr_at(s, links, AssetType::Weapon, p.at(s.layout(412, 456)))?;
 
     follow_snd_alias_custom(s, p.at(s.layout(436, 488)))?;
     follow_snd_alias_custom(s, p.at(s.layout(440, 496)))?;
-    for (field, wide) in [(472, 536), (476, 544)] {
-        asset_ptr_at(s, links, AssetType::Material, p.at(s.layout(field, wide)))?;
+    let mut icons = [[0; 128]; 2];
+    for (index, (field, wide)) in [(472, 536), (476, 544)].into_iter().enumerate() {
+        let slot = p.at(s.layout(field, wide));
+        let fresh = super::asset_ptr_at_linked(s, links, AssetType::Material, slot)?;
+        super::copy_linked_material(s, links, slot, fresh, &mut icons[index]);
     }
+    s.record_vehicle_compass(
+        icons,
+        [
+            s.i32_at(p, s.layout(480, 552))?,
+            s.i32_at(p, s.layout(484, 556))?,
+        ],
+    );
     for (field, wide) in [
         (488, 560),
         (492, 568),

@@ -1,5 +1,5 @@
-use crate::origin::fx_sample_float_range;
-use crate::random::{FX_RAND_CH_INITIAL_ROTATION, FX_RAND_CH_ROTATION_DELTA, fx_random_table_f32};
+use crate::origin::sample_float_range;
+use crate::random::{FX_RAND_CH_INITIAL_ROTATION, FX_RAND_CH_ROTATION_DELTA, random_table_f32};
 
 pub const FX_ELEM_VIS_STATE_SAMPLE_SIZE: usize = 0x30;
 
@@ -18,7 +18,7 @@ pub const FX_VIS_SIZE1_OFF: usize = 0x10;
 pub const FX_VIS_SCALE_OFF: usize = 0x14;
 
 #[inline]
-pub fn fx_elem_norm_time(age_msec: i32, life_msec: i32) -> f32 {
+pub fn elem_norm_time(age_msec: i32, life_msec: i32) -> f32 {
     if life_msec <= 0 {
         return 1.0;
     }
@@ -33,7 +33,7 @@ pub fn fx_elem_norm_time(age_msec: i32, life_msec: i32) -> f32 {
 }
 
 #[inline]
-pub fn fx_setup_visual_sample_point(interval_count: u8, norm_time: f32) -> (usize, f32) {
+pub fn setup_visual_sample_point(interval_count: u8, norm_time: f32) -> (usize, f32) {
     let sample_point = (interval_count as f32) * norm_time;
     let floor = libm::floorf(sample_point).max(0.0) as usize;
     let frac = sample_point - floor as f32;
@@ -60,14 +60,14 @@ fn read_f32(bytes: &[u8], off: usize) -> Option<f32> {
 }
 
 #[inline]
-pub fn fx_integrate_rotation_from_zero(
+pub fn integrate_rotation_from_zero(
     s0: &[u8],
     s1: &[u8],
     seed: u32,
     sample_lerp: f32,
     life_msec: f32,
 ) -> f32 {
-    let r = fx_random_table_f32(seed, FX_RAND_CH_ROTATION_DELTA);
+    let r = random_table_f32(seed, FX_RAND_CH_ROTATION_DELTA);
     let half_sq = sample_lerp * sample_lerp * 0.5;
     let base_delta0 = read_f32(s0, FX_VIS_ROT_DELTA_OFF).unwrap_or(0.0);
     let amp_delta0 = read_f32(s0, FX_ELEM_VISUAL_STATE_SIZE + FX_VIS_ROT_DELTA_OFF).unwrap_or(0.0);
@@ -82,7 +82,7 @@ pub fn fx_integrate_rotation_from_zero(
 }
 
 #[inline]
-pub fn fx_evaluate_rotation_total(
+pub fn evaluate_rotation_total(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
@@ -90,18 +90,18 @@ pub fn fx_evaluate_rotation_total(
     initial_rotation: [f32; 2],
     life_msec: f32,
 ) -> Option<f32> {
-    let (floor, frac) = fx_setup_visual_sample_point(interval_count, norm_time);
+    let (floor, frac) = setup_visual_sample_point(interval_count, norm_time);
     let (s0, s1) = sample_pair(samples, floor)?;
-    let initial = fx_sample_float_range(
+    let initial = sample_float_range(
         initial_rotation[0],
         initial_rotation[1],
-        fx_random_table_f32(seed, FX_RAND_CH_INITIAL_ROTATION),
+        random_table_f32(seed, FX_RAND_CH_INITIAL_ROTATION),
     );
-    Some(initial + fx_integrate_rotation_from_zero(s0, s1, seed, frac, life_msec))
+    Some(initial + integrate_rotation_from_zero(s0, s1, seed, frac, life_msec))
 }
 
 #[inline]
-pub fn fx_evaluate_size0(
+pub fn evaluate_size0(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
@@ -111,7 +111,7 @@ pub fn fx_evaluate_size0(
 }
 
 #[inline]
-pub fn fx_evaluate_size1(
+pub fn evaluate_size1(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
@@ -121,7 +121,7 @@ pub fn fx_evaluate_size1(
 }
 
 #[inline]
-pub fn fx_evaluate_scale(
+pub fn evaluate_scale(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
@@ -137,7 +137,7 @@ fn evaluate_size_channel(
     rand01: f32,
     off: usize,
 ) -> Option<f32> {
-    let (floor, frac) = fx_setup_visual_sample_point(interval_count, norm_time);
+    let (floor, frac) = setup_visual_sample_point(interval_count, norm_time);
     let (s0, s1) = sample_pair(samples, floor)?;
     let base0 = read_f32(s0, off)?;
     let amp0 = read_f32(s0, FX_ELEM_VISUAL_STATE_SIZE + off).unwrap_or(0.0);
@@ -149,13 +149,13 @@ fn evaluate_size_channel(
 }
 
 #[inline]
-pub fn fx_evaluate_color_bgra(
+pub fn evaluate_color_bgra(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
     rand01: f32,
 ) -> Option<[u8; 4]> {
-    let (floor, frac) = fx_setup_visual_sample_point(interval_count, norm_time);
+    let (floor, frac) = setup_visual_sample_point(interval_count, norm_time);
     let (s0, s1) = sample_pair(samples, floor)?;
     let mut out = [0u8; 4];
     for c in 0..4 {
@@ -176,11 +176,11 @@ pub fn fx_evaluate_color_bgra(
 }
 
 #[inline]
-pub fn fx_evaluate_vis_alpha(
+pub fn evaluate_vis_alpha(
     samples: &[u8],
     interval_count: u8,
     norm_time: f32,
     rand01: f32,
 ) -> Option<u8> {
-    Some(fx_evaluate_color_bgra(samples, interval_count, norm_time, rand01)?[3])
+    Some(evaluate_color_bgra(samples, interval_count, norm_time, rand01)?[3])
 }

@@ -23,7 +23,7 @@ pub struct SmodelRigidListStep {
     pub consumed: bool,
 }
 
-pub fn r_tess_static_model_rigid_draw_surf_list(
+pub fn tess_static_model_rigid_draw_surf_list(
     entries: &[GfxSmodelRigidEntry],
     cur: usize,
     setup_ok: bool,
@@ -42,7 +42,7 @@ pub fn r_tess_static_model_rigid_draw_surf_list(
     }
 }
 
-pub fn r_tess_static_model_rigid_draw_surf_lighting(
+pub fn tess_static_model_rigid_draw_surf_lighting(
     run: &[GfxSmodelRigidEntry],
     tech_type_lit: bool,
 ) -> Vec<SmodelRigidFlush> {
@@ -122,7 +122,7 @@ pub fn smodel_rigid_list_step(
     }
 }
 
-pub fn r_tess_xmodel_rigid_draw_surf_lighting(
+pub fn tess_xmodel_rigid_draw_surf_lighting(
     run: &[GfxXModelRigidEntry],
     tech_type_lit: bool,
 ) -> Vec<XModelRigidFlush> {
@@ -299,7 +299,7 @@ impl TrianglesListArm {
     }
 }
 
-pub fn r_tess_triangles_list_generic(
+pub fn tess_triangles_list_generic(
     entries: &[GfxTrianglesListEntry],
     mut sort_key_run_ends: impl FnMut(u32, u32) -> bool,
 ) -> Vec<TrianglesListFlush> {

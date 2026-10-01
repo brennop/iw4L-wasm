@@ -17,9 +17,9 @@ pub struct PreparedModelMaterials {
     owner: Option<ModelMaterialsOwner>,
     by_name: HashMap<String, SmodelPassMaterial>,
     by_authored: HashMap<assets::MaterialIndex, SmodelPassMaterial>,
-    scene_dobjs: HashMap<String, Arc<assets::DObj>>,
+    scene_dobjs: HashMap<String, Arc<xmodel_runtime::DObj>>,
     projectile_materials: HashMap<assets::MaterialIndex, SmodelPassMaterial>,
-    projectile_dobjs: HashMap<(assets::AssetNamespace, String), Arc<assets::DObj>>,
+    projectile_dobjs: HashMap<(asset_core::AssetNamespace, String), Arc<xmodel_runtime::DObj>>,
 }
 
 impl PreparedModelMaterials {
@@ -62,7 +62,7 @@ impl PreparedModelMaterials {
         self.by_authored.get(&authored)
     }
 
-    pub fn scene_dobj(&self, model: &str) -> Option<&Arc<assets::DObj>> {
+    pub fn scene_dobj(&self, model: &str) -> Option<&Arc<xmodel_runtime::DObj>> {
         self.scene_dobjs.get(model)
     }
 
@@ -79,9 +79,9 @@ impl PreparedModelMaterials {
 
     pub fn projectile_dobj(
         &self,
-        namespace: assets::AssetNamespace,
+        namespace: asset_core::AssetNamespace,
         model: &str,
-    ) -> Option<&Arc<assets::DObj>> {
+    ) -> Option<&Arc<xmodel_runtime::DObj>> {
         self.projectile_dobjs.get(&(namespace, model.to_owned()))
     }
 
@@ -147,7 +147,7 @@ pub fn scene_lit_pass_material(
 }
 
 fn present_names<'a>(
-    keys: &'a [Option<assets::MaterialKey>],
+    keys: &'a [Option<asset_core::MaterialKey>],
     edges: &'a [assets::AssetEdge<assets::MaterialSpace>],
 ) -> impl Iterator<Item = &'a str> {
     keys.iter()
@@ -161,7 +161,7 @@ pub fn prepare_model_materials(
     atlas: Option<Res<WorldModelLightingAtlas>>,
     bodies: Option<Res<assets::PreparedBodies>>,
     world_weapons: Option<Res<assets::PreparedWorldWeapons>>,
-    scene_models: Option<Res<assets::MapXModelSceneCatalog>>,
+    scene_models: Option<Res<asset_world::MapXModelSceneCatalog>>,
     projectiles: Option<Res<assets::PreparedProjectileMeshes>>,
     mut prepared: ResMut<PreparedModelMaterials>,
 ) {
@@ -220,10 +220,10 @@ pub fn prepare_model_materials(
     if let Some(scene_models) = scene_models.as_deref() {
         for (key, asset) in scene_models.iter() {
             let skel = match asset {
-                assets::MapXModelSceneAsset::Iw4(skel)
-                | assets::MapXModelSceneAsset::Iw5(skel)
-                | assets::MapXModelSceneAsset::T5(skel) => skel,
-                assets::MapXModelSceneAsset::Unavailable { .. } => continue,
+                asset_world::MapXModelSceneAsset::Iw4(skel)
+                | asset_world::MapXModelSceneAsset::Iw5(skel)
+                | asset_world::MapXModelSceneAsset::T5(skel) => skel,
+                asset_world::MapXModelSceneAsset::Unavailable { .. } => continue,
             };
             for surface in 0..skel.surface_materials.len() {
                 let Some(authored) = scene_models.surface_material(key, surface) else {
@@ -237,7 +237,7 @@ pub fn prepare_model_materials(
                 }
             }
             if let Some(pose) = skel.pose.as_ref()
-                && let Ok(dobj) = assets::DObj::build(&[(pose, None)])
+                && let Ok(dobj) = xmodel_runtime::DObj::build(&[(pose, None)])
             {
                 scene_dobjs.insert(key.0.clone(), Arc::new(dobj));
             }
@@ -255,7 +255,7 @@ pub fn prepare_model_materials(
                     .0
                     .key_at(index)
                     .cloned()
-                    .unwrap_or(assets::ProjectileMeshKey::new(
+                    .unwrap_or(asset_model::ProjectileMeshKey::new(
                         entry.namespace,
                         &entry.skel.name,
                     ));
@@ -276,7 +276,7 @@ pub fn prepare_model_materials(
                 }
             }
             if let Some(pose) = entry.skel.pose.as_ref()
-                && let Ok(dobj) = assets::DObj::build(&[(pose, None)])
+                && let Ok(dobj) = xmodel_runtime::DObj::build(&[(pose, None)])
             {
                 projectile_dobjs.insert((key.namespace, key.name), Arc::new(dobj));
             }

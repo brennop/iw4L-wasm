@@ -28,7 +28,7 @@ and leaves transport to `net`.
 | `ClientState` | per-client slot, stride `0x7c` (command, `name[16]`) |
 | `CorpseInfo` | server-side corpse slot, stride `0x53c`, 8 of them |
 | `ET_PLAYER` / `ET_PLAYER_CORPSE` / `ET_ITEM` / `ET_MISSILE` | |
-| `Trajectory` | `bg_evaluate_trajectory`: gravity 400, delta 800 |
+| `Trajectory` | `evaluate_trajectory`: gravity 400, delta 800 |
 | events | the entity-event ring, an 11-bit wrapper |
 | `ENTITYNUM_NONE` | `0x7FF` |
 | `playerstate_iw4` | player and input: the two ends of the funnel |

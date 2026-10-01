@@ -5,8 +5,8 @@ use asset_material::MaterialDefinitions;
 use fastfile_iw4::{Ptr, ZonePtr, ZoneStream};
 use fx_iw4::{
     FX_GLASS_DEF, FX_GLASS_GEOMETRY_DATA, FX_GLASS_INIT_PIECE_STATE, FX_GLASS_PIECE_PLACE,
-    FX_GLASS_PIECE_STATE, fx_glass_place_origin, fx_glass_place_quat, fx_glass_reset_copy_geo,
-    fx_glass_reset_copy_piece, fx_glass_state_geo_start, fx_unit_quat_to_axis,
+    FX_GLASS_PIECE_STATE, glass_place_origin, glass_place_quat, glass_reset_copy_geo,
+    glass_reset_copy_piece, glass_state_geo_start, unit_quat_to_axis,
 };
 use weapon_iw4::CONTENTS_GLASS;
 
@@ -47,7 +47,7 @@ pub struct GlassZoneCensus {
 impl GlassZoneCensus {
     pub fn report_line(&self) -> String {
         format!(
-            "glass zone: fx init_pieces={} defs={} init_geo={} | G_GlassData pieces={} names={} | clip encoded={} unique={} surf9={} contents_glass={} (not tess, not hitType=4)",
+            "glass zone: fx init_pieces={} defs={} init_geo={} | glass data pieces={} names={} | clip encoded={} unique={} surf9={} contents_glass={} (not tess, not hitType=4)",
             self.fx_init_piece_n,
             self.fx_def_n,
             self.fx_init_geo_n,
@@ -110,7 +110,7 @@ fn fill_fx(out: &mut GlassZoneCensus, s: &ZoneStream<'_>) {
 }
 
 fn fill_g_glass(out: &mut GlassZoneCensus, s: &ZoneStream<'_>) {
-    let Some(g) = s.g_glass_data() else {
+    let Some(g) = s.glass_data() else {
         return;
     };
     out.g_recorded = true;
@@ -167,8 +167,8 @@ impl FxGlassReset {
 
     pub fn pane_basis(&self, piece: usize) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
         let place = self.piece_places.get(piece)?;
-        let origin = fx_glass_place_origin(place);
-        let axis = fx_unit_quat_to_axis(fx_glass_place_quat(place));
+        let origin = glass_place_origin(place);
+        let axis = unit_quat_to_axis(glass_place_quat(place));
         Some((origin, axis[0], axis[1]))
     }
 
@@ -206,7 +206,7 @@ impl FxGlassReset {
     }
 
     pub fn geo_start(&self, piece: usize) -> Option<u16> {
-        self.piece_states.get(piece).map(fx_glass_state_geo_start)
+        self.piece_states.get(piece).map(glass_state_geo_start)
     }
 }
 
@@ -230,7 +230,7 @@ pub fn build_fx_glass_reset(stream: &ZoneStream<'_>) -> Option<FxGlassReset> {
     let mut geo_cursor = 0u16;
     for (i, init) in init_piece_states.iter().enumerate() {
         let piece = u16::try_from(i).ok()?;
-        let out = fx_glass_reset_copy_piece(init, piece, geo_cursor, &defs);
+        let out = glass_reset_copy_piece(init, piece, geo_cursor, &defs);
         geo_cursor = out.next_geo_start;
         piece_places.push(out.place);
         piece_states.push(out.state);
@@ -239,7 +239,7 @@ pub fn build_fx_glass_reset(stream: &ZoneStream<'_>) -> Option<FxGlassReset> {
 
     let mut geo_flat = vec![0u8; init_geo_data.len() * FX_GLASS_GEOMETRY_DATA];
     let src: Vec<u8> = init_geo_data.iter().flatten().copied().collect();
-    fx_glass_reset_copy_geo(&mut geo_flat, &src);
+    glass_reset_copy_geo(&mut geo_flat, &src);
     let mut geo_data = Vec::with_capacity(init_geo_data.len());
     for chunk in geo_flat.chunks_exact(FX_GLASS_GEOMETRY_DATA) {
         let mut word = [0u8; FX_GLASS_GEOMETRY_DATA];

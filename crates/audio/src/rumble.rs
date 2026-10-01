@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::prelude::*;
-use net::{CgFrameClock, LocalPresentClient, PresentedSnapshot};
+use net::{LocalPresentClient, PresentedSnapshot};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Rumble {
@@ -13,8 +13,8 @@ pub(crate) struct Rumble {
 
 impl Rumble {
     pub(crate) fn prepare(
-        bank: &assets::SoundCatalog,
-        namespace: assets::AssetNamespace,
+        bank: &asset_audio::SoundCatalog,
+        namespace: asset_core::AssetNamespace,
         name: &str,
     ) -> Result<Arc<Self>, String> {
         let text = |name: &str| -> Result<&str, String> {
@@ -130,6 +130,20 @@ struct RumblePlayback {
     last_time: i32,
     active: Vec<(i32, Arc<Rumble>)>,
     output: Option<(Entity, GamepadRumbleIntensity)>,
+    selected: Option<Entity>,
+    next_refresh_ms: i32,
+}
+
+fn push_rumble(active: &mut Vec<(i32, Arc<Rumble>)>, now: i32, rumble: Arc<Rumble>) {
+    if active.len() >= 32
+        && let Some((index, _)) = active
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (start, rumble))| start.saturating_add(rumble.duration_ms))
+    {
+        active.swap_remove(index);
+    }
+    active.push((now, rumble));
 }
 
 pub(crate) fn register(app: &mut App) {
@@ -147,12 +161,36 @@ fn update(
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     generation: Res<frame::WorldGeneration>,
-    clock: Res<CgFrameClock>,
+    time: Res<Time>,
+    devices: Res<frame::InputDevices>,
+    mut tests: MessageReader<frame::TestControllerRumble>,
     gamepads: Query<Entity, With<Gamepad>>,
     mut state: Local<RumblePlayback>,
     mut output: MessageWriter<GamepadRumbleRequest>,
+    settings: Res<frame::GameSettings>,
+    active: Option<Res<frame::ActivePad>>,
 ) {
-    let now = clock.time();
+    let now = (time.elapsed_secs_f64() * 1000.0) as i32;
+    let selected = active
+        .and_then(|active| active.0)
+        .filter(|entity| gamepads.contains(*entity));
+    if state.selected != selected {
+        state.active.clear();
+        if let Some((gamepad, _)) = state.output.take() {
+            output.write(GamepadRumbleRequest::Stop { gamepad });
+        }
+        state.selected = selected;
+        state.next_refresh_ms = 0;
+    }
+    if !settings.pad_vibration || !devices.focused || selected.is_none() {
+        requests.clear();
+        tests.clear();
+        state.active.clear();
+        if let Some((gamepad, _)) = state.output.take() {
+            output.write(GamepadRumbleRequest::Stop { gamepad });
+        }
+        return;
+    }
     let owner = bank.as_ref().and_then(|bank| {
         let meta = presented.snapshot()?.meta.for_client(local.0)?;
         (meta.lifecycle == sim::ClientLifecycle::Alive).then_some((
@@ -177,17 +215,19 @@ fn update(
         if owner.is_none_or(|owner| owner.3 != request.bank_revision) {
             continue;
         }
-        if state.active.len() == 32 {
-            if let Some((index, _)) = state
-                .active
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, (start, rumble))| start.saturating_add(rumble.duration_ms))
-            {
-                state.active.swap_remove(index);
-            }
-        }
-        state.active.push((now, Arc::clone(&request.rumble)));
+        push_rumble(&mut state.active, now, Arc::clone(&request.rumble));
+    }
+    if tests.read().next().is_some() {
+        push_rumble(
+            &mut state.active,
+            now,
+            Arc::new(Rumble {
+                duration_ms: 400,
+                low: vec![(0.0, 0.6), (1.0, 0.0)],
+                high: vec![(0.0, 0.4), (1.0, 0.0)],
+            }),
+        );
+        tests.clear();
     }
     let mut intensity = GamepadRumbleIntensity {
         strong_motor: 0.0,
@@ -198,27 +238,22 @@ fn update(
         intensity.strong_motor = intensity.strong_motor.max(current.strong_motor);
         intensity.weak_motor = intensity.weak_motor.max(current.weak_motor);
     }
-    let selected = gamepads.iter().min_by_key(|entity| entity.to_bits());
-    if state
-        .output
-        .is_some_and(|(entity, _)| Some(entity) != selected)
-    {
-        if let Some((gamepad, _)) = state.output.take() {
-            output.write(GamepadRumbleRequest::Stop { gamepad });
-        }
-    }
     if let Some(gamepad) = selected {
         let zero = intensity.strong_motor == 0.0 && intensity.weak_motor == 0.0;
-        if !zero || state.output != Some((gamepad, intensity)) {
-            output.write(GamepadRumbleRequest::Stop { gamepad });
-            if !zero {
-                output.write(GamepadRumbleRequest::Add {
-                    gamepad,
-                    duration: std::time::Duration::from_millis(100),
-                    intensity,
-                });
+        if zero {
+            if state.output.take().is_some() {
+                output.write(GamepadRumbleRequest::Stop { gamepad });
             }
+            state.next_refresh_ms = 0;
+        } else if state.output.is_none() || now >= state.next_refresh_ms {
+            output.write(GamepadRumbleRequest::Stop { gamepad });
+            output.write(GamepadRumbleRequest::Add {
+                gamepad,
+                duration: std::time::Duration::from_millis(160),
+                intensity,
+            });
+            state.output = Some((gamepad, intensity));
+            state.next_refresh_ms = now.saturating_add(80);
         }
-        state.output = Some((gamepad, intensity));
     }
 }

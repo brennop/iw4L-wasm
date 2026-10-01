@@ -2,6 +2,7 @@ pub mod bundle_zip;
 pub mod certs;
 pub mod chaos;
 pub mod dotenv;
+pub mod duo;
 pub mod fmt;
 pub mod frame_budget;
 pub mod live;

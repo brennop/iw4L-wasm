@@ -1,5 +1,5 @@
 use crate::pool::FX_RAND_TABLE_MOD;
-use crate::random::fx_random_table_f32;
+use crate::random::random_table_f32;
 
 pub const FX_GLASS_SHATTER_BRANCH_SCALE: f32 = -3.0;
 
@@ -59,7 +59,7 @@ pub const FX_GLASS_SHATTER_FX_64: &str = "code/glass_shatter_64x64";
 
 pub const FX_GLASS_SHATTER_FX_PIECE: &str = "code/glass_shatter_piece";
 
-pub fn fx_glass_shatter_fx_name(landing: bool) -> &'static str {
+pub fn glass_shatter_fx_name(landing: bool) -> &'static str {
     if landing {
         FX_GLASS_SHATTER_FX_PIECE
     } else {
@@ -67,7 +67,7 @@ pub fn fx_glass_shatter_fx_name(landing: bool) -> &'static str {
     }
 }
 
-pub fn fx_glass_shatter_fx_fallback(landing: bool) -> Option<&'static str> {
+pub fn glass_shatter_fx_fallback(landing: bool) -> Option<&'static str> {
     if landing {
         None
     } else {
@@ -89,31 +89,31 @@ const FX_GLASS_MASS_AREA_MAX: f32 = 2048.0;
 
 const FX_GLASS_MASS_RSQRT_SCALE: f32 = 11.313_709_259_033_203;
 
-pub fn fx_glass_shatter_rand(cursor: &mut u32) -> f32 {
+pub fn glass_shatter_rand(cursor: &mut u32) -> f32 {
     *cursor = cursor.saturating_add(1);
     if *cursor == FX_RAND_TABLE_MOD {
         *cursor = 0;
     }
-    fx_random_table_f32(*cursor, 0)
+    random_table_f32(*cursor, 0)
 }
 
-pub fn fx_glass_interior_branch_count(rand01: f32) -> u32 {
+pub fn glass_interior_branch_count(rand01: f32) -> u32 {
     let rounded = libm::roundf(rand01 * FX_GLASS_SHATTER_BRANCH_SCALE) as i32;
     3u32.wrapping_sub(rounded as u32).clamp(3, 6)
 }
 
-pub fn fx_glass_piece_speed_scale(area_x2: f32) -> f32 {
+pub fn glass_piece_speed_scale(area_x2: f32) -> f32 {
     let v = area_x2.clamp(FX_GLASS_MASS_AREA_MIN, FX_GLASS_MASS_AREA_MAX);
     let i = 0x5f37_59df_u32.wrapping_sub(v.to_bits() >> 1);
     let y = f32::from_bits(i);
     y * (1.5 - 0.5 * v * y * y) * FX_GLASS_MASS_RSQRT_SCALE
 }
 
-pub fn fx_glass_lerp_range(min: f32, max: f32, rand01: f32) -> f32 {
+pub fn glass_lerp_range(min: f32, max: f32, rand01: f32) -> f32 {
     min + (max - min) * rand01
 }
 
-pub fn fx_glass_loop_area_x2(verts: &[[i16; 2]]) -> f32 {
+pub fn glass_loop_area_x2(verts: &[[i16; 2]]) -> f32 {
     if verts.len() < 3 {
         return 0.0;
     }
@@ -126,7 +126,7 @@ pub fn fx_glass_loop_area_x2(verts: &[[i16; 2]]) -> f32 {
     acc.abs() * crate::glass::FX_GLASS_VERT_SCALE * crate::glass::FX_GLASS_VERT_SCALE
 }
 
-pub fn fx_glass_centroid(verts: &[[i16; 2]]) -> [f32; 2] {
+pub fn glass_centroid(verts: &[[i16; 2]]) -> [f32; 2] {
     if verts.is_empty() {
         return [0.0, 0.0];
     }
@@ -140,7 +140,7 @@ pub fn fx_glass_centroid(verts: &[[i16; 2]]) -> [f32; 2] {
     [x / n, y / n]
 }
 
-pub fn fx_glass_shard_size_cap(original_area: f32, supported: bool) -> f32 {
+pub fn glass_shard_size_cap(original_area: f32, supported: bool) -> f32 {
     let base = if supported {
         FX_GLASS_FRINGE_MAXSIZE
     } else {
@@ -154,15 +154,15 @@ pub fn fx_glass_shard_size_cap(original_area: f32, supported: bool) -> f32 {
     if base < floor { floor } else { base }
 }
 
-pub fn fx_glass_needs_size_split(area_x2: f32, original_area: f32, supported: bool) -> bool {
-    area_x2 > fx_glass_shard_size_cap(original_area, supported)
+pub fn glass_needs_size_split(area_x2: f32, original_area: f32, supported: bool) -> bool {
+    area_x2 > glass_shard_size_cap(original_area, supported)
 }
 
-pub fn fx_glass_fringe_cap(original_area: f32) -> f32 {
+pub fn glass_fringe_cap(original_area: f32) -> f32 {
     FX_GLASS_FRINGE_MAXCOVERAGE * original_area
 }
 
-pub fn fx_glass_life_fade(age_msec: i32, life_msec: i32, fade_msec: i32) -> f32 {
+pub fn glass_life_fade(age_msec: i32, life_msec: i32, fade_msec: i32) -> f32 {
     if life_msec <= 0 {
         return 0.0;
     }
@@ -180,7 +180,7 @@ pub fn fx_glass_life_fade(age_msec: i32, life_msec: i32, fade_msec: i32) -> f32 
     remain as f32 / fade_msec as f32
 }
 
-pub fn fx_glass_scale_color_alpha(rgba: [u8; 4], fade: f32) -> [u8; 4] {
+pub fn glass_scale_color_alpha(rgba: [u8; 4], fade: f32) -> [u8; 4] {
     let fade = if fade < 0.0 {
         0.0
     } else if fade > 1.0 {
@@ -192,7 +192,7 @@ pub fn fx_glass_scale_color_alpha(rgba: [u8; 4], fade: f32) -> [u8; 4] {
     [rgba[0], rgba[1], rgba[2], a]
 }
 
-pub fn fx_glass_normalize3(v: [f32; 3]) -> Option<[f32; 3]> {
+pub fn glass_normalize3(v: [f32; 3]) -> Option<[f32; 3]> {
     let len_sq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
     if len_sq <= 1e-12 {
         return None;
@@ -201,7 +201,7 @@ pub fn fx_glass_normalize3(v: [f32; 3]) -> Option<[f32; 3]> {
     Some([v[0] * inv, v[1] * inv, v[2] * inv])
 }
 
-pub fn fx_glass_cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub fn glass_cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -209,13 +209,13 @@ pub fn fx_glass_cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-pub fn fx_glass_launch_dir(dir: [f32; 3], pane_normal: [f32; 3]) -> [f32; 3] {
-    fx_glass_normalize3(dir)
-        .or_else(|| fx_glass_normalize3(pane_normal))
+pub fn glass_launch_dir(dir: [f32; 3], pane_normal: [f32; 3]) -> [f32; 3] {
+    glass_normalize3(dir)
+        .or_else(|| glass_normalize3(pane_normal))
         .unwrap_or([0.0, 0.0, 1.0])
 }
 
-pub fn fx_glass_splitmix64(state: &mut u64) -> f32 {
+pub fn glass_splitmix64(state: &mut u64) -> f32 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -228,7 +228,7 @@ pub fn fx_glass_splitmix64(state: &mut u64) -> f32 {
 ///
 /// Piece geometry is stored about the piece origin on the packed grid, so a shard is
 /// shifted onto its own centroid and the place and UV base follow it by the same step.
-pub fn fx_glass_recenter_offset(
+pub fn glass_recenter_offset(
     offset: [f32; 2],
     origin: [f32; 3],
     axis: [[f32; 3]; 3],
@@ -248,14 +248,14 @@ pub fn fx_glass_recenter_offset(
     (new_origin, new_uv)
 }
 
-pub fn fx_glass_support_frac(support_mask: u32, vert_n: u8) -> f32 {
+pub fn glass_support_frac(support_mask: u32, vert_n: u8) -> f32 {
     let edges = vert_n.max(1);
     support_mask.count_ones() as f32 / f32::from(edges)
 }
 
-pub fn fx_glass_launch_avel(dir: [f32; 3], pane_axis: [[f32; 3]; 3], ang: f32) -> [f32; 3] {
-    let spin = fx_glass_cross3(dir, pane_axis[2]);
-    if let Some(axis) = fx_glass_normalize3(spin) {
+pub fn glass_launch_avel(dir: [f32; 3], pane_axis: [[f32; 3]; 3], ang: f32) -> [f32; 3] {
+    let spin = glass_cross3(dir, pane_axis[2]);
+    if let Some(axis) = glass_normalize3(spin) {
         [axis[0] * ang, axis[1] * ang, axis[2] * ang]
     } else {
         [

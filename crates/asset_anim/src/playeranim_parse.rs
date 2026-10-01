@@ -9,7 +9,7 @@ use anim_iw4::{
 };
 
 use crate::animtree::CompiledAnimTreeDefinition;
-use crate::atr_compile::ComParser;
+use crate::atr_compile::AtrParser;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedAnimCommand {
@@ -139,7 +139,7 @@ pub(crate) fn parse_player_anim_script(
     script: &[u8],
     tree: &CompiledAnimTreeDefinition,
 ) -> Result<Arc<ParsedPlayerAnimScript>, PlayerAnimParseError> {
-    let mut parser = ComParser::new(script);
+    let mut parser = AtrParser::new(script);
     let mut parsed = ParsedPlayerAnimScript {
         slots: Vec::new(),
         events: Vec::new(),
@@ -294,7 +294,7 @@ fn flush_event_slot(
 }
 
 fn parse_item(
-    parser: &mut ComParser<'_>,
+    parser: &mut AtrParser<'_>,
     tree: &CompiledAnimTreeDefinition,
     parsed: &mut ParsedPlayerAnimScript,
     aliases: &HashMap<(u8, String), u64>,
@@ -372,7 +372,7 @@ fn parse_item(
 }
 
 fn parse_define(
-    parser: &mut ComParser<'_>,
+    parser: &mut AtrParser<'_>,
     aliases: &mut HashMap<(u8, String), u64>,
 ) -> Result<(), PlayerAnimParseError> {
     let cond = parser.parse(false);
@@ -429,7 +429,7 @@ fn resolve_cond_value(
 }
 
 fn parse_conditions(
-    parser: &mut ComParser<'_>,
+    parser: &mut AtrParser<'_>,
     aliases: &HashMap<(u8, String), u64>,
 ) -> Result<(bool, Vec<ParsedAnimCondition>, String), PlayerAnimParseError> {
     let mut skip = false;
@@ -516,7 +516,7 @@ fn parse_conditions(
     Ok((skip, conditions, raw.join(" ")))
 }
 
-fn skip_unknown_block(parser: &mut ComParser<'_>) {
+fn skip_unknown_block(parser: &mut AtrParser<'_>) {
     let mut depth = 0i32;
     loop {
         let token = parser.parse(true);
@@ -546,7 +546,7 @@ fn ascii_lower(token: &str) -> String {
     token.chars().map(|c| c.to_ascii_lowercase()).collect()
 }
 
-fn bad(parser: &ComParser<'_>, message: &'static str) -> PlayerAnimParseError {
+fn bad(parser: &AtrParser<'_>, message: &'static str) -> PlayerAnimParseError {
     PlayerAnimParseError::BadToken {
         offset: parser.last_offset(),
         message: message.to_owned(),

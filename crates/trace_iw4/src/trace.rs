@@ -8,7 +8,7 @@ pub const fn trace_get_glass_hit_id(hit_type: i32, hit_id: u16) -> u16 {
 }
 
 #[must_use]
-pub const fn cm_brush_sweep_hit_kind(glass_encoded: u16) -> (i32, u16) {
+pub const fn brush_sweep_hit_kind(glass_encoded: u16) -> (i32, u16) {
     if glass_encoded != 0 {
         (HITTYPE_GLASS, glass_encoded)
     } else {

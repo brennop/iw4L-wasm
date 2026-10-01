@@ -3,16 +3,16 @@ use std::sync::Arc;
 use asset_iw4::size::GFX_PACKED_VERTEX;
 use bevy::prelude::*;
 use fx_iw4::{
-    FX_SPRITE_QUAD_LOCAL_XY, FxSpriteAtlasUv, fx_pack_code_mesh_vertex, fx_sprite_quad_indices,
-    fx_trail_pack_normal, fx_trail_pack_texcoord,
+    FX_SPRITE_QUAD_LOCAL_XY, FxSpriteAtlasUv, pack_code_mesh_vertex, sprite_quad_indices,
+    trail_pack_normal, trail_pack_texcoord,
 };
 
 use render_frame::{
-    GfxMeshData, r_reserve_code_mesh, r_reserve_code_mesh_indices, r_reserve_code_mesh_verts,
-    r_shrink_code_mesh_verts,
+    GfxMeshData, reserve_code_mesh, reserve_code_mesh_indices, reserve_code_mesh_verts,
+    shrink_code_mesh_verts,
 };
 
-use render_frame::RetailPackedVertexRefusal;
+use render_frame::PackedVertexRefusal;
 
 #[derive(Clone, Debug)]
 pub struct FxPassMaterial {
@@ -94,13 +94,11 @@ impl FxCodeMeshPlan {
         self.indices.as_slice()
     }
 
-    pub fn exact_packed_vertices(
-        &self,
-    ) -> Result<&[[u8; GFX_PACKED_VERTEX]], RetailPackedVertexRefusal> {
+    pub fn exact_packed_vertices(&self) -> Result<&[[u8; GFX_PACKED_VERTEX]], PackedVertexRefusal> {
         let table_stride =
             asset_iw4::vertex_decl::stream_extent(asset_iw4::vertex_decl::PACKED_VERTEX_TYPE, 0);
         if table_stride != Some(GFX_PACKED_VERTEX as u16) {
-            return Err(RetailPackedVertexRefusal::RetailStrideMismatch { table_stride });
+            return Err(PackedVertexRefusal::StrideMismatch { table_stride });
         }
         Ok(self.packed_rows())
     }
@@ -111,20 +109,20 @@ impl FxCodeMeshPlan {
         color_rgba: [u8; 4],
         uv: FxSpriteAtlasUv,
     ) -> bool {
-        let Some(base) = r_reserve_code_mesh_verts(&mut self.mesh, 4) else {
+        let Some(base) = reserve_code_mesh_verts(&mut self.mesh, 4) else {
             self.overflow_n = self.overflow_n.saturating_add(1);
             return false;
         };
-        if r_reserve_code_mesh_indices(&mut self.mesh, 6).is_none() {
-            r_shrink_code_mesh_verts(&mut self.mesh, 4);
+        if reserve_code_mesh_indices(&mut self.mesh, 6).is_none() {
+            shrink_code_mesh_verts(&mut self.mesh, 4);
             self.overflow_n = self.overflow_n.saturating_add(1);
             return false;
         }
         let tangent = axis_or(transform.rotation * Vec3::X, Vec3::X);
         let normal = axis_or(transform.rotation * Vec3::Z, Vec3::Z);
-        let texcoord = |u: f32, v: f32| fx_trail_pack_texcoord(u, v);
-        let normal_packed = fx_trail_pack_normal(normal.to_array());
-        let tangent_packed = fx_trail_pack_normal(tangent.to_array());
+        let texcoord = |u: f32, v: f32| trail_pack_texcoord(u, v);
+        let normal_packed = trail_pack_normal(normal.to_array());
+        let tangent_packed = trail_pack_normal(tangent.to_array());
         debug_assert_eq!(u32::from(base), self.vertices.len() as u32);
 
         let corners = uv.corners();
@@ -132,7 +130,7 @@ impl FxCodeMeshPlan {
             let local = Vec3::new(local_xy[0], local_xy[1], 0.0);
             let uv = corners[i];
             let world = transform.transform_point(local);
-            self.verts_mut().push(fx_pack_code_mesh_vertex(
+            self.verts_mut().push(pack_code_mesh_vertex(
                 world.to_array(),
                 color_rgba,
                 texcoord(uv[0], uv[1]),
@@ -141,7 +139,7 @@ impl FxCodeMeshPlan {
             ));
         }
         self.inds_mut()
-            .extend_from_slice(&fx_sprite_quad_indices(u32::from(base)));
+            .extend_from_slice(&sprite_quad_indices(u32::from(base)));
         true
     }
 
@@ -153,11 +151,11 @@ impl FxCodeMeshPlan {
         normal_packed: u32,
         tangent_packed: f32,
     ) -> bool {
-        if r_reserve_code_mesh_verts(&mut self.mesh, 1).is_none() {
+        if reserve_code_mesh_verts(&mut self.mesh, 1).is_none() {
             self.overflow_n = self.overflow_n.saturating_add(1);
             return false;
         }
-        self.verts_mut().push(fx_pack_code_mesh_vertex(
+        self.verts_mut().push(pack_code_mesh_vertex(
             xyz,
             color_rgba,
             texcoord_packed,
@@ -168,14 +166,14 @@ impl FxCodeMeshPlan {
     }
 
     pub fn push_post_light(&mut self, tess: &fx_iw4::FxPostLightTess) -> bool {
-        let Some((base, _, arg_base)) = r_reserve_code_mesh(&mut self.mesh, 16, 84, 2) else {
+        let Some((base, _, arg_base)) = reserve_code_mesh(&mut self.mesh, 16, 84, 2) else {
             self.overflow_n = self.overflow_n.saturating_add(1);
             return false;
         };
         debug_assert_eq!(u32::from(base), self.vertices.len() as u32);
         for xyz in tess.verts {
             self.verts_mut()
-                .push(fx_iw4::fx_post_light_pack_vert(xyz, tess.color_packed));
+                .push(fx_iw4::post_light_pack_vert(xyz, tess.color_packed));
         }
         let b = u32::from(base);
         for idx in tess.indices {
@@ -187,7 +185,7 @@ impl FxCodeMeshPlan {
     }
 
     pub fn extend_indices(&mut self, inds: &[u32]) -> bool {
-        if r_reserve_code_mesh_indices(&mut self.mesh, inds.len() as u32).is_none() {
+        if reserve_code_mesh_indices(&mut self.mesh, inds.len() as u32).is_none() {
             self.overflow_n = self.overflow_n.saturating_add(1);
             return false;
         }
@@ -197,7 +195,7 @@ impl FxCodeMeshPlan {
 
     pub fn shrink_verts_to(&mut self, vert_used: u32) {
         let n = self.mesh.vert_used.wrapping_sub(vert_used);
-        r_shrink_code_mesh_verts(&mut self.mesh, n);
+        shrink_code_mesh_verts(&mut self.mesh, n);
         let vert_used = self.mesh.vert_used as usize;
         self.verts_mut().truncate(vert_used);
     }

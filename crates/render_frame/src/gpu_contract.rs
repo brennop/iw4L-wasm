@@ -31,6 +31,7 @@ pub fn texture_binding() -> TextureBinding {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WgpuVertexFormat {
     Float32x2,
+    Float16x2,
     Float32x3,
     Float32x4,
     Unorm8x4,
@@ -92,7 +93,7 @@ pub fn texture_table_bind_entries() -> [WgpuBindLayoutEntry; 4] {
         binding: u16::try_from(binding).expect("table binding fits u16"),
         visibility: WgpuShaderVisibility::VertexFragment,
         kind,
-        retail_register: None,
+        register_packed: None,
     };
     [
         entry(
@@ -137,7 +138,7 @@ fn fixed_slot_bind_entries(abi: &PassProgramAbi) -> Vec<WgpuBindLayoutEntry> {
                 binding: u16::try_from(binding).expect("fixed slot binding fits u16"),
                 visibility: WgpuShaderVisibility::VertexFragment,
                 kind,
-                retail_register: Some(slot.register),
+                register_packed: Some(slot.register),
             };
             [
                 entry(
@@ -162,7 +163,7 @@ pub struct WgpuBindLayoutEntry {
     pub visibility: WgpuShaderVisibility,
     pub kind: WgpuBindingKind,
 
-    pub retail_register: Option<u16>,
+    pub register_packed: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -252,7 +253,7 @@ pub fn derive_wgpu_pass_layout(
         binding: 0,
         visibility: WgpuShaderVisibility::VertexFragment,
         kind: WgpuBindingKind::ReadOnlyStorageBuffer,
-        retail_register: None,
+        register_packed: None,
     });
 
     match texture_binding {
@@ -272,6 +273,7 @@ fn vertex_format(
 ) -> Result<(WgpuVertexFormat, u8), WgpuLayoutRefusal> {
     let format = match decl_type {
         D3dDeclType::Float2 => WgpuVertexFormat::Float32x2,
+        D3dDeclType::Float16x2 => WgpuVertexFormat::Float16x2,
         D3dDeclType::Float3 => WgpuVertexFormat::Float32x3,
         D3dDeclType::Float4 => WgpuVertexFormat::Float32x4,
 

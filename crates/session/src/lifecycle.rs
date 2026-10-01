@@ -238,7 +238,7 @@ pub fn run_teardown(
         "Bevy Assets<Image/Mesh> handles dropped by WorldScene::default stay \
          until Bevy GC; they are not drawable leftover world",
         "WorldScene Resource stays so hold still freezes level.time; render \
-         empties geometry / tess / GPU plans (R_ShutdownWorld)",
+         empties geometry / tess / GPU plans",
         "AuthorityWorld Resource stays; clip is SimWorld::shutdown_game, not remove",
     ];
 
@@ -350,9 +350,15 @@ fn occupy_after_teardown(
             let keep_client = role
                 .as_ref()
                 .is_some_and(|role| **role == RuntimeRole::Client);
-            if !keep_client {
-                stamp_runtime_role(role, identity, RuntimeRole::Listen);
-            }
+            stamp_runtime_role(
+                role,
+                identity,
+                if keep_client {
+                    RuntimeRole::Client
+                } else {
+                    RuntimeRole::Listen
+                },
+            );
             approved.write(MapLoadApproved {
                 request_id: pending.id,
                 load_key: load_key_for_swap(pending.id, bridge),
@@ -553,10 +559,35 @@ fn udp_match_ended_rising(latched: bool, journal_has: bool) -> bool {
     journal_has && !latched
 }
 
+fn connection_notice(reason: &str) -> String {
+    let reason = reason
+        .strip_prefix("handshake rejected: ")
+        .or_else(|| reason.strip_prefix("join admission: "))
+        .unwrap_or(reason);
+    let message = if reason.starts_with("class catalog mismatch") {
+        "Your class rules differ from the host's. Both players need the same game build."
+    } else if reason.starts_with("map content mismatch") {
+        "Your map data differs from the host's. Both players need the same map data to join."
+    } else if reason.starts_with("weapon table mismatch") {
+        "Your weapon data differs from the host's. Check that both players use the same build and game content."
+    } else {
+        reason
+    };
+    if message.chars().count() > 420 {
+        format!(
+            "{}…\nSee the log for details.",
+            message.chars().take(420).collect::<String>()
+        )
+    } else {
+        message.to_owned()
+    }
+}
+
 fn run_peer_lobby_return(
     signon: Res<net::SignonState>,
     bridge: Option<Res<net::MasterBridge>>,
     mut transition: ResMut<SessionSwapRequest>,
+    mut dvars: ResMut<frame::UiMenuDvars>,
     mut live: Local<bool>,
     mut terminal_cleanup: Local<Option<u64>>,
 ) {
@@ -579,6 +610,29 @@ fn run_peer_lobby_return(
             match transition.request_menu() {
                 Ok(id) => {
                     *terminal_cleanup = Some(incarnation);
+                    // Keep the notice outside cgame: teardown clears SignonState
+                    // and the menu stack before the frontend becomes interactive.
+                    let reason = match held.as_ref() {
+                        Some(net::MasterBridgeState::Failed { error, .. }) => {
+                            Some(error.source.clone())
+                        }
+                        Some(net::MasterBridgeState::Closed { reason, .. }) => {
+                            Some(net::SignonFailReason::SessionClosed(*reason).to_string())
+                        }
+                        Some(net::MasterBridgeState::Left { .. }) => None,
+                        _ => match &signon.phase {
+                            net::SignonPhase::Failed(net::SignonFailReason::Transport {
+                                source,
+                                ..
+                            }) => Some(source.clone()),
+                            net::SignonPhase::Failed(reason) => Some(reason.to_string()),
+                            _ => None,
+                        },
+                    };
+                    if let Some(reason) = reason {
+                        dvars.set("partyend_reason", connection_notice(&reason));
+                        dvars.set("ui_connection_error", "1");
+                    }
                     diag::info!(Sim, "session: peer terminal → lobby (swap #{id})");
                 }
                 Err(err) => diag::info!(Sim, "session: peer terminal lobby refused — {err}"),
@@ -712,6 +766,7 @@ fn follow_master_match(
 
 pub fn register_lifecycle(app: &mut App) {
     app.init_resource::<TeardownRequest>()
+        .init_resource::<frame::UiMenuDvars>()
         .init_resource::<SessionSwapRequest>()
         .init_resource::<TeardownGaps>()
         .init_resource::<WorldGeneration>()

@@ -423,7 +423,7 @@ fn find_zone_stem(
     match find_stem_file(root, game, &prefixed) {
         Ok(mut found) => {
             let note = format!(
-                "zone alias: `{stem}` → `{prefixed}` (MP stem preferred over bare `{stem}.ff`)"
+                "zone alias: `{stem}` -> `{prefixed}` (MP stem preferred over bare `{stem}.ff`)"
             );
             found.alias_note = Some(note.clone());
             match gamefs::metadata(&found.path) {
@@ -600,8 +600,23 @@ pub fn games_content_report(root: &GamesRoot) -> Vec<String> {
     report
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MapPack {
+    pub label: String,
+    pub maps: Vec<String>,
+}
+
 pub fn list_mp_maps(root: &GamesRoot) -> Vec<String> {
-    let mut maps = Vec::new();
+    let mut maps: Vec<String> = list_mp_map_packs(root)
+        .into_iter()
+        .flat_map(|pack| pack.maps)
+        .collect();
+    maps.sort();
+    maps
+}
+
+pub fn list_mp_map_packs(root: &GamesRoot) -> Vec<MapPack> {
+    let mut zones = Vec::new();
     for entry in game_files(&root.0) {
         let path = match entry {
             Ok(path) => path,
@@ -617,16 +632,57 @@ pub fn list_mp_maps(root: &GamesRoot) -> Vec<String> {
         let is_ff = path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("ff"));
-        if !(is_ff && stem.starts_with("mp_") && !stem.ends_with("_load")) {
+        if !(is_ff && stem.starts_with("mp_")) {
             continue;
         }
         if let Some(game) = zone_game_for_path(&path) {
-            maps.push(format!("{}:{stem}", game.prefix()));
+            zones.push((game.prefix(), stem, map_pack_folder(&path)));
         }
     }
-    maps.sort();
-    maps.dedup();
-    maps
+    let loads: HashSet<(&str, &str)> = zones
+        .iter()
+        .filter_map(|(game, stem, _)| stem.strip_suffix("_load").map(|map| (*game, map)))
+        .collect();
+    let mut packs: BTreeMap<(&str, &str), Vec<String>> = BTreeMap::new();
+    let mut seen = HashSet::new();
+    for (game, stem, folder) in &zones {
+        if stem.ends_with("_load")
+            || !(loads.contains(&(*game, stem.as_str())) || !loads.iter().any(|(g, _)| g == game))
+        {
+            continue;
+        }
+        let map = format!("{game}:{stem}");
+        if seen.insert(map.clone()) {
+            packs.entry((game, folder)).or_default().push(map);
+        }
+    }
+    packs
+        .into_iter()
+        .map(|((game, folder), mut maps)| {
+            maps.sort();
+            MapPack {
+                label: format!("{} {folder}", game.to_ascii_uppercase()),
+                maps,
+            }
+        })
+        .collect()
+}
+
+fn map_pack_folder(zone_ff: &Path) -> String {
+    game_root_for_zone(zone_ff)
+        .ok()
+        .and_then(|tree| {
+            zone_ff
+                .strip_prefix(tree.join("zone"))
+                .ok()?
+                .components()
+                .next()?
+                .as_os_str()
+                .to_str()
+                .map(str::to_ascii_uppercase)
+        })
+        .filter(|folder| folder.starts_with("DLC"))
+        .unwrap_or_else(|| "BASE".to_owned())
 }
 
 pub fn ensure_artifacts_dir() -> Result<PathBuf, String> {
@@ -640,6 +696,33 @@ pub fn find_t5_localized_zones(
     anchor: &Path,
     language: Option<&str>,
 ) -> Result<Vec<ZoneFile>, String> {
+    let (dir, prefix) = t5_language_archive(anchor, language)?;
+    Ok(["code_post_gfx_mp", "common_mp", "ui_mp"]
+        .into_iter()
+        .filter_map(|stem| t5_localized_zone(&dir, &prefix, stem))
+        .collect())
+}
+
+pub fn find_t5_localized_zone(
+    anchor: &Path,
+    language: Option<&str>,
+    stem: &str,
+) -> Result<Option<ZoneFile>, String> {
+    let (dir, prefix) = t5_language_archive(anchor, language)?;
+    Ok(t5_localized_zone(&dir, &prefix, stem))
+}
+
+fn t5_localized_zone(dir: &Path, prefix: &str, stem: &str) -> Option<ZoneFile> {
+    let zone_name = format!("{prefix}{stem}");
+    let path = dir.join(format!("{zone_name}.ff"));
+    gamefs::is_file(&path).then_some(ZoneFile {
+        path,
+        zone_name,
+        alias_note: None,
+    })
+}
+
+fn t5_language_archive(anchor: &Path, language: Option<&str>) -> Result<(PathBuf, String), String> {
     let root = game_root_for_zone(anchor)?.join("zone");
     let mut choices: Vec<_> = files_under(vec![root])
         .filter_map(Result::ok)
@@ -676,16 +759,5 @@ pub fn find_t5_localized_zones(
         .strip_suffix("code_post_gfx_mp.ff")
         .ok_or("T5 language prefix")?;
     let dir = chosen.parent().ok_or("T5 language directory")?;
-    Ok(["code_post_gfx_mp", "common_mp", "ui_mp"]
-        .into_iter()
-        .filter_map(|stem| {
-            let zone_name = format!("{prefix}{stem}");
-            let path = dir.join(format!("{zone_name}.ff"));
-            gamefs::is_file(&path).then_some(ZoneFile {
-                path,
-                zone_name,
-                alias_note: None,
-            })
-        })
-        .collect())
+    Ok((dir.to_path_buf(), prefix.to_owned()))
 }

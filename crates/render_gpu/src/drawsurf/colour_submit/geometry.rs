@@ -55,6 +55,7 @@ pub(super) fn upload_exact_geometry(
         geometry.world_products = source.world.world_products;
         geometry.world_vertex = None;
         geometry.world_layer = None;
+        geometry.world_effect = None;
         geometry.world_index = None;
         geometry.world_cpu_indices.clear();
         geometry.world_surface_ranges.clear();
@@ -87,6 +88,12 @@ pub(super) fn upload_exact_geometry(
                     source.world.static_geometry.world_vertices.as_slice(),
                 ),
                 usage: BufferUsages::VERTEX,
+            }));
+            // Dynamic impact updates can patch this independently of static vertices.
+            geometry.world_effect = Some(device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("world_surface_effect_vb"),
+                contents: bytemuck::cast_slice(&vec![0u32; geometry.world_vertex_count]),
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             }));
             geometry.world_index = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_world_ib"),

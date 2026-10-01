@@ -2,7 +2,7 @@ use d3d9_sm3::{
     ConstantSlot, DeclType, PassLoweringAbi, PassWgsl, SamplerSlot, Sm3ProgramIr, Sm3Wgsl,
     TextureBinding, VaryingLink, VertexInput, lower_pass_to_wgsl, pass_fragment_alpha_test_entry,
 };
-use d3d9_state::AlphaTest;
+use render_material::MATERIAL_ALPHA_TESTS;
 
 use super::sm3_abi::{ConstantSource, PassProgramAbi};
 
@@ -88,25 +88,6 @@ pub fn pass_lowering_abi(abi: &PassProgramAbi, texture_binding: TextureBinding) 
             })
             .collect(),
         alpha_tests: MATERIAL_ALPHA_TESTS.to_vec(),
-    }
-}
-
-pub const MATERIAL_ALPHA_TESTS: [AlphaTest; 4] = [
-    AlphaTest::from_raw(5, 0),
-    AlphaTest::from_raw(2, 128),
-    AlphaTest::from_raw(7, 128),
-    AlphaTest::from_raw(7, 255),
-];
-
-pub fn alpha_test_fragment_entry(alpha_test: Option<AlphaTest>) -> String {
-    match alpha_test {
-        None => String::from(PASS_FRAGMENT_ENTRY),
-        Some(test) => pass_fragment_alpha_test_entry(
-            MATERIAL_ALPHA_TESTS
-                .iter()
-                .position(|entry| *entry == test)
-                .expect("uncompiled material alpha-test state"),
-        ),
     }
 }
 

@@ -1,16 +1,15 @@
 use std::collections::{BTreeSet, HashSet};
 
-use assets::{
-    AssetNamespace, MapLoadProcess, MatchType10SoundHints, PreparedWeapons, SoundCatalog,
-    WeaponRegistry,
-};
+use asset_audio::SoundCatalog;
+use asset_core::AssetNamespace;
+use asset_game::WeaponRegistry;
+use assets::{MapLoadProcess, MatchType10SoundHints, PreparedWeapons};
 use bevy::prelude::*;
 use frame::{ClientSet, LaunchIdentity, MatchTornDown, ReturnedToMenu};
 
 use crate::aliases::movement_prepare_names;
 use crate::ambient::{SoundBankCompose, SoundBankLoadAttempted, SoundBankNamespace};
 use crate::clip_store::{ClipKey, ClipStore, clip_keys_for_alias};
-use crate::map_doors::RADIATION_DOOR_ALIASES;
 use crate::playback::SoundBank;
 
 #[derive(Resource, Default)]
@@ -32,7 +31,7 @@ const MATCH_HUD_PULSE: &[&str] = &["ui_pulse_text_type", "ui_pulse_text_delete"]
 
 const MENU_CODE: [&str; 2] = ["mouse_over", "mouse_click"];
 
-const MATCH_CLOCK: &[&str] = &[gamemode_iw4::match_clock::COUNTDOWN_TICK_ALIAS];
+const MATCH_CLOCK: &[&str] = &["ui_mp_timer_countdown"];
 
 #[derive(Default)]
 struct MatchRequests {
@@ -48,7 +47,7 @@ struct MatchClipPrep {
     /// Clips this match still had to convert when the set was queued — not the
     /// alias count, and not the whole cache.
     total: usize,
-    stage: Option<assets::StageHandle>,
+    stage: Option<asset_transport::StageHandle>,
     /// Resident sample bytes this process had already produced when the set
     /// was queued. The decoders count for the life of the process, so what
     /// this match cost is the distance from here.
@@ -71,6 +70,7 @@ pub(crate) fn register(app: &mut App) {
     }
     app.init_resource::<AudioReady>()
         .init_resource::<MatchClipPrep>()
+        .init_resource::<crate::match_voices::AnnouncerRoutes>()
         .add_systems(
             Update,
             (
@@ -88,6 +88,7 @@ fn reset_match_audio_on_match_end(
     mut returned: MessageReader<ReturnedToMenu>,
     mut ready: ResMut<AudioReady>,
     mut prep: ResMut<MatchClipPrep>,
+    mut announcer: ResMut<crate::match_voices::AnnouncerRoutes>,
 ) {
     if torn.read().count() == 0 && returned.read().count() == 0 {
         return;
@@ -97,6 +98,7 @@ fn reset_match_audio_on_match_end(
         stage.cancel();
     }
     *prep = MatchClipPrep::default();
+    *announcer = Default::default();
 }
 
 fn queue_match_clips(
@@ -107,11 +109,13 @@ fn queue_match_clips(
     type10: Option<Res<MatchType10SoundHints>>,
     bank: Option<Res<SoundBank>>,
     identity: Option<Res<LaunchIdentity>>,
-    catalog: Option<Res<assets::MenuCatalog>>,
-    script_sound: Option<Res<assets::SessionMapScriptSound>>,
+    catalog: Option<Res<asset_game::MenuCatalog>>,
+    script_sound: Option<Res<asset_audio::SessionMapScriptSound>>,
+    teams: Option<Res<asset_game::SessionTeamSettings>>,
     namespace: Option<Res<SoundBankNamespace>>,
     loading: Option<Res<MapLoadProcess>>,
     mut prep: ResMut<MatchClipPrep>,
+    mut announcer: ResMut<crate::match_voices::AnnouncerRoutes>,
     mut ready: ResMut<AudioReady>,
     silent: Option<Res<AudioSilent>>,
 ) {
@@ -121,7 +125,9 @@ fn queue_match_clips(
     if silent.is_some() {
         ready.0 = true;
         if let Some(loading) = loading.as_ref() {
-            loading.progress.record_skipped(assets::StageId::Audio);
+            loading
+                .progress
+                .record_skipped(asset_transport::StageId::Audio);
         }
         diag::info!(Audio, "audio: AudioReady — Silent, no clips prepared");
         return;
@@ -135,7 +141,9 @@ fn queue_match_clips(
     let Some(clips) = clips.as_mut() else {
         ready.0 = true;
         if let Some(loading) = loading.as_ref() {
-            loading.progress.record_skipped(assets::StageId::Audio);
+            loading
+                .progress
+                .record_skipped(asset_transport::StageId::Audio);
         }
         diag::info!(
             Audio,
@@ -178,40 +186,33 @@ fn queue_match_clips(
             request_named(clips, &bank.0, ns, &emitter.soundalias, &mut set);
         }
     }
-    let mut destructible_loops: Vec<&str> = Vec::new();
-    for alias in gamemode_iw4::destructible_loop_sound_aliases() {
-        if destructible_loops.contains(&alias) {
-            continue;
-        }
-        destructible_loops.push(alias);
-        aliases += 1;
-        request_named(clips, &bank.0, namespace.namespace, alias, &mut set);
-    }
-    for alias in RADIATION_DOOR_ALIASES {
-        aliases += 1;
-        let ns = match bank.0.index_in(AssetNamespace::T5, alias) {
-            Some(_) => AssetNamespace::T5,
-            None => AssetNamespace::Iw4,
-        };
-        request_named(clips, &bank.0, ns, alias, &mut set);
-    }
     if let Some(identity) = identity.as_deref() {
-        let (allies, axis) = crate::policy::music::voice_prefixes_for_zone(
+        let (allies, axis) = crate::match_voices::voice_prefixes_for_zone(
             catalog.as_deref(),
             Some(bank.as_ref()),
             identity,
         );
-        for alias in
-            crate::policy::music::match_script_alias_names(allies.as_deref(), axis.as_deref())
-        {
+        let voices =
+            crate::match_voices::team_voice_aliases(&bank.0, allies.as_deref(), axis.as_deref());
+        let native = teams.as_deref().map(|teams| &teams.0);
+        *announcer = crate::match_voices::AnnouncerRoutes::build(
+            &bank.0,
+            namespace.namespace,
+            [allies.as_deref(), axis.as_deref()],
+            native,
+            &voices,
+        );
+        diag::info!(
+            Audio,
+            "audio: announcer: {} of {} team voice aliases play as {:?}",
+            announcer.len(),
+            voices.len(),
+            namespace.namespace
+        );
+        for alias in &voices {
             aliases += 1;
-            request_named(clips, &bank.0, AssetNamespace::Iw4, &alias, &mut set);
-        }
-        for alias in
-            crate::policy::music::match_voice_alias_names(allies.as_deref(), axis.as_deref())
-        {
-            aliases += 1;
-            request_named(clips, &bank.0, AssetNamespace::Iw4, &alias, &mut set);
+            let (ns, alias) = announcer.route(alias);
+            request_named(clips, &bank.0, ns, alias, &mut set);
         }
     }
     if let Some(alias) = script_sound.0.ambient_alias.as_deref() {
@@ -230,7 +231,6 @@ fn queue_match_clips(
         .chain(crate::weapon_lock::ALIASES.iter())
         .chain([&gamemode_iw4::damage_feedback::HIT_ALERT_ALIAS])
         .chain(MATCH_CLOCK)
-        .chain(crate::objectives::EFFECTS)
     {
         aliases += 1;
         request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
@@ -264,12 +264,12 @@ fn queue_match_clips(
         if prep.total == 0 && set.resolved_aliases > 0 {
             loading
                 .progress
-                .record_reused_scoped(assets::StageId::Audio, "clips");
+                .record_reused_scoped(asset_transport::StageId::Audio, "clips");
         } else {
             prep.stage = Some(
                 loading
                     .progress
-                    .begin(assets::StageId::Audio, Some(prep.total as u64)),
+                    .begin(asset_transport::StageId::Audio, Some(prep.total as u64)),
             );
         }
     }

@@ -56,15 +56,22 @@ pub(super) fn load_xmodel(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
     let lod_info_off = s.layout(sz::XMODEL_LOD_INFO_OFF, 96);
     let lod_info = s.layout(sz::XMODEL_LOD_INFO, 56);
     let mut lod0_surfaces = None;
+    let mut lod0_surfaces_name = None;
     for i in 0..4 {
         let lp = p.at(lod_info_off + i * lod_info);
         s.walk_stage = "xmodel.lod";
 
         asset_ptr_at(s, links, AssetType::XModelSurfs, lp.at(8))?;
         if i == 0 {
-            lod0_surfaces = match s.ptr_at(lp, 8)? {
-                ZonePtr::Offset(surfs) => s.xmodel_surfs_array_at_alias(surfs),
-                _ => s.take_latest_xmodel_surfs_array(),
+            (lod0_surfaces, lod0_surfaces_name) = match s.ptr_at(lp, 8)? {
+                ZonePtr::Offset(surfs) => {
+                    let (array, name) = links.xmodel_surfaces(surfs);
+                    (array.or_else(|| s.xmodel_surfs_array_at_alias(surfs)), name)
+                }
+                _ => (
+                    s.take_latest_xmodel_surfs_array(),
+                    s.take_latest_xmodel_surfs_name(),
+                ),
             };
         }
     }
@@ -143,6 +150,7 @@ pub(super) fn load_xmodel(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         name,
         material_handles: handles,
         surfaces: lod0_surfaces,
+        surfaces_name: lod0_surfaces_name,
         surface_count: s.u16_at(p.at(lod_info_off), 4)? as usize,
         num_bones,
         num_root_bones,
@@ -190,6 +198,10 @@ pub(super) fn load_xmodel_surfs(
         }
     };
     s.record_xmodel_surfs_array(surfaces);
+    s.record_xmodel_surfs_name(match s.ptr_at(p, 0)? {
+        ZonePtr::Offset(name) => Some(s.resolve_alias(name)),
+        _ => None,
+    });
     if let Some(slot) = insert_slot {
         s.publish_xmodel_surfs_insert(slot, surfaces)?;
     }

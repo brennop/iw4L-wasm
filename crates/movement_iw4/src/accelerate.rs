@@ -2,13 +2,7 @@ use playerstate_iw4::PlayerState;
 
 use crate::Pml;
 
-pub fn pm_accelerate(
-    ps: &mut PlayerState,
-    pml: &Pml,
-    wishdir: &[f32; 3],
-    wishspeed: f32,
-    accel: f32,
-) {
+pub fn accelerate(ps: &mut PlayerState, pml: &Pml, wishdir: &[f32; 3], wishspeed: f32, accel: f32) {
     accelerate_velocity(
         &mut ps.velocity,
         ps.pm_flags,

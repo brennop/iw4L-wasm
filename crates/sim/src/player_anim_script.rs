@@ -3,9 +3,9 @@ use std::sync::Arc;
 use anim_iw4::{
     ANIM_COND_AKIMBO, ANIM_COND_PLAYERANIMTYPE, ANIM_COND_PLAYERANIMTYPEPRIMARY,
     ANIM_COND_WEAPON_POSITION, ANIM_COND_WEAPONCLASS, ANIM_ET_DEATH, PLAYER_ANIM_INDEX_MASK,
-    PlayerAnimValue, anim_weapon_position_from_pm_flags, bg_random,
+    PlayerAnimValue, anim_weapon_position_from_pm_flags, random,
 };
-use playerstate_iw4::{PlayerState, bg_get_viewmodel_weapon_index};
+use playerstate_iw4::{PlayerState, get_viewmodel_weapon_index};
 use weapon_iw4::WeaponCombatFacts;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +84,7 @@ fn bit_index(v: i32) -> u8 {
 }
 
 pub fn pmove_anim_weapon_ids(ps: &PlayerState) -> (u32, u32) {
-    (bg_get_viewmodel_weapon_index(ps), ps.weapon)
+    (get_viewmodel_weapon_index(ps), ps.weapon)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -167,7 +167,7 @@ impl PlayerAnimScript {
                 continue;
             }
             let n = item.commands.len();
-            let pick = (bg_random(seed) as usize) % n;
+            let pick = (random(seed) as usize) % n;
             let cmd = item.commands[pick];
             execute_command(ps, cmd, true, false, true);
             return true;
@@ -294,4 +294,8 @@ fn play_anim(
             ps.torso_timer = duration;
         }
     }
+}
+
+pub(crate) fn reset_stance_torso(ps: &mut PlayerState) {
+    play_anim(ps, 0, false, 0, false, true, true);
 }

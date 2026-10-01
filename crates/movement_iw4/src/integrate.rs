@@ -3,7 +3,7 @@ use playerstate_iw4::PlayerState;
 use crate::Pml;
 
 #[allow(clippy::assign_op_pattern)]
-pub fn pm_predict_integrate(ps: &mut PlayerState, pml: &Pml) {
+pub fn predict_integrate(ps: &mut PlayerState, pml: &Pml) {
     integrate_origin(&mut ps.origin, &ps.velocity, pml.frametime);
 }
 

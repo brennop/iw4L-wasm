@@ -1,18 +1,15 @@
 use std::collections::HashMap;
 
-use assets::{
-    FontDef, MapTeamSettings, MenuCatalog, PreparedLocalizedStrings, SessionTeamSettings,
-};
+use asset_game::{FontDef, MapTeamSettings, MenuCatalog, SessionTeamSettings};
+use assets::PreparedLocalizedStrings;
 use bevy::prelude::*;
 use entity_iw4::client_state_name;
 use frame::LaunchIdentity;
 use gamemode_iw4::{ParsedScores, Score};
-use hud_iw4::{
-    ALIGN_CENTER, match_time_remaining_ms, r_normalized_text_scale, scorebar_gametype_loc_key,
-};
+use hud_iw4::{ALIGN_CENTER, normalized_text_scale};
 use net::{
-    CgScores, ClientActionInput, LocalPresentClient, MasterBridge, MasterBridgeState,
-    PresentedSnapshot,
+    ClientActionInput, LocalPresentClient, MasterBridge, MasterBridgeState, PresentedSnapshot,
+    Scoreboard,
 };
 use sim::{ClientLifecycle, MatchPhase, Snapshot};
 
@@ -155,7 +152,7 @@ impl BoardDraw<'_> {
         } else {
             x
         };
-        let nscale = r_normalized_text_scale(self.font.pixel_height, scale);
+        let nscale = normalized_text_scale(self.font.pixel_height, scale);
         let r = self.surface.apply_rect(
             x - 320.0,
             y - 240.0,
@@ -174,7 +171,7 @@ impl BoardDraw<'_> {
             s1: 1.0,
             t1: 1.0,
             color,
-            material: assets::AssetRef::bare_name(&self.font.material).to_owned(),
+            material: asset_core::AssetRef::bare_name(&self.font.material).to_owned(),
             material_namespace: HUD_CHROME_NAMESPACE,
             op: Draw2dOp::TextRun {
                 font: HUD_SMALL_FONT.to_owned(),
@@ -223,7 +220,7 @@ fn team_presentation(
     icons: &MapTeamSettings,
     team: i32,
     strings: Option<&PreparedLocalizedStrings>,
-) -> (String, Option<assets::AssetKey>, [f32; 4]) {
+) -> (String, Option<asset_core::AssetKey>, [f32; 4]) {
     let icon = match team {
         1 => icons.axis.clone(),
         2 => icons.allies.clone(),
@@ -284,7 +281,7 @@ pub(crate) fn update_scoreboard(
     strings: Option<Res<PreparedLocalizedStrings>>,
     identity: Option<Res<LaunchIdentity>>,
     session_icons: Option<Res<SessionTeamSettings>>,
-    scores: Option<Res<CgScores>>,
+    scores: Option<Res<Scoreboard>>,
     bridge: Option<Res<MasterBridge>>,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
@@ -341,65 +338,6 @@ pub(crate) fn update_scoreboard(
         font,
         cmds: Vec::new(),
     };
-
-    draw.picture(0.0, 24.0, 640.0, 25.0, "white", [0.1, 0.1, 0.1, 0.35]);
-    if snap.meta.kind.is_team() {
-        for (team, x) in [(2, 32.0), (1, 127.0)] {
-            let (_, icon, _) = team_presentation(icons, team, loc);
-            if let Some(icon) = icon {
-                draw.picture(x, 20.0, 30.0, 30.0, &icon.name, WHITE);
-                draw.cmds.last_mut().unwrap().material_namespace = icon.namespace;
-            }
-            draw.text(
-                x + 32.0,
-                41.0,
-                60.0,
-                0.35,
-                false,
-                &snap.meta.objectives.scores[team as usize].to_string(),
-                WHITE,
-            );
-        }
-    }
-    let key = scorebar_gametype_loc_key(snap.meta.kind.token()).unwrap_or("MPUI_DD");
-    let title = localized(loc, key);
-    draw.text(226.0, 41.0, 295.0, 0.35, true, &title, WHITE);
-    if snap.meta.score_limit > 0 {
-        let score = if snap.meta.kind.is_team() {
-            snap.meta
-                .objectives
-                .scores
-                .get(local_team as usize)
-                .copied()
-                .unwrap_or(0)
-        } else {
-            snap.meta.for_client(local.0).map_or(0, |m| m.score)
-        };
-        draw.text(
-            226.0,
-            58.0,
-            295.0,
-            0.28,
-            true,
-            &format!("{score} / {}", snap.meta.score_limit),
-            WHITE,
-        );
-    }
-    let remaining_ms = if snap.meta.kind == gamemode_iw4::GameModeKind::Demolition {
-        snap.meta.objectives.round_remaining_ms as i32
-    } else {
-        match_time_remaining_ms(snap.meta.time_limit_ms, snap.meta.match_elapsed_ms)
-    };
-    let remaining = remaining_ms.max(0) / 1000;
-    draw.text(
-        558.0,
-        41.0,
-        60.0,
-        0.35,
-        true,
-        &format!("{}:{:02}", remaining / 60, remaining % 60),
-        WHITE,
-    );
 
     for (x, w, key) in COLUMNS {
         draw.text(

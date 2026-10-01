@@ -3,9 +3,10 @@ use glam::Mat4;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    Attach, CollisionBone, DObj, DObjError, DObjPoseRequest, Local, MaterializeError, ModelPoseSrc,
-    PartBits, RetainedModelCapability, XAnimTreeRuntime, collision_dobj_with_controller,
+    Attach, CollisionBone, DObj, DObjError, DObjPoseRequest, MaterializeError, ModelPoseSrc,
+    RetainedModelCapability, XAnimTreeRuntime, collision_dobj_with_controller,
 };
+use anim_iw4::{Local, PartBits};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DObjReuseKey {
@@ -13,11 +14,11 @@ pub struct DObjReuseKey {
     pub model: i32,
 }
 
-pub fn dobj_reuse_matches(cached: DObjReuseKey, current: DObjReuseKey) -> bool {
+pub fn reuse_matches(cached: DObjReuseKey, current: DObjReuseKey) -> bool {
     cached.e_type == current.e_type && cached.model == current.model
 }
 
-pub fn dobj_model_token(parts: &[&str]) -> i32 {
+pub fn model_token(parts: &[&str]) -> i32 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for part in parts {
         part.hash(&mut hasher);

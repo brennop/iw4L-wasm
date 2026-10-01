@@ -19,17 +19,17 @@ pub struct WorldVertex {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RetailPackedVertexRefusal {
+pub enum PackedVertexRefusal {
     ForeignLayout { source_layout: &'static str },
-    VertexCountMismatch { retail: usize, decoded: usize },
-    RetailStrideMismatch { table_stride: Option<u16> },
+    VertexCountMismatch { packed: usize, decoded: usize },
+    StrideMismatch { table_stride: Option<u16> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RetailWorldVertexRefusal {
+pub enum WorldVertexRefusal {
     ForeignLayout { source_layout: &'static str },
-    VertexCountMismatch { retail: usize, decoded: usize },
-    RetailStrideMismatch { table_stride: Option<u16> },
+    VertexCountMismatch { packed: usize, decoded: usize },
+    StrideMismatch { table_stride: Option<u16> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

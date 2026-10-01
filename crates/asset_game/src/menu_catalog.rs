@@ -9,19 +9,18 @@ use fastfile_iw4::{
     load_asset_at_observed, load_zone,
 };
 
-use crate::asset_graph::AssetRef;
-use crate::discover::{GamesRoot, find_zone_file, game_root_for_zone};
 use crate::localize::decode_localized_text;
-use crate::material_catalog::{TS_2D, TS_COLOR_MAP};
-use crate::material_images::decode_zone_image_rgba;
-use crate::zone::{ZoneMemory, open_zone};
+use asset_core::AssetRef;
 use asset_iw4::size as sz;
+use asset_material::{TS_2D, TS_COLOR_MAP, decode_zone_image_rgba};
+use asset_transport::{GamesRoot, ZoneMemory, find_zone_file, game_root_for_zone, open_zone};
 
 pub const ITEM_TYPE_BUTTON: i32 = 1;
 
 pub const ITEM_TYPE_TEXT: i32 = 0;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MenuRect {
     pub x: f32,
     pub y: f32,
@@ -44,11 +43,73 @@ impl From<MenuRectCapture> for MenuRect {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum MenuEvent {
+    Script(String),
+    If {
+        condition: String,
+        then: Vec<MenuEvent>,
+    },
+    Else(Vec<MenuEvent>),
+    SetLocalVar {
+        kind: i32,
+        name: String,
+        expr: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MenuHandlers {
+    pub open: Vec<MenuEvent>,
+    pub close: Vec<MenuEvent>,
+    pub close_request: Vec<MenuEvent>,
+    pub esc: Vec<MenuEvent>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ItemHandlers {
+    pub action: Vec<MenuEvent>,
+    pub accept: Vec<MenuEvent>,
+    pub mouse_enter: Vec<MenuEvent>,
+    pub mouse_exit: Vec<MenuEvent>,
+    pub focus: Vec<MenuEvent>,
+    pub leave_focus: Vec<MenuEvent>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MenuEditField {
+    pub max_chars: usize,
+}
+
+impl Default for MenuEditField {
+    fn default() -> Self {
+        Self { max_chars: 32 }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MenuSlider {
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+    #[serde(default)]
+    pub display_range: Option<[f32; 2]>,
+    #[serde(default)]
+    pub suffix: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MenuItem {
     pub name: String,
+    pub handlers: ItemHandlers,
 
     pub text_key: String,
+    pub text_literal: bool,
     pub item_type: i32,
 
     pub style: i32,
@@ -72,6 +133,9 @@ pub struct MenuItem {
     pub dvar_test: String,
     pub enable_dvar: String,
     pub local_var: String,
+    pub edit_field: Option<MenuEditField>,
+    pub choices: Vec<(String, String)>,
+    pub slider: Option<MenuSlider>,
     pub bg_ptr: u8,
     pub vis_ptr: u8,
     pub mat_ptr: u8,
@@ -85,18 +149,21 @@ pub struct MenuItem {
     pub mouse_enter_ptr: u8,
     pub on_focus_ptr: u8,
     pub static_flags: i32,
+    pub dvar_flags: i32,
     pub action: Vec<String>,
     pub mouse_enter: Vec<String>,
     pub on_focus: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MenuDef {
     pub name: String,
     pub sound_name: String,
     pub window_background: String,
     pub expr_dvars: String,
     pub fullscreen: i32,
+    pub focus_color: Option<[f32; 4]>,
 
     pub rect: MenuRect,
     pub items: Vec<MenuItem>,
@@ -106,6 +173,7 @@ pub struct MenuDef {
 
     pub on_close_request: Vec<String>,
     pub on_esc: Vec<String>,
+    pub handlers: MenuHandlers,
 
     pub vis_exp: String,
 
@@ -113,6 +181,7 @@ pub struct MenuDef {
 
     pub on_open_local_vars: Vec<MenuSetLocalVar>,
 
+    #[serde(skip)]
     expr_dvar_rows: std::sync::OnceLock<Vec<(i32, std::ops::Range<usize>)>>,
 }
 
@@ -144,7 +213,8 @@ fn expr_dvar_rows(list: &str) -> Vec<(i32, std::ops::Range<usize>)> {
     rows
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MenuSetLocalVar {
     pub kind: i32,
     pub name: String,
@@ -269,6 +339,7 @@ pub struct MenuCatalog {
     pub material_2d_plans: BTreeMap<String, HudMaterialPlan>,
 
     pub material_images: BTreeMap<String, String>,
+    pub material_srgb_reads: BTreeMap<String, bool>,
     pub lists: Vec<(String, i32)>,
     pub walked: usize,
 
@@ -277,6 +348,7 @@ pub struct MenuCatalog {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HudMaterialPlan {
+    pub texture_atlas: [u8; 2],
     pub technique_slots: Option<u64>,
     pub state_bits_entry: Option<[u8; asset_iw4::size::TECHNIQUE_SLOT_COUNT]>,
     pub state_rows: Vec<[u32; 2]>,
@@ -296,8 +368,20 @@ pub struct HudMaterialTextureBinding {
 }
 
 impl MenuCatalog {
+    pub fn load_definitions(&mut self, source: &str) -> Result<(), String> {
+        let definitions = crate::menu_source::load(source, self)?;
+        self.menus
+            .extend(definitions.into_iter().map(|def| (def.name.clone(), def)));
+        Ok(())
+    }
+
     pub fn get(&self, name: &str) -> Option<&MenuDef> {
-        self.menus.get(name)
+        self.menus.get(name).or_else(|| {
+            self.menus
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, def)| def)
+        })
     }
 
     pub fn played_sound_aliases(&self) -> std::collections::BTreeSet<&str> {
@@ -407,6 +491,7 @@ impl MenuCatalog {
             self.rawfiles.insert(name, text);
         }
         self.material_state_bits.extend(other.material_state_bits);
+        self.material_srgb_reads.extend(other.material_srgb_reads);
         self.material_2d_plans.extend(other.material_2d_plans);
         for (name, image) in other.material_images {
             self.material_images.insert(name, image);
@@ -434,6 +519,7 @@ pub const HUD_CHROME_MENUS: &[&str] = &[
     "hud_fullscreen",
     "dpad_hd",
     "javelin_overlay_hd",
+    "missilecam_hud_hd",
     "dpad_sd",
     "splash",
     "challenge",
@@ -503,9 +589,14 @@ fn load_menu_catalog_with_iwd(path: &Path, games: Option<&Path>) -> Result<MenuC
     let mut stream = memory.stream(&image.bytes).map_err(|e| e.to_string())?;
     let mut sink = MenuSink {
         catalog: MenuCatalog::default(),
+        russian_fonts: path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name.eq_ignore_ascii_case("russian")),
         names: HashMap::new(),
         script_sets: HashMap::new(),
         script_set_stack: Vec::new(),
+        branches: Vec::new(),
         image_links: HashMap::new(),
         images: Vec::new(),
         technique_links: HashMap::new(),
@@ -533,17 +624,28 @@ enum TechniqueLink {
 
 struct CapturedZoneImage {
     name: String,
+    use_srgb_reads: bool,
     width: u16,
     height: u16,
     format: u32,
     payload: Vec<u8>,
 }
 
+#[derive(Clone)]
+enum RecordedEvent {
+    Script(String),
+    Begin(Option<String>),
+    End,
+    SetLocalVar(i32, String, String),
+}
+
 struct MenuSink {
+    russian_fonts: bool,
     catalog: MenuCatalog,
     names: HashMap<(u8, u32), String>,
-    script_sets: HashMap<(u8, u32), Vec<String>>,
+    script_sets: HashMap<(u8, u32), Vec<RecordedEvent>>,
     script_set_stack: Vec<Ptr>,
+    branches: Vec<(Option<String>, Vec<MenuEvent>)>,
     image_links: HashMap<Ptr, ImageLink>,
     images: Vec<CapturedZoneImage>,
 
@@ -617,13 +719,48 @@ impl MenuSink {
         self.names.insert(ptr_key(slot), name.to_owned());
     }
 
-    fn record_script_set(&mut self, script: &str) {
+    fn record_script_set(&mut self, event: RecordedEvent) {
         for body in &self.script_set_stack {
             self.script_sets
                 .entry(ptr_key(*body))
                 .or_default()
-                .push(script.to_owned());
+                .push(event.clone());
         }
+    }
+
+    fn push_event(&mut self, menu: &str, kind: MenuScriptKind, event: MenuEvent) {
+        if let Some((_, body)) = self.branches.last_mut() {
+            body.push(event);
+            return;
+        }
+        let Some(def) = self.catalog.menus.get_mut(menu) else {
+            return;
+        };
+        let list = match kind {
+            MenuScriptKind::OnOpen => &mut def.handlers.open,
+            MenuScriptKind::OnClose => &mut def.handlers.close,
+            MenuScriptKind::OnCloseRequest => &mut def.handlers.close_request,
+            MenuScriptKind::OnEsc => &mut def.handlers.esc,
+            MenuScriptKind::ExecKey => return,
+            item_kind => {
+                let Some(row) = def.items.last_mut() else {
+                    return;
+                };
+                match item_kind {
+                    MenuScriptKind::Action => &mut row.handlers.action,
+                    MenuScriptKind::Accept => &mut row.handlers.accept,
+                    MenuScriptKind::MouseEnter | MenuScriptKind::MouseEnterText => {
+                        &mut row.handlers.mouse_enter
+                    }
+                    MenuScriptKind::MouseExit | MenuScriptKind::MouseExitText => {
+                        &mut row.handlers.mouse_exit
+                    }
+                    MenuScriptKind::OnFocus => &mut row.handlers.focus,
+                    _ => &mut row.handlers.leave_focus,
+                }
+            }
+        };
+        list.push(event);
     }
 
     fn bind_image(&mut self, slot: Ptr, link: ImageLink) {
@@ -686,6 +823,7 @@ impl MenuSink {
         let index = self.images.len();
         self.images.push(CapturedZoneImage {
             name: name.as_str().to_owned(),
+            use_srgb_reads: geometry.use_srgb_reads,
             width: geometry.width,
             height: geometry.height,
             format: geometry.format,
@@ -760,6 +898,7 @@ impl MenuSink {
         self.catalog.material_2d_plans.insert(
             key.clone(),
             HudMaterialPlan {
+                texture_atlas: geometry.texture_atlas,
                 technique_slots,
                 state_bits_entry: geometry.state_bits_entry,
                 state_rows: bits,
@@ -773,6 +912,9 @@ impl MenuSink {
                 self.catalog
                     .material_images
                     .insert(key.clone(), captured.name.clone());
+                self.catalog
+                    .material_srgb_reads
+                    .insert(key.clone(), captured.use_srgb_reads);
             }
             self.material_ts2d.insert(key, image);
         }
@@ -812,13 +954,19 @@ impl MenuSink {
                 "hud_suitcase_bomb",
                 "compassping_friendly_mp",
                 "compassping_enemyfiring",
+                "hud_fofbox_self",
+                "hud_fofbox_hostile",
             ]
             .map(str::to_owned),
         );
         materials.extend(
             self.material_ts2d
                 .keys()
-                .filter(|name| name.starts_with("rank_") || name.starts_with("killicon"))
+                .filter(|name| {
+                    name.starts_with("rank_")
+                        || name.starts_with("killicon")
+                        || name.starts_with("hud_minimap_")
+                })
                 .cloned(),
         );
         if let Some(table) = self.catalog.string_table("mp/rankIconTable.csv") {
@@ -826,6 +974,22 @@ impl MenuSink {
                 // Column zero identifies the rank; the rest are prestige variants.
                 for col in 1..table.columns {
                     let material = table.cell(row as i32, col as i32);
+                    if !material.is_empty() {
+                        materials.push(material.to_owned());
+                    }
+                }
+            }
+        }
+        // These icons are selected through expressions, so static backgrounds do
+        // not enumerate them. Some (including ACOG) only live in the fastfile.
+        for (name, column) in [
+            ("mp/statsTable.csv", 6),
+            ("mp/attachmentTable.csv", 6),
+            ("mp/perkTable.csv", 3),
+        ] {
+            if let Some(table) = self.catalog.string_table(name) {
+                for row in 0..table.rows {
+                    let material = table.cell(row as i32, column);
                     if !material.is_empty() {
                         materials.push(material.to_owned());
                     }
@@ -1051,6 +1215,7 @@ impl AssetLinkSink for MenuSink {
         def.window_background = rec.window_background.to_owned();
         def.set_expr_dvars(rec.expr_dvars.to_owned());
         def.fullscreen = rec.fullscreen;
+        def.focus_color = Some(rec.focus_color);
         def.rect = MenuRect::from(rec.rect);
         Ok(())
     }
@@ -1131,6 +1296,7 @@ impl AssetLinkSink for MenuSink {
             item.mouse_enter_ptr = rec.mouse_enter_ptr;
             item.on_focus_ptr = rec.on_focus_ptr;
             item.static_flags = rec.static_flags;
+            item.dvar_flags = rec.dvar_flags;
         }
         Ok(())
     }
@@ -1196,6 +1362,29 @@ impl AssetLinkSink for MenuSink {
         Ok(())
     }
 
+    fn capture_item_choice(
+        &mut self,
+        menu: &str,
+        _item: &str,
+        label: &str,
+        value: fastfile_iw4::MenuChoiceValue<'_>,
+    ) -> fastfile_iw4::Result<()> {
+        let Some(def) = self.catalog.menus.get_mut(menu) else {
+            return Ok(());
+        };
+        if label.is_empty() {
+            return Ok(());
+        }
+        if let Some(item) = def.items.last_mut() {
+            let value = match value {
+                fastfile_iw4::MenuChoiceValue::Str(text) => text.to_owned(),
+                fastfile_iw4::MenuChoiceValue::Float(number) => number.to_string(),
+            };
+            item.choices.push((label.to_owned(), value));
+        }
+        Ok(())
+    }
+
     fn capture_item_material_exp(
         &mut self,
         menu: &str,
@@ -1218,7 +1407,8 @@ impl AssetLinkSink for MenuSink {
         kind: MenuScriptKind,
         script: &str,
     ) -> fastfile_iw4::Result<()> {
-        self.record_script_set(script);
+        self.record_script_set(RecordedEvent::Script(script.to_owned()));
+        self.push_event(menu, kind, MenuEvent::Script(script.to_owned()));
         let Some(def) = self.catalog.menus.get_mut(menu) else {
             return Ok(());
         };
@@ -1255,6 +1445,20 @@ impl AssetLinkSink for MenuSink {
         name: &str,
         expr: &str,
     ) -> fastfile_iw4::Result<()> {
+        self.record_script_set(RecordedEvent::SetLocalVar(
+            var_kind,
+            name.to_owned(),
+            expr.to_owned(),
+        ));
+        self.push_event(
+            menu,
+            kind,
+            MenuEvent::SetLocalVar {
+                kind: var_kind,
+                name: name.to_owned(),
+                expr: expr.to_owned(),
+            },
+        );
         if !item.is_empty() || kind != MenuScriptKind::OnOpen {
             return Ok(());
         }
@@ -1292,12 +1496,57 @@ impl AssetLinkSink for MenuSink {
         item: &str,
         kind: MenuScriptKind,
     ) -> fastfile_iw4::Result<()> {
-        let Some(scripts) = self.script_sets.get(&ptr_key(body)).cloned() else {
+        let Some(events) = self.script_sets.get(&ptr_key(body)).cloned() else {
             return Ok(());
         };
-        for script in scripts {
-            self.capture_menu_script(menu, item, kind, &script)?;
+        for event in events {
+            match event {
+                RecordedEvent::Script(script) => {
+                    self.capture_menu_script(menu, item, kind, &script)?
+                }
+                RecordedEvent::Begin(condition) => {
+                    self.begin_menu_event_branch(menu, item, kind, condition.as_deref())?
+                }
+                RecordedEvent::End => self.end_menu_event_branch(menu, item, kind)?,
+                RecordedEvent::SetLocalVar(var_kind, name, expr) => {
+                    self.capture_menu_set_local_var(menu, item, kind, var_kind, &name, &expr)?
+                }
+            }
         }
+        Ok(())
+    }
+
+    fn begin_menu_event_branch(
+        &mut self,
+        _menu: &str,
+        _item: &str,
+        _kind: MenuScriptKind,
+        condition: Option<&str>,
+    ) -> fastfile_iw4::Result<()> {
+        self.record_script_set(RecordedEvent::Begin(condition.map(str::to_owned)));
+        self.branches
+            .push((condition.map(str::to_owned), Vec::new()));
+        Ok(())
+    }
+
+    fn end_menu_event_branch(
+        &mut self,
+        menu: &str,
+        _item: &str,
+        kind: MenuScriptKind,
+    ) -> fastfile_iw4::Result<()> {
+        self.record_script_set(RecordedEvent::End);
+        let Some((condition, body)) = self.branches.pop() else {
+            return Ok(());
+        };
+        let event = match condition {
+            Some(condition) => MenuEvent::If {
+                condition,
+                then: body,
+            },
+            None => MenuEvent::Else(body),
+        };
+        self.push_event(menu, kind, event);
         Ok(())
     }
 
@@ -1307,6 +1556,60 @@ impl AssetLinkSink for MenuSink {
             let mut row = [0u8; sz::GLYPH];
             row.copy_from_slice(chunk);
             glyphs.push(GlyphCapture::from_row(&row));
+        }
+        // Russian zone atlases index Cyrillic by Windows-1251 bytes. Keep
+        // those entries for legacy localized strings and add Unicode aliases
+        // for UTF-8 user text. Other language atlases must not reinterpret them.
+        if self.russian_fonts {
+            let aliases: Vec<_> = glyphs
+                .iter()
+                .filter_map(|glyph| {
+                    let letter = match glyph.letter {
+                        0xc0..=0xff => 0x0410 + glyph.letter - 0xc0,
+                        0x80 => 0x0402,
+                        0x81 => 0x0403,
+                        0x83 => 0x0453,
+                        0x8a => 0x0409,
+                        0x8c => 0x040a,
+                        0x8d => 0x040c,
+                        0x8e => 0x040b,
+                        0x8f => 0x040f,
+                        0x90 => 0x0452,
+                        0x9a => 0x0459,
+                        0x9c => 0x045a,
+                        0x9d => 0x045c,
+                        0x9e => 0x045b,
+                        0x9f => 0x045f,
+                        0xa1 => 0x040e,
+                        0xa2 => 0x045e,
+                        0xa3 => 0x0408,
+                        0xa5 => 0x0490,
+                        0xa8 => 0x0401,
+                        0xaa => 0x0404,
+                        0xaf => 0x0407,
+                        0xb2 => 0x0406,
+                        0xb3 => 0x0456,
+                        0xb4 => 0x0491,
+                        0xb8 => 0x0451,
+                        0xba => 0x0454,
+                        0xbc => 0x0458,
+                        0xbd => 0x0405,
+                        0xbe => 0x0455,
+                        0xbf => 0x0457,
+                        _ => return None,
+                    };
+                    if glyphs.iter().any(|existing| existing.letter == letter) {
+                        return None;
+                    }
+                    let mut alias = *glyph;
+                    alias.letter = letter;
+                    Some(alias)
+                })
+                .collect();
+            glyphs.extend(aliases);
+            if let Some(extended) = glyphs.get_mut(0x60..) {
+                extended.sort_by_key(|glyph| glyph.letter);
+            }
         }
         self.catalog.fonts.insert(
             rec.name.to_ascii_lowercase(),
@@ -1332,7 +1635,10 @@ impl AssetLinkSink for MenuSink {
             || n.rsplit('/')
                 .next()
                 .is_some_and(|leaf| leaf.eq_ignore_ascii_case("basemaps.arena"));
-        if !is_arena {
+        let lower = n.to_ascii_lowercase();
+        let is_config = lower.ends_with(".cfg");
+        let is_shock = lower.starts_with("shock/") && lower.ends_with(".shock");
+        if !is_arena && !is_config && !is_shock {
             return Ok(());
         }
         let bytes = if zlib_compressed {

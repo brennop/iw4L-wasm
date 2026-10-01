@@ -1,6 +1,4 @@
-use playerstate_iw4::PlayerState;
-
-use crate::PMF_ADS_INTENT;
+use playerstate_iw4::{PlayerState, pm_flags};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AdsFracContext {
@@ -28,7 +26,7 @@ impl Default for AdsFracContext {
     }
 }
 
-pub fn pm_update_ads_frac(ps: &mut PlayerState, msec: i32, context: AdsFracContext) {
+pub fn update_ads_frac(ps: &mut PlayerState, msec: i32, context: AdsFracContext) {
     if !context.aim_down_sight {
         ps.f_weapon_pos_frac = 0.0;
         ps.ads_delay_time = 0;
@@ -42,7 +40,7 @@ pub fn pm_update_ads_frac(ps: &mut PlayerState, msec: i32, context: AdsFracConte
         return;
     }
 
-    let mut ads_requested = (ps.pm_flags & PMF_ADS_INTENT) != 0;
+    let mut ads_requested = (ps.pm_flags & pm_flags::ADS_INTENT) != 0;
     if !context.rechamber_while_ads && ws == 7 {
         ads_requested = false;
     }

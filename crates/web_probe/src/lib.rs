@@ -64,13 +64,13 @@ impl Report {
 }
 
 pub async fn probe(games_root: &str, zone: &str) -> Result<Report, String> {
-    assets::set_games_root_override(PathBuf::from(games_root));
-    let root = assets::GamesRoot(PathBuf::from(games_root));
-    let found = assets::find_zone_file(&root, zone)?;
-    let common_mp = assets::find_runtime_common_mp(&root, &found.path).map(|zone| zone.path);
+    asset_transport::set_games_root_override(PathBuf::from(games_root));
+    let root = asset_transport::GamesRoot(PathBuf::from(games_root));
+    let found = asset_transport::find_zone_file(&root, zone)?;
+    let common_mp = asset_transport::find_runtime_common_mp(&root, &found.path).map(|zone| zone.path);
     let started = web_time::Instant::now();
     let outcome =
-        assets::load_prepared_match(Ok(found.path), common_mp, assets::LoadProgress::default())
+        assets::load_prepared_match(Ok(found.path), common_mp, asset_transport::LoadProgress::default())
             .await;
     let load_ms = started.elapsed().as_secs_f64() * 1000.0;
     let live_at_ready = diag::process_live_heap_bytes();

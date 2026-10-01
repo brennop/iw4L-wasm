@@ -125,7 +125,7 @@ fn execute(
     }
     if name == "scr_fog_fraction" {
         return Err(
-            "scr_fog_fraction is initialized to 1 by retail art script but has no fog consumer",
+            "scr_fog_fraction is initialized to 1 by the art script but has no fog consumer",
         );
     }
     let v = values(&cmd.args)?;
@@ -141,7 +141,7 @@ fn execute(
         f.transition_time = scalar(&v[6..7], 0.0, i32::MAX as f32 / 1000.0)?;
         f.volumetric = None;
         f.sun = if v.len() == 16 {
-            Some(assets::SunFog {
+            Some(asset_world::SunFog {
                 color_rgb: vector(&v[7..10], 0.0, 1.0)?,
                 sun_dir: vector(&v[10..13], -f32::MAX, f32::MAX)?,
                 begin_angle_deg: scalar(&v[13..14], 0.0, 180.0)?,
@@ -235,7 +235,7 @@ pub(crate) fn route(
     mut commands: MessageReader<ConsoleCommand>,
     mut dvars: ResMut<FogDvars>,
     mut map: Option<ResMut<MapFrameFog>>,
-    clock: Option<Res<net::CgFrameClock>>,
+    clock: Option<Res<net::FrameClock>>,
     prepared: Res<PreparedSceneView>,
     mut console: ResMut<ConsoleState>,
     settings: Res<ConsoleSettings>,

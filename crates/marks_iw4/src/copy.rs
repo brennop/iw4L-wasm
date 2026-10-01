@@ -57,13 +57,13 @@ pub struct FxMarkCopyCensus {
 }
 
 #[inline]
-pub fn fx_mark_contexts_equal(a: &[u8; 7], b: &[u8; 7]) -> bool {
+pub fn mark_contexts_equal(a: &[u8; 7], b: &[u8; 7]) -> bool {
     a == b
 }
 
 #[inline]
-pub fn fx_mark_tri_pack_count(tris: &[FxMarkStagingTri]) -> u32 {
-    if tris.len() >= 2 && fx_mark_contexts_equal(&tris[0].context, &tris[1].context) {
+pub fn mark_tri_pack_count(tris: &[FxMarkStagingTri]) -> u32 {
+    if tris.len() >= 2 && mark_contexts_equal(&tris[0].context, &tris[1].context) {
         2
     } else if tris.is_empty() {
         0
@@ -72,11 +72,11 @@ pub fn fx_mark_tri_pack_count(tris: &[FxMarkStagingTri]) -> u32 {
     }
 }
 
-pub fn fx_mark_tri_groups_for_staging(tris: &[FxMarkStagingTri]) -> u32 {
+pub fn mark_tri_groups_for_staging(tris: &[FxMarkStagingTri]) -> u32 {
     let mut n = 0u32;
     let mut i = 0usize;
     while i < tris.len() {
-        let pack = fx_mark_tri_pack_count(&tris[i..]);
+        let pack = mark_tri_pack_count(&tris[i..]);
         if pack == 0 {
             break;
         }
@@ -86,7 +86,7 @@ pub fn fx_mark_tri_groups_for_staging(tris: &[FxMarkStagingTri]) -> u32 {
     n
 }
 
-pub fn fx_link_scratch_tri_groups(groups: &mut [FxTriGroup]) -> u16 {
+pub fn link_scratch_tri_groups(groups: &mut [FxTriGroup]) -> u16 {
     if groups.is_empty() {
         return FX_TRI_GROUP_CHAIN_NONE;
     }
@@ -99,7 +99,7 @@ pub fn fx_link_scratch_tri_groups(groups: &mut [FxTriGroup]) -> u16 {
     (groups.len() - 1) as u16
 }
 
-pub fn fx_link_scratch_point_groups(groups: &mut [FxPointGroup]) -> u16 {
+pub fn link_scratch_point_groups(groups: &mut [FxPointGroup]) -> u16 {
     if groups.is_empty() {
         return FX_POINT_GROUP_CHAIN_NONE;
     }
@@ -112,7 +112,7 @@ pub fn fx_link_scratch_point_groups(groups: &mut [FxPointGroup]) -> u16 {
     (groups.len() - 1) as u16
 }
 
-pub fn fx_copy_mark_tris(
+pub fn copy_mark_tris(
     groups: &mut [FxTriGroup],
     mut handle: u16,
     mut staging: &[FxMarkStagingTri],
@@ -135,7 +135,7 @@ pub fn fx_copy_mark_tris(
             if si >= staging.len() {
                 break;
             }
-            if si > 0 && !fx_mark_contexts_equal(&staging[si].context, &first_ctx) {
+            if si > 0 && !mark_contexts_equal(&staging[si].context, &first_ctx) {
                 break;
             }
             groups[idx].indices[si] = staging[si].indices;
@@ -149,7 +149,7 @@ pub fn fx_copy_mark_tris(
     copied
 }
 
-pub fn fx_copy_mark_points(
+pub fn copy_mark_points(
     groups: &mut [FxPointGroup],
     mut handle: u16,
     mut staging: &[FxMarkStagingPoint],
@@ -176,7 +176,7 @@ pub fn fx_copy_mark_points(
     copied
 }
 
-pub fn fx_copy_staging_into_scratch(
+pub fn copy_staging_into_scratch(
     tris: &[FxMarkStagingTri],
     points: &[FxMarkStagingPoint],
     tri_groups: &mut [FxTriGroup],
@@ -185,15 +185,15 @@ pub fn fx_copy_staging_into_scratch(
     if tris.is_empty() {
         return None;
     }
-    let need_t = fx_mark_tri_groups_for_staging(tris) as usize;
-    let need_p = crate::fx_mark_point_groups_for_count(points.len() as u32) as usize;
+    let need_t = mark_tri_groups_for_staging(tris) as usize;
+    let need_p = crate::mark_point_groups_for_count(points.len() as u32) as usize;
     if tri_groups.len() < need_t || point_groups.len() < need_p {
         return None;
     }
-    let tri_head = fx_link_scratch_tri_groups(&mut tri_groups[..need_t]);
-    let point_head = fx_link_scratch_point_groups(&mut point_groups[..need_p]);
-    let copied_tri = fx_copy_mark_tris(&mut tri_groups[..need_t], tri_head, tris);
-    let copied_point = fx_copy_mark_points(&mut point_groups[..need_p], point_head, points);
+    let tri_head = link_scratch_tri_groups(&mut tri_groups[..need_t]);
+    let point_head = link_scratch_point_groups(&mut point_groups[..need_p]);
+    let copied_tri = copy_mark_tris(&mut tri_groups[..need_t], tri_head, tris);
+    let copied_point = copy_mark_points(&mut point_groups[..need_p], point_head, points);
     let first_xyz = if (tri_head as usize) < need_t && (point_head as usize) < need_p {
         point_groups[point_head as usize].points[0].xyz
     } else {

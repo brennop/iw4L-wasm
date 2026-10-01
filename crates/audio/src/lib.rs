@@ -1,16 +1,15 @@
 mod aliases;
 mod ambient;
+mod attenuation;
 mod backend;
 mod clip_store;
 mod emit;
 mod entity_events;
 mod frontend;
 mod messages;
-mod objectives;
 mod pcm;
 mod playback;
 mod plugin;
-pub mod policy;
 mod rumble;
 mod shellshock;
 mod space;
@@ -20,9 +19,9 @@ mod voice;
 mod worklet;
 
 pub use aliases::{
-    StepGait, footstep_aliases, gear_rattle_alias, land_aliases, mantle_gear_alias,
-    quiet_surface_alias, select_cg_fire_alias, select_fire_alias, step_prefix,
-    surface_alias_candidates, world_surface_alias,
+    StepGait, footstep_aliases, gear_alias, gear_rattle_alias, land_aliases, quiet_surface_alias,
+    select_cg_fire_alias, select_fire_alias, step_prefix, surface_alias_candidates,
+    world_surface_alias,
 };
 pub use ambient::{
     MAX_ACTIVE_MAP_EMITTERS, MIN_AUDIBLE_EMITTER_GAIN, MapAmbient, MapAmbientBooted, MapEmitter,
@@ -34,7 +33,7 @@ pub use frontend::FrontendAudio;
 pub use match_set::{AudioReady, AudioSilent};
 pub use messages::{
     AliasCommand, BoundWeaponSound, Footstep, LandSound, PlayAlias, SND_ENT_LOCAL,
-    ViewmodelNotetracks, WeaponSound, snd_ent_from_number,
+    ViewmodelNotetracks, WeaponSound, ent_from_number,
 };
 pub use pcm::{LivePan, LoopingPcmAudio, PcmAudio, decode_audio_bytes};
 pub use playback::{
@@ -42,7 +41,6 @@ pub use playback::{
     world_oneshot_channel_gains, world_oneshot_pan,
 };
 pub use plugin::AudioPlugin;
-pub use policy::music::ScriptMusicHost;
 pub use space::{distance_inches, transform_inches};
 pub use start::{
     SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome, SuppressReason,
@@ -54,7 +52,7 @@ pub use bevy::audio::{AudioSink, AudioSinkPlayback};
 pub use worklet::{AudioSink, AudioSinkPlayback};
 
 mod destructible_loops;
-mod map_doors;
 mod match_set;
+mod match_voices;
 
 mod weapon_lock;

@@ -28,14 +28,14 @@ pub const WEAPON_NAME_FADE_DURATION_MS: i32 = 1800;
 pub const WEAPON_NAME_FADE_TAIL_MS: i32 = 700;
 
 #[must_use]
-pub fn bg_get_perk_slot_index(name: &str) -> Option<usize> {
+pub fn get_perk_slot_index(name: &str) -> Option<usize> {
     PERK_SLOT_NAMES
         .iter()
         .position(|slot| slot.eq_ignore_ascii_case(name))
 }
 
 #[must_use]
-pub fn bg_perk_code_key(code: u32) -> Option<String> {
+pub fn perk_code_key(code: u32) -> Option<String> {
     if code == 0 {
         None
     } else {

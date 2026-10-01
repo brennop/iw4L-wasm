@@ -36,9 +36,9 @@ pub use world_trace::{
 };
 pub use xmodel_trace::{
     ClipStaticModel, RigidXform, StaticModelHit, StaticModelWalkStats, XModelAnimBone, XModelColl,
-    XModelCollSurf, XModelCollTri, cm_trace_box_misses, cm_trace_static_model,
-    point_trace_static_models, point_trace_static_models_stats,
-    point_trace_static_models_stats_keyed, xmodel_trace_line, xmodel_trace_line_animated,
+    XModelCollSurf, XModelCollTri, point_trace_static_models, point_trace_static_models_stats,
+    point_trace_static_models_stats_keyed, trace_box_misses, trace_static_model, xmodel_trace_line,
+    xmodel_trace_line_animated,
 };
 
 pub trait BrushView {

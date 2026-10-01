@@ -139,7 +139,7 @@ pub(crate) fn entity_clip_census(
     owners: &[crate::bullet_collision::EntityCollisionCapabilities],
     mask: u32,
 ) -> EntityClipCensus {
-    use crate::bullet_collision::dobj_contents_match_mask;
+    use crate::bullet_collision::contents_match_mask;
 
     let mut out = EntityClipCensus::default();
     for owner in owners {
@@ -178,7 +178,7 @@ pub(crate) fn entity_clip_census(
             }
             continue;
         };
-        if !dobj_contents_match_mask(contents, mask) {
+        if !contents_match_mask(contents, mask) {
             out.not_bullet_solid += 1;
             continue;
         }

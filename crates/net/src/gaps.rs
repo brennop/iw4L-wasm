@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use diag::gap::{self as ledger, Gap as _, GapLedger};
 use sim::ClientId;
 
-use crate::client::entities::CLIENT_ENTITY_SLOT_COUNT;
+use crate::client::presentation::entities::CLIENT_ENTITY_SLOT_COUNT;
 
 const NET_GAP_COUNT: usize = <NetGap as ledger::Gap>::ALL.len();
 

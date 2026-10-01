@@ -115,11 +115,11 @@ pub fn clear_host_gfx_scene(
 }
 
 pub fn scene_quat_from_angles(angles: [f32; 3]) -> [f32; 4] {
-    fx_iw4::fx_axis_to_quat(math_iw4::angles_to_axis(angles))
+    fx_iw4::axis_to_quat(math_iw4::angles_to_axis(angles))
 }
 
 pub fn scene_quat_from_viewmodel_axes(gun_angles: [f32; 3], view_angles: [f32; 3]) -> [f32; 4] {
-    fx_iw4::fx_axis_to_quat(fx_iw4::fx_mat3_mul(
+    fx_iw4::axis_to_quat(fx_iw4::mat3_mul(
         math_iw4::angles_to_axis(gun_angles),
         math_iw4::angles_to_axis(view_angles),
     ))
@@ -152,13 +152,14 @@ pub struct ScriptMoverBmodelClaim {
     pub origin: [f32; 3],
     pub angles: [f32; 3],
     pub entnum: u32,
+    pub hidden: bool,
 }
 
 pub fn occupy_add_bmodel(scene: &mut GfxScene, surf_id: i16, pose: AddBModelPose) {
     let _ = scene.add_bmodel(AddBModelArgs { surf_id }, pose);
 }
 
-fn surf_id_for_model(models: &[assets::GfxBrushModelSurfs], model_index: u32) -> i16 {
+fn surf_id_for_model(models: &[asset_world::GfxBrushModelSurfs], model_index: u32) -> i16 {
     models
         .get(model_index as usize)
         .and_then(|model| i16::try_from(model.surface_count).ok())
@@ -167,8 +168,8 @@ fn surf_id_for_model(models: &[assets::GfxBrushModelSurfs], model_index: u32) ->
 
 pub fn occupy_script_brushes(
     scene: &mut GfxScene,
-    models: &[assets::GfxBrushModelSurfs],
-    authored: &[assets::ScriptBrushModelPlacement],
+    models: &[asset_world::GfxBrushModelSurfs],
+    authored: &[asset_world::ScriptBrushModelPlacement],
     live: &[ScriptMoverBmodelClaim],
 ) {
     let mut claims: HashMap<u32, ScriptMoverBmodelClaim> = HashMap::new();
@@ -186,6 +187,9 @@ pub fn occupy_script_brushes(
         let surf_id = surf_id_for_model(models, brush.cmodel_handle);
         if let Some(claim) = claims.get(&brush.cmodel_handle) {
             used.insert(claim.model_index);
+            if claim.hidden {
+                continue;
+            }
             occupy_add_bmodel(
                 scene,
                 surf_id,
@@ -210,7 +214,7 @@ pub fn occupy_script_brushes(
         }
     }
     for claim in claims.values() {
-        if !used.insert(claim.model_index) {
+        if !used.insert(claim.model_index) || claim.hidden {
             continue;
         }
         occupy_add_bmodel(
@@ -254,7 +258,7 @@ pub struct SceneEntSkinModel {
 pub struct SceneEntSkinPendingModel {
     pub lod: i8,
     pub bone_count: u8,
-    pub skel: std::sync::Arc<assets::ModelSkel>,
+    pub skel: std::sync::Arc<asset_model::ModelSkel>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -272,7 +276,7 @@ impl SceneEntSurfaceCache {
     pub fn surfaces(
         &mut self,
         name: &str,
-        skel: &assets::ModelSkel,
+        skel: &asset_model::ModelSkel,
         lod: u8,
     ) -> std::sync::Arc<[dpvs_iw4::PreSkinSurface]> {
         if let Some(hit) = self.by_name.get(name).and_then(|lods| lods.get(&lod)) {
@@ -291,7 +295,7 @@ impl SceneEntSurfaceCache {
     }
 }
 
-fn pre_skin_xsurface(skel: &assets::ModelSkel, surface: usize) -> dpvs_iw4::PreSkinSurface {
+fn pre_skin_xsurface(skel: &asset_model::ModelSkel, surface: usize) -> dpvs_iw4::PreSkinSurface {
     dpvs_iw4::PreSkinSurface {
         part_bits: skel
             .surface_part_bits
@@ -365,7 +369,7 @@ pub fn expand_scene_ent_pending(
 
 pub fn hide_part_bits_from_tags(
     bits: &mut [u32; 6],
-    skel: &assets::ModelSkel,
+    skel: &asset_model::ModelSkel,
     base: usize,
     hide_tags: &[String],
 ) {
@@ -373,7 +377,7 @@ pub fn hide_part_bits_from_tags(
         return;
     }
     for bone in 0..skel.bone_names.len() {
-        if assets::bone_has_hidden_ancestor(
+        if asset_game::bone_has_hidden_ancestor(
             &skel.bone_names,
             |b| skel.parent_of(b),
             bone,

@@ -2,7 +2,6 @@ use anim_iw4::{PLAYER_ANIM_RAW_MASK, PlayerAnimValue};
 use bevy_ecs::prelude::Component;
 use playerstate_iw4::{AnimPair, PlayerState};
 
-use crate::anim_script_gap::PlayerAnimScriptGap;
 use crate::bullet_collision::{
     CollisionHistory, EntityCollisionCapabilities, EntityCollisionHistory,
     EntityCollisionTraceGeom, LinkedBrushCollisionBrush,
@@ -46,7 +45,7 @@ pub struct Tick(pub u32);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ClientId(pub u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingPlayerCardKind {
     SetSlot {
         source: ClientId,
@@ -56,16 +55,31 @@ pub enum PendingPlayerCardKind {
         cs_index: i32,
     },
     Splash {
-        key: &'static str,
+        key: String,
         slot: i32,
         optional: i32,
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingPlayerCardEvent {
     pub recipient: ClientId,
     pub kind: PendingPlayerCardKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingPrint {
+    pub recipient: Option<ClientId>,
+    pub bold: bool,
+    pub template: String,
+    pub arg: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingLocalSound {
+    pub recipient: ClientId,
+    pub stop: bool,
+    pub alias_index: u8,
 }
 
 pub(crate) const CONTENTS_BODY: u32 = 0x0200_0000;
@@ -135,6 +149,14 @@ pub struct SimStaticModel {
 #[derive(Clone, Debug, Default)]
 pub struct SimClipCmodels {
     pub models: Vec<clipmap_iw4::ClipCmodel>,
+    pub triggers: Vec<Vec<SimTriggerHull>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SimTriggerHull {
+    pub mid: [f32; 3],
+    pub half: [f32; 3],
+    pub slabs: Vec<([f32; 3], f32, f32)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -149,10 +171,7 @@ impl PlayerKitCollision {
     fn reuse_key(&self) -> xmodel_runtime::DObjReuseKey {
         xmodel_runtime::DObjReuseKey {
             e_type: entity_iw4::ET_PLAYER,
-            model: xmodel_runtime::dobj_model_token(&[
-                self.body_key.as_str(),
-                self.head_key.as_str(),
-            ]),
+            model: xmodel_runtime::model_token(&[self.body_key.as_str(), self.head_key.as_str()]),
         }
     }
 }
@@ -224,15 +243,6 @@ pub struct HitvolDumpRow {
     pub dobj_models: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DamageFeedbackCue {
-    pub seq: u64,
-    pub attacker: ClientId,
-    pub victim: ClientId,
-    pub type_hit: gamemode_iw4::TypeHit,
-    pub amount: i32,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PredictionRemoteBody {
     pub client: ClientId,
@@ -262,6 +272,13 @@ impl SimContent {
 }
 
 /// Installation work. Consuming this builder closes all definition writers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeaponSetup {
+    pub realm: crate::script::Realm,
+    pub base: String,
+    pub attachments: Vec<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct SimContentBuilder {
     clip_brushes: Vec<SimBrush>,
@@ -278,11 +295,22 @@ pub struct SimContentBuilder {
     player_kits: [PlayerKitCollision; 2],
     player_anim_tree: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
     player_anim_node_names: Vec<String>,
-    mantle_xanims: Arc<crate::MantleXAnimBind>,
+    script_model_anims: std::collections::BTreeMap<String, crate::ScriptModelPlayAnim>,
+    xanims: Arc<crate::MantleXAnimBind>,
     weapon_script_names: Arc<[String]>,
+    weapon_script_aliases: std::collections::BTreeMap<String, u32>,
+    vehicle_turrets: std::collections::BTreeMap<String, String>,
+    vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
+    weapon_setups: Arc<[Option<WeaponSetup>]>,
+    weapon_world_models: Vec<(String, Vec<String>)>,
+    weapon_projectile_models: Vec<String>,
+    weapon_melee_only: Vec<bool>,
+    weapon_script_sounds: Vec<WeaponScriptSounds>,
     equipment_runtime: Vec<EquipmentRuntimeFacts>,
     team_voice_prefix_allies: Option<String>,
     team_voice_prefix_axis: Option<String>,
+    map_custom: std::collections::BTreeMap<String, String>,
+    shocks: std::collections::BTreeMap<String, hud_iw4::ShockParams>,
     player_anim_script: Option<Arc<PlayerAnimScript>>,
 }
 
@@ -293,6 +321,16 @@ impl SimContentBuilder {
     }
     pub fn set_weapon_def_scales(&mut self, scales: Vec<(f32, f32, f32)>) {
         self.weapon_def_scales = scales;
+    }
+
+    pub fn set_script_model_anims(
+        &mut self,
+        anims: impl IntoIterator<Item = (String, crate::ScriptModelPlayAnim)>,
+    ) {
+        self.script_model_anims = anims
+            .into_iter()
+            .map(|(name, facts)| (name.to_ascii_lowercase(), facts))
+            .collect();
     }
 
     pub fn set_player_anim_script(&mut self, script: Option<Arc<PlayerAnimScript>>) {
@@ -341,11 +379,46 @@ impl SimContentBuilder {
     }
 
     pub fn set_mantle_xanims(&mut self, bind: crate::MantleXAnimBind) {
-        self.mantle_xanims = Arc::new(bind);
+        self.xanims = Arc::new(bind);
     }
 
     pub fn set_weapon_script_names(&mut self, names: Vec<String>) {
         self.weapon_script_names = names.into();
+    }
+
+    pub fn set_weapon_script_aliases(&mut self, aliases: Vec<(String, u32)>) {
+        self.weapon_script_aliases = aliases.into_iter().collect();
+    }
+
+    pub fn set_vehicle_compass(
+        &mut self,
+        rows: impl IntoIterator<Item = (String, ([String; 2], [i32; 2]))>,
+    ) {
+        self.vehicle_compass = rows.into_iter().collect();
+    }
+
+    pub fn set_vehicle_turrets(&mut self, turrets: Vec<(String, String)>) {
+        self.vehicle_turrets = turrets.into_iter().collect();
+    }
+
+    pub fn set_weapon_setups(&mut self, setups: Vec<Option<WeaponSetup>>) {
+        self.weapon_setups = setups.into();
+    }
+
+    pub fn set_weapon_world_models(&mut self, models: Vec<(String, Vec<String>)>) {
+        self.weapon_world_models = models;
+    }
+
+    pub fn set_weapon_projectile_models(&mut self, models: Vec<String>) {
+        self.weapon_projectile_models = models;
+    }
+
+    pub fn set_weapon_melee_only(&mut self, rows: Vec<bool>) {
+        self.weapon_melee_only = rows;
+    }
+
+    pub fn set_weapon_script_sounds(&mut self, rows: Vec<WeaponScriptSounds>) {
+        self.weapon_script_sounds = rows;
     }
 
     pub fn set_equipment_runtime_table(&mut self, rows: Vec<EquipmentRuntimeFacts>) {
@@ -355,6 +428,14 @@ impl SimContentBuilder {
     pub fn set_team_voice_prefixes(&mut self, allies: Option<String>, axis: Option<String>) {
         self.team_voice_prefix_allies = allies;
         self.team_voice_prefix_axis = axis;
+    }
+
+    pub fn set_map_custom(&mut self, entry: std::collections::BTreeMap<String, String>) {
+        self.map_custom = entry;
+    }
+
+    pub fn set_shocks(&mut self, shocks: std::collections::BTreeMap<String, hud_iw4::ShockParams>) {
+        self.shocks = shocks;
     }
 
     pub fn set_clip_brushes(&mut self, brushes: Vec<SimBrush>) {
@@ -389,6 +470,10 @@ pub struct SimState {
 
     entity_collision_capabilities: Vec<EntityCollisionCapabilities>,
 
+    model_library: Arc<
+        std::collections::BTreeMap<String, Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
+    >,
+
     old_buttons: Vec<(ClientId, u32)>,
 
     old_cmd_angles: Vec<(ClientId, [i32; 3])>,
@@ -400,9 +485,6 @@ pub struct SimState {
     player_dobjs: HashMap<u32, PlayerDobjSlot>,
 
     player_body_materialize_error: Option<String>,
-
-    damage_feedback_seq: u64,
-    damage_feedback_cues: Vec<DamageFeedbackCue>,
 
     g_hudelems: Vec<crate::hudelem::GameHudElemSlot>,
 
@@ -421,31 +503,9 @@ pub struct SimState {
 
     max_alive_seen: u32,
 
-    pending_prematch_done: bool,
-
-    pending_game_win: Option<Option<ClientId>>,
-
-    pending_team_game_win: Option<Option<gamemode_iw4::Team>>,
-
-    pending_round_win: Option<Option<gamemode_iw4::Team>>,
-
-    pending_round_switch: Option<bool>,
-
     game_win_winner: Option<ClientId>,
 
     placement_cointoss_unwired: u32,
-
-    pending_spawn_music: Vec<ClientId>,
-
-    bc_speakers: Vec<crate::voice::BattlechatterSpeaker>,
-
-    pending_battlechatter: Vec<crate::voice::DelayedBattlechatter>,
-
-    pending_concussion: Vec<crate::damage::DelayedConcussion>,
-
-    voice_rng: MatchRng,
-
-    outcome_hud_latched: bool,
 
     root_seed: u64,
     spawn_rng: MatchRng,
@@ -479,13 +539,9 @@ pub struct SimState {
 
     pellet_fx: Vec<crate::PelletFxRecord>,
 
-    anim_script_gap: PlayerAnimScriptGap,
-
     world_objects: WorldObjectState,
 
     script_gaps: ScriptGaps,
-
-    pending_match_clock: Option<gamemode_iw4::ClockTickEmit>,
 
     sound_alias_cs: crate::SoundAliasCs,
 
@@ -493,16 +549,17 @@ pub struct SimState {
 
     hud_material_cs: crate::HudMaterialCs,
 
-    pending_score_limit_soon: Option<gamemode_iw4::MatchSoundNotify>,
+    hud_string_cs: crate::HudStringCs,
 
     num_kills: u32,
 
     pub(crate) recent_kills: Vec<(ClientId, i32, u32)>,
-    pub(crate) care_packages: Vec<crate::match_state::CarePackage>,
-    pub(crate) pave_lows: Vec<crate::match_state::PaveLow>,
-    pub(crate) uavs: Vec<crate::match_state::Uav>,
+    pub(crate) weapon_notes: Vec<crate::equipment::WeaponNote>,
 
     pending_player_cards: Vec<PendingPlayerCardEvent>,
+
+    pending_prints: Vec<PendingPrint>,
+    pending_local_sounds: Vec<PendingLocalSound>,
 
     pending_final_kill: Option<(ClientId, ClientId)>,
 
@@ -529,36 +586,9 @@ pub struct SimState {
     last_think_dispatch: Vec<(i32, crate::gentity::EntityRunKind)>,
     last_use_presses: Vec<crate::gentity::UsePress>,
 
-    pub map_doors: Option<crate::MapDoors>,
-    pub radiation_diggers: Vec<crate::RadiationDigger>,
-    pub radiation_moving_diggers: Vec<crate::RadiationMovingDigger>,
-    pub radiation_conveyer: Option<crate::RadiationConveyer>,
-    pub radiation_lights: Option<crate::RadiationLights>,
     pub objectives: crate::ObjectiveMatch,
 
-    use_objects: Vec<crate::use_object::UseObject>,
-    use_hold: Option<crate::use_object::UseHoldSession>,
-    last_use_events: Vec<crate::use_object::UseObjectEvent>,
-    next_use_object_id: u32,
-    use_script_tick: crate::world::Tick,
-
     use_start_spawns: bool,
-
-    dom_score_next_ms: Option<i32>,
-    team_scores: gamemode_iw4::TeamScores,
-    lead_swing: gamemode_iw4::LeadSwing,
-
-    last_status_axis_ms: i32,
-    last_status_allies_ms: i32,
-
-    capture_pace: Vec<(crate::world::ClientId, gamemode_iw4::CapturePace)>,
-
-    best_spawn_flag_axis: Option<u32>,
-    best_spawn_flag_allies: Option<u32>,
-
-    dom_spawn_graph: Vec<gamemode_iw4::DomFlagSpawnNode>,
-    use_throwing_grenade: Vec<(crate::world::ClientId, bool)>,
-    use_objective_scaler: Vec<(crate::world::ClientId, f32)>,
 
     item_pickups: Vec<crate::ItemPickupRecord>,
 
@@ -573,14 +603,13 @@ impl Default for SimState {
             prediction_remote_bodies: Vec::new(),
             area_entity_world: None,
             entity_collision_capabilities: Vec::new(),
+            model_library: Arc::default(),
             old_buttons: Vec::new(),
             old_cmd_angles: Vec::new(),
             player_anim_trees: HashMap::new(),
             corpse_anim_trees: HashMap::new(),
             player_dobjs: HashMap::new(),
             player_body_materialize_error: None,
-            damage_feedback_seq: 0,
-            damage_feedback_cues: Vec::new(),
             g_hudelems: Vec::new(),
             hud_elem_sound_ids: crate::hudelem::PulseFxSoundIds::default(),
             dying_missiles: Vec::new(),
@@ -590,19 +619,8 @@ impl Default for SimState {
             match_elapsed_ms: 0,
             prematch: gamemode_iw4::PrematchStep::default(),
             max_alive_seen: 0,
-            pending_prematch_done: false,
-            pending_game_win: None,
-            pending_team_game_win: None,
-            pending_round_win: None,
-            pending_round_switch: None,
             game_win_winner: None,
             placement_cointoss_unwired: 0,
-            pending_spawn_music: Vec::new(),
-            bc_speakers: Vec::new(),
-            pending_battlechatter: Vec::new(),
-            pending_concussion: Vec::new(),
-            voice_rng: crate::voice::voice_rng_from_root(0),
-            outcome_hud_latched: false,
             root_seed: 0,
             spawn_rng: MatchRng::from_root(0, RngDomain::Spawn),
             combat_rng: MatchRng::from_root(0, RngDomain::Combat),
@@ -627,20 +645,18 @@ impl Default for SimState {
             entity_events: Vec::new(),
             next_entity_event: EventSequence(1),
             pellet_fx: Vec::new(),
-            anim_script_gap: PlayerAnimScriptGap::default(),
             world_objects: WorldObjectState::default(),
             script_gaps: ScriptGaps::default(),
-            pending_match_clock: None,
             sound_alias_cs: crate::SoundAliasCs::default(),
             effect_name_cs: crate::EffectNameCs::default(),
             hud_material_cs: crate::HudMaterialCs::default(),
-            pending_score_limit_soon: None,
+            hud_string_cs: crate::HudStringCs::default(),
             num_kills: 0,
             recent_kills: Vec::new(),
-            care_packages: Vec::new(),
-            pave_lows: Vec::new(),
-            uavs: Vec::new(),
+            weapon_notes: Vec::new(),
             pending_player_cards: Vec::new(),
+            pending_prints: Vec::new(),
+            pending_local_sounds: Vec::new(),
             pending_final_kill: None,
             last_pmove_walking: HashMap::new(),
             stuck_holdrand: 0,
@@ -654,32 +670,8 @@ impl Default for SimState {
             last_think_order: Vec::new(),
             last_think_dispatch: Vec::new(),
             last_use_presses: Vec::new(),
-            map_doors: None,
-            radiation_diggers: Vec::new(),
-            radiation_moving_diggers: Vec::new(),
-            radiation_conveyer: None,
-            radiation_lights: None,
             objectives: crate::ObjectiveMatch::default(),
-            use_objects: Vec::new(),
-            use_hold: None,
-            last_use_events: Vec::new(),
-            next_use_object_id: 1,
-            use_script_tick: Tick(0),
             use_start_spawns: gamemode_iw4::USE_START_SPAWNS_AT_START,
-            dom_score_next_ms: None,
-            team_scores: gamemode_iw4::TeamScores::default(),
-            lead_swing: gamemode_iw4::LeadSwing {
-                was_winning: None,
-                last_status_time_ms: 0,
-            },
-            last_status_axis_ms: 0,
-            last_status_allies_ms: 0,
-            capture_pace: Vec::new(),
-            best_spawn_flag_axis: None,
-            best_spawn_flag_allies: None,
-            dom_spawn_graph: Vec::new(),
-            use_throwing_grenade: Vec::new(),
-            use_objective_scaler: Vec::new(),
             item_pickups: Vec::new(),
             publish_snapshot: true,
         };
@@ -727,27 +719,16 @@ impl SimState {
         self.spawn_rng = MatchRng::from_root(bootstrap.seed, RngDomain::Spawn);
         self.combat_rng = MatchRng::from_root(bootstrap.seed, RngDomain::Combat);
         self.bot_rng = MatchRng::from_root(bootstrap.seed, RngDomain::Bot);
-        self.voice_rng = crate::voice::voice_rng_from_root(bootstrap.seed);
-        self.bc_speakers.clear();
-        self.pending_battlechatter.clear();
-        self.pending_concussion.clear();
         self.stuck_holdrand = bootstrap.seed as u32;
         self.last_stuck_ejects.clear();
         self.bootstrap = bootstrap;
         self.phase = MatchPhase::Warmup;
         self.match_elapsed_ms = 0;
-        self.capture_pace.clear();
         self.prematch = gamemode_iw4::PrematchStep::default();
         self.max_alive_seen = 0;
-        self.pending_prematch_done = false;
-        self.pending_game_win = None;
         self.game_win_winner = None;
         self.placement_cointoss_unwired = 0;
-        self.pending_spawn_music.clear();
-        self.care_packages.clear();
-        self.pave_lows.clear();
-        self.uavs.clear();
-        self.outcome_hud_latched = false;
+        self.weapon_notes.clear();
         self.next_shot = ShotId(1);
         self.collision_history.clear();
         self.entity_collision_history.clear();
@@ -758,12 +739,13 @@ impl SimState {
         self.projectile_impact_log.clear();
         self.g_hudelems.clear();
         self.hud_material_cs = crate::HudMaterialCs::default();
+        self.hud_string_cs = crate::HudStringCs::default();
         self.bind_required_hud_materials();
         self.num_kills = 0;
         self.recent_kills.clear();
         self.pending_player_cards.clear();
-        self.damage_feedback_cues.clear();
-        self.damage_feedback_seq = 0;
+        self.pending_prints.clear();
+        self.pending_local_sounds.clear();
         self.script_gaps = ScriptGaps::default();
         self.recompute_content_digest();
         Ok(())
@@ -789,27 +771,6 @@ impl SimState {
         self.prematch
     }
 
-    pub fn take_prematch_done(&mut self) -> bool {
-        core::mem::take(&mut self.pending_prematch_done)
-    }
-
-    pub fn take_game_win(&mut self) -> Option<Option<ClientId>> {
-        self.pending_game_win.take()
-    }
-
-    pub fn take_team_game_win(&mut self) -> Option<Option<gamemode_iw4::Team>> {
-        self.pending_team_game_win.take()
-    }
-
-    pub fn take_round_win(&mut self) -> Option<Option<gamemode_iw4::Team>> {
-        self.pending_round_win.take()
-    }
-
-    /// `Some(true)` is halftime; `Some(false)` is a side switch.
-    pub fn take_round_switch(&mut self) -> Option<bool> {
-        self.pending_round_switch.take()
-    }
-
     pub fn max_alive_seen(&self) -> u32 {
         self.max_alive_seen
     }
@@ -828,66 +789,12 @@ impl SimState {
         }
     }
 
-    pub fn take_spawn_music(&mut self) -> Vec<ClientId> {
-        core::mem::take(&mut self.pending_spawn_music)
-    }
-
-    pub(crate) fn bump_max_alive_seen(&mut self, n: u32) {
-        if n > self.max_alive_seen {
-            self.max_alive_seen = n;
-        }
-    }
-
-    pub(crate) fn set_prematch(&mut self, step: gamemode_iw4::PrematchStep) {
-        self.prematch = step;
-    }
-
-    pub(crate) fn mark_prematch_done(&mut self) {
-        self.pending_prematch_done = true;
-    }
-
-    pub(crate) fn set_pending_game_win(&mut self, winner: Option<ClientId>) {
-        self.pending_game_win = Some(winner);
-        self.game_win_winner = winner;
-    }
-
-    pub(crate) fn set_pending_team_game_win(&mut self, winner: Option<gamemode_iw4::Team>) {
-        self.pending_team_game_win = Some(winner);
-    }
-
-    /// A round win is notified only when this was not the last round; the
-    /// game-ending round reaches the dialog as a game win.
-    pub(crate) fn set_pending_round_switch(&mut self, halftime: bool) {
-        self.pending_round_switch = Some(halftime);
-    }
-
-    pub(crate) fn set_pending_round_win(&mut self, winner: Option<gamemode_iw4::Team>) {
-        self.pending_round_win = Some(winner);
-    }
-
     pub fn game_win_winner(&self) -> Option<ClientId> {
         self.game_win_winner
     }
 
-    pub(crate) fn add_placement_cointoss_unwired(&mut self, pairs: u32) {
-        self.placement_cointoss_unwired = self.placement_cointoss_unwired.saturating_add(pairs);
-    }
-
     pub fn placement_cointoss_unwired(&self) -> u32 {
         self.placement_cointoss_unwired
-    }
-
-    pub(crate) fn outcome_hud_latched(&self) -> bool {
-        self.outcome_hud_latched
-    }
-
-    pub(crate) fn set_outcome_hud_latched(&mut self, latched: bool) {
-        self.outcome_hud_latched = latched;
-    }
-
-    // The outcome must be gone before the final killcam plays.
-    pub fn reset_outcome(&mut self) {
-        crate::hudelem::clear_outcome_elems(&mut self.g_hudelems);
     }
 
     pub(crate) fn hud_elem_slots_mut(&mut self) -> &mut Vec<crate::hudelem::GameHudElemSlot> {
@@ -902,53 +809,8 @@ impl SimState {
         self.hud_elem_sound_ids = ids;
     }
 
-    pub(crate) fn push_spawn_music(&mut self, id: ClientId) {
-        self.pending_spawn_music.push(id);
-    }
-
-    pub(crate) fn add_match_elapsed_ms(&mut self, ms: u32) {
-        self.match_elapsed_ms = self.match_elapsed_ms.saturating_add(ms);
-    }
-
     pub fn sound_alias_index(&mut self, name: &str) -> u8 {
         self.sound_alias_cs.index(name)
-    }
-
-    pub(crate) fn team_voice_prefix(&self, axis: bool) -> Option<&str> {
-        if axis {
-            self.content.data.team_voice_prefix_axis.as_deref()
-        } else {
-            self.content.data.team_voice_prefix_allies.as_deref()
-        }
-    }
-
-    pub(crate) fn pers_team_is_axis(&self, id: ClientId) -> bool {
-        let Some(meta) = self.client_meta(id) else {
-            return false;
-        };
-        Self::kit_assignment_is_axis(meta.client_state_team, meta.ffa_team)
-    }
-
-    pub(crate) fn voice_rng_mut(&mut self) -> &mut MatchRng {
-        &mut self.voice_rng
-    }
-
-    pub(crate) fn bc_speakers(&self) -> &[crate::voice::BattlechatterSpeaker] {
-        &self.bc_speakers
-    }
-
-    pub(crate) fn bc_speakers_mut(&mut self) -> &mut Vec<crate::voice::BattlechatterSpeaker> {
-        &mut self.bc_speakers
-    }
-
-    pub(crate) fn pending_battlechatter_mut(
-        &mut self,
-    ) -> &mut Vec<crate::voice::DelayedBattlechatter> {
-        &mut self.pending_battlechatter
-    }
-
-    pub(crate) fn pending_concussion_mut(&mut self) -> &mut Vec<crate::damage::DelayedConcussion> {
-        &mut self.pending_concussion
     }
 
     pub fn effect_name_index(&mut self, name: &str) -> u8 {
@@ -959,23 +821,31 @@ impl SimState {
         self.hud_material_cs.index(name)
     }
 
+    pub(crate) fn hud_string_index(&mut self, text: &str) -> Option<i32> {
+        self.hud_string_cs.index(text)
+    }
+
+    pub(crate) fn push_print(&mut self, print: PendingPrint) {
+        self.pending_prints.push(print);
+    }
+
+    pub fn take_pending_prints(&mut self) -> Vec<PendingPrint> {
+        core::mem::take(&mut self.pending_prints)
+    }
+
+    pub(crate) fn push_local_sound(&mut self, sound: PendingLocalSound) {
+        self.pending_local_sounds.push(sound);
+    }
+
+    pub fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
+        core::mem::take(&mut self.pending_local_sounds)
+    }
+
     pub fn bind_required_hud_materials(&mut self) {
         for name in crate::REQUIRED_HUD_MATERIALS {
             let index = self.hud_material_cs.index(name);
             debug_assert_ne!(index, 0, "required HUD material `{name}` has no slot");
         }
-    }
-
-    pub fn take_match_clock_emit(&mut self) -> Option<gamemode_iw4::ClockTickEmit> {
-        self.pending_match_clock.take()
-    }
-
-    pub fn take_score_limit_soon(&mut self) -> Option<gamemode_iw4::MatchSoundNotify> {
-        self.pending_score_limit_soon.take()
-    }
-
-    pub fn take_glass_destroyed(&mut self) -> Vec<crate::GlassPieceId> {
-        self.world_objects_mut().take_glass_destroyed()
     }
 
     pub fn script_destroy_glass(
@@ -991,13 +861,7 @@ impl SimState {
         self.num_kills
     }
 
-    pub fn push_hud_splash(
-        &mut self,
-        recipient: ClientId,
-        key: &'static str,
-        slot: i32,
-        optional: i32,
-    ) {
+    pub fn push_hud_splash(&mut self, recipient: ClientId, key: String, slot: i32, optional: i32) {
         self.pending_player_cards.push(PendingPlayerCardEvent {
             recipient,
             kind: PendingPlayerCardKind::Splash {
@@ -1026,11 +890,6 @@ impl SimState {
         core::mem::take(&mut self.pending_player_cards)
     }
 
-    pub(crate) fn bump_num_kills(&mut self) -> u32 {
-        self.num_kills = self.num_kills.saturating_add(1);
-        self.num_kills
-    }
-
     pub fn take_pending_final_kill(&mut self) -> Option<(ClientId, ClientId)> {
         self.pending_final_kill.take()
     }
@@ -1039,29 +898,22 @@ impl SimState {
         self.pending_final_kill
     }
 
-    pub(crate) fn set_pending_final_kill(&mut self, mark: Option<(ClientId, ClientId)>) {
-        self.pending_final_kill = mark;
-    }
-
-    pub(crate) fn set_pending_match_clock(&mut self, emit: Option<gamemode_iw4::ClockTickEmit>) {
-        self.pending_match_clock = emit;
-    }
-
-    pub(crate) fn set_pending_score_limit_soon(
-        &mut self,
-        notify: Option<gamemode_iw4::MatchSoundNotify>,
-    ) {
-        self.pending_score_limit_soon = notify;
-    }
-
     pub fn clients_scoreboard(&self) -> Vec<(ClientId, ClientMatchState)> {
         self.clients.clone()
+    }
+
+    pub(crate) fn restart_level_phase(&mut self) {
+        self.phase = MatchPhase::Warmup;
+        self.match_elapsed_ms = 0;
+        self.prematch = gamemode_iw4::PrematchStep::default();
+        self.max_alive_seen = 0;
+        self.game_win_winner = None;
+        self.pending_final_kill = None;
     }
 
     pub(crate) fn set_phase(&mut self, phase: MatchPhase) {
         if phase == MatchPhase::Playing && self.phase == MatchPhase::Warmup {
             self.prematch = gamemode_iw4::PrematchStep::Done;
-            self.pending_prematch_done = true;
         }
         self.phase = phase;
     }
@@ -1084,10 +936,6 @@ impl SimState {
 
     pub fn bot_rng(&self) -> &MatchRng {
         &self.bot_rng
-    }
-
-    pub(crate) fn spawn_rng_mut(&mut self) -> &mut MatchRng {
-        &mut self.spawn_rng
     }
 
     pub(crate) fn combat_rng_mut(&mut self) -> &mut MatchRng {
@@ -1132,10 +980,6 @@ impl SimState {
 
     pub fn cheats_enabled(&self) -> bool {
         self.bootstrap.allow_debug_actions
-    }
-
-    pub fn respawn_delay_ticks(&self) -> u32 {
-        self.bootstrap.respawn_delay_ticks
     }
 
     pub fn player_anim_script(&self) -> Option<Arc<PlayerAnimScript>> {
@@ -1184,8 +1028,8 @@ impl SimState {
         }
     }
 
-    pub fn mantle_xanims(&self) -> Arc<crate::MantleXAnimBind> {
-        Arc::clone(&self.content.data.mantle_xanims)
+    pub fn xanims(&self) -> Arc<crate::MantleXAnimBind> {
+        Arc::clone(&self.content.data.xanims)
     }
 
     pub fn player_body_pose_kind(&self) -> &'static str {
@@ -1221,6 +1065,14 @@ impl SimState {
         Arc::clone(&self.content.data.weapon_script_names)
     }
 
+    pub(crate) fn weapon_setup(&self, weapon: u32) -> Option<&WeaponSetup> {
+        self.content
+            .data
+            .weapon_setups
+            .get(weapon as usize)?
+            .as_ref()
+    }
+
     pub fn weapon_script_name(&self, weapon: u32) -> &str {
         self.content
             .data
@@ -1230,7 +1082,60 @@ impl SimState {
             .unwrap_or("")
     }
 
+    pub(crate) fn shock(&self, name: &str) -> Option<&hud_iw4::ShockParams> {
+        self.content.data.shocks.get(&name.to_ascii_lowercase())
+    }
+
+    pub(crate) fn map_custom(&self, key: &str) -> &str {
+        self.content
+            .data
+            .map_custom
+            .get(&key.to_ascii_lowercase())
+            .map_or("", String::as_str)
+    }
+
+    pub(crate) fn weapon_projectile_model(&self, weapon: u32) -> &str {
+        self.content
+            .data
+            .weapon_projectile_models
+            .get(weapon as usize)
+            .map_or("", String::as_str)
+    }
+
+    pub(crate) fn weapon_script_sounds(&self, weapon: u32) -> Option<&WeaponScriptSounds> {
+        self.content.data.weapon_script_sounds.get(weapon as usize)
+    }
+
+    pub(crate) fn weapon_is_melee_only(&self, weapon: u32) -> bool {
+        self.content
+            .data
+            .weapon_melee_only
+            .get(weapon as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn weapon_world_model(&self, weapon: u32) -> Option<(&str, &[String])> {
+        self.content
+            .data
+            .weapon_world_models
+            .get(weapon as usize)
+            .map(|(model, tags)| (model.as_str(), tags.as_slice()))
+    }
+
+    pub fn vehicle_compass(&self, name: &str) -> Option<&([String; 2], [i32; 2])> {
+        self.content.data.vehicle_compass.get(name)
+    }
+
+    pub fn vehicle_turret_weapon(&self, vehicle: &str) -> Option<u32> {
+        let path = self.content.data.vehicle_turrets.get(vehicle)?;
+        self.weapon_index_by_script_name(path.rsplit('/').next().unwrap_or(path))
+    }
+
     pub fn weapon_index_by_script_name(&self, name: &str) -> Option<u32> {
+        if let Some(&weapon) = self.content.data.weapon_script_aliases.get(name) {
+            return Some(weapon);
+        }
         self.content
             .data
             .weapon_script_names
@@ -1273,7 +1178,7 @@ impl SimState {
         id
     }
 
-    pub fn dobj_anim_mat(&self, entnum: i32, bone: i32) -> Option<entity_iw4::DObjAnimMat> {
+    pub fn anim_mat(&self, entnum: i32, bone: i32) -> Option<entity_iw4::DObjAnimMat> {
         self.dobj_anim_mats.get(&(entnum, bone)).copied()
     }
 
@@ -1353,7 +1258,7 @@ impl SimState {
     }
 
     fn recompute_content_digest(&mut self) {
-        self.content_digest = crate::content::content_digest_v2(
+        self.content_digest = crate::content::content_digest(
             &self.content.data.weapon_combat,
             &self.content.data.weapon_runnable,
             &self.content.data.weapon_transition_groups,
@@ -1362,7 +1267,7 @@ impl SimState {
             &self.content.data.clip_brushes,
             &self.entity_collision_capabilities,
         );
-        self.content_components = crate::content::content_components_v2(
+        self.content_components = crate::content::content_components(
             &self.content.data.weapon_combat,
             &self.content.data.weapon_runnable,
             &self.content.data.weapon_transition_groups,
@@ -1416,7 +1321,7 @@ impl SimState {
         let world_bounds =
             clipmap_iw4::AreaBounds::from_mins_maxs(world_model.mins, world_model.maxs)
                 .unwrap_or_else(|_| {
-                    panic!("CM_AreaEntities world cmodel Bounds are invalid");
+                    panic!("area query: world cmodel Bounds are invalid");
                 });
         self.area_entity_world = Some(clipmap_iw4::AreaEntityWorld::new(world_bounds));
     }
@@ -1432,7 +1337,7 @@ impl SimState {
             return false;
         };
         let entity_num = u16::try_from(id.0).unwrap_or_else(|_| {
-            panic!("player entity index does not fit the retail 1024-entry CM world");
+            panic!("player entity index does not fit the 1024-entry collision world");
         });
         let absmin = [
             origin[0] + mins[0] - 1.0,
@@ -1445,7 +1350,7 @@ impl SimState {
             origin[2] + maxs[2] + 1.0,
         ];
         let bounds = clipmap_iw4::AreaBounds::from_mins_maxs(absmin, absmax).unwrap_or_else(|_| {
-            panic!("SV_LinkEntity player Bounds are invalid");
+            panic!("player link Bounds are invalid");
         });
         area_world
             .link(
@@ -1457,7 +1362,7 @@ impl SimState {
                 [absmax[0], absmax[1]],
             )
             .unwrap_or_else(|_| {
-                panic!("CM_LinkEntity rejected player link state");
+                panic!("collision link rejected player link state");
             });
         true
     }
@@ -1467,10 +1372,10 @@ impl SimState {
             return false;
         };
         let Ok(entity_num) = u16::try_from(id.0) else {
-            panic!("player entity index does not fit the retail 1024-entry CM world");
+            panic!("player entity index does not fit the 1024-entry collision world");
         };
         area_world.translate(entity_num, delta).unwrap_or_else(|_| {
-            panic!("CM_LinkEntity rejected translated player Bounds");
+            panic!("collision link rejected translated player Bounds");
         })
     }
 
@@ -1479,10 +1384,10 @@ impl SimState {
             return false;
         };
         let Ok(entity_num) = u16::try_from(id.0) else {
-            panic!("player entity index does not fit the retail 1024-entry CM world");
+            panic!("player entity index does not fit the 1024-entry collision world");
         };
         area_world.unlink(entity_num).unwrap_or_else(|_| {
-            panic!("CM_UnlinkEntity rejected player entity index");
+            panic!("collision unlink rejected player entity index");
         })
     }
 
@@ -1506,7 +1411,7 @@ impl SimState {
         self.area_entity_world
             .as_ref()
             .unwrap_or_else(|| {
-                panic!("CM_AreaEntities needs an initialized world cmodel Bounds root");
+                panic!("area query needs an initialized world cmodel Bounds root");
             })
             .query(bounds, mask, capacity)
     }
@@ -1552,395 +1457,6 @@ impl SimState {
         &self.last_use_presses
     }
 
-    pub fn last_use_events(&self) -> &[crate::use_object::UseObjectEvent] {
-        &self.last_use_events
-    }
-
-    pub fn use_objects(&self) -> &[crate::use_object::UseObject] {
-        &self.use_objects
-    }
-
-    pub fn use_hold(&self) -> Option<crate::use_object::UseHoldSession> {
-        self.use_hold
-    }
-
-    pub fn use_object(&self, id: u32) -> Option<&crate::use_object::UseObject> {
-        self.use_objects.iter().find(|object| object.id == id)
-    }
-
-    pub fn install_use_object(&mut self, spec: crate::use_object::UseObjectInstall) -> u32 {
-        let id = self.next_use_object_id;
-        self.next_use_object_id = self.next_use_object_id.saturating_add(1);
-        self.use_objects.push(crate::use_object::UseObject {
-            id,
-            kind: spec.kind,
-            mins: spec.mins,
-            maxs: spec.maxs,
-            cylinder: spec.cylinder,
-            use_time_ms: spec.use_time_ms,
-            use_weapon: spec.use_weapon,
-            owner_team: spec.owner_team,
-            interact_team: spec.interact_team,
-            in_use: false,
-            cur_progress: 0,
-            use_rate: 0.0,
-            claim: gamemode_iw4::ProxClaimTeam::None,
-            last_claim: gamemode_iw4::ProxClaimTeam::None,
-            last_claim_time_ms: 0,
-            claim_player: None,
-            touching: Vec::new(),
-            bound_entnum: spec.bound_entnum,
-            notify_slots: spec.notify_slots,
-            callback_kind: spec.callback_kind,
-            capture_time_ms: None,
-            script_label: spec.script_label,
-            script_origin: spec.script_origin,
-        });
-        if spec.callback_kind == gamemode_iw4::UseCallbackKind::DomFlag {
-            self.arm_dom_scores();
-        }
-        id
-    }
-
-    pub fn install_map_use_object(
-        &mut self,
-        classname: &str,
-        origin: [f32; 3],
-        angles: [f32; 3],
-        radius: Option<f32>,
-        height: Option<f32>,
-        box_mid: Option<[f32; 3]>,
-        box_half: Option<[f32; 3]>,
-        bound_entnum: Option<i32>,
-        use_time_seconds: f32,
-        script_label: &str,
-    ) -> Result<u32, crate::use_object::MapUseBindError> {
-        let spec = crate::use_object::bind_map_use_object(
-            classname,
-            origin,
-            angles,
-            radius,
-            height,
-            box_mid,
-            box_half,
-            bound_entnum,
-            use_time_seconds,
-            script_label,
-        )?;
-        Ok(self.install_use_object(spec))
-    }
-
-    pub fn install_dom_flags(
-        &mut self,
-        ents: &[gamemode_iw4::DomFlagMapEnt<'_>],
-    ) -> Result<Vec<u32>, crate::use_object::DomFlagInstallError> {
-        crate::use_object::install_dom_flags(self, ents)
-    }
-
-    pub fn objective_position_in_volume(&self, id: u32, origin: [f32; 3]) -> Option<bool> {
-        if let Some(site) = self.objectives.bombs.iter().find(|s| s.view.id == id) {
-            return Some(crate::objectives::touching(origin, site));
-        }
-        self.use_object(id)
-            .map(|object| crate::use_object::origin_touching(origin, object))
-    }
-
-    pub(crate) fn set_use_volume(&mut self, id: u32, mins: [f32; 3], maxs: [f32; 3]) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.mins = mins;
-            row.maxs = maxs;
-        }
-    }
-
-    pub(crate) fn use_throwing_grenade(&self, id: crate::world::ClientId) -> bool {
-        self.use_throwing_grenade
-            .iter()
-            .find(|(c, _)| *c == id)
-            .map(|(_, v)| *v)
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn use_objective_scaler(&self, id: crate::world::ClientId) -> f32 {
-        self.use_objective_scaler
-            .iter()
-            .find(|(c, _)| *c == id)
-            .map(|(_, v)| *v)
-            .unwrap_or(gamemode_iw4::OBJECTIVE_SCALER_IDENTITY)
-    }
-
-    pub(crate) fn clear_use_events(&mut self) {
-        self.last_use_events.clear();
-    }
-
-    pub(crate) fn push_use_event(&mut self, event: crate::use_object::UseObjectEvent) {
-        self.last_use_events.push(event);
-    }
-
-    pub(crate) fn first_eligible_use_object(
-        &self,
-        id: crate::world::ClientId,
-        ps: &playerstate_iw4::PlayerState,
-    ) -> Option<u32> {
-        if self.use_objects.iter().any(|object| object.in_use) {
-            return None;
-        }
-        self.use_objects.iter().find_map(|object| {
-            crate::use_object::eligible_begin(self, id, ps, object).then_some(object.id)
-        })
-    }
-
-    pub(crate) fn begin_use_hold(&mut self, object: u32, client: crate::world::ClientId) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == object) {
-            row.in_use = true;
-            row.cur_progress = 0;
-        }
-        self.use_hold = Some(crate::use_object::UseHoldSession {
-            object,
-            client,
-            loop_state: gamemode_iw4::UseHoldLoopState::begin(),
-        });
-    }
-
-    pub(crate) fn set_use_hold_state(&mut self, state: gamemode_iw4::UseHoldLoopState) {
-        let object = self.use_hold.map(|session| session.object);
-        if let Some(object) = object {
-            if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == object) {
-                row.cur_progress = state.cur_progress;
-                row.in_use = state.in_use;
-            }
-        }
-        if let Some(session) = &mut self.use_hold {
-            session.loop_state = state;
-        }
-    }
-
-    pub(crate) fn finish_use_hold(&mut self, cur_progress: i32, in_use: bool) {
-        if let Some(session) = self.use_hold.take() {
-            if let Some(row) = self
-                .use_objects
-                .iter_mut()
-                .find(|row| row.id == session.object)
-            {
-                row.cur_progress = cur_progress;
-                row.in_use = in_use;
-            }
-        }
-    }
-
-    pub(crate) fn clear_use_hold(&mut self) {
-        self.use_hold = None;
-    }
-
-    pub(crate) fn set_use_touching(
-        &mut self,
-        id: u32,
-        touching: Vec<(crate::world::ClientId, gamemode_iw4::ProxClaimTeam, i32)>,
-        use_rate: f32,
-    ) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.touching = touching;
-            row.use_rate = use_rate;
-        }
-    }
-
-    pub(crate) fn set_use_claim(
-        &mut self,
-        id: u32,
-        new_team: gamemode_iw4::ProxClaimTeam,
-        claim_player: Option<crate::world::ClientId>,
-        now_ms: i32,
-        reset_progress: bool,
-    ) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.last_claim = row.claim;
-            row.last_claim_time_ms = now_ms;
-            row.claim = new_team;
-            row.claim_player = claim_player;
-            if reset_progress {
-                row.cur_progress = 0;
-            }
-        }
-    }
-
-    pub(crate) fn set_use_rate(&mut self, id: u32, use_rate: f32) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.use_rate = use_rate;
-        }
-    }
-
-    pub(crate) fn set_use_progress(&mut self, id: u32, cur_progress: i32) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.cur_progress = cur_progress;
-        }
-    }
-
-    pub(crate) fn set_use_owner_team(&mut self, id: u32, owner: gamemode_iw4::GameObjectTeam) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.owner_team = owner;
-        }
-    }
-
-    pub(crate) fn set_use_capture_time(&mut self, id: u32, now_ms: i32) {
-        if let Some(row) = self.use_objects.iter_mut().find(|row| row.id == id) {
-            row.capture_time_ms = Some(now_ms);
-        }
-    }
-
-    pub(crate) fn arm_dom_scores(&mut self) {
-        if self.dom_score_next_ms.is_none() {
-            self.dom_score_next_ms = Some(self.entity_kernel.level_time_ms());
-        }
-    }
-
-    pub fn team_scores(&self) -> gamemode_iw4::TeamScores {
-        self.team_scores
-    }
-
-    pub(crate) fn grant_dom_objective_point(
-        &mut self,
-        team: gamemode_iw4::ScoringTeam,
-        now_ms: i32,
-    ) -> i32 {
-        let grant = gamemode_iw4::ObjectiveGrant {
-            kind: gamemode_iw4::GameModeKind::Domination,
-            team,
-            points: gamemode_iw4::DOM_FLAG_SCORE_POINTS,
-            now_ms,
-            splitscreen: false,
-            nuke_incoming: false,
-            score_limit: gamemode_iw4::dom::SCORE_LIMIT,
-            overtime: false,
-        };
-        let mut dialogs = [
-            gamemode_iw4::LeaderDialogRequest {
-                dialog: gamemode_iw4::StatusDialog::LeadTaken,
-                team,
-                group: "",
-            },
-            gamemode_iw4::LeaderDialogRequest {
-                dialog: gamemode_iw4::StatusDialog::LeadTaken,
-                team,
-                group: "",
-            },
-        ];
-        let _ = gamemode_iw4::give_team_score_for_objective(
-            grant,
-            &mut self.team_scores,
-            &mut self.lead_swing,
-            &mut dialogs,
-        );
-        self.team_scores.get(team)
-    }
-
-    pub(crate) fn set_use_script_tick(&mut self, tick: Tick) {
-        self.use_script_tick = tick;
-    }
-
-    pub(crate) fn give_player_objective_score(
-        &mut self,
-        id: crate::world::ClientId,
-        points: i32,
-    ) -> i32 {
-        let tick = self.use_script_tick;
-        let (score, kills, deaths) = {
-            let meta = self.client_meta_mut(id);
-            meta.score = meta.score.saturating_add(points);
-            (meta.score, meta.kills, meta.deaths)
-        };
-        let now_ms = crate::hudelem::hud_level_time_ms(tick);
-        self.record_score_popup(id, points as f32, now_ms);
-        self.push_event(
-            tick,
-            EventAudience::All,
-            SimEvent::ScoreChanged {
-                client: id,
-                score,
-                kills,
-                deaths,
-            },
-        );
-        score
-    }
-
-    pub(crate) fn take_status_dialog(
-        &mut self,
-        team: gamemode_iw4::GameObjectTeam,
-        now_ms: i32,
-        force: bool,
-    ) -> bool {
-        let last = match team {
-            gamemode_iw4::GameObjectTeam::Axis => self.last_status_axis_ms,
-            gamemode_iw4::GameObjectTeam::Allies => self.last_status_allies_ms,
-            gamemode_iw4::GameObjectTeam::Neutral | gamemode_iw4::GameObjectTeam::None => {
-                return false;
-            }
-        };
-        if !gamemode_iw4::status_dialog_allowed(now_ms, last, force) {
-            return false;
-        }
-        match team {
-            gamemode_iw4::GameObjectTeam::Axis => self.last_status_axis_ms = now_ms,
-            gamemode_iw4::GameObjectTeam::Allies => self.last_status_allies_ms = now_ms,
-            gamemode_iw4::GameObjectTeam::Neutral | gamemode_iw4::GameObjectTeam::None => {}
-        }
-        true
-    }
-
-    pub(crate) fn apply_capture_pace(
-        &mut self,
-        id: crate::world::ClientId,
-        time_passed_ms: i32,
-    ) -> i32 {
-        let idx = self.capture_pace.iter().position(|(c, _)| *c == id);
-        let prior = idx.map(|i| self.capture_pace[i].1).unwrap_or_default();
-        let next = gamemode_iw4::update_cpm(prior, time_passed_ms);
-        if let Some(i) = idx {
-            self.capture_pace[i].1 = next;
-        } else {
-            self.capture_pace.push((id, next));
-        }
-        next.cpm
-    }
-
-    pub(crate) fn set_best_spawn_flag(&mut self, team: gamemode_iw4::GameObjectTeam, object: u32) {
-        match team {
-            gamemode_iw4::GameObjectTeam::Axis => self.best_spawn_flag_axis = Some(object),
-            gamemode_iw4::GameObjectTeam::Allies => self.best_spawn_flag_allies = Some(object),
-            gamemode_iw4::GameObjectTeam::Neutral | gamemode_iw4::GameObjectTeam::None => {}
-        }
-    }
-
-    pub fn best_spawn_flag(&self, team: gamemode_iw4::GameObjectTeam) -> Option<u32> {
-        match team {
-            gamemode_iw4::GameObjectTeam::Axis => self.best_spawn_flag_axis,
-            gamemode_iw4::GameObjectTeam::Allies => self.best_spawn_flag_allies,
-            gamemode_iw4::GameObjectTeam::Neutral | gamemode_iw4::GameObjectTeam::None => None,
-        }
-    }
-
-    pub(crate) fn set_dom_spawn_graph(&mut self, graph: Vec<gamemode_iw4::DomFlagSpawnNode>) {
-        self.dom_spawn_graph = graph;
-    }
-
-    pub(crate) fn dom_spawn_graph(&self) -> &[gamemode_iw4::DomFlagSpawnNode] {
-        &self.dom_spawn_graph
-    }
-
-    pub fn rebuild_dom_spawn_graph(&mut self) {
-        crate::spawn::rebuild_dom_spawn_graph(self);
-    }
-
-    pub(crate) fn take_dom_score_due(&mut self, now_ms: i32) -> bool {
-        match self.dom_score_next_ms {
-            Some(due) if now_ms >= due => {
-                self.dom_score_next_ms =
-                    Some(due.saturating_add(gamemode_iw4::UPDATE_DOM_SCORES_WAIT_MS));
-                true
-            }
-            _ => false,
-        }
-    }
-
     pub(crate) fn set_use_start_spawns(&mut self, value: bool) {
         self.use_start_spawns = value;
     }
@@ -1981,37 +1497,7 @@ impl SimState {
         mut proxies: Vec<EntityCollisionCapabilities>,
     ) {
         proxies.sort_by_key(|capabilities| capabilities.owner);
-        for proxy in &mut proxies {
-            let pickup = self
-                .world_objects()
-                .vehicle_bodies()
-                .iter()
-                .any(|(id, kind, _)| {
-                    Some(*id) == proxy.owner.script_model() && kind.has_body_glass()
-                });
-            if pickup && let Some(dobj) = proxy.dobj.as_mut() {
-                crate::vehicle_glass::install(dobj);
-            }
-        }
         self.entity_collision_capabilities = proxies;
-        self.recompute_content_digest();
-    }
-
-    pub fn start_script_model_play_anims(
-        &mut self,
-        rows: impl IntoIterator<Item = (ScriptModelId, &'static str, bool, f32)>,
-    ) {
-        for (id, clip, looping, frequency) in rows {
-            for capabilities in self.entity_collision_capabilities.iter_mut() {
-                if capabilities.owner.script_model() != Some(id) {
-                    continue;
-                }
-                let Some(dobj) = capabilities.dobj.as_mut() else {
-                    continue;
-                };
-                dobj.begin_script_model_play_anim(clip, looping, frequency);
-            }
-        }
         self.recompute_content_digest();
     }
 
@@ -2023,6 +1509,51 @@ impl SimState {
         &mut self,
     ) -> &mut [EntityCollisionCapabilities] {
         &mut self.entity_collision_capabilities
+    }
+
+    pub(crate) fn collision_owner_mut(
+        &mut self,
+        id: ScriptModelId,
+    ) -> Option<&mut EntityCollisionCapabilities> {
+        let owner = crate::AuthorityModelOwner::ScriptModel(id);
+        let index = self
+            .entity_collision_capabilities
+            .binary_search_by_key(&owner, |row| row.owner)
+            .ok()?;
+        Some(&mut self.entity_collision_capabilities[index])
+    }
+
+    pub(crate) fn insert_collision_owner(&mut self, row: EntityCollisionCapabilities) {
+        match self
+            .entity_collision_capabilities
+            .binary_search_by_key(&row.owner, |have| have.owner)
+        {
+            Ok(index) => self.entity_collision_capabilities[index] = row,
+            Err(index) => self.entity_collision_capabilities.insert(index, row),
+        }
+    }
+
+    pub(crate) fn remove_collision_owner(&mut self, id: ScriptModelId) {
+        let owner = crate::AuthorityModelOwner::ScriptModel(id);
+        self.entity_collision_capabilities
+            .retain(|row| row.owner != owner);
+    }
+
+    pub fn install_model_library(
+        &mut self,
+        models: std::collections::BTreeMap<
+            String,
+            Option<Arc<xmodel_runtime::RetainedModelCapability>>,
+        >,
+    ) {
+        self.model_library = Arc::new(models);
+    }
+
+    pub(crate) fn model_capability(
+        &self,
+        name: &str,
+    ) -> Option<Option<Arc<xmodel_runtime::RetainedModelCapability>>> {
+        self.model_library.get(name).cloned()
     }
 
     pub fn trace_world(
@@ -2159,17 +1690,16 @@ impl SimState {
             mask,
             &|piece| !ignore_glass && self.world_objects.glass_is_solid(piece as u32),
         );
-        let linked: Vec<LinkedBrushCollisionBrush> = self
+        let linked = self
             .entity_collision_capabilities
             .iter()
-            .flat_map(|c| c.linked_brushes.iter().cloned())
-            .collect();
+            .flat_map(|c| c.solid_brushes().iter());
         clip_move_to_bmodels(
             world_hit,
             &self.content.data.clip_cmodels.models,
             &clip_bsp.leafbrushes,
             clip_brushes,
-            &linked,
+            linked,
             movement_iw4::GroundTraceInput {
                 start,
                 end,
@@ -2443,12 +1973,45 @@ impl SimState {
         &self,
         player: impl Fn(ClientId) -> Option<PlayerState>,
     ) -> Vec<crate::bullet_collision::PlayerCollisionPose> {
-        self.alive_collision_poses_inner(player, |_| {})
+        self.alive_collision_poses_inner(player, &[], |_| {})
+    }
+
+    pub(crate) fn player_poses_since_record(
+        &self,
+        player: impl Fn(ClientId) -> Option<PlayerState>,
+    ) -> Option<Vec<crate::bullet_collision::PlayerCollisionPose>> {
+        use crate::match_state::ClientLifecycle;
+
+        let recorded = self
+            .collision_history
+            .latest_poses()
+            .map_or(&[][..], |(_, poses)| poses);
+        let mut alive = 0;
+        for (id, meta) in &self.clients {
+            if meta.lifecycle != ClientLifecycle::Alive {
+                continue;
+            }
+            let Some(ps) = player(*id) else {
+                continue;
+            };
+            alive += 1;
+            let held = recorded.iter().any(|pose| {
+                pose.client == *id
+                    && pose.life_sequence == meta.life_sequence
+                    && pose.origin == ps.origin
+            });
+            if !held {
+                return Some(self.alive_collision_poses_inner(player, recorded, |_| {}));
+            }
+        }
+        (alive + self.prediction_remote_bodies.len() != recorded.len())
+            .then(|| self.alive_collision_poses_inner(player, recorded, |_| {}))
     }
 
     fn alive_collision_poses_inner(
         &self,
         player: impl Fn(ClientId) -> Option<PlayerState>,
+        reuse: &[crate::bullet_collision::PlayerCollisionPose],
         mut on_err: impl FnMut(&str),
     ) -> Vec<crate::bullet_collision::PlayerCollisionPose> {
         use crate::bullet_collision::{
@@ -2464,6 +2027,14 @@ impl SimState {
             let Some(ps) = player(*id) else {
                 continue;
             };
+            if let Some(pose) = reuse.iter().find(|pose| {
+                pose.client == *id
+                    && pose.life_sequence == meta.life_sequence
+                    && pose.origin == ps.origin
+            }) {
+                poses.push(pose.clone());
+                continue;
+            }
             let bones = match self.player_hitvol_bones(*id, &ps) {
                 Ok(bones) => bones,
                 Err(error) => {
@@ -2573,8 +2144,8 @@ impl SimState {
         let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
         let input = player_controller_input(ps);
         let controller = move |dobj: &xmodel_runtime::DObj,
-                               _: &xmodel_runtime::PartBits,
-                               locals: &mut [xmodel_runtime::Local]| {
+                               _: &anim_iw4::PartBits,
+                               locals: &mut [anim_iw4::Local]| {
             xmodel_runtime::apply_player_controller(dobj, locals, input);
         };
         let models: Vec<(
@@ -2633,7 +2204,7 @@ impl SimState {
             let reuse = self
                 .player_dobjs
                 .get(&id.0)
-                .is_some_and(|slot| xmodel_runtime::dobj_reuse_matches(slot.reuse_key, key));
+                .is_some_and(|slot| xmodel_runtime::reuse_matches(slot.reuse_key, key));
             if reuse {
                 if let Some(slot) = self.player_dobjs.get_mut(&id.0) {
                     slot.persist = 1;
@@ -2761,7 +2332,7 @@ impl SimState {
         self.tick_player_dobjs(hitbox_cmds);
         self.tick_player_anim_trees(msec, player, hitbox_cmds);
         let mut error = None;
-        let poses = self.alive_collision_poses_inner(player, |e| {
+        let poses = self.alive_collision_poses_inner(player, &[], |e| {
             if error.is_none() {
                 error = Some(e.to_owned());
             }
@@ -2779,7 +2350,6 @@ impl SimState {
         let rows = self
             .entity_collision_capabilities
             .iter()
-            .filter(|c| self.objectives.collision_active(c.owner))
             .map(|capabilities| {
                 let mut row = capabilities.trace_geom();
                 row.epoch = EntityCollisionEpoch::Historical { frame: tick };
@@ -2804,7 +2374,6 @@ impl SimState {
             .iter()
             .filter(|capabilities| {
                 capabilities.ray_may_hit(&self.content.data.clip_cmodels, query.start, query.end)
-                    && self.objectives.collision_active(capabilities.owner)
             })
             .map(EntityCollisionCapabilities::trace_geom)
             .collect();
@@ -2886,6 +2455,42 @@ impl SimState {
         &mut self.corpses
     }
 
+    pub(crate) fn script_model_anim(&self, name: &str) -> Option<crate::ScriptModelPlayAnim> {
+        self.content
+            .data
+            .script_model_anims
+            .get(&name.to_ascii_lowercase())
+            .copied()
+    }
+
+    pub(crate) fn player_anim_clip(&self, legs_anim: i32) -> Option<Arc<xmodel_runtime::AnimClip>> {
+        let definition = self.content.data.player_anim_tree.as_ref()?;
+        let value = PlayerAnimValue::from_raw((legs_anim as u16) & PLAYER_ANIM_RAW_MASK)?;
+        match &definition
+            .nodes()
+            .get(value.effective_index() as usize)?
+            .kind
+        {
+            xmodel_runtime::XAnimNodeKind::Leaf { clip, .. } => Some(Arc::clone(clip)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn player_anim_clip_named(
+        &self,
+        name: &str,
+    ) -> Option<Arc<xmodel_runtime::AnimClip>> {
+        let definition = self.content.data.player_anim_tree.as_ref()?;
+        definition.nodes().iter().find_map(|node| match &node.kind {
+            xmodel_runtime::XAnimNodeKind::Leaf { clip, .. }
+                if clip.name.eq_ignore_ascii_case(name) =>
+            {
+                Some(Arc::clone(clip))
+            }
+            _ => None,
+        })
+    }
+
     pub(crate) fn corpse_dobj_tree_install(&mut self, entnum: i32, legs_anim: i32) {
         self.corpse_anim_trees.remove(&entnum);
         let Some(definition) = self.content.data.player_anim_tree.clone() else {
@@ -2962,6 +2567,11 @@ impl SimState {
             })
             .collect();
         let mut entities: Vec<_> = script_movers.iter().map(|mover| mover.state).collect();
+        let shown_hidden: std::collections::BTreeSet<ScriptModelId> = script_movers
+            .iter()
+            .filter(|mover| mover.shown_to != 0)
+            .map(|mover| mover.id)
+            .collect();
         for projectile in projectiles.iter() {
             if projectile.entnum != playerstate_iw4::ENTITYNUM_NONE {
                 entities.push(crate::gentity::init_missile_state(
@@ -2992,7 +2602,6 @@ impl SimState {
             players,
             projectiles,
             meta: SnapshotMeta {
-                map_doors: self.map_doors.clone(),
                 objectives: self.objectives.clone(),
                 phase: self.phase,
                 match_elapsed_ms: self.match_elapsed_ms,
@@ -3001,15 +2610,13 @@ impl SimState {
                 time_limit_ms: self.bootstrap.time_limit_ms,
                 kind: self.bootstrap.kind,
                 clients,
-                care_packages: self.care_packages.clone(),
-                pave_lows: self.pave_lows.clone(),
-                uavs: self.uavs.clone(),
                 journal: self.journal.clone(),
                 entity_events: self.entity_events.clone(),
                 pellet_fx: self.pellet_fx.clone(),
                 sound_aliases: self.sound_alias_cs.occupied(),
                 effect_names: self.effect_name_cs.occupied(),
                 hud_materials: self.hud_material_cs.occupied(),
+                hud_strings: self.hud_string_cs.occupied(),
                 rng: self.rng_debug_meta(),
                 world_objects: {
                     let mut world_objects = self.world_objects.to_snapshot();
@@ -3024,6 +2631,13 @@ impl SimState {
                 entity_dobjs: self
                     .entity_collision_capabilities
                     .iter()
+                    .filter(|capabilities| {
+                        !capabilities.hidden
+                            || capabilities
+                                .owner
+                                .script_model()
+                                .is_some_and(|id| shown_hidden.contains(&id))
+                    })
                     .filter_map(|capabilities| {
                         capabilities
                             .dobj
@@ -3127,9 +2741,6 @@ impl SimState {
             report.clients += 1;
         }
         self.clients = adopted_clients;
-        self.care_packages = snapshot.meta.care_packages.clone();
-        self.pave_lows = snapshot.meta.pave_lows.clone();
-        self.uavs = snapshot.meta.uavs.clone();
 
         self.entity_kernel = crate::EntityKernel::from_snapshot(&snapshot.meta.entity_kernel)
             .expect("authoritative snapshot carried an invalid EntityKernel state");
@@ -3141,29 +2752,12 @@ impl SimState {
             .copied()
             .collect();
         report.projectiles = projectiles.len();
-
-        self.map_doors = snapshot.meta.map_doors.clone();
         self.objectives = snapshot.meta.objectives.clone();
-        if let Some(doors) = &self.map_doors {
-            for leaf in &doors.leaves {
-                let id = ScriptModelId::from_authored_source_ordinal(leaf.brush);
-                let angles = snapshot
-                    .meta
-                    .script_movers
-                    .iter()
-                    .find(|m| m.id == id)
-                    .expect("map door checkpoint omitted its brush mover")
-                    .state
-                    .apos_tr_base;
-                for cap in &mut self.entity_collision_capabilities {
-                    for brush in &mut cap.linked_brushes {
-                        if brush.cmodel_handle == leaf.cmodel {
-                            brush.angles = angles;
-                        }
-                    }
-                }
-            }
-        }
+        crate::presence::follow_movers(
+            &mut self.entity_collision_capabilities,
+            &snapshot.meta.script_movers,
+            crate::level_time_ms(snapshot.tick),
+        );
         let script_movers = snapshot.meta.script_movers.clone();
 
         let dropped_items: Vec<_> = snapshot
@@ -3187,7 +2781,7 @@ impl SimState {
                 };
                 crate::item::DroppedItem {
                     state: *state,
-                    origin: entity_iw4::bg_evaluate_trajectory(
+                    origin: entity_iw4::evaluate_trajectory(
                         &trajectory,
                         snapshot.meta.entity_kernel.level_time_ms,
                     ),
@@ -3235,6 +2829,8 @@ impl SimState {
             .adopt_occupied(&snapshot.meta.effect_names);
         self.hud_material_cs
             .adopt_occupied(&snapshot.meta.hud_materials);
+        self.hud_string_cs
+            .adopt_occupied(&snapshot.meta.hud_strings);
 
         self.corpses = snapshot.meta.corpses;
 
@@ -3281,14 +2877,11 @@ impl SimState {
             .map(|(_, angles)| *angles)
     }
 
-    pub(crate) fn journal(&self) -> &[EventRecord] {
-        &self.journal
-    }
-
     pub fn initialize_prediction_from(&mut self, other: &SimState) {
         self.content = Arc::clone(&other.content);
         self.reset_area_entity_world();
         self.entity_collision_capabilities = other.entity_collision_capabilities.clone();
+        self.model_library = Arc::clone(&other.model_library);
         self.bootstrap = other.bootstrap.clone();
         self.root_seed = other.root_seed;
         self.world_objects
@@ -3353,14 +2946,6 @@ impl SimState {
         self.pellet_fx.push(record);
     }
 
-    pub fn anim_script_gap(&self) -> PlayerAnimScriptGap {
-        self.anim_script_gap
-    }
-
-    pub(crate) fn count_fire_anim_gap(&mut self) {
-        self.anim_script_gap.fire_inputs += 1;
-    }
-
     pub(crate) fn scales_for(&self, weapon: u32) -> (f32, f32, f32) {
         self.content
             .data
@@ -3416,57 +3001,6 @@ impl SimState {
             }
             self.projectile_impact_log.push((tick, *impact));
         }
-    }
-
-    pub fn damage_feedback_cues(&self) -> &[DamageFeedbackCue] {
-        &self.damage_feedback_cues
-    }
-
-    pub(crate) fn record_damage_feedback(
-        &mut self,
-        attacker: ClientId,
-        victim: ClientId,
-        type_hit: gamemode_iw4::TypeHit,
-        amount: i32,
-        now_ms: i32,
-    ) {
-        self.damage_feedback_seq = self.damage_feedback_seq.saturating_add(1);
-        if self.damage_feedback_cues.len() >= 64 {
-            self.damage_feedback_cues.remove(0);
-        }
-        self.damage_feedback_cues.push(DamageFeedbackCue {
-            seq: self.damage_feedback_seq,
-            attacker,
-            victim,
-            type_hit,
-            amount,
-        });
-        if let Some(pulse) = gamemode_iw4::update_damage_feedback(type_hit, false, 0.0) {
-            let material_index = self.hud_material_index("damage_feedback");
-            if let Some(slot) =
-                crate::hudelem::ensure_damage_feedback_slot(&mut self.g_hudelems, attacker)
-            {
-                crate::hudelem::pulse_damage_feedback(slot, pulse, material_index, now_ms);
-            }
-        }
-    }
-
-    pub fn record_score_popup(&mut self, attacker: ClientId, amount: f32, now_ms: i32) {
-        if let Some(slot) = crate::hudelem::ensure_score_popup_slot(&mut self.g_hudelems, attacker)
-        {
-            crate::hudelem::pulse_score_popup(slot, amount, now_ms);
-        }
-    }
-
-    pub fn tick_scripted_hud(&mut self, tick: Tick) {
-        let now_ms = crate::hudelem::hud_level_time_ms(tick);
-        crate::hudelem::tick_score_popup_slots(&mut self.g_hudelems, now_ms);
-        crate::hudelem::tick_hint_slots(&mut self.g_hudelems, now_ms);
-        crate::hudelem::sync_match_start_elems(
-            &mut self.g_hudelems,
-            self.prematch.display(),
-            now_ms,
-        );
     }
 
     pub fn collision_census(&self) -> crate::CollisionCensus {
@@ -3817,12 +3351,12 @@ fn player_controller_input(ps: &PlayerState) -> xmodel_runtime::PlayerController
     }
 }
 
-pub(crate) fn clip_move_to_bmodels(
+pub(crate) fn clip_move_to_bmodels<'a>(
     mut hit: trace_iw4::Trace,
     cmodels: &[clipmap_iw4::ClipCmodel],
     leafbrushes: &[u16],
     brushes: &[SimBrush],
-    linked: &[LinkedBrushCollisionBrush],
+    linked: impl IntoIterator<Item = &'a LinkedBrushCollisionBrush>,
     input: movement_iw4::GroundTraceInput,
 ) -> trace_iw4::Trace {
     if hit.fraction == 0.0 {
@@ -3987,17 +3521,12 @@ pub(crate) fn give_weapon_to_ps_akimbo(ps: &mut PlayerState, weapon: u32, akimbo
     if ps.weapons.iter().all(|&slot| slot != weapon as i32) {
         if let Some(slot) = ps.weapons.first_mut() {
             *slot = weapon as i32;
-            weapon_iw4::bg_latch_weapon_dual_wield(
-                &ps.weapons,
-                &mut ps.weapon_data,
-                weapon,
-                akimbo,
-            );
+            weapon_iw4::latch_weapon_dual_wield(&ps.weapons, &mut ps.weapon_data, weapon, akimbo);
         }
     }
     ps.weapon = weapon;
     ps.weapon_primary = weapon;
-    ps.last_weapon_hand = weapon_iw4::pm_num_hands_for_held(&ps.weapons, &ps.weapon_data, weapon);
+    ps.last_weapon_hand = weapon_iw4::num_hands_for_held(&ps.weapons, &ps.weapon_data, weapon);
 }
 
 pub(crate) fn inventory_add_weapon(ps: &mut PlayerState, weapon: u32, akimbo: bool) {
@@ -4010,7 +3539,7 @@ pub(crate) fn inventory_add_weapon(ps: &mut PlayerState, weapon: u32, akimbo: bo
             *slot = want;
         }
     }
-    weapon_iw4::bg_latch_weapon_dual_wield(&ps.weapons, &mut ps.weapon_data, weapon, akimbo);
+    weapon_iw4::latch_weapon_dual_wield(&ps.weapons, &mut ps.weapon_data, weapon, akimbo);
 }
 
 pub fn blank_player_state() -> PlayerState {
@@ -4033,4 +3562,13 @@ pub(crate) fn spawn_player_state(origin: [f32; 3], viewangles: [f32; 3]) -> Play
     ps.other_flags |= playerstate_iw4::other_flags::PLAYER;
     ps.corpse_index = -1;
     ps
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeaponScriptSounds {
+    pub fire: Option<String>,
+    pub fire_player: Option<String>,
+    pub pickup: Option<String>,
+    pub pickup_player: Option<String>,
+    pub proj_explosion: Option<String>,
 }

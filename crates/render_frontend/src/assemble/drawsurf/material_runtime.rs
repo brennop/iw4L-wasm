@@ -23,8 +23,8 @@ pub use render_material::{
     StableMaterialShell, StablePassShell, TECHNIQUE_SLOT_COUNT, add_surf_has_technique,
     capture_stable_shell, draw_binds_code_texture, draw_code_sampler_mask, execute_material,
     pack_local_banks, pack_local_samplers, prepared_draw_technique, rebind_stable_material,
-    resolve_material_technique, resolve_sorted_material, smodel_tess_vertex_type,
-    sort_pass_args_retail, world_tess_vertex_type, world_tess_vertex_type_authored,
+    resolve_material_technique, resolve_sorted_material, smodel_tess_vertex_type, sort_pass_args,
+    world_tess_vertex_type, world_tess_vertex_type_authored,
 };
 
 pub use render_scene::runtime_cull_face;
@@ -597,10 +597,10 @@ struct ComparatorRecord {
 }
 
 fn shader_name<'a>(
-    source: &'a assets::MaterialDefinitions,
+    source: &'a asset_material::MaterialDefinitions,
     material: MaterialAssetId,
     slot: u8,
-    reference: &assets::OwnedShaderRef,
+    reference: &asset_material::OwnedShaderRef,
 ) -> Result<&'a str, CatalogBuildError> {
     reference
         .shader
@@ -610,11 +610,11 @@ fn shader_name<'a>(
 }
 
 fn comparator_pass_key(
-    source: &assets::MaterialDefinitions,
-    material: &assets::AuthoredMaterial,
+    source: &asset_material::MaterialDefinitions,
+    material: &asset_material::AuthoredMaterial,
     asset_id: MaterialAssetId,
     slot: u8,
-    technique: &assets::OwnedTechnique,
+    technique: &asset_material::OwnedTechnique,
 ) -> Result<ComparatorPassKey, CatalogBuildError> {
     let pass = technique
         .passes
@@ -633,23 +633,23 @@ fn comparator_pass_key(
         },
     )?;
 
-    let argument_type = |argument: &assets::OwnedShaderArgument| match argument {
-        assets::OwnedShaderArgument::MaterialVertexConstant { .. } => 0,
-        assets::OwnedShaderArgument::LiteralVertexConstant { .. } => 1,
-        assets::OwnedShaderArgument::MaterialPixelSampler { .. } => 2,
-        assets::OwnedShaderArgument::CodeVertexConstant { .. } => 3,
-        assets::OwnedShaderArgument::CodePixelSampler { .. } => 4,
-        assets::OwnedShaderArgument::CodePixelConstant { .. } => 5,
-        assets::OwnedShaderArgument::MaterialPixelConstant { .. } => 6,
-        assets::OwnedShaderArgument::LiteralPixelConstant { .. } => 7,
-        assets::OwnedShaderArgument::Unknown { argument_type, .. } => *argument_type,
+    let argument_type = |argument: &asset_material::OwnedShaderArgument| match argument {
+        asset_material::OwnedShaderArgument::MaterialVertexConstant { .. } => 0,
+        asset_material::OwnedShaderArgument::LiteralVertexConstant { .. } => 1,
+        asset_material::OwnedShaderArgument::MaterialPixelSampler { .. } => 2,
+        asset_material::OwnedShaderArgument::CodeVertexConstant { .. } => 3,
+        asset_material::OwnedShaderArgument::CodePixelSampler { .. } => 4,
+        asset_material::OwnedShaderArgument::CodePixelConstant { .. } => 5,
+        asset_material::OwnedShaderArgument::MaterialPixelConstant { .. } => 6,
+        asset_material::OwnedShaderArgument::LiteralPixelConstant { .. } => 7,
+        asset_material::OwnedShaderArgument::Unknown { argument_type, .. } => *argument_type,
     };
     let mut cursor = stable
         .iter()
         .position(|argument| argument_type(argument) >= 5)
         .unwrap_or(stable.len());
     let mut code_pixel_constants = Vec::new();
-    while let Some(assets::OwnedShaderArgument::CodePixelConstant { index, .. }) =
+    while let Some(asset_material::OwnedShaderArgument::CodePixelConstant { index, .. }) =
         stable.get(cursor)
     {
         code_pixel_constants.push(*index);
@@ -661,7 +661,7 @@ fn comparator_pass_key(
         .position(|argument| argument_type(argument) >= 6)
         .unwrap_or(stable.len());
     let mut pixel_constants = Vec::new();
-    while let Some(assets::OwnedShaderArgument::MaterialPixelConstant {
+    while let Some(asset_material::OwnedShaderArgument::MaterialPixelConstant {
         destination,
         name_hash,
     }) = stable.get(cursor)
@@ -687,8 +687,10 @@ fn comparator_pass_key(
         pixel_constants.push((*destination, words));
         cursor += 1;
     }
-    while let Some(assets::OwnedShaderArgument::LiteralPixelConstant { destination, words }) =
-        stable.get(cursor)
+    while let Some(asset_material::OwnedShaderArgument::LiteralPixelConstant {
+        destination,
+        words,
+    }) = stable.get(cursor)
     {
         pixel_constants.push((
             *destination,
@@ -710,14 +712,14 @@ fn comparator_pass_key(
 }
 
 fn leftover_x_token_aliased(
-    source: &assets::MaterialDefinitions,
-    material: &assets::AuthoredMaterial,
+    source: &asset_material::MaterialDefinitions,
+    material: &asset_material::AuthoredMaterial,
 ) -> bool {
-    if material.namespace != assets::AssetNamespace::T5 {
+    if material.namespace != asset_core::AssetNamespace::T5 {
         return false;
     }
-    let want = assets::AssetRef::bare_name(material.technique_set.as_str());
-    let stripped = assets::t5_feature_token_stripped(want);
+    let want = asset_core::AssetRef::bare_name(material.technique_set.as_str());
+    let stripped = asset_material::t5_feature_token_stripped(want);
     stripped != want
         && source.technique_set_facts().iter().any(|facts| {
             facts.name.is_real() && facts.name.as_str() == stripped && facts.table.is_some()
@@ -725,27 +727,27 @@ fn leftover_x_token_aliased(
 }
 
 fn comparator_record(
-    source: &assets::MaterialDefinitions,
+    source: &asset_material::MaterialDefinitions,
     index: usize,
 ) -> Result<ComparatorRecord, CatalogBuildError> {
     let asset_id = MaterialAssetId(
         u16::try_from(index).map_err(|_| CatalogBuildError::MaterialAssetIdOverflow { index })?,
     );
     let material = &source.materials[index];
-    let key = assets::TechsetKey::new(material.namespace, material.technique_set.as_str());
+    let key = asset_material::TechsetKey::new(material.namespace, material.technique_set.as_str());
     let facts = match source.resolve_technique_set(key) {
-        assets::TechsetResolve::Hit { facts, .. } => facts,
-        assets::TechsetResolve::GraphMissing { .. } => {
+        asset_material::TechsetResolve::Hit { facts, .. } => facts,
+        asset_material::TechsetResolve::GraphMissing { .. } => {
             return Err(CatalogBuildError::TechniqueGraphMissing { material: asset_id });
         }
-        assets::TechsetResolve::Foreign { got, .. } => {
+        asset_material::TechsetResolve::Foreign { got, .. } => {
             return Err(CatalogBuildError::TechniqueSetNamespaceMismatch {
                 material: asset_id,
                 want: material.namespace,
                 got,
             });
         }
-        assets::TechsetResolve::Missing => {
+        asset_material::TechsetResolve::Missing => {
             return Err(CatalogBuildError::TechniqueSetMissing { material: asset_id });
         }
     };
@@ -944,7 +946,7 @@ fn skip_cause_key(cause: &CatalogBuildError) -> &'static str {
     }
 }
 
-fn leftover_t5_common_yields_capacity(material: &assets::AuthoredMaterial) -> bool {
+fn leftover_t5_common_yields_capacity(material: &asset_material::AuthoredMaterial) -> bool {
     leftover_t5_common_yields_capacity_parts(
         material.t5_state_bits_entry.is_some(),
         material.zone.as_str(),
@@ -952,10 +954,10 @@ fn leftover_t5_common_yields_capacity(material: &assets::AuthoredMaterial) -> bo
 }
 
 fn leftover_t5_common_yields_capacity_parts(has_t5_state_bits: bool, zone: &str) -> bool {
-    has_t5_state_bits && zone == assets::ZoneOwner::COMMON_MP.as_str()
+    has_t5_state_bits && zone == asset_core::ZoneOwner::COMMON_MP.as_str()
 }
 
-fn leftover_iw5_common_yields_capacity(material: &assets::AuthoredMaterial) -> bool {
+fn leftover_iw5_common_yields_capacity(material: &asset_material::AuthoredMaterial) -> bool {
     leftover_iw5_common_yields_capacity_parts(
         material.iw5_state_bits_entry.is_some(),
         material.zone.as_str(),
@@ -963,10 +965,10 @@ fn leftover_iw5_common_yields_capacity(material: &assets::AuthoredMaterial) -> b
 }
 
 fn leftover_iw5_common_yields_capacity_parts(has_iw5_state_bits: bool, zone: &str) -> bool {
-    has_iw5_state_bits && zone == assets::ZoneOwner::COMMON_MP.as_str()
+    has_iw5_state_bits && zone == asset_core::ZoneOwner::COMMON_MP.as_str()
 }
 
-fn is_foreign_common_leftover(material: &assets::AuthoredMaterial) -> bool {
+fn is_foreign_common_leftover(material: &asset_material::AuthoredMaterial) -> bool {
     leftover_t5_common_yields_capacity(material) || leftover_iw5_common_yields_capacity(material)
 }
 
@@ -1028,7 +1030,7 @@ fn skip_tech_label(counts: &BTreeMap<String, u32>) -> Option<String> {
 }
 
 fn build_sorted_material_table(
-    source: &assets::MaterialDefinitions,
+    source: &asset_material::MaterialDefinitions,
 ) -> Result<
     (
         Vec<MaterialAssetId>,
@@ -1132,7 +1134,9 @@ fn build_sorted_material_table(
     ))
 }
 
-pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeMaterialCatalog {
+pub fn capture_runtime_catalog(
+    source: &asset_material::MaterialDefinitions,
+) -> RuntimeMaterialCatalog {
     let mut technique_sets = Vec::new();
     let mut vertex_decls = Vec::<(u32, RuntimeVertexDecl)>::new();
     for facts in source.technique_set_facts() {
@@ -1147,7 +1151,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                     .passes
                     .iter()
                     .map(|pass| {
-                        let shader = |reference: &assets::OwnedShaderRef| {
+                        let shader = |reference: &asset_material::OwnedShaderRef| {
                             reference
                                 .shader
                                 .and_then(|index| source.shaders.get(index))
@@ -1194,7 +1198,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                             .arguments
                             .iter()
                             .map(|argument| match argument {
-                                assets::OwnedShaderArgument::MaterialVertexConstant {
+                                asset_material::OwnedShaderArgument::MaterialVertexConstant {
                                     destination,
                                     name_hash,
                                 } => RuntimeArgumentBinding::MaterialConstant {
@@ -1202,7 +1206,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                     destination: *destination,
                                     name_hash: *name_hash,
                                 },
-                                assets::OwnedShaderArgument::LiteralVertexConstant {
+                                asset_material::OwnedShaderArgument::LiteralVertexConstant {
                                     destination,
                                     words,
                                 } => RuntimeArgumentBinding::LiteralConstant {
@@ -1210,14 +1214,14 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                     destination: *destination,
                                     words: *words,
                                 },
-                                assets::OwnedShaderArgument::MaterialPixelSampler {
+                                asset_material::OwnedShaderArgument::MaterialPixelSampler {
                                     destination,
                                     name_hash,
                                 } => RuntimeArgumentBinding::MaterialTexture {
                                     destination: *destination,
                                     name_hash: *name_hash,
                                 },
-                                assets::OwnedShaderArgument::CodeVertexConstant {
+                                asset_material::OwnedShaderArgument::CodeVertexConstant {
                                     destination,
                                     index,
                                     first_row,
@@ -1229,14 +1233,14 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                     first_row: *first_row,
                                     row_count: *row_count,
                                 },
-                                assets::OwnedShaderArgument::CodePixelSampler {
+                                asset_material::OwnedShaderArgument::CodePixelSampler {
                                     destination,
                                     index,
                                 } => RuntimeArgumentBinding::CodeTexture {
                                     destination: *destination,
                                     index: *index,
                                 },
-                                assets::OwnedShaderArgument::CodePixelConstant {
+                                asset_material::OwnedShaderArgument::CodePixelConstant {
                                     destination,
                                     index,
                                     first_row,
@@ -1248,7 +1252,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                     first_row: *first_row,
                                     row_count: *row_count,
                                 },
-                                assets::OwnedShaderArgument::MaterialPixelConstant {
+                                asset_material::OwnedShaderArgument::MaterialPixelConstant {
                                     destination,
                                     name_hash,
                                 } => RuntimeArgumentBinding::MaterialConstant {
@@ -1256,7 +1260,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                     destination: *destination,
                                     name_hash: *name_hash,
                                 },
-                                assets::OwnedShaderArgument::LiteralPixelConstant {
+                                asset_material::OwnedShaderArgument::LiteralPixelConstant {
                                     destination,
                                     words,
                                 } => RuntimeArgumentBinding::LiteralConstant {
@@ -1264,12 +1268,13 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                     destination: *destination,
                                     words: *words,
                                 },
-                                assets::OwnedShaderArgument::Unknown { argument_type, raw } => {
-                                    RuntimeArgumentBinding::Unknown {
-                                        argument_type: *argument_type,
-                                        raw: *raw,
-                                    }
-                                }
+                                asset_material::OwnedShaderArgument::Unknown {
+                                    argument_type,
+                                    raw,
+                                } => RuntimeArgumentBinding::Unknown {
+                                    argument_type: *argument_type,
+                                    raw: *raw,
+                                },
                             })
                             .collect();
                         let mut runtime_pass = RuntimePass {
@@ -1285,7 +1290,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                                 slot_index as u8,
                             ),
                         };
-                        sort_pass_args_retail(&mut runtime_pass);
+                        sort_pass_args(&mut runtime_pass);
                         runtime_pass
                     })
                     .collect();
@@ -1337,12 +1342,15 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
         .iter()
         .enumerate()
         .map(|(material_index, material)| {
-            let key = assets::TechsetKey::new(material.namespace, material.technique_set.as_str());
+            let key = asset_material::TechsetKey::new(
+                material.namespace,
+                material.technique_set.as_str(),
+            );
             let local_index = match source.resolve_technique_set(key) {
-                assets::TechsetResolve::Hit { index, .. } => Some(index),
-                assets::TechsetResolve::GraphMissing { .. }
-                | assets::TechsetResolve::Foreign { .. }
-                | assets::TechsetResolve::Missing => None,
+                asset_material::TechsetResolve::Hit { index, .. } => Some(index),
+                asset_material::TechsetResolve::GraphMissing { .. }
+                | asset_material::TechsetResolve::Foreign { .. }
+                | asset_material::TechsetResolve::Missing => None,
             };
             let local_technique_set = RuntimeTechniqueSetId(
                 local_index
@@ -1351,7 +1359,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
             );
             let asset_id = MaterialAssetId(
                 u16::try_from(material_index)
-                    .expect("material catalog index exceeds the retail u16 asset-id domain"),
+                    .expect("material catalog index exceeds the u16 asset-id domain"),
             );
             let baked_draw_surf =
                 sorted_materials
@@ -1361,7 +1369,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                         dpvs_iw4::bake_material_draw_surf_key(dpvs_iw4::MaterialDrawSurfBakeInput {
                             sort_key: material.sort_key,
                             info_game_flags: material.info_game_flags,
-                            material_sorted_index: ordinal.retail_sort_band(),
+                            material_sorted_index: ordinal.sort_band(),
                             technique0_absent: table.is_none_or(|table| table.slots & 1 == 0),
                             technique1_present: table.is_some_and(|table| table.slots & 2 != 0),
                             material_byte_4b: material.state_flags,
@@ -1370,7 +1378,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                         .packed
                     });
             let [uv_anim, falloff_parms, falloff_begin, falloff_end] =
-                assets::MaterialDefinitions::material_animation(material);
+                asset_material::MaterialDefinitions::material_animation(material);
             RuntimeMaterial {
                 asset_id,
                 name: material.name.to_string(),
@@ -1392,12 +1400,12 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
                     .route
                     .is_some_and(|route| route.uses_model_lighting_const),
                 square_color_map: source.color_map_transform(material)
-                    == assets::ColorMapTransform::Square,
+                    == asset_material::ColorMapTransform::Square,
                 shadow_only: source.is_shadowcaster(material),
                 cull_mode: match source.cull_face(material) {
-                    Some(assets::MaterialCullFace::Back) => Some(0),
-                    Some(assets::MaterialCullFace::Front) => Some(1),
-                    Some(assets::MaterialCullFace::None) | None => None,
+                    Some(asset_material::MaterialCullFace::Back) => Some(0),
+                    Some(asset_material::MaterialCullFace::Front) => Some(1),
+                    Some(asset_material::MaterialCullFace::None) | None => None,
                 },
                 uv_anim_bits: uv_anim.map(f32::to_bits),
                 falloff_parms_bits: falloff_parms.map(f32::to_bits),
@@ -1492,13 +1500,13 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
         shader_programs,
         vertex_decls,
         sorted_materials,
-        iw5_remap: assets::leftover_selector_census(
+        iw5_remap: asset_material::iw5_tech_map::leftover_selector_census(
             source
                 .materials
                 .iter()
                 .filter_map(|material| material.iw5_state_bits_entry.as_ref()),
         ),
-        t5_remap: assets::leftover_t5_selector_census(
+        t5_remap: asset_material::t5_tech_map::leftover_t5_selector_census(
             source
                 .materials
                 .iter()
@@ -1543,7 +1551,7 @@ pub fn capture_runtime_catalog(source: &assets::MaterialDefinitions) -> RuntimeM
     }
 }
 
-fn remaining_unknown_arg_n(source: &assets::MaterialDefinitions) -> u32 {
+fn remaining_unknown_arg_n(source: &asset_material::MaterialDefinitions) -> u32 {
     let mut n = 0u32;
     for facts in source.technique_set_facts() {
         for table in facts
@@ -1558,7 +1566,10 @@ fn remaining_unknown_arg_n(source: &assets::MaterialDefinitions) -> u32 {
             for technique in graph.slots.iter().flatten() {
                 for pass in &technique.passes {
                     for argument in &pass.arguments {
-                        if matches!(argument, assets::OwnedShaderArgument::Unknown { .. }) {
+                        if matches!(
+                            argument,
+                            asset_material::OwnedShaderArgument::Unknown { .. }
+                        ) {
                             n = n.saturating_add(1);
                         }
                     }

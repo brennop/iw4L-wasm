@@ -66,7 +66,7 @@ pub struct PlayerAngleOutput {
     pub legs_dest: f32,
 }
 
-pub fn cg_swing_angles(
+pub fn swing_angles(
     destination: f32,
     swing_tolerance: f32,
     clamp_tolerance: f32,
@@ -118,7 +118,7 @@ pub fn cg_swing_angles(
     }
 }
 
-pub fn cg_player_angles(
+pub fn player_angles(
     input: PlayerAngleInput,
     torso: &mut SwingState,
     legs: &mut SwingState,
@@ -128,7 +128,7 @@ pub fn cg_player_angles(
     let torso_dest = input.dvars.move_factor_on_torso * movement + base;
     let legs_dest = angle_normalize_360(base + movement);
 
-    cg_swing_angles(
+    swing_angles(
         torso_dest,
         0.0,
         TORSO_YAW_CLAMP,
@@ -142,7 +142,7 @@ pub fn cg_player_angles(
     } else {
         input.dvars.leg_yaw_tolerance
     };
-    cg_swing_angles(
+    swing_angles(
         legs_dest,
         leg_tol,
         LEGS_YAW_CLAMP,

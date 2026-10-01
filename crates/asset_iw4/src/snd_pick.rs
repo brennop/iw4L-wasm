@@ -4,12 +4,12 @@ pub const SND_LCG_ADD: u32 = 0x269ec3;
 
 pub const SND_LCG_UNIT_SCALE: f32 = 32768.0;
 
-pub fn snd_advance_lcg(state: &mut u32) {
+pub fn advance_lcg(state: &mut u32) {
     *state = state.wrapping_mul(SND_LCG_MUL).wrapping_add(SND_LCG_ADD);
 }
 
-pub fn snd_unit_random(state: &mut u32) -> f32 {
-    snd_advance_lcg(state);
+pub fn unit_random(state: &mut u32) -> f32 {
+    advance_lcg(state);
     ((*state >> 16) & 0x7fff) as f32 / SND_LCG_UNIT_SCALE
 }
 
@@ -35,9 +35,9 @@ pub fn pick_weighted_variant_index(weights: &[f32], rng: &mut u32, avoid: Option
         .map(|(i, &w)| if avoid == Some(i) && n > 1 { 0.0 } else { w })
         .sum();
     if total <= 1e-8 {
-        return ((snd_unit_random(rng) * n as f32) as usize).min(n - 1);
+        return ((unit_random(rng) * n as f32) as usize).min(n - 1);
     }
-    let mut cursor = snd_unit_random(rng) * total;
+    let mut cursor = unit_random(rng) * total;
     for (index, &weight) in weights.iter().enumerate() {
         let w = if avoid == Some(index) && n > 1 {
             0.0

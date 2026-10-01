@@ -19,7 +19,7 @@ pub(crate) fn stamp_prepared_scene_view(
     znear: Res<RZnearDvar>,
     fog: Res<crate::assemble::drawsurf::fog::FogDvars>,
     map_fog: Option<Res<crate::assemble::drawsurf::MapFrameFog>>,
-    clock: Option<Res<net::CgFrameClock>>,
+    clock: Option<Res<net::FrameClock>>,
     depthhack: Res<RZnearDepthhackDvar>,
     subwindow: Res<RSubwindowDvar>,
     hosts: Query<&Transform, With<FlyCamera>>,
@@ -49,7 +49,7 @@ pub(crate) fn stamp_prepared_scene_view(
         .physical_target_size()
         .and_then(|rt| i32::try_from(rt.x).ok().zip(i32::try_from(rt.y).ok()))
         .unwrap_or((0, 0));
-    let scene_viewport = hud_iw4::r_subwindow_to_viewport(
+    let scene_viewport = hud_iw4::subwindow_to_viewport(
         subwindow.left,
         subwindow.right,
         subwindow.top,
@@ -57,7 +57,7 @@ pub(crate) fn stamp_prepared_scene_view(
         rt_w,
         rt_h,
     );
-    if hud_iw4::r_subwindow_is_full(
+    if hud_iw4::subwindow_is_full(
         subwindow.left,
         subwindow.right,
         subwindow.top,
@@ -88,7 +88,7 @@ pub(crate) fn stamp_prepared_scene_view(
         }
         _ => bevy::camera::ClearColorConfig::Default,
     };
-    let dpvs_z_near = hud_iw4::r_znear_from_refdef(0.0, znear.value);
+    let dpvs_z_near = hud_iw4::znear_from_refdef(0.0, znear.value);
     *view = prepare_scene_view(
         lens_world_from_parent_child(*parent, *child),
         persp.fov,

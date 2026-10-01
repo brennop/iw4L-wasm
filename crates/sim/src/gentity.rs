@@ -1,6 +1,6 @@
 use entity_iw4::{
     ET_ITEM, ET_MISSILE, ET_SCRIPTMOVER, EntityState, TR_LINEAR_STOP, TR_STATIONARY, Trajectory,
-    bg_evaluate_trajectory,
+    evaluate_trajectory,
 };
 use playerstate_iw4::{GENTITY_SPAWN_BASE, buttons};
 use trace_iw4::ENTITYNUM_WORLD;
@@ -628,6 +628,10 @@ pub struct ScriptMoverGentity {
     pub link_mid: [f32; 3],
 
     pub link_half: [f32; 3],
+
+    pub nonsolid: bool,
+
+    pub shown_to: u64,
 }
 
 impl Default for ScriptMoverGentity {
@@ -639,6 +643,8 @@ impl Default for ScriptMoverGentity {
             box_half: [0.0; 3],
             link_mid: [0.0; 3],
             link_half: [0.0; 3],
+            nonsolid: false,
+            shown_to: 0,
         }
     }
 }
@@ -722,7 +728,7 @@ pub fn rotate_velocity_apos(
     level_time_ms: i32,
 ) -> Trajectory {
     let tr_base = if current.tr_type != 0 {
-        bg_evaluate_trajectory(current, level_time_ms)
+        evaluate_trajectory(current, level_time_ms)
     } else {
         current.tr_base
     };

@@ -30,7 +30,7 @@ pub struct MarkBoxSurfaces<'a> {
     pub cell_bits: &'a mut [u32],
 }
 
-pub fn fx_mark_box_surfaces(q: &mut MarkBoxSurfaces<'_>) -> MarkBoxSurfacesCensus {
+pub fn mark_box_surfaces(q: &mut MarkBoxSurfaces<'_>) -> MarkBoxSurfacesCensus {
     let cell_n = q.planes.cell_count;
     let mut census = MarkBoxSurfacesCensus {
         cell_n,
@@ -84,6 +84,6 @@ pub fn fx_mark_box_surfaces(q: &mut MarkBoxSurfaces<'_>) -> MarkBoxSurfacesCensu
 }
 
 #[inline]
-pub fn fx_mark_box_surfaces_words(count: u32) -> usize {
+pub fn mark_box_surfaces_words(count: u32) -> usize {
     words_for_bits(count as usize)
 }

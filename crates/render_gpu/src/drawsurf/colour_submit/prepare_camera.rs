@@ -2,7 +2,33 @@ use bevy::tasks::{ComputeTaskPool, TaskPool};
 use dpvs_iw4::GfxDrawSurf;
 use render_backend::MaterialRunCensus;
 
-use super::*;
+use super::{
+    BTreeMap, COLOUR_PREPARE_LANES, Camera3d, CameraPrepareState, CameraWorldPretess,
+    ColourPackPlan, ColourPrepareLane, ColourRowPlan, ColourSubmitScratch, DrawRefusalCensus,
+    ExactColourBindingCache, ExactColourGeometry, ExactColourPipeline, ExactColourSubmitCensus,
+    ExactConstantArena, ExactFloatZResolve, ExactPipelineRegistry, ExactPrepare,
+    ExactPrepareTarget, ExactShadowBindingCache, ExactTessBind, ExtractedColourRefs,
+    ExtractedRenderFrameProducts, ExtractedView, FrameProduct, FrameProductKind,
+    FrameProductStatus, GpuConstantArena, GpuSubmitRefusal, HashSet, InstalledRenderWorld, Mat4,
+    MaterialExecView, MaterialRefusal, MaterialRunExecutor, Msaa, PipelineCache, PortId,
+    PrepareCost, PrepareTextureTables, PreparedColourRow, PublishedRenderFrame, Query,
+    RenderDevice, RenderQueue, Res, ResMut, ResidentShadowStaticDraws, Resource, RetainedDrawKind,
+    RuntimeShaderStage, RuntimeUploadedImageRegistry, SCENE_DEPTH_FORMAT, SamplerTable,
+    SceneDepthTexture, SceneTextureState, SceneTextureTables, ShadowSubmitScratch,
+    ShadowTextureTable, ShadowmapSpotArena, ShadowmapSpotGpu, ShadowmapSunArena, ShadowmapSunGpu,
+    SmodelCacheGpu, SpecializedRenderPipelines, UnsupportedStateCensus, Vec3, Vec4, ViewTarget,
+    With, WorldPretessLayout, as_u32, bind_world_packed_rows, bsp_draw_source, bsp_kind_index,
+    build_colour_row_plan, colour_census_clock, colour_census_ms, colour_draw_at, colour_pack_key,
+    colour_tech_at, draw_surf_list_work_colour, empty_world_run_gather, exec_tables,
+    execution_binds_code_texture, floatz, gather_world_run_indices, is_viewmodel_colour_draw,
+    material_refusal_class, open_scene_table_epoch, open_shadow_table_epoch,
+    pack_sun_shadow_frontend, prepare_shadowmap_spot, prepare_shadowmap_sun,
+    publish_this_frame_spot_shadow_views, publish_this_frame_sun_shadow_view,
+    record_pipeline_not_ready, reset_exact_colour_census, smodel_skinned, spot_rt_for_light,
+    spot_shadow_view_missing, submit_refusal_class, submit_refusal_family, sun_shadow_view_missing,
+    upload_constant_arena, viewmodel_colour_submits_when_pipelines_ready, world_material_sorted,
+    world_packed_row_meta, world_pretess_dest_ib, world_pretess_key,
+};
 
 fn run_colour_lanes(camera: CameraLane<'_>, shadow: ShadowLane<'_>) {
     let _prepare = perf::Span::RenderColourPrepareMs.enter();
@@ -243,7 +269,7 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
             &geometry.xmodel_surface_ranges,
             &mut scratch.pack_draws,
         );
-        let work = r_draw_surf_list_work_colour(&packed);
+        let work = draw_surf_list_work_colour(&packed);
         let skinned = (
             packed.smodel_skinned.len(),
             work.smodel_skinned_unconsumed as usize,
@@ -272,8 +298,8 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
         .take()
         .expect("colour pack plan is filled");
     if census_on {
-        census.end_depth_restore_n = Some(pack_plan.work.end_restore_n);
-        census.end_depth_range_type = Some(pack_plan.work.end_depth_range_type);
+        census.frame.end_depth_restore_n = Some(pack_plan.work.end_restore_n);
+        census.frame.end_depth_range_type = Some(pack_plan.work.end_depth_range_type);
     }
     let gather_started = colour_census_clock(census_on);
     let world_ib_skip = pretess.layout.as_ref().is_some_and(|layout| {
@@ -325,24 +351,24 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
         );
     }
     if census_on {
-        census.world_index_gaps = Some(gathered.index_gaps);
-        census.world_run_indices_n = Some(pretess.logical_index_count());
-        census.world_ib_skip = Some(u32::from(world_ib_skip));
+        census.frame.world_index_gaps = Some(gathered.index_gaps);
+        census.frame.world_run_indices_n = Some(pretess.logical_index_count());
+        census.frame.world_ib_skip = Some(u32::from(world_ib_skip));
     }
     if census_on {
-        census.world_gathered = Some(u32::from(pretess.index().is_some()));
+        census.frame.world_gathered = Some(u32::from(pretess.index().is_some()));
     }
 
     if census_on {
-        census.smodel_pretess_skip = Some(0);
-        census.smodel_pretess_runs = Some(0);
-        census.smodel_pretess_hits = Some(0);
-        census.smodel_pretess_verts = Some(0);
-        census.smodel_pretess_indices = Some(0);
-        census.smodel_cached_lighting = Some(0);
-        census.smodel_pretess_local = Some(0);
-        census.smodel_pretess_length1 = Some(0);
-        census.submit_gather_ms = colour_census_ms(gather_started);
+        census.frame.smodel_pretess_skip = Some(0);
+        census.frame.smodel_pretess_runs = Some(0);
+        census.frame.smodel_pretess_hits = Some(0);
+        census.frame.smodel_pretess_verts = Some(0);
+        census.frame.smodel_pretess_indices = Some(0);
+        census.frame.smodel_cached_lighting = Some(0);
+        census.frame.smodel_pretess_local = Some(0);
+        census.frame.smodel_pretess_length1 = Some(0);
+        census.frame.submit_gather_ms = colour_census_ms(gather_started);
     }
     let prepare_started = colour_census_clock(census_on);
     let exec_frame = &extracted.frame.exec_frame;
@@ -497,14 +523,14 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
         last_refusal = Some(GpuSubmitRefusal::PipelineNotReady);
     }
     if census_on {
-        census.submit_prepare_ms = colour_census_ms(prepare_started);
+        census.frame.submit_prepare_ms = colour_census_ms(prepare_started);
     }
     if !prepared.is_empty() {
         if census_on {
-            census.submit_arena_ms = Some(arena_ms);
-            census.pack_arena_share_n = Some(arena_share);
-            census.pack_arena_vertex_n = Some(as_u32(arena_vertex_n));
-            census.pack_arena_pixel_n = Some(as_u32(arena_pixel_n));
+            census.frame.submit_arena_ms = Some(arena_ms);
+            census.frame.pack_arena_share_n = Some(arena_share);
+            census.frame.pack_arena_vertex_n = Some(as_u32(arena_vertex_n));
+            census.frame.pack_arena_pixel_n = Some(as_u32(arena_pixel_n));
         }
         let smodel_ib_skip = smodel_cache_gpu.write_dynamic_indices(
             queue,
@@ -960,7 +986,7 @@ struct CameraRowsInput<'a> {
     device: &'a RenderDevice,
     queue: &'a RenderQueue,
     uploaded: &'a RuntimeUploadedImageRegistry,
-    sampler_table: &'a RetailSamplerTable,
+    sampler_table: &'a SamplerTable,
     textures: &'a std::sync::Mutex<SceneTextureState>,
     skinned: &'a std::sync::Mutex<smodel_skinned::SmodelSkinnedTess>,
     exec_view: Option<MaterialExecView<'a>>,

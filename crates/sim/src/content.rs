@@ -1,9 +1,8 @@
-use crate::match_state::ClassDef;
 use crate::spawn::{AuthoredSpawnPoint, MatchBootstrap};
 use crate::world::SimBrush;
 use weapon_iw4::WeaponCombatFacts;
 
-pub const CONTENT_DIGEST_SCHEME: u64 = 14;
+pub const CONTENT_DIGEST_SCHEME: u64 = 16;
 
 #[derive(Clone, Copy)]
 struct Digest(u64);
@@ -74,12 +73,12 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         h.i32(row.inventory_type);
         h.i32(row.weap_class);
         h.i32(row.player_anim_type);
-        h.byte(match row.select_requires_ammo_at_0x667 {
+        h.byte(match row.select_requires_ammo {
             None => 0,
             Some(false) => 1,
             Some(true) => 2,
         });
-        h.byte(match row.offhand_hold_is_cancelable_at_0x681 {
+        h.byte(match row.offhand_hold_is_cancelable {
             None => 0,
             Some(false) => 1,
             Some(true) => 2,
@@ -166,26 +165,12 @@ fn hash_weapon_admission(h: &mut Digest, runnable: &[bool], transition_groups: &
     }
 }
 
-fn hash_classes(h: &mut Digest, classes: &[ClassDef]) {
-    h.u64(classes.len() as u64);
-    for c in classes {
-        h.u32(c.id.0);
-        h.u32(c.revision);
-        h.u32(c.primary);
-        h.u32(c.secondary);
-        for id in c.primary_attachments {
-            h.u32(id);
-        }
-        for id in c.secondary_attachments {
-            h.u32(id);
-        }
-        h.u32(c.lethal);
-        h.u32(c.tactical);
-        for id in c.perks {
-            h.u32(id);
-        }
-        h.bytes(c.deathstreak.as_bytes());
-        h.bool(c.locked);
+fn hash_class_catalog(h: &mut Digest) {
+    for perk in crate::match_state::CLASS_CATALOG_PERKS {
+        h.bytes(perk.as_bytes());
+    }
+    for streak in crate::match_state::CLASS_CATALOG_DEATHSTREAKS {
+        h.bytes(streak.as_bytes());
     }
 }
 
@@ -230,6 +215,11 @@ fn hash_equipment(h: &mut Digest, rows: &[crate::EquipmentRuntimeFacts]) {
         h.i32(row.fuse_time_ms);
         h.i32(row.hold_fire_time_ms);
         h.bool(row.cook_off_hold);
+        h.bool(row.has_detonator);
+        h.i32(row.detonate_delay_ms);
+        h.i32(row.detonate_time_ms);
+        h.bool(row.projectile_rotates);
+        h.i32(row.stickiness);
         h.bool(row.timed_detonation);
         h.bool(row.proj_impact_explode);
         h.bool(row.stick_to_players);
@@ -237,6 +227,10 @@ fn hash_equipment(h: &mut Digest, rows: &[crate::EquipmentRuntimeFacts]) {
         h.i32(row.explosion_radius_min);
         h.i32(row.explosion_inner_damage);
         h.i32(row.explosion_outer_damage);
+        h.f32(row.damage_cone_angle);
+        h.i32(row.missile_guidance);
+        h.i32(row.ignition_delay_ms);
+        h.bool(row.require_lock_to_fire);
         h.i32(row.projectile_speed);
         h.i32(row.projectile_speed_up);
         h.i32(row.projectile_speed_forward);
@@ -253,21 +247,6 @@ fn hash_equipment(h: &mut Digest, rows: &[crate::EquipmentRuntimeFacts]) {
             }
         }
     }
-}
-
-pub fn content_digest_v1(
-    combat: &[WeaponCombatFacts],
-    bootstrap: &MatchBootstrap,
-    clip_brushes: &[SimBrush],
-) -> u64 {
-    let mut h = Digest::new();
-    h.u64(CONTENT_DIGEST_SCHEME);
-    hash_combat(&mut h, combat);
-    hash_classes(&mut h, &bootstrap.classes);
-    hash_spawns(&mut h, &bootstrap.spawns);
-    hash_collision(&mut h, clip_brushes);
-    h.u32(bootstrap.respawn_delay_ticks);
-    h.finish()
 }
 
 fn hash_script_models(h: &mut Digest, script_models: &[crate::EntityCollisionCapabilities]) {
@@ -315,7 +294,7 @@ fn hash_script_models(h: &mut Digest, script_models: &[crate::EntityCollisionCap
     }
 }
 
-pub fn content_digest_v2(
+pub fn content_digest(
     combat: &[WeaponCombatFacts],
     runnable: &[bool],
     transition_groups: &[u32],
@@ -329,11 +308,10 @@ pub fn content_digest_v2(
     hash_combat(&mut h, combat);
     hash_weapon_admission(&mut h, runnable, transition_groups);
     hash_equipment(&mut h, equipment);
-    hash_classes(&mut h, &bootstrap.classes);
+    hash_class_catalog(&mut h);
     hash_spawns(&mut h, &bootstrap.spawns);
     hash_collision(&mut h, clip_brushes);
     hash_script_models(&mut h, script_models);
-    h.u32(bootstrap.respawn_delay_ticks);
     h.finish()
 }
 
@@ -348,7 +326,7 @@ pub struct ContentComponents {
     pub classes: u64,
 }
 
-pub fn content_components_v2(
+pub fn content_components(
     combat: &[WeaponCombatFacts],
     runnable: &[bool],
     transition_groups: &[u32],
@@ -377,8 +355,7 @@ pub fn content_components_v2(
     hash_equipment(&mut weapons, equipment);
 
     let mut classes = component(b'C');
-    hash_classes(&mut classes, &bootstrap.classes);
-    classes.u32(bootstrap.respawn_delay_ticks);
+    hash_class_catalog(&mut classes);
 
     ContentComponents {
         map: map.finish(),
@@ -386,12 +363,4 @@ pub fn content_components_v2(
         weapons: weapons.finish(),
         classes: classes.finish(),
     }
-}
-
-pub fn content_digest_v0(combat: &[WeaponCombatFacts], classes: &[ClassDef]) -> u64 {
-    let bootstrap = MatchBootstrap {
-        classes: classes.to_vec(),
-        ..MatchBootstrap::default()
-    };
-    content_digest_v1(combat, &bootstrap, &[])
 }

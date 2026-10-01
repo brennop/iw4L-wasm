@@ -1,5 +1,5 @@
-use crate::ZoneGame;
 use crate::lane::lane;
+use asset_core::ZoneGame;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaneStatus {

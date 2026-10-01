@@ -1,11 +1,15 @@
+pub mod class_presets;
+pub mod pad;
 pub mod retire;
 pub mod schedule;
 pub mod script_entity_notify;
 pub mod script_notify;
 pub mod session;
 pub mod settings;
-pub mod ui_sound;
+pub mod ui;
 
+pub use class_presets::{ClassPreset, pick_showcase, showcase_classes};
+pub use pad::{ActivePad, InputDevices, PromptStyle, TestControllerRumble};
 pub use retire::Retiring;
 pub use schedule::{
     AUTHORITY_TOC, AuthorityBookkeeping, AuthorityEdge, AuthoritySet, CLIENT_TOC,
@@ -16,17 +20,16 @@ pub use schedule::{
     configure_client_sets, configure_render_sets, configure_worker_cmd_sets, worker_cmd_name,
 };
 pub use script_entity_notify::{AbortKillcam, BeginKillcam, KillcamEnded, SpawnedPlayer};
-pub use script_notify::{
-    ExitLevelCalled, GameEnded, GameWin, GameWinner, GlassDestroyed, MatchEndingReason,
-    MatchEndingSoon, MatchEndingVerySoon, PrematchDone, RoundSwitch as RoundSwitchNotify,
-    RoundSwitchKind, RoundWin, SpawnedPlayerNotify, SpawningIntermission, register_script_notify,
-};
+pub use script_notify::{ExitLevelCalled, register_script_notify};
 pub use session::{
     AdmissionKey, AppScreen, BotNavigationReady, CacWeaponOffer, ClassSelectHandoff, HasWorld,
-    HostClassLoadouts, HostClassSlot, HudInputView, LaunchIdentity, LaunchReport, LifeEndCause,
-    LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, MapLoadApproved, MapLoadFailed,
-    MatchInstalled, MatchKey, MatchTornDown, ReturnedToMenu, RuntimeRole, TeardownReason, UiDraw,
-    ViewSubject, WorldGeneration, WorldProducts,
+    Headless, HostClassLoadouts, HostClassSlot, HudInputView, LaunchIdentity, LaunchReport,
+    LifeEndCause, LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, MapLoadApproved,
+    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, ReturnedToMenu, RuntimeRole,
+    TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration, WorldProducts,
 };
 pub use settings::{DisplayResolution, GameSettings};
-pub use ui_sound::{UiPlayMusic, UiPlaySound, UiStopMusic, register_ui_sound};
+pub use ui::{
+    HostMatchRules, UiBindRequest, UiBindingCapture, UiExecCommand, UiMenuDvars, UiMenuKey,
+    UiMenuRequest, UiPartyState, UiPlayMusic, UiPlaySound, UiStopMusic, register_ui_contracts,
+};

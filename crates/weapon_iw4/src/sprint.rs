@@ -1,9 +1,8 @@
-use crate::pm_weapon::{WeaponCombatFacts, WeaponHandState};
+use crate::tick::{WeaponCombatFacts, WeaponHandState};
 use crate::weaponstate::WeaponState;
+use playerstate_iw4::pm_flags;
 
-pub const PMF_SPRINTING: u32 = 0x4000;
-
-pub fn pm_weapon_check_for_sprint(
+pub fn weapon_check_for_sprint(
     hand: &mut WeaponHandState,
     facts: &WeaponCombatFacts,
     pm_flags: u32,
@@ -17,7 +16,7 @@ pub fn pm_weapon_check_for_sprint(
     if !check_for_sprint_allowed(ws) {
         return;
     }
-    let sprinting = pm_flags & PMF_SPRINTING != 0;
+    let sprinting = pm_flags & pm_flags::SPRINTING != 0;
     if sprinting && !ws.is_sprint() {
         begin_sprint(hand, facts);
     } else if !sprinting && matches!(ws, WeaponState::SprintIn | WeaponState::SprintLoop) {
@@ -60,7 +59,7 @@ fn begin_sprint(hand: &mut WeaponHandState, facts: &WeaponCombatFacts) {
     hand.weapon_delay = 0;
     hand.shot_count = 0;
     hand.burst_latch = false;
-    crate::weap_anim::pm_start_weapon_anim(
+    crate::weap_anim::start_weapon_anim(
         &mut hand.weap_anim,
         crate::weap_anim::weap_anim_event::SPRINT_IN,
     );
@@ -70,7 +69,7 @@ fn sprint_loop(hand: &mut WeaponHandState) {
     hand.weaponstate = WeaponState::SprintLoop as i32;
     hand.weapon_time = 0;
     hand.weapon_delay = 0;
-    crate::weap_anim::pm_start_weapon_anim(
+    crate::weap_anim::start_weapon_anim(
         &mut hand.weap_anim,
         crate::weap_anim::weap_anim_event::SPRINT_LOOP,
     );
@@ -85,13 +84,13 @@ fn begin_sprint_out(hand: &mut WeaponHandState, facts: &WeaponCombatFacts) {
     hand.weaponstate = WeaponState::SprintOut as i32;
     hand.weapon_time = time;
     hand.weapon_delay = 0;
-    crate::weap_anim::pm_start_weapon_anim(
+    crate::weap_anim::start_weapon_anim(
         &mut hand.weap_anim,
         crate::weap_anim::weap_anim_event::SPRINT_OUT,
     );
 }
 
-pub fn pm_weapon_advance_sprint(
+pub fn weapon_advance_sprint(
     hand: &mut WeaponHandState,
     weap_flags: &mut u32,
     pm_flags_word: &mut u32,
@@ -100,7 +99,7 @@ pub fn pm_weapon_advance_sprint(
     match WeaponState::from_i32(hand.weaponstate) {
         Ok(WeaponState::SprintIn) if hand.weapon_time <= 0 => sprint_loop(hand),
         Ok(WeaponState::SprintOut) if hand.weapon_time <= 0 => {
-            crate::melee::pm_weapon_settle_ready(hand, weap_flags, pm_flags_word, pm_type);
+            crate::melee::weapon_settle_ready(hand, weap_flags, pm_flags_word, pm_type);
         }
         _ => {}
     }

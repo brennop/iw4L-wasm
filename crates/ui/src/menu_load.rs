@@ -2,17 +2,18 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use frame::ClientSet;
 
-use assets::{
-    GamesRoot, LoadProgress, LoadingPreviewSource, LocalizeCatalog, MatchLoadRequest,
-    find_runtime_common_mp, find_zone_file, list_mp_maps, load_mp_localized_strings,
+use asset_game::{LocalizeCatalog, load_mp_localized_strings};
+use asset_transport::{
+    GamesRoot, LoadProgress, find_runtime_common_mp, find_zone_file, list_mp_map_packs,
 };
+use assets::{LoadingPreviewSource, MatchLoadRequest};
 
-use crate::class_select::ClassSelectOverlayOpen;
+use crate::classes::select::ClassSelectOverlayOpen;
 use crate::layers::{UiLayer, UiLayers};
 use crate::loading::{
     LoadingCamera, LoadingRoot, LoadingScreen, OverlayUiCamera, dismiss_loading_overlay,
 };
-use crate::menu::{MenuEnabled, MenuMapList, PendingMenuMap};
+use crate::menu::MenuMapList;
 use frame::{AppScreen, LaunchIdentity, LaunchReport, MapLoadApproved, ReturnedToMenu};
 
 fn launch_report(
@@ -33,7 +34,7 @@ fn launch_report(
 }
 
 fn resolve_zone(
-    games: &assets::GamesRoot,
+    games: &asset_transport::GamesRoot,
     requested: &str,
 ) -> (
     String,
@@ -45,7 +46,7 @@ fn resolve_zone(
     let found = find_zone_file(games, requested);
     let zone_alias = found.as_ref().ok().and_then(|z| z.alias_note.clone());
     let requested_lc = requested.trim().to_ascii_lowercase();
-    let (parsed_game, requested_stem) = assets::split_zone_key(&requested_lc);
+    let (parsed_game, requested_stem) = asset_transport::split_zone_key(&requested_lc);
     let zone = found
         .as_ref()
         .ok()
@@ -63,9 +64,9 @@ fn resolve_zone(
         found
             .as_ref()
             .ok()
-            .and_then(|z| assets::zone_game_for_path(&z.path))
+            .and_then(|z| asset_transport::zone_game_for_path(&z.path))
     });
-    let title = assets::map_load_title(&requested_lc, game);
+    let title = asset_transport::map_load_title(&requested_lc, game);
     (zone, zone_ff, common_mp, zone_alias, title)
 }
 
@@ -76,11 +77,13 @@ fn insert_loading_chrome(
     zone: &str,
     zone_ff: Result<std::path::PathBuf, String>,
     request_id: u64,
+    mode: sim::HostGameModeSelection,
 ) {
+    diag::info!(Ui, "loading: map={zone} mode={}", mode.token());
     commands.insert_resource(LoadingScreen::new(
         progress,
         title,
-        sim::host_game_mode_kind().display_name().to_owned(),
+        mode.display_name().to_owned(),
     ));
     if let Ok(path) = zone_ff {
         commands.insert_resource(LoadingPreviewSource {
@@ -96,26 +99,10 @@ fn insert_loading_chrome(
     });
 }
 
-pub(crate) fn begin_map_from_menu(
-    mut commands: Commands,
-    mut pending: ResMut<PendingMenuMap>,
-    mut swap: ResMut<session::SessionSwapRequest>,
-    game_setup: Res<crate::menu::GameSetupDraft>,
-) {
-    let Some(requested) = pending.0.take() else {
-        return;
-    };
-    commands.insert_resource(game_setup.selected_mode);
-    match swap.request_zone(requested.clone()) {
-        Ok(id) => diag::info!(Ui, "menu: loading {requested} (swap #{id})"),
-        Err(error) => diag::warn!(Ui, "menu: load `{requested}` refused — {error}"),
-    }
-}
-
 pub(crate) fn begin_load_from_session(
     mut commands: Commands,
     mut approved: MessageReader<MapLoadApproved>,
-    mut menu_enabled: ResMut<MenuEnabled>,
+    mode: Option<Res<sim::HostGameModeSelection>>,
     mut app_screen: ResMut<AppScreen>,
     mut class_overlay: ResMut<ClassSelectOverlayOpen>,
     identity: Option<ResMut<LaunchIdentity>>,
@@ -133,7 +120,7 @@ pub(crate) fn begin_load_from_session(
     let Some(mut identity) = identity else {
         return;
     };
-    let games = assets::GamesRoot(identity.games_root.clone());
+    let games = asset_transport::GamesRoot(identity.games_root.clone());
     let (zone, zone_ff, common_mp, zone_alias, loading_title) = resolve_zone(&games, &fact.zone);
     if loading.as_ref().is_some_and(|s| s.title() == loading_title) {
         return;
@@ -149,7 +136,6 @@ pub(crate) fn begin_load_from_session(
     if let Ok(mut window) = window.single_mut() {
         window.title = format!("iw4l — {zone}");
     }
-    menu_enabled.0 = false;
     class_overlay.0 = false;
     *app_screen = AppScreen::Loading;
     commands.insert_resource(probe);
@@ -160,6 +146,9 @@ pub(crate) fn begin_load_from_session(
         &zone,
         zone_ff,
         fact.request_id,
+        mode.as_deref()
+            .copied()
+            .unwrap_or_else(sim::HostGameModeSelection::from_env),
     );
     diag::info!(
         Ui,
@@ -171,29 +160,23 @@ pub(crate) fn begin_load_from_session(
 pub(crate) fn restore_menu_on_return(
     mut commands: Commands,
     mut returned: MessageReader<ReturnedToMenu>,
-    mut menu_enabled: ResMut<MenuEnabled>,
     mut class_overlay: ResMut<ClassSelectOverlayOpen>,
     mut maps: ResMut<MenuMapList>,
     identity: Option<Res<LaunchIdentity>>,
     mut app_screen: ResMut<AppScreen>,
     chrome: Query<Entity, Or<(With<LoadingRoot>, With<LoadingCamera>)>>,
     overlay_cams: Query<Entity, With<OverlayUiCamera>>,
-    mut stack: ResMut<crate::RetailMenuStack>,
 ) {
     if returned.read().count() == 0 {
         return;
     }
     class_overlay.0 = false;
-    if let Some(index) = stack.names.iter().position(|name| name == "ingame_options") {
-        stack.names.truncate(index);
-    }
     *app_screen = AppScreen::MainMenu;
-    menu_enabled.0 = true;
 
     dismiss_loading_overlay(&mut commands, chrome.iter(), overlay_cams.iter(), false);
     if maps.0.is_empty() {
         if let Some(identity) = identity {
-            maps.0 = list_mp_maps(&assets::GamesRoot(identity.games_root.clone()));
+            maps.0 = list_mp_map_packs(&asset_transport::GamesRoot(identity.games_root.clone()));
         }
     }
     diag::info!(Ui, "session: main menu enabled");
@@ -258,24 +241,16 @@ fn install_menu_strings_prepare(
 }
 
 pub(crate) fn register_menu_load_systems(app: &mut App) {
-    app.add_message::<ReturnedToMenu>()
-        .add_systems(Update, begin_map_from_menu.in_set(ClientSet::Ui))
-        .add_systems(
-            Update,
-            crate::retail_menu::sync_frontend_music
-                .after(begin_map_from_menu)
-                .in_set(ClientSet::Ui),
+    app.add_message::<ReturnedToMenu>().add_systems(
+        Update,
+        (
+            begin_load_from_session,
+            restore_menu_on_return.after(begin_load_from_session),
+            start_menu_strings_prepare,
+            install_menu_strings_prepare.after(start_menu_strings_prepare),
         )
-        .add_systems(
-            Update,
-            (
-                begin_load_from_session,
-                restore_menu_on_return.after(begin_load_from_session),
-                start_menu_strings_prepare,
-                install_menu_strings_prepare.after(start_menu_strings_prepare),
-            )
-                .after(assets::MapLoadApproval)
-                .before(assets::MatchLoadDispatch)
-                .in_set(ClientSet::Load),
-        );
+            .after(assets::MapLoadApproval)
+            .before(assets::MatchLoadDispatch)
+            .in_set(ClientSet::Load),
+    );
 }

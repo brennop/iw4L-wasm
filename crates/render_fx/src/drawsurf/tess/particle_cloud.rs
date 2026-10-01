@@ -6,12 +6,11 @@ use fx_iw4::{
     FX_PARTICLE_CLOUD_GRID_Z, FX_PARTICLE_CLOUD_INDICES_PER_CELL, FX_PARTICLE_CLOUD_TEMPLATE_CELLS,
     FX_PARTICLE_CLOUD_VERTS_PER_CELL, FX_PARTICLE_SPARK_INDICES_PER_CELL,
     FX_PARTICLE_SPARK_VERTS_PER_CELL, GFX_POS_TEX_VERTEX_STRIDE, GfxParticleCloud, GfxPosTexVertex,
-    MSVCRT_HOLDRAND_DEFAULT, fx_particle_cloud_cell_indices, fx_particle_cloud_cell_radius_sq,
-    fx_particle_cloud_cell_verts, fx_particle_cloud_cell_xyz,
-    fx_particle_cloud_compare_cell_radius, fx_particle_cloud_draw_counts,
-    fx_particle_cloud_particle_id, fx_particle_spark_cell_indices, fx_particle_spark_cell_verts,
-    fx_spark_fountain_cell_indices, fx_spark_fountain_index_count, gfx_pos_tex_vertex_bytes,
-    msvcrt_rand01, r_add_particle_cloud_custom_allows,
+    MSVCRT_HOLDRAND_DEFAULT, add_particle_cloud_custom_allows, gfx_pos_tex_vertex_bytes,
+    msvcrt_rand01, particle_cloud_cell_indices, particle_cloud_cell_radius_sq,
+    particle_cloud_cell_verts, particle_cloud_cell_xyz, particle_cloud_compare_cell_radius,
+    particle_cloud_draw_counts, particle_cloud_particle_id, particle_spark_cell_indices,
+    particle_spark_cell_verts, spark_fountain_cell_indices, spark_fountain_index_count,
 };
 
 use super::fx::FxPassMaterial;
@@ -121,7 +120,7 @@ impl FxParticleCloudPlan {
         });
         let flags = clouds[0].flags;
         let spark = flags & FX_PARTICLE_CLOUD_FLAG_SPARK != 0;
-        let (_, prims) = fx_particle_cloud_draw_counts(spark, flags);
+        let (_, prims) = particle_cloud_draw_counts(spark, flags);
         let index_start = if spark { 0 } else { self.spark_index_count };
         self.draws.push(FxParticleCloudDraw {
             material,
@@ -143,7 +142,7 @@ impl FxParticleCloudPlan {
         if cloud.flags & FX_PARTICLE_CLOUD_FLAG_SPARK != 0 {
             return None;
         }
-        if !r_add_particle_cloud_custom_allows(self.custom_live) {
+        if !add_particle_cloud_custom_allows(self.custom_live) {
             return None;
         }
         if cells.is_empty() {
@@ -161,7 +160,7 @@ impl FxParticleCloudPlan {
                 verts.push(gfx_pos_tex_vertex_bytes(eight[k]));
                 k += 1;
             }
-            for idx in fx_spark_fountain_cell_indices(0) {
+            for idx in spark_fountain_cell_indices(0) {
                 inds.push(v0.wrapping_add(u32::from(idx)));
             }
             cell = cell.saturating_add(1);
@@ -172,11 +171,11 @@ impl FxParticleCloudPlan {
             sort_key,
             material_sorted_index,
         });
-        let empty = fx_iw4::fx_empty_particle_cloud();
+        let empty = fx_iw4::empty_particle_cloud();
         self.draws.push(FxParticleCloudDraw {
             material,
             index_start,
-            index_count: fx_spark_fountain_index_count(cells.len() as u32),
+            index_count: spark_fountain_index_count(cells.len() as u32),
             clouds: [cloud, empty, empty],
         });
         self.custom_live = self.custom_live.saturating_add(1);
@@ -211,8 +210,8 @@ fn spark_template_crt_rand() -> SparkTemplate {
     for x in 0..FX_PARTICLE_CLOUD_GRID_X {
         for y in 0..FX_PARTICLE_CLOUD_GRID_Y {
             for z in 0..FX_PARTICLE_CLOUD_GRID_Z {
-                let id = fx_particle_cloud_particle_id(x, y, z);
-                let xyz = fx_particle_cloud_cell_xyz(
+                let id = particle_cloud_particle_id(x, y, z);
+                let xyz = particle_cloud_cell_xyz(
                     x,
                     y,
                     z,
@@ -222,30 +221,30 @@ fn spark_template_crt_rand() -> SparkTemplate {
                         msvcrt_rand01(&mut holdrand),
                     ],
                 );
-                spark_cells.push(fx_particle_spark_cell_verts(xyz));
-                cloud_cells.push(fx_particle_cloud_cell_verts(xyz));
-                for index in fx_particle_spark_cell_indices(id) {
+                spark_cells.push(particle_spark_cell_verts(xyz));
+                cloud_cells.push(particle_cloud_cell_verts(xyz));
+                for index in particle_spark_cell_indices(id) {
                     spark_indices.push(u32::from(index));
                 }
             }
         }
     }
     spark_cells.sort_unstable_by(|a, b| {
-        match fx_particle_cloud_compare_cell_radius(a[0].xyz, b[0].xyz) {
+        match particle_cloud_compare_cell_radius(a[0].xyz, b[0].xyz) {
             -1 => core::cmp::Ordering::Less,
             1 => core::cmp::Ordering::Greater,
             _ => core::cmp::Ordering::Equal,
         }
     });
     cloud_cells.sort_unstable_by(|a, b| {
-        match fx_particle_cloud_compare_cell_radius(a[0].xyz, b[0].xyz) {
+        match particle_cloud_compare_cell_radius(a[0].xyz, b[0].xyz) {
             -1 => core::cmp::Ordering::Less,
             1 => core::cmp::Ordering::Greater,
             _ => core::cmp::Ordering::Equal,
         }
     });
     let first_xyz = spark_cells[0][0].xyz;
-    let first_r2 = fx_particle_cloud_cell_radius_sq(first_xyz);
+    let first_r2 = particle_cloud_cell_radius_sq(first_xyz);
     let mut vertices = Vec::with_capacity(spark_vert_count + cloud_vert_count);
     for cell in &spark_cells {
         for vert in cell {
@@ -260,7 +259,7 @@ fn spark_template_crt_rand() -> SparkTemplate {
     let spark_base = spark_vert_count as u32;
     let mut indices = spark_indices;
     for cell in 0..FX_PARTICLE_CLOUD_TEMPLATE_CELLS as u32 {
-        for index in fx_particle_cloud_cell_indices(cell) {
+        for index in particle_cloud_cell_indices(cell) {
             indices.push(spark_base.wrapping_add(u32::from(index)));
         }
     }

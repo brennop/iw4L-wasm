@@ -3,7 +3,7 @@
 //! Everything here is presentation: which rows exist, in what order, and what
 //! their cells say. Nothing in this file may change what the load does.
 
-use assets::{LoadSnapshot, StageId, StageOutcome, StageSnapshot};
+use asset_transport::{LoadSnapshot, StageId, StageOutcome, StageSnapshot};
 use bevy::prelude::Color;
 
 /// What a row is doing, once its stages have been folded together.

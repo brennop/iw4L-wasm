@@ -18,6 +18,7 @@ artifactfs.workspace = true
 diag.workspace = true
 gamefs.workspace = true
 assets.workspace = true
+asset_transport.workspace = true
 bootstrap = { path = "../bootstrap" }
 
 # Web build: WebGPU backend for wgpu. Cargo unifies features per target, so this

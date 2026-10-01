@@ -1,5 +1,5 @@
-use crate::trail::fx_pack_code_mesh_vertex;
-use crate::vec::{fx_perpendicular_vector, fx_vec3_length_sq, fx_vec3_normalize};
+use crate::trail::pack_code_mesh_vertex;
+use crate::vec::{perpendicular_vector, vec3_length_sq, vec3_normalize};
 
 pub const FX_POST_LIGHT_DRAW_NAME: &str = "PostLight";
 
@@ -27,7 +27,7 @@ pub struct FxPostLight {
 }
 
 #[inline]
-pub fn fx_post_light_add_allows(live: u32) -> bool {
+pub fn post_light_add_allows(live: u32) -> bool {
     live != FX_POST_LIGHT_ADD_CAP as u32
 }
 
@@ -40,18 +40,18 @@ pub struct FxPostLightTess {
 }
 
 #[inline]
-pub fn fx_post_light_pack_vert(xyz: [f32; 3], color_packed: u32) -> [u8; 32] {
+pub fn post_light_pack_vert(xyz: [f32; 3], color_packed: u32) -> [u8; 32] {
     let [b, g, r, a] = color_packed.to_le_bytes();
-    fx_pack_code_mesh_vertex(xyz, [r, g, b, a], 0, 0, 0)
+    pack_code_mesh_vertex(xyz, [r, g, b, a], 0, 0, 0)
 }
 
-pub fn fx_post_light_generate_verts(light: &FxPostLight, eye: [f32; 3]) -> Option<FxPostLightTess> {
+pub fn post_light_generate_verts(light: &FxPostLight, eye: [f32; 3]) -> Option<FxPostLightTess> {
     let delta = [
         light.end[0] - light.begin[0],
         light.end[1] - light.begin[1],
         light.end[2] - light.begin[2],
     ];
-    let len_sq = fx_vec3_length_sq(delta);
+    let len_sq = vec3_length_sq(delta);
     if len_sq < FX_POST_LIGHT_MIN_DELTA_SQ {
         return None;
     }
@@ -71,8 +71,8 @@ pub fn fx_post_light_generate_verts(light: &FxPostLight, eye: [f32; 3]) -> Optio
             inv_len_sq,
         ],
     ];
-    let dir = fx_vec3_normalize(delta);
-    let ortho0 = fx_perpendicular_vector(dir);
+    let dir = vec3_normalize(delta);
+    let ortho0 = perpendicular_vector(dir);
     let ortho1 = [
         dir[1] * ortho0[2] - dir[2] * ortho0[1],
         dir[2] * ortho0[0] - dir[0] * ortho0[2],
@@ -104,12 +104,12 @@ pub fn fx_post_light_generate_verts(light: &FxPostLight, eye: [f32; 3]) -> Optio
     Some(FxPostLightTess {
         verts,
         color_packed: light.color_packed,
-        indices: fx_post_light_indices(),
+        indices: post_light_indices(),
         args,
     })
 }
 
-fn fx_post_light_indices() -> [u16; 84] {
+fn post_light_indices() -> [u16; 84] {
     let mut out = [0u16; 84];
     let mut w = 0usize;
     for around in 0..8u16 {

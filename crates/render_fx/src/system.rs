@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use frame::{FxSoundPublished, MatchTornDown, SessionSwapApplied};
 use fx::{FxGapCause, FxMsec, set_presentation_clock};
 use net::{
-    CgFrameClock, CgameActive, ClientSet, LastAdoptedSnapshot, advance_cg_frame_clock,
+    ClientSet, FrameClock, GameActive, LastAdoptedSnapshot, advance_cg_frame_clock,
     reconcile_prediction,
 };
 use render_anim::sync_camera_from_presented;
@@ -93,14 +93,14 @@ fn kill_fx_on_match_torn_down(
 fn latch_cgame_active(
     facts: Res<WorldPresentFacts>,
     adopted: Option<Res<LastAdoptedSnapshot>>,
-    mut active: ResMut<CgameActive>,
+    mut active: ResMut<GameActive>,
 ) {
     let spawned = facts.spawned;
     let has_snap = adopted.as_ref().is_some_and(|snap| snap.next().is_some());
-    active.0 = CgameActive::from_first_snapshot(spawned, has_snap);
+    active.0 = GameActive::from_first_snapshot(spawned, has_snap);
 }
 
-fn stamp_presentation_clock(mut host: ResMut<HostFxSystem>, clock: Res<CgFrameClock>) {
+fn stamp_presentation_clock(mut host: ResMut<HostFxSystem>, clock: Res<FrameClock>) {
     let msec = FxMsec(clock.time());
     set_presentation_clock(&mut host.0, msec);
 }
@@ -109,7 +109,7 @@ fn play_pending_fx_sounds(
     mut host: ResMut<HostFxSystem>,
     catalog: Option<Res<PreparedFxCatalog>>,
     bank: Option<Res<audio::SoundBank>>,
-    clock: Res<CgFrameClock>,
+    clock: Res<FrameClock>,
     mut output: MessageWriter<audio::AliasCommand>,
 ) {
     let Some(catalog) = catalog else {
@@ -127,13 +127,13 @@ fn play_pending_fx_sounds(
             .and_then(|parent| parent.elems.get(req.def_index as usize))
             .map(|elem| elem.sound_in_bank(req.random_seed, &bank.0))
         {
-            None | Some(assets::FxBankSound::Gap) => {
+            None | Some(asset_game::FxBankSound::Gap) => {
                 host.0.gaps.raise(FxGapCause::ElemSoundSpawnSkipped {
                     def_index: req.def_index,
                 });
             }
-            Some(assets::FxBankSound::Silent) => {}
-            Some(assets::FxBankSound::Play { namespace, alias }) => {
+            Some(asset_game::FxBankSound::Silent) => {}
+            Some(asset_game::FxBankSound::Play { namespace, alias }) => {
                 output.write(audio::AliasCommand::Play(audio::PlayAlias {
                     namespace,
                     alias: alias.to_owned(),

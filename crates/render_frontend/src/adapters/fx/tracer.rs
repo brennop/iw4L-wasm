@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 use fx_iw4::{
-    FX_TRAIL_TANGENT_PACKED, FxBeamVert, fx_beam_color_rgba, fx_beam_generate_verts,
-    fx_beam_index_count, fx_beam_vert_count, fx_create_clip_matrix, fx_trail_pack_normal,
-    fx_trail_pack_texcoord,
+    FX_TRAIL_TANGENT_PACKED, FxBeamVert, beam_color_rgba, beam_generate_verts, beam_index_count,
+    beam_vert_count, create_clip_matrix, trail_pack_normal, trail_pack_texcoord,
 };
 use render_fx::{CombatFxDump, FxWorldColorImages, TracerWorld};
 
@@ -35,7 +34,7 @@ pub(crate) fn present_tracer_beams(
     let created = tan_half_fov.and_then(|(tx, ty)| {
         if tx > 0.0 && ty > 0.0 {
             let axis = [view_fwd, cam_tf.left().to_array(), cam_tf.up().to_array()];
-            Some(fx_create_clip_matrix(view_pos, axis, tx, ty))
+            Some(create_clip_matrix(view_pos, axis, tx, ty))
         } else {
             None
         }
@@ -80,19 +79,19 @@ pub(crate) fn present_tracer_beams(
             } => {
                 let seg = beam.tess.segment_count.max(1) as usize;
                 vert_buf.resize(
-                    fx_beam_vert_count(seg),
+                    beam_vert_count(seg),
                     FxBeamVert {
                         xyz: [0.0; 3],
                         uv: [0.0; 2],
                         color: [0.0; 4],
                     },
                 );
-                idx_buf.resize(fx_beam_index_count(seg), 0u16);
+                idx_buf.resize(beam_index_count(seg), 0u16);
                 let clip_pair = created
                     .as_ref()
                     .zip(created_inv.as_ref())
                     .or_else(|| clip_from_world.as_ref().zip(inv_clip.as_ref()));
-                let Some((nv, ni)) = fx_beam_generate_verts(
+                let Some((nv, ni)) = beam_generate_verts(
                     &beam.tess,
                     view_pos,
                     view_fwd,
@@ -106,12 +105,12 @@ pub(crate) fn present_tracer_beams(
                 let vert_used = plan.mesh.vert_used;
                 let index_used = plan.mesh.index_used;
                 let mut verts_ok = true;
-                let normal = fx_trail_pack_normal([0.0, 1.0, 0.0]);
+                let normal = trail_pack_normal([0.0, 1.0, 0.0]);
                 for v in &vert_buf[..nv] {
                     if !plan.push_trail_vert(
                         v.xyz,
-                        fx_beam_color_rgba(v.color),
-                        fx_trail_pack_texcoord(v.uv[0], v.uv[1]),
+                        beam_color_rgba(v.color),
+                        trail_pack_texcoord(v.uv[0], v.uv[1]),
                         normal,
                         FX_TRAIL_TANGENT_PACKED,
                     ) {

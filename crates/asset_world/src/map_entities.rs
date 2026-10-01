@@ -138,7 +138,6 @@ pub fn exploding_prop_machine(
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapUseTrigger {
-    pub hulls: Option<Vec<MapTriggerHull>>,
     pub target: String,
     pub source_ordinal: u32,
     pub classname: String,
@@ -183,7 +182,6 @@ pub fn parse_map_use_triggers(text: &str) -> Vec<MapUseTrigger> {
                 .find(|(name, _)| *name == target)
                 .map(|(_, angles)| *angles);
             Some(MapUseTrigger {
-                hulls: None,
                 target: target.to_owned(),
                 source_ordinal: u32::try_from(ordinal).ok()?,
                 classname: classname.to_owned(),
@@ -299,25 +297,6 @@ pub fn map_script_structs_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<MapScript
     parse_map_script_structs(text)
 }
 
-pub fn map_use_triggers(s: &ZoneStream<'_>) -> Vec<MapUseTrigger> {
-    let Some(text) = entity_string(s) else {
-        return Vec::new();
-    };
-    let mut triggers = parse_map_use_triggers(text);
-    if let Some(geo) = s.map_ents() {
-        for trigger in &mut triggers {
-            if let Some(index) = trigger
-                .model
-                .strip_prefix('?')
-                .and_then(|v| v.parse::<usize>().ok())
-            {
-                trigger.hulls = capture_trigger_hulls(s, geo, index);
-            }
-        }
-    }
-    triggers
-}
-
 pub fn map_use_triggers_t5(s: &fastfile_t5::ZoneStream<'_>) -> Vec<MapUseTrigger> {
     let Some(text) = entity_string_t5(s) else {
         return Vec::new();
@@ -329,15 +308,7 @@ pub fn map_use_triggers_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<MapUseTrigg
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    let mut triggers = parse_map_use_triggers(text);
-    if let Some(geo) = s.map_ents() {
-        for trigger in &mut triggers {
-            if let Some(index) = trigger.model.strip_prefix('?').and_then(|v| v.parse().ok()) {
-                trigger.hulls = capture_iw5_trigger_hulls(s, geo, index);
-            }
-        }
-    }
-    triggers
+    parse_map_use_triggers(text)
 }
 
 fn has_ascii_prefix(value: &str, prefix: &str) -> bool {
@@ -399,6 +370,14 @@ pub fn worldspawn_north_yaw(s: &ZoneStream<'_>) -> Option<f32> {
     parse_worldspawn_north_yaw(text)
 }
 
+pub fn airstrike_height(s: &ZoneStream<'_>) -> Option<f32> {
+    parse_airstrike_height(entity_string(s)?)
+}
+
+pub fn airstrike_height_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Option<f32> {
+    parse_airstrike_height(entity_string_iw5(s)?)
+}
+
 pub fn minimap_corners_t5(s: &fastfile_t5::ZoneStream<'_>) -> Option<MinimapCorners> {
     let text = entity_string_t5(s)?;
     parse_minimap_corners(text)
@@ -445,6 +424,126 @@ pub fn dm_spawn_points_t5(s: &fastfile_t5::ZoneStream<'_>) -> Vec<SpawnPoint> {
         }
     }
     spawns
+}
+
+pub fn t5_entities_for_iw4_rules(text: &str) -> String {
+    type Block = Vec<(String, String)>;
+    fn get<'a>(block: &'a Block, key: &str) -> Option<&'a str> {
+        block
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+    fn set(block: &mut Block, key: &str, value: String) {
+        match block.iter_mut().find(|(k, _)| k == key) {
+            Some((_, v)) => *v = value,
+            None => block.push((key.to_owned(), value)),
+        }
+    }
+
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut open: Option<Block> = None;
+    for line in text.lines() {
+        match (line.trim(), open.as_mut()) {
+            ("{", None) => open = Some(Vec::new()),
+            ("}", Some(_)) => blocks.extend(open.take()),
+            (trimmed, Some(block)) => {
+                let mut quoted = trimmed.split('"').skip(1).step_by(2);
+                if let (Some(key), Some(value)) = (quoted.next(), quoted.next()) {
+                    block.push((key.to_owned(), value.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut flag_visuals: Vec<(String, String)> = Vec::new();
+    let mut spawned: Vec<Block> = Vec::new();
+    for block in &mut blocks {
+        let team = get(block, "script_team").map(str::to_owned);
+        if let Some(suffix) = get(block, "classname").and_then(|c| c.strip_prefix("mp_dem_spawn_"))
+        {
+            set(block, "classname", format!("mp_dd_spawn_{suffix}"));
+        }
+        match (get(block, "targetname"), team.as_deref()) {
+            (Some("bombzone_dem"), _) => set(block, "targetname", "dd_bombzone".to_owned()),
+            (Some("ctf_flag_zone_trig"), Some(team)) => {
+                set(block, "targetname", format!("ctf_zone_{team}"));
+                if get(block, "height").is_none() {
+                    set(block, "height", "128".to_owned());
+                }
+            }
+            (Some("ctf_flag_pickup_trig"), Some(team)) => match get(block, "target") {
+                Some(target) => flag_visuals.push((target.to_owned(), format!("ctf_flag_{team}"))),
+                None => spawned.push(
+                    [("classname", "script_model".to_owned())]
+                        .into_iter()
+                        .chain(
+                            ["origin", "angles"]
+                                .into_iter()
+                                .filter_map(|key| Some((key, get(block, key)?.to_owned()))),
+                        )
+                        .chain([("targetname", format!("ctf_flag_{team}"))])
+                        .map(|(k, v)| (k.to_owned(), v))
+                        .collect(),
+                ),
+            },
+            _ => {}
+        }
+        if let Some(names) = get(block, "script_gameobjectname") {
+            let mut tokens: Vec<&str> = Vec::new();
+            for token in names.split_whitespace() {
+                let token = match token {
+                    "bombzone_dem" => "dd_bombzone",
+                    token => token,
+                };
+                tokens.push(token);
+                tokens.extend(match token {
+                    "dem" => Some("dd"),
+                    "tdm" => Some("war"),
+                    "koth" => Some("hq"),
+                    _ => None,
+                });
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            tokens.retain(|token| seen.insert(*token));
+            let names = tokens.join(" ");
+            set(block, "script_gameobjectname", names);
+        }
+    }
+    for block in &mut blocks {
+        if let Some((_, name)) = get(block, "targetname")
+            .and_then(|own| flag_visuals.iter().find(|(target, _)| target == own))
+        {
+            let name = name.clone();
+            set(block, "targetname", name);
+        }
+    }
+    blocks.extend(spawned);
+    if !blocks
+        .iter()
+        .any(|block| get(block, "targetname") == Some("care_package"))
+    {
+        blocks.push(vec![
+            ("classname".into(), "script_model".into()),
+            ("targetname".into(), "care_package".into()),
+            ("target".into(), "care_package_collision".into()),
+        ]);
+        blocks.push(vec![
+            ("classname".into(), "script_brushmodel".into()),
+            ("targetname".into(), "care_package_collision".into()),
+        ]);
+    }
+
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    for block in blocks {
+        out.push_str("{\n");
+        for (key, value) in block {
+            out.push_str(&format!("\"{key}\" \"{value}\"\n"));
+        }
+        out.push_str("}\n");
+    }
+    out
 }
 
 pub fn script_model_placements_t5(s: &fastfile_t5::ZoneStream<'_>) -> Vec<ScriptModelPlacement> {
@@ -507,6 +606,14 @@ fn entity_string<'a>(s: &'a ZoneStream<'_>) -> Option<&'a str> {
 
 pub fn map_ents_entity_string<'a>(s: &'a ZoneStream<'_>) -> Option<&'a str> {
     entity_string(s)
+}
+
+pub fn map_ents_entity_string_t5<'a>(s: &'a fastfile_t5::ZoneStream<'_>) -> Option<&'a str> {
+    entity_string_t5(s)
+}
+
+pub fn map_ents_entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Option<&'a str> {
+    entity_string_iw5(s)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -645,6 +752,13 @@ fn parse_minimap_corners(text: &str) -> Option<MinimapCorners> {
         a: corners[0],
         b: corners[1],
     })
+}
+
+fn parse_airstrike_height(text: &str) -> Option<f32> {
+    parse_entities(text)
+        .find(|e| e.targetname == Some("airstrikeheight"))
+        .and_then(|e| e.origin)
+        .map(|origin| origin[2])
 }
 
 fn parse_worldspawn_north_yaw(text: &str) -> Option<f32> {
@@ -916,15 +1030,55 @@ enum EntityKey {
     Other,
 }
 
-const IW5_KEY_CLASSNAME: &str = "1668";
-const IW5_KEY_ORIGIN: &str = "1669";
-const IW5_KEY_MODEL: &str = "1670";
-const IW5_KEY_TARGET: &str = "1672";
-const IW5_KEY_TARGETNAME: &str = "1673";
-const IW5_KEY_ANGLES: &str = "1677";
-const IW5_KEY_GAMEOBJECT: &str = "11848";
-const IW5_KEY_DESTRUCTIBLE_TYPE: &str = "2369";
-const IW5_KEY_LT_ORIGIN: &str = "2814";
+const IW5_KEYS: &[(&str, &str)] = &[
+    ("1668", "classname"),
+    ("1669", "origin"),
+    ("1670", "model"),
+    ("1671", "spawnflags"),
+    ("1672", "target"),
+    ("1673", "targetname"),
+    ("1676", "dmg"),
+    ("1677", "angles"),
+    ("1679", "script_linkname"),
+    ("1774", "script_noteworthy"),
+    ("1782", "radius"),
+    ("1783", "height"),
+    ("2009", "script_exploder"),
+    ("2328", "script_linkto"),
+    ("2369", "destructible_type"),
+    ("2814", "ltOrigin"),
+    ("7864", "script_prefab_exploder"),
+    ("11039", "animation"),
+    ("11848", "script_gameobjectname"),
+    ("11996", "script_label"),
+    ("12906", "script_type"),
+];
+
+fn iw5_key_name(key: &str) -> Option<&'static str> {
+    IW5_KEYS
+        .iter()
+        .find(|(id, _)| *id == key)
+        .map(|(_, name)| *name)
+}
+
+pub fn iw5_entity_string_named(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 4);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        match trimmed.split_once(' ') {
+            Some((key, value)) if key.bytes().all(|b| b.is_ascii_digit()) && !key.is_empty() => {
+                let name = iw5_key_name(key).unwrap_or(key);
+                out.push('"');
+                out.push_str(name);
+                out.push_str("\" ");
+                out.push_str(value.trim());
+            }
+            _ => out.push_str(trimmed),
+        }
+        out.push('\n');
+    }
+    out
+}
 
 fn entity_pair(line: &str) -> Option<(EntityKey, &str)> {
     if let Some((key, value)) = quoted_pair(line) {
@@ -967,23 +1121,7 @@ fn numbered_pair(line: &str) -> Option<(EntityKey, &str)> {
     let line = line.trim();
     let (key, rest) = line.split_once(' ')?;
 
-    let key = match key {
-        IW5_KEY_CLASSNAME => EntityKey::Classname,
-        IW5_KEY_ORIGIN => EntityKey::Origin,
-        IW5_KEY_ANGLES => EntityKey::Angles,
-        IW5_KEY_MODEL => EntityKey::Model,
-        IW5_KEY_TARGET => EntityKey::Target,
-        IW5_KEY_TARGETNAME => EntityKey::Targetname,
-        IW5_KEY_GAMEOBJECT => EntityKey::Gameobject,
-        IW5_KEY_DESTRUCTIBLE_TYPE => EntityKey::DestructibleType,
-        IW5_KEY_LT_ORIGIN => EntityKey::LtOrigin,
-        "11996" => EntityKey::ScriptLabel,
-        "1782" => EntityKey::Radius,
-        "1783" => EntityKey::Height,
-        "2009" => EntityKey::ScriptExploder,
-        "7864" => EntityKey::ScriptPrefabExploder,
-        named => named_key(named),
-    };
+    let key = named_key(iw5_key_name(key).unwrap_or(key));
     let mut quotes = rest.match_indices('"').map(|(index, _)| index);
     let a = quotes.next()?;
     let b = quotes.next()?;
@@ -1019,6 +1157,24 @@ pub struct MapTriggerHull {
     pub half: [f32; 3],
     pub slabs: Vec<([f32; 3], f32, f32)>,
 }
+pub fn trigger_models(s: &ZoneStream<'_>) -> Vec<Vec<MapTriggerHull>> {
+    let Some(geo) = s.map_ents() else {
+        return Vec::new();
+    };
+    (0..geo.trigger_model_count)
+        .map(|n| capture_trigger_hulls(s, geo, n).unwrap_or_default())
+        .collect()
+}
+
+pub fn trigger_models_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<Vec<MapTriggerHull>> {
+    let Some(geo) = s.map_ents() else {
+        return Vec::new();
+    };
+    (0..geo.trigger_model_count)
+        .map(|n| capture_iw5_trigger_hulls(s, geo, n).unwrap_or_default())
+        .collect()
+}
+
 fn capture_trigger_hulls(
     s: &ZoneStream<'_>,
     g: fastfile_iw4::MapEntsGeometry,
@@ -1117,42 +1273,4 @@ fn capture_iw5_trigger_hulls(
         out.push(MapTriggerHull { mid, half, slabs });
     }
     Some(out)
-}
-
-pub fn capture_brush_trigger_hulls(triggers: &mut [MapUseTrigger], clip: &crate::ClipCollision) {
-    for trigger in triggers {
-        trigger.hulls = (|| {
-            let index: usize = trigger.model.strip_prefix('*')?.parse().ok()?;
-            let model = clip.cmodels.get(index)?;
-            let first = model.first_brush as usize;
-            let ids = clip
-                .leafbrushes
-                .get(first..first.checked_add(model.num_brushes as usize)?)?;
-            ids.iter()
-                .map(|&id| {
-                    let brush = clip.brushes.get(id as usize)?;
-                    let planes = &brush.planes;
-                    if planes.len() < 6 {
-                        return None;
-                    }
-                    let mins: [f32; 3] = std::array::from_fn(|i| -planes[i * 2 + 1][3]);
-                    let maxs: [f32; 3] = std::array::from_fn(|i| planes[i * 2][3]);
-                    let mid = std::array::from_fn(|i| (mins[i] + maxs[i]) * 0.5);
-                    let half = std::array::from_fn(|i| (maxs[i] - mins[i]) * 0.5);
-                    let slabs = planes[6..]
-                        .iter()
-                        .map(|p| {
-                            let dir = [p[0], p[1], p[2]];
-                            // The opposite slab face is outside the brush's axial bounds.
-                            let lower = (0..3)
-                                .map(|i| dir[i] * if dir[i] >= 0.0 { mins[i] } else { maxs[i] })
-                                .sum::<f32>();
-                            (dir, (lower + p[3]) * 0.5, (p[3] - lower) * 0.5)
-                        })
-                        .collect();
-                    Some(MapTriggerHull { mid, half, slabs })
-                })
-                .collect()
-        })();
-    }
 }

@@ -64,7 +64,7 @@ tools).
 ```bash
 cp .env.example .env          # IW4L_GAMES — folder containing the game trees
 make map mp_boneyard          # run a map
-make map mp_boneyard CMDS='spawn assault; wait 2s; quit'
+make map mp_boneyard CMDS='spawn 0; wait 2s; quit'
 make help                     # every recipe
 ```
 

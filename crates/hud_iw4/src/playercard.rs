@@ -83,7 +83,7 @@ impl PlayerCardData {
 }
 
 #[must_use]
-pub fn cg_player_cards_set_script_slot(
+pub fn player_cards_set_script_slot(
     cg_time: i32,
     name16: &[u8; 16],
     team: i32,

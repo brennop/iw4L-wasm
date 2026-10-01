@@ -28,12 +28,12 @@ pub const FX_MARKS_INIT_FRAME_COUNT: i32 = 1;
 pub const FX_MARKS_INIT_ALLOCED_COUNT: u32 = 0;
 
 #[inline]
-pub const fn fx_mark_world_brushes_invokes_callback(any_marks: bool) -> bool {
+pub const fn mark_world_brushes_invokes_callback(any_marks: bool) -> bool {
     any_marks
 }
 
 #[inline]
-pub const fn fx_mark_point_groups_for_count(point_count: u32) -> u32 {
+pub const fn mark_point_groups_for_count(point_count: u32) -> u32 {
     point_count.saturating_add(1) / 2
 }
 
@@ -75,12 +75,12 @@ pub struct FxAllocMarkRequest {
     pub first_tri_context: u32,
 }
 
-pub fn fx_alloc_and_construct_mark(
+pub fn alloc_and_construct_mark(
     req: &FxAllocMarkRequest,
     tri_handle: u16,
     point_handle: u16,
 ) -> Result<FxMarkConstructed, FxAllocMarkRefuse> {
-    if !fx_mark_world_brushes_invokes_callback(req.any_marks) {
+    if !mark_world_brushes_invokes_callback(req.any_marks) {
         return Err(FxAllocMarkRefuse::CallbackNotInvoked);
     }
     if req.tri_count == 0 {

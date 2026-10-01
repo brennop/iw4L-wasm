@@ -2,7 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use assets::{CreateFxOneshot, FxDefinitions, FxName, OwnedFxEffectDef};
+use asset_audio::CreateFxOneshot;
+use asset_game::{FxDefinitions, FxName, OwnedFxEffectDef};
 use bevy::tasks::ComputeTaskPool;
 use fx::{
     FX_CATALOG_INDEX_NONE, FxBoltTarget, FxChildKind, FxCloudInstance, FxDrawElemContext,
@@ -17,12 +18,11 @@ use fx::{
 };
 use fx_iw4::{
     FX_ELEM_ATLAS_OFF, FX_ELEM_ATLAS_SIZE, FX_RAND_CH_COLOR, FX_RAND_CH_SCALE, FX_RAND_CH_SIZE0,
-    FxElemType, fx_apply_lighting_frac_bgra, fx_build_cloud, fx_clamp_elem_rotation_time,
-    fx_cull_cloud, fx_cull_elem_light, fx_effect_def_needs_lighting_sample,
-    fx_elem_light_color_bgr, fx_elem_uses_lighting_frac, fx_evaluate_rotation_total,
-    fx_evaluate_scale, fx_evaluate_size0, fx_evaluate_size1, fx_get_elem_angles_axis,
-    fx_get_velocity_at_time, fx_random_table_f32, fx_sprite_atlas_uv, fx_vec3_normalize,
-    fx_vis_blocker_add_prepared,
+    FxElemType, apply_lighting_frac_bgra, build_cloud, clamp_elem_rotation_time, cull_cloud,
+    cull_elem_light, effect_def_needs_lighting_sample, elem_light_color_bgr,
+    elem_uses_lighting_frac, evaluate_rotation_total, evaluate_scale, evaluate_size0,
+    evaluate_size1, get_elem_angles_axis, get_velocity_at_time, random_table_f32, sprite_atlas_uv,
+    vec3_normalize, vis_blocker_add_prepared,
 };
 use math_iw4::angle_vectors;
 use sim::SimWorld;
@@ -142,7 +142,7 @@ fn stamp_packed_lighting(
     let index = effect.catalog_index;
     let origin = effect.origin;
     let needs = catalog_lookup(catalog, index)
-        .is_some_and(|d| fx_effect_def_needs_lighting_sample(d.view.flags));
+        .is_some_and(|d| effect_def_needs_lighting_sample(d.view.flags));
     if !needs {
         return;
     }
@@ -193,14 +193,8 @@ pub fn restamp_missing_packed_lighting(host: &mut FxSystemHost, world: Option<&d
     }
 }
 
-fn fx_evaluate_color_rgba(
-    samples: &[u8],
-    intervals: u8,
-    time: f32,
-    random: f32,
-) -> Option<[u8; 4]> {
-    fx_iw4::fx_evaluate_color_bgra(samples, intervals, time, random)
-        .map(|[b, g, r, a]| [r, g, b, a])
+fn evaluate_color_rgba(samples: &[u8], intervals: u8, time: f32, random: f32) -> Option<[u8; 4]> {
+    fx_iw4::evaluate_color_bgra(samples, intervals, time, random).map(|[b, g, r, a]| [r, g, b, a])
 }
 
 fn apply_elem_lighting(
@@ -211,7 +205,7 @@ fn apply_elem_lighting(
     def_index: u8,
     gaps: &mut FxVertsGaps,
 ) -> [u8; 4] {
-    if !fx_elem_uses_lighting_frac(lighting_frac) {
+    if !elem_uses_lighting_frac(lighting_frac) {
         return color;
     }
     gaps.lighting_frac = gaps.lighting_frac.saturating_add(1);
@@ -231,7 +225,7 @@ fn apply_elem_lighting(
         FxPackedLightingSrc::Missing => {}
     }
     let [r, g, b, a] = color;
-    let [b, g, r, a] = fx_apply_lighting_frac_bgra([b, g, r, a], packed, lighting_frac);
+    let [b, g, r, a] = apply_lighting_frac_bgra([b, g, r, a], packed, lighting_frac);
     [r, g, b, a]
 }
 
@@ -293,6 +287,50 @@ pub fn play_named_oriented_in_world(
     world: Option<&dyn FxScene>,
 ) -> Option<PlayResult> {
     let msec = host.msec_now;
+    let result = play_named_at(host, catalog, cache, name, origin, axis, msec, world)?;
+    drain_spawn_side_effects(host, catalog, cache, world);
+    Some(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_named_oriented_in_world(
+    host: &mut FxSystemHost,
+    catalog: &FxDefinitions,
+    cache: &FxElemInfoCache,
+    name: FxName<'_>,
+    origin: [f32; 3],
+    axis: [[f32; 3]; 3],
+    msec: i32,
+    world: Option<&dyn FxScene>,
+) -> Option<PlayResult> {
+    let effect = name.resolve(catalog)?;
+    let elem_infos = cache.arc_for(catalog, effect);
+    let result = spawn_oriented(
+        host,
+        FxPlayRequest {
+            def_name: effect.name.as_str(),
+            pose: FxPlayPose { origin, axis, msec },
+            wants_spotlight: false,
+            catalog_index: catalog_index_of(catalog, effect),
+            def: Some(def_info(effect, &elem_infos)),
+        },
+    );
+    let result = stamp_play_lighting(host, catalog, world, result);
+    drain_spawn_side_effects(host, catalog, cache, world);
+    Some(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn play_named_oriented_at_msec(
+    host: &mut FxSystemHost,
+    catalog: &FxDefinitions,
+    cache: &FxElemInfoCache,
+    name: FxName<'_>,
+    origin: [f32; 3],
+    axis: [[f32; 3]; 3],
+    msec: i32,
+    world: Option<&dyn FxScene>,
+) -> Option<PlayResult> {
     let result = play_named_at(host, catalog, cache, name, origin, axis, msec, world)?;
     drain_spawn_side_effects(host, catalog, cache, world);
     Some(result)
@@ -500,15 +538,15 @@ fn record_spawn_decal(
         .and_then(|parent| parent.elems.get(req.def_index as usize))
     {
         host.last_decal_vis =
-            Some(fx_iw4::fx_elem_visual_index(elem.view.visual_count, req.random_seed) as u8);
-        let rand_size = fx_random_table_f32(req.random_seed, FX_RAND_CH_SIZE0);
-        host.last_decal_size0 = fx_evaluate_size0(
+            Some(fx_iw4::elem_visual_index(elem.view.visual_count, req.random_seed) as u8);
+        let rand_size = random_table_f32(req.random_seed, FX_RAND_CH_SIZE0);
+        host.last_decal_size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             0.0,
             rand_size,
         );
-        host.last_decal_rotation = fx_evaluate_rotation_total(
+        host.last_decal_rotation = evaluate_rotation_total(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             0.0,
@@ -516,8 +554,8 @@ fn record_spawn_decal(
             elem.view.initial_rotation,
             1.0,
         );
-        let rand_color = fx_random_table_f32(req.random_seed, FX_RAND_CH_COLOR);
-        host.last_decal_color = fx_evaluate_color_rgba(
+        let rand_color = random_table_f32(req.random_seed, FX_RAND_CH_COLOR);
+        host.last_decal_color = evaluate_color_rgba(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             0.0,
@@ -618,7 +656,7 @@ fn eval_pending_collide(
     let Some(elem) = effect.elems.get(q.def_index as usize) else {
         return out;
     };
-    if fx_iw4::fx_elem_uses_collision(elem.view.flags) {
+    if fx_iw4::elem_uses_collision(elem.view.flags) {
         let Some(world) = clip_world else {
             out.gap = Some(q.def_index);
             return out;
@@ -792,7 +830,7 @@ fn tick_fx_pass(
             let out = (|| {
                 let effect = catalog_lookup(catalog, q.catalog_index)?;
                 let elem = effect.elems.get(q.def_index as usize)?;
-                if fx_iw4::fx_elem_uses_collision(elem.view.flags) {
+                if fx_iw4::elem_uses_collision(elem.view.flags) {
                     let Some(world) = clip_world else {
                         collide_gap_indices.borrow_mut().push(q.def_index);
                         return None;
@@ -840,7 +878,7 @@ fn tick_fx_pass(
             if elem.effect_emitted.is_absent() {
                 return None;
             }
-            let (base, max) = fx_iw4::fx_emit_dist_range(
+            let (base, max) = fx_iw4::emit_dist_range(
                 elem.view.emit_dist[0],
                 elem.view.emit_dist[1],
                 elem.view.emit_dist_variance[0],
@@ -851,7 +889,7 @@ fn tick_fx_pass(
             if elem.view.emit_dist_variance[1] != 0.0 {
                 emit_rand_gap_indices.push(q.def_index);
             }
-            Some(fx_iw4::fx_process_emitting_schedule(
+            Some(fx_iw4::process_emitting_schedule(
                 q.emit_residual,
                 q.origin_begin,
                 q.origin_end,
@@ -934,23 +972,23 @@ fn tick_fx_pass(
         |q: FxSparkFillQuery<'_>| {
             let effect = catalog_lookup(catalog, q.catalog_index)?;
             let elem = effect.elems.get(q.def_index as usize)?;
-            let rand_size = fx_random_table_f32(q.elem_random_seed, FX_RAND_CH_SIZE0);
-            let rand_scale = fx_random_table_f32(q.elem_random_seed, FX_RAND_CH_SCALE);
-            let rand_color = fx_random_table_f32(q.elem_random_seed, FX_RAND_CH_COLOR);
-            let size0 = fx_evaluate_size0(
+            let rand_size = random_table_f32(q.elem_random_seed, FX_RAND_CH_SIZE0);
+            let rand_scale = random_table_f32(q.elem_random_seed, FX_RAND_CH_SCALE);
+            let rand_color = random_table_f32(q.elem_random_seed, FX_RAND_CH_COLOR);
+            let size0 = evaluate_size0(
                 elem.vis_samples.as_slice(),
                 elem.view.vis_state_interval_count,
                 q.norm_time,
                 rand_size,
             )?;
-            let scale = fx_evaluate_scale(
+            let scale = evaluate_scale(
                 elem.vis_samples.as_slice(),
                 elem.view.vis_state_interval_count,
                 q.norm_time,
                 rand_scale,
             )
             .unwrap_or(0.0);
-            let color = fx_evaluate_color_rgba(
+            let color = evaluate_color_rgba(
                 elem.vis_samples.as_slice(),
                 elem.view.vis_state_interval_count,
                 q.norm_time,
@@ -1031,9 +1069,9 @@ pub fn build_fx_verts(
             gaps.no_material_visual = gaps.no_material_visual.saturating_add(1);
             return None;
         };
-        let rand_size = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_color = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
-        let Some(size0) = fx_evaluate_size0(
+        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
+        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let Some(size0) = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1048,7 +1086,7 @@ pub fn build_fx_verts(
         }
 
         let size1 = if ctx.elem_type == 2 {
-            let Some(s1) = fx_evaluate_size1(
+            let Some(s1) = evaluate_size1(
                 elem.vis_samples.as_slice(),
                 elem.view.vis_state_interval_count,
                 ctx.norm_time,
@@ -1065,7 +1103,7 @@ pub fn build_fx_verts(
         } else {
             0.0
         };
-        let (mut color, color_missing) = match fx_evaluate_color_rgba(
+        let (mut color, color_missing) = match evaluate_color_rgba(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1089,7 +1127,7 @@ pub fn build_fx_verts(
         );
 
         let axis = if ctx.elem_type == 1 {
-            fx_get_elem_angles_axis(
+            get_elem_angles_axis(
                 elem.view.spawn_angles,
                 elem.view.angular_velocity,
                 ctx.elem_random_seed,
@@ -1101,7 +1139,7 @@ pub fn build_fx_verts(
         };
 
         let vel_dir = if ctx.elem_type == 2 {
-            let vel = fx_get_velocity_at_time(
+            let vel = get_velocity_at_time(
                 ctx.flags,
                 ctx.base_vel,
                 ctx.age_msec as f32,
@@ -1111,11 +1149,11 @@ pub fn build_fx_verts(
                 ctx.axis,
                 ctx.elem_random_seed,
             );
-            fx_vec3_normalize(vel)
+            vec3_normalize(vel)
         } else {
             [0.0; 3]
         };
-        let rotation_rad = fx_evaluate_rotation_total(
+        let rotation_rad = evaluate_rotation_total(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1125,7 +1163,7 @@ pub fn build_fx_verts(
         )
         .unwrap_or(0.0);
         let atlas = if elem.raw.len() >= FX_ELEM_ATLAS_OFF + FX_ELEM_ATLAS_SIZE {
-            fx_sprite_atlas_uv(
+            sprite_atlas_uv(
                 &elem.raw[FX_ELEM_ATLAS_OFF..FX_ELEM_ATLAS_OFF + FX_ELEM_ATLAS_SIZE],
                 ctx.elem_random_seed,
                 ctx.sequence,
@@ -1206,9 +1244,9 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_color = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
-        let size0 = fx_evaluate_size0(
+        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
+        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1217,21 +1255,21 @@ pub fn build_fx_verts(
         if size0 <= 0.0 {
             return None;
         }
-        let size1 = fx_evaluate_size1(
+        let size1 = evaluate_size1(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_size,
         )
         .unwrap_or(size0);
-        let color = fx_evaluate_color_rgba(
+        let color = evaluate_color_rgba(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_color,
         )
         .unwrap_or([255, 255, 255, 255]);
-        let rotation = fx_evaluate_rotation_total(
+        let rotation = evaluate_rotation_total(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1264,8 +1302,8 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let size1 = fx_evaluate_size1(
+        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
+        let size1 = evaluate_size1(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1281,29 +1319,29 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_scale = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
-        let rand_color = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
-        let size0 = fx_evaluate_size0(
+        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
+        let rand_scale = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
+        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_size,
         )?;
-        let size1 = fx_evaluate_size1(
+        let size1 = evaluate_size1(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_size,
         )
         .unwrap_or(size0);
-        let scale = fx_evaluate_scale(
+        let scale = evaluate_scale(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_scale,
         )?;
-        if fx_cull_cloud(
+        if cull_cloud(
             cull.elem_draw,
             cull.planes,
             cull.planes.len() as u32,
@@ -1315,7 +1353,7 @@ pub fn build_fx_verts(
         ) {
             return None;
         }
-        let (color, _) = match fx_evaluate_color_rgba(
+        let (color, _) = match evaluate_color_rgba(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1324,19 +1362,19 @@ pub fn build_fx_verts(
             Some(c) => (c, false),
             None => ([255, 255, 255, 255], true),
         };
-        let rot_t = fx_clamp_elem_rotation_time(
+        let rot_t = clamp_elem_rotation_time(
             ctx.age_msec as f32,
             ctx.life_msec as f32,
             ctx.at_rest_fraction,
         );
-        let axis = fx_get_elem_angles_axis(
+        let axis = get_elem_angles_axis(
             elem.view.spawn_angles,
             elem.view.angular_velocity,
             ctx.elem_random_seed,
             rot_t,
             ctx.axis,
         );
-        let vel = fx_get_velocity_at_time(
+        let vel = get_velocity_at_time(
             ctx.flags,
             ctx.base_vel,
             ctx.age_msec as f32,
@@ -1350,7 +1388,7 @@ pub fn build_fx_verts(
             def_name: ctx.def_name.to_owned(),
             catalog_index: ctx.catalog_index,
             def_index: ctx.def_index,
-            cloud: fx_build_cloud(
+            cloud: build_cloud(
                 ctx.origin,
                 axis,
                 size0,
@@ -1371,10 +1409,10 @@ pub fn build_fx_verts(
             &catalog_name_n,
         )?;
         let elem = effect.elems.get(ctx.def_index as usize)?;
-        let rand_size = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
-        let rand_scale = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
-        let rand_color = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
-        let size0 = fx_evaluate_size0(
+        let rand_size = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SIZE0);
+        let rand_scale = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
+        let rand_color = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_COLOR);
+        let size0 = evaluate_size0(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
@@ -1383,13 +1421,13 @@ pub fn build_fx_verts(
         if size0 <= 0.0 {
             return None;
         }
-        let scale = fx_evaluate_scale(
+        let scale = evaluate_scale(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_scale,
         )?;
-        if fx_cull_elem_light(
+        if cull_elem_light(
             cull.elem_draw,
             cull.planes,
             cull.planes.len() as u32,
@@ -1399,18 +1437,18 @@ pub fn build_fx_verts(
         ) {
             return None;
         }
-        let color = fx_evaluate_color_rgba(
+        let color = evaluate_color_rgba(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,
             ctx.norm_time,
             rand_color,
         )?;
-        let rot_t = fx_clamp_elem_rotation_time(
+        let rot_t = clamp_elem_rotation_time(
             ctx.age_msec as f32,
             ctx.life_msec as f32,
             ctx.at_rest_fraction,
         );
-        let axis = fx_get_elem_angles_axis(
+        let axis = get_elem_angles_axis(
             elem.view.spawn_angles,
             elem.view.angular_velocity,
             ctx.elem_random_seed,
@@ -1423,7 +1461,7 @@ pub fn build_fx_verts(
             is_spot: ctx.elem_type == FxElemType::SpotLight as u8,
             origin: ctx.origin,
             radius: size0,
-            color_bgr: fx_elem_light_color_bgr(color, scale),
+            color_bgr: elem_light_color_bgr(color, scale),
             axis,
         })
     };
@@ -1442,7 +1480,7 @@ pub fn build_fx_verts(
         camera,
     );
     for (flags, origin, size0, alpha, fade_in, fade_out) in vis_blocker_adds.into_inner() {
-        fx_vis_blocker_add_prepared(
+        vis_blocker_add_prepared(
             &mut host.vis_blocker_read,
             flags,
             origin,
@@ -1467,8 +1505,8 @@ fn evaluate_fx_model_instance(
     let effect = catalog_lookup_draw(catalog, ctx.catalog_index, catalog_index_n, catalog_name_n)?;
     let elem = effect.elems.get(ctx.def_index as usize)?;
     let model_index = elem.model_edge(ctx.elem_random_seed)?.bound_index()?;
-    let rand_scale = fx_random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
-    let scale = fx_evaluate_scale(
+    let rand_scale = random_table_f32(ctx.elem_random_seed, FX_RAND_CH_SCALE);
+    let scale = evaluate_scale(
         elem.vis_samples.as_slice(),
         elem.view.vis_state_interval_count,
         ctx.norm_time,
@@ -1477,12 +1515,12 @@ fn evaluate_fx_model_instance(
     if scale == 0.0 {
         return None;
     }
-    let rot_t = fx_clamp_elem_rotation_time(
+    let rot_t = clamp_elem_rotation_time(
         ctx.age_msec as f32,
         ctx.life_msec as f32,
         ctx.at_rest_fraction,
     );
-    let axis = fx_get_elem_angles_axis(
+    let axis = get_elem_angles_axis(
         elem.view.spawn_angles,
         elem.view.angular_velocity,
         ctx.elem_random_seed,

@@ -1,7 +1,7 @@
 use playerstate_iw4::{ENTITYNUM_NONE, PlayerState};
 use trace_iw4::Trace;
 
-use crate::{CollisionBackend, GroundTraceInput, MoveBounds, Pml};
+use crate::{CollisionBackend, GroundTraceInput, MoveBounds, Pml, jump};
 
 const STARTSOLID_RETRY_EPSILON: f32 = 0.001;
 
@@ -29,7 +29,7 @@ pub fn complete_ground_trace<C: CollisionBackend>(
             collision.correct_solid(origin, bounds.mins, bounds.maxs, bounds.tracemask)
         else {
             clear_ground_state(ps, pml);
-            crate::jump_clear_state(ps);
+            jump::clear_state(ps);
             return;
         };
         ps.origin = corrected.origin;
@@ -65,7 +65,7 @@ pub fn complete_ground_trace<C: CollisionBackend>(
         pml.almost_ground_plane = 1;
         pml.walking = 1;
         if ps.ground_entity_num == ENTITYNUM_NONE {
-            crate::pm_crash_land(ps, pml);
+            crate::crash_land(ps, pml);
         }
         let entity = trace_entity_id(&trace);
         ps.ground_entity_num = entity;
@@ -75,7 +75,7 @@ pub fn complete_ground_trace<C: CollisionBackend>(
         pml.ground_plane = 1;
         pml.almost_ground_plane = 1;
         pml.walking = 0;
-        crate::jump_clear_state(ps);
+        jump::clear_state(ps);
     }
 }
 

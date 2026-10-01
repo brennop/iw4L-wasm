@@ -612,7 +612,7 @@ pub struct FxWorldGeometry {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GGlassDataGeometry {
+pub struct GlassDataGeometry {
     pub data: Option<Ptr>,
     pub piece_count: usize,
     pub name_count: usize,
@@ -887,31 +887,31 @@ pub struct WeaponSwayCapture {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponMovementOfsCapture {
-    pub stand_move_at_0x138: [f32; 3],
-    pub stand_rot_at_0x144: [f32; 3],
-    pub strafe_move_at_0x150: [f32; 3],
-    pub strafe_rot_at_0x15c: [f32; 3],
-    pub ducked_move_at_0x174: [f32; 3],
-    pub ducked_rot_at_0x180: [f32; 3],
-    pub prone_move_at_0x198: [f32; 3],
-    pub prone_rot_at_0x1a4: [f32; 3],
-    pub pos_move_rate_at_0x1b0: f32,
-    pub pos_prone_move_rate_at_0x1b4: f32,
-    pub stand_move_min_speed_at_0x1b8: f32,
-    pub ducked_move_min_speed_at_0x1bc: f32,
-    pub prone_move_min_speed_at_0x1c0: f32,
-    pub pos_rot_rate_at_0x1c4: f32,
-    pub pos_prone_rot_rate_at_0x1c8: f32,
+    pub stand_move: [f32; 3],
+    pub stand_rot: [f32; 3],
+    pub strafe_move: [f32; 3],
+    pub strafe_rot: [f32; 3],
+    pub ducked_move: [f32; 3],
+    pub ducked_rot: [f32; 3],
+    pub prone_move: [f32; 3],
+    pub prone_rot: [f32; 3],
+    pub pos_move_rate: f32,
+    pub pos_prone_move_rate: f32,
+    pub stand_move_min_speed: f32,
+    pub ducked_move_min_speed: f32,
+    pub prone_move_min_speed: f32,
+    pub pos_rot_rate: f32,
+    pub pos_prone_rot_rate: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponIdleCapture {
-    pub ads_idle_amount_at_0x36c: f32,
-    pub hip_idle_amount_at_0x370: f32,
-    pub ads_idle_speed_at_0x374: f32,
-    pub hip_idle_speed_at_0x378: f32,
-    pub idle_crouch_factor_at_0x37c: f32,
-    pub idle_prone_factor_at_0x380: f32,
+    pub ads_idle_amount: f32,
+    pub hip_idle_amount: f32,
+    pub ads_idle_speed: f32,
+    pub hip_idle_speed: f32,
+    pub idle_crouch_factor: f32,
+    pub idle_prone_factor: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -923,7 +923,7 @@ pub struct WeaponGeometry {
 
     pub weap_def: Option<Ptr>,
 
-    pub display_name_at_0x8: Option<Ptr>,
+    pub display_name: Option<Ptr>,
 
     pub gun_xmodel_name: Option<Ptr>,
 
@@ -1111,7 +1111,7 @@ pub struct WeaponGeometry {
 
     pub proj_ignition_slot: Option<Ptr>,
 
-    pub reticle_center_size_at_0x128: i32,
+    pub reticle_center_size: i32,
 
     pub i_reticle_side_size: i32,
 
@@ -1172,9 +1172,9 @@ pub struct WeaponGeometry {
 
     pub quick_drop_time_ms: i32,
 
-    pub select_requires_ammo_at_0x667: Option<bool>,
+    pub select_requires_ammo: Option<bool>,
 
-    pub offhand_hold_is_cancelable_at_0x681: Option<bool>,
+    pub offhand_hold_is_cancelable: Option<bool>,
 
     pub move_speed_scale: f32,
 
@@ -1182,15 +1182,15 @@ pub struct WeaponGeometry {
 
     pub sprint_duration_scale: f32,
 
-    pub stance_ofs_at_0x168: [f32; 3],
+    pub ducked_ofs: [f32; 3],
 
-    pub stance_ofs_at_0x18c: [f32; 3],
+    pub prone_ofs: [f32; 3],
 
     pub night_vision_wear_time: i32,
 
-    pub ads_bob_factor_at_0x330: f32,
+    pub ads_bob_factor: f32,
 
-    pub ads_view_bob_mult_at_0x334: f32,
+    pub ads_view_bob_mult: f32,
 
     pub movement: WeaponMovementOfsCapture,
 
@@ -1253,11 +1253,18 @@ pub struct WeaponGeometry {
     pub sprint_drop_time_ms: i32,
 
     pub fuse_time_ms: i32,
+    pub auto_aim_range: f32,
+    pub aim_assist_range: f32,
+    pub aim_assist_range_ads: f32,
 
     pub cook_off_hold: bool,
 
     pub clip_only: bool,
 
+    pub has_detonator: bool,
+    pub detonate_delay_ms: i32,
+    pub detonate_time_ms: i32,
+    pub projectile_rotates: bool,
     pub timed_detonation: bool,
 
     pub proj_impact_explode: bool,
@@ -1269,8 +1276,11 @@ pub struct WeaponGeometry {
 
     pub explosion_inner_damage: i32,
     pub explosion_outer_damage: i32,
+    pub damage_cone_angle: f32,
 
     pub missile_guidance: i32,
+    pub ignition_delay_ms: i32,
+    pub require_lock_to_fire: bool,
     pub stickiness: i32,
     pub projectile_speed: i32,
     pub projectile_speed_up: i32,
@@ -1390,12 +1400,14 @@ pub struct ZoneStream<'a> {
     light_def_count: usize,
     gfx_world: Option<GfxWorldGeometry>,
     fx_world: Option<FxWorldGeometry>,
-    g_glass_data: Option<GGlassDataGeometry>,
+    glass_data: Option<GlassDataGeometry>,
     clip_map: Option<ClipMapGeometry>,
     map_ents: Option<MapEntsGeometry>,
     xmodel: Option<XModelGeometry>,
     phys_preset: Option<PhysPresetGeometry>,
     weapon: Option<WeaponGeometry>,
+    vehicle: Option<(Option<Ptr>, Option<Ptr>)>,
+    vehicle_compass: ([[u8; 128]; 2], [i32; 2]),
     latest_material: Option<MaterialGeometry>,
     latest_image: Option<GfxImageGeometry>,
     latest_technique_set: Option<TechniqueSetGeometry>,
@@ -1492,12 +1504,14 @@ impl<'a> ZoneStream<'a> {
             light_def_count: 0,
             gfx_world: None,
             fx_world: None,
-            g_glass_data: None,
+            glass_data: None,
             clip_map: None,
             map_ents: None,
             xmodel: None,
             phys_preset: None,
             weapon: None,
+            vehicle: None,
+            vehicle_compass: ([[0; 128]; 2], [0; 2]),
             latest_material: None,
             latest_image: None,
             latest_technique_set: None,
@@ -2036,12 +2050,12 @@ impl<'a> ZoneStream<'a> {
         self.fx_world
     }
 
-    pub fn record_g_glass_data(&mut self, geometry: GGlassDataGeometry) {
-        self.g_glass_data = Some(geometry);
+    pub fn record_g_glass_data(&mut self, geometry: GlassDataGeometry) {
+        self.glass_data = Some(geometry);
     }
 
-    pub fn g_glass_data(&self) -> Option<GGlassDataGeometry> {
-        self.g_glass_data
+    pub fn glass_data(&self) -> Option<GlassDataGeometry> {
+        self.glass_data
     }
 
     pub fn record_clip_map(&mut self, geometry: ClipMapGeometry) {
@@ -2082,6 +2096,26 @@ impl<'a> ZoneStream<'a> {
 
     pub fn weapon(&self) -> Option<WeaponGeometry> {
         self.weapon
+    }
+
+    pub(crate) fn record_vehicle(&mut self, name: Option<Ptr>, turret_weapon: Option<Ptr>) {
+        self.vehicle = Some((name, turret_weapon));
+    }
+
+    pub(crate) fn record_vehicle_compass(&mut self, icons: [[u8; 128]; 2], size: [i32; 2]) {
+        self.vehicle_compass = (icons, size);
+    }
+
+    pub fn vehicle_compass(&self) -> ([&str; 2], [i32; 2]) {
+        let icons = [&self.vehicle_compass.0[0], &self.vehicle_compass.0[1]].map(|bytes| {
+            let len = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+            core::str::from_utf8(&bytes[..len]).unwrap_or("")
+        });
+        (icons, self.vehicle_compass.1)
+    }
+
+    pub fn vehicle(&self) -> Option<(Option<Ptr>, Option<Ptr>)> {
+        self.vehicle
     }
 
     pub(crate) fn record_material(&mut self, material: MaterialGeometry) {

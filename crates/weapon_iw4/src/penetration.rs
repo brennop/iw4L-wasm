@@ -132,7 +132,7 @@ pub fn depth_surface_type(surface_flags: u32, last_surface_type: u32) -> u32 {
     surf
 }
 
-pub fn bg_advance_trace(
+pub fn advance_trace(
     hit_pos: [f32; 3],
     normal: [f32; 3],
     dir: [f32; 3],

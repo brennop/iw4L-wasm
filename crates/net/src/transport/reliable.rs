@@ -131,7 +131,7 @@ impl ReliableEventQueue {
     }
 }
 
-fn seq_after(a: u16, b: u16) -> bool {
+pub(crate) fn seq_after(a: u16, b: u16) -> bool {
     a != b && a.wrapping_sub(b) < 0x8000
 }
 

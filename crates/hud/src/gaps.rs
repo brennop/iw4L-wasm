@@ -35,13 +35,13 @@ pub enum HudGap {
 
     FlashWhiteout,
 
-    Hitmarker,
+    HudElemMaterial,
 
     AdsOverlay,
 
     DeathIcons,
 
-    RetailFont,
+    AssetFont,
 
     MenuVisExp,
 
@@ -76,10 +76,10 @@ impl ledger::Gap for HudGap {
         HudGap::Scoreboard,
         HudGap::BloodOverlay,
         HudGap::FlashWhiteout,
-        HudGap::Hitmarker,
+        HudGap::HudElemMaterial,
         HudGap::AdsOverlay,
         HudGap::DeathIcons,
-        HudGap::RetailFont,
+        HudGap::AssetFont,
         HudGap::MenuVisExp,
         HudGap::EngineSplash,
         HudGap::MantleHint,
@@ -106,10 +106,10 @@ impl ledger::Gap for HudGap {
             HudGap::Scoreboard => "scoreboard",
             HudGap::BloodOverlay => "blood-overlay",
             HudGap::FlashWhiteout => "flash-whiteout",
-            HudGap::Hitmarker => "hitmarker",
+            HudGap::HudElemMaterial => "hudelem-material",
             HudGap::AdsOverlay => "ads-overlay",
             HudGap::DeathIcons => "death-icons",
-            HudGap::RetailFont => "retail-font",
+            HudGap::AssetFont => "asset-font",
             HudGap::MenuVisExp => "menu-visexp",
             HudGap::EngineSplash => "engine-splash",
             HudGap::MantleHint => "mantle-hint",
@@ -131,10 +131,10 @@ impl ledger::Gap for HudGap {
                 | HudGap::CompassMap
                 | HudGap::BloodOverlay
                 | HudGap::FlashWhiteout
-                | HudGap::Hitmarker
+                | HudGap::HudElemMaterial
                 | HudGap::AdsOverlay
                 | HudGap::MenuVisExp
-                | HudGap::RetailFont
+                | HudGap::AssetFont
                 | HudGap::EngineSplash
                 | HudGap::Obituary
                 | HudGap::MantleHint
@@ -242,7 +242,7 @@ pub enum GapCause {
         miss: ImageMiss,
     },
 
-    HitmarkerImageMissing {
+    HudElemImageMissing {
         name: String,
         miss: ImageMiss,
     },
@@ -449,8 +449,8 @@ impl ledger::GapCause for GapCause {
             GapCause::BloodOverlayImageMissing { .. }
             | GapCause::BloodOverlayMaterialUnsupported { .. } => HudGap::BloodOverlay,
             GapCause::FlashWhiteoutImageMissing { .. } => HudGap::FlashWhiteout,
-            GapCause::HitmarkerImageMissing { .. } | GapCause::HudElemMaterialUnbound { .. } => {
-                HudGap::Hitmarker
+            GapCause::HudElemImageMissing { .. } | GapCause::HudElemMaterialUnbound { .. } => {
+                HudGap::HudElemMaterial
             }
             GapCause::AdsOverlayNamesNoImage { .. }
             | GapCause::AdsOverlayImageMissing { .. }
@@ -461,7 +461,7 @@ impl ledger::GapCause for GapCause {
             | GapCause::MenuScriptUnsupported { .. } => HudGap::MenuVisExp,
             GapCause::NoFontCatalog
             | GapCause::FontMissing { .. }
-            | GapCause::FontAtlasMissing { .. } => HudGap::RetailFont,
+            | GapCause::FontAtlasMissing { .. } => HudGap::AssetFont,
             GapCause::SplashNoTable
             | GapCause::SplashNoMenu { .. }
             | GapCause::SplashKeyMissing { .. }
@@ -562,8 +562,8 @@ impl fmt::Display for GapCause {
                 f,
                 "HudElem materialIndex {material_index} resolves to no CS_HUDMATERIALS name"
             ),
-            GapCause::HitmarkerImageMissing { name, miss } => {
-                write!(f, "hitmarker image `{name}` is {miss}")
+            GapCause::HudElemImageMissing { name, miss } => {
+                write!(f, "hud elem material `{name}` is {miss}")
             }
             GapCause::AdsOverlayNamesNoImage { material } => match material {
                 Some(name) => write!(f, "overlay material `{name}` names no image"),
@@ -615,7 +615,7 @@ impl fmt::Display for GapCause {
             GapCause::SplashEmptyPaint { name } => {
                 write!(
                     f,
-                    "`{name}` Item_Paint emitted no tess quads for a live splash slot"
+                    "`{name}` paint emitted no tess quads for a live splash slot"
                 )
             }
             GapCause::ObituaryNoClientInfo => {
@@ -653,7 +653,7 @@ impl fmt::Display for GapCause {
                 write!(f, "entity {entnum} has no same-Present posed-head product")
             }
             GapCause::OverheadFlashUnavailable => {
-                f.write_str("local presented playerState is missing for CG_IsFlashbanged")
+                f.write_str("local presented playerState is missing for the flashbang check")
             }
             GapCause::OverheadPartyUnavailable { client } => {
                 write!(f, "party relation to client {client} is unknown")
@@ -686,7 +686,7 @@ impl fmt::Display for GapCause {
                 write!(f, "playercard image `{name}` is {miss}")
             }
             GapCause::PlayerCardEmptyPaint { name } => {
-                write!(f, "`{name}` Item_Paint emitted no tess quads")
+                write!(f, "`{name}` paint emitted no tess quads")
             }
             GapCause::WeaponbarPaint { error } => write!(f, "weaponbar_hd: {error}"),
             GapCause::PerkPaint { error } => write!(f, "perks_info_hd: {error}"),
@@ -703,7 +703,7 @@ impl fmt::Display for GapCause {
                 write!(f, "perk image `{name}` is {miss}")
             }
             GapCause::PerkEmptyPaint { name } => {
-                write!(f, "`{name}` Item_Paint emitted no tess quads")
+                write!(f, "`{name}` paint emitted no tess quads")
             }
             GapCause::CompassRingMaterialMissing { name, miss } => {
                 write!(f, "compass ring image `{name}` is {miss}")

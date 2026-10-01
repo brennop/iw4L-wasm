@@ -6,9 +6,8 @@ use hud_iw4::{
 use playerstate_iw4::PlayerState;
 use sim::ClientSnapshotMeta;
 use weapon_iw4::{
-    bg_ammo_row_present, bg_ammo_table_key, bg_clip_row_present, bg_clip_table_key,
-    bg_get_ammo_not_in_clip, bg_get_clip_for_hand, bg_get_viewmodel_weapon_index,
-    pm_num_hands_for_held,
+    ammo_row_present, ammo_table_key, clip_row_present, clip_table_key, get_ammo_not_in_clip,
+    get_clip_for_hand, get_viewmodel_weapon_index, num_hands_for_held,
 };
 
 use crate::chrome::{OwnerDrawArgs, OwnerDrawPaint};
@@ -53,17 +52,17 @@ pub(crate) fn weaponbar_ammo(
     weapons: &PreparedWeapons,
     meta: Option<&ClientSnapshotMeta>,
 ) -> Option<WeaponbarAmmo> {
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+    let viewmodel = get_viewmodel_weapon_index(ps);
     let facts = weapons.0.facts_of(viewmodel)?;
     let kind = ammo_counter_clip_kind(facts.ammo_counter_clip)?;
-    let clip_key = bg_clip_table_key(facts.clip_index, viewmodel);
-    let ammo_key = bg_ammo_table_key(facts.ammo_index, viewmodel);
+    let clip_key = clip_table_key(facts.clip_index, viewmodel);
+    let ammo_key = ammo_table_key(facts.ammo_index, viewmodel);
     let stock = match kind {
         AmmoCounterClipKind::None => Some(0),
         AmmoCounterClipKind::AltWeapon => None,
         _ => {
-            if bg_ammo_row_present(&ps.ammo, ammo_key) {
-                Some(bg_get_ammo_not_in_clip(&ps.ammo, ammo_key))
+            if ammo_row_present(&ps.ammo, ammo_key) {
+                Some(get_ammo_not_in_clip(&ps.ammo, ammo_key))
             } else {
                 meta.map(|m| m.ammo_stock)
             }
@@ -73,17 +72,17 @@ pub(crate) fn weaponbar_ammo(
         AmmoCounterClipKind::None => Some(0),
         AmmoCounterClipKind::AltWeapon => None,
         _ => {
-            if bg_clip_row_present(&ps.ammoclip, clip_key) {
-                Some(bg_get_clip_for_hand(&ps.ammoclip, clip_key, 0))
+            if clip_row_present(&ps.ammoclip, clip_key) {
+                Some(get_clip_for_hand(&ps.ammoclip, clip_key, 0))
             } else {
                 meta.map(|m| m.ammo_clip)
             }
         }
     };
-    let dual = pm_num_hands_for_held(&ps.weapons, &ps.weapon_data, viewmodel) >= 1;
+    let dual = num_hands_for_held(&ps.weapons, &ps.weapon_data, viewmodel) >= 1;
     let clip_alt = if dual {
-        Some(if bg_clip_row_present(&ps.ammoclip, clip_key) {
-            bg_get_clip_for_hand(&ps.ammoclip, clip_key, 1)
+        Some(if clip_row_present(&ps.ammoclip, clip_key) {
+            get_clip_for_hand(&ps.ammoclip, clip_key, 1)
         } else {
             0
         })
@@ -125,13 +124,13 @@ pub(crate) fn offhand_ammo(ps: &PlayerState, weapons: &PreparedWeapons, class: i
         if facts.offhand_class != class {
             continue;
         }
-        let ammo_key = bg_ammo_table_key(facts.ammo_index, index);
-        let clip_key = bg_clip_table_key(facts.clip_index, index);
-        if bg_ammo_row_present(&ps.ammo, ammo_key) {
-            total += bg_get_ammo_not_in_clip(&ps.ammo, ammo_key);
+        let ammo_key = ammo_table_key(facts.ammo_index, index);
+        let clip_key = clip_table_key(facts.clip_index, index);
+        if ammo_row_present(&ps.ammo, ammo_key) {
+            total += get_ammo_not_in_clip(&ps.ammo, ammo_key);
         }
-        if bg_clip_row_present(&ps.ammoclip, clip_key) {
-            total += bg_get_clip_for_hand(&ps.ammoclip, clip_key, 0);
+        if clip_row_present(&ps.ammoclip, clip_key) {
+            total += get_clip_for_hand(&ps.ammoclip, clip_key, 0);
         }
     }
     total

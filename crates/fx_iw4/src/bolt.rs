@@ -43,7 +43,7 @@ pub enum FxGetBoneOrientationRoute {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FxGetBoneOrientationRefuse {
+pub enum BoneOrientationRefuse {
     CentityInvalid,
     DObjMissing,
     BoneOutOfRange,
@@ -59,39 +59,39 @@ pub enum FxUpdateEffectBolt {
 }
 
 #[inline]
-pub const fn fx_bolt_dobj(packed: u32) -> u32 {
+pub const fn bolt_dobj(packed: u32) -> u32 {
     packed & FX_BOLT_DOBJ_MASK
 }
 
 #[inline]
-pub const fn fx_bolt_teleport_bit(packed: u32) -> bool {
+pub const fn bolt_teleport_bit(packed: u32) -> bool {
     ((packed >> FX_BOLT_TELEPORT_SHIFT) & 1) != 0
 }
 
 #[inline]
-pub const fn fx_bolt_bone(packed: u32) -> u32 {
+pub const fn bolt_bone(packed: u32) -> u32 {
     (packed >> FX_BOLT_BONE_SHIFT) & FX_BOLT_BONE_MASK
 }
 
 #[inline]
-pub const fn fx_bolt_handle_is_none(packed: u32) -> bool {
-    fx_bolt_dobj(packed) == FX_BOLT_HANDLE_NONE
+pub const fn bolt_handle_is_none(packed: u32) -> bool {
+    bolt_dobj(packed) == FX_BOLT_HANDLE_NONE
 }
 
 #[inline]
-pub const fn fx_bolt_mark_lost(packed: u32) -> u32 {
+pub const fn bolt_mark_lost(packed: u32) -> u32 {
     packed | FX_BOLT_LOST_OR
 }
 
 #[inline]
-pub const fn fx_bolt_pack(dobj: u32, teleport: bool, bone: u32) -> u32 {
+pub const fn bolt_pack(dobj: u32, teleport: bool, bone: u32) -> u32 {
     (dobj & FX_BOLT_DOBJ_MASK)
         | ((teleport as u32) << FX_BOLT_TELEPORT_SHIFT)
         | ((bone & FX_BOLT_BONE_MASK) << FX_BOLT_BONE_SHIFT)
 }
 
 #[inline]
-pub const fn fx_bolt_centity_teleport_for_compare(dobj: u32, teleport: bool) -> bool {
+pub const fn bolt_centity_teleport_for_compare(dobj: u32, teleport: bool) -> bool {
     if dobj < FX_BOLT_CENTITY_LIMIT {
         teleport
     } else {
@@ -100,47 +100,47 @@ pub const fn fx_bolt_centity_teleport_for_compare(dobj: u32, teleport: bool) -> 
 }
 
 #[inline]
-pub const fn fx_bolt_spawn_teleport_bit(dobj: u32, next_state_eflags: u32) -> bool {
-    fx_bolt_centity_teleport_for_compare(
+pub const fn bolt_spawn_teleport_bit(dobj: u32, next_state_eflags: u32) -> bool {
+    bolt_centity_teleport_for_compare(
         dobj,
         (next_state_eflags & FX_BOLT_CENTITY_TELEPORT_MASK) != 0,
     )
 }
 
 #[inline]
-pub fn fx_get_bone_orientation_route(
+pub fn get_bone_orientation_route(
     dobj: u32,
     current_valid: bool,
     bone: i32,
     dobj_bone_count: Option<u8>,
-) -> Result<FxGetBoneOrientationRoute, FxGetBoneOrientationRefuse> {
+) -> Result<FxGetBoneOrientationRoute, BoneOrientationRefuse> {
     if dobj < FX_BOLT_CENTITY_LIMIT && !current_valid {
-        return Err(FxGetBoneOrientationRefuse::CentityInvalid);
+        return Err(BoneOrientationRefuse::CentityInvalid);
     }
     if bone < 0 {
         return Ok(FxGetBoneOrientationRoute::EntityPose);
     }
     let Some(count) = dobj_bone_count else {
-        return Err(FxGetBoneOrientationRefuse::DObjMissing);
+        return Err(BoneOrientationRefuse::DObjMissing);
     };
     if bone >= i32::from(count) {
-        return Err(FxGetBoneOrientationRefuse::BoneOutOfRange);
+        return Err(BoneOrientationRefuse::BoneOutOfRange);
     }
     Ok(FxGetBoneOrientationRoute::DObjBone(bone as u16))
 }
 
 #[inline]
-pub const fn fx_stop_effect_non_recursive_allows(status: u32) -> bool {
+pub const fn stop_effect_non_recursive_allows(status: u32) -> bool {
     (status & crate::status::FX_STATUS_REF_COUNT_MASK_IW4) != 0
 }
 
 #[inline]
-pub const fn fx_stop_effect_has_owned(status: u32) -> bool {
+pub const fn stop_effect_has_owned(status: u32) -> bool {
     (status & crate::status::FX_STATUS_OWNED_EFFECTS_MASK) != 0
 }
 
 #[inline]
-pub fn fx_begin_iterating_over_effects_exclusive(iterator_count: i32) -> i32 {
+pub fn begin_iterating_over_effects_exclusive(iterator_count: i32) -> i32 {
     let clamped = if iterator_count < 0 {
         0
     } else {
@@ -150,17 +150,17 @@ pub fn fx_begin_iterating_over_effects_exclusive(iterator_count: i32) -> i32 {
 }
 
 #[inline]
-pub fn fx_end_iterating_over_effects(iterator_count: i32) -> i32 {
+pub fn end_iterating_over_effects(iterator_count: i32) -> i32 {
     iterator_count.wrapping_sub(1)
 }
 
 #[inline]
-pub fn fx_end_iterating_runs_gc(iterator_after_dec: i32, needs_gc: bool) -> bool {
+pub fn end_iterating_runs_gc(iterator_after_dec: i32, needs_gc: bool) -> bool {
     iterator_after_dec == 0 && needs_gc
 }
 
 #[inline]
-pub fn fx_quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+pub fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
         (a[2] * b[1] + b[0] * a[3] + a[0] * b[3]) - a[1] * b[2],
         b[2] * a[0] + b[1] * a[3] + (a[1] * b[3] - a[2] * b[0]),
@@ -170,7 +170,7 @@ pub fn fx_quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 }
 
 #[inline]
-pub fn fx_quat_transform_vec(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+pub fn quat_transform_vec(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
     let qx = q[0];
     let qy = q[1];
     let qz = q[2];
@@ -192,17 +192,17 @@ pub fn fx_quat_transform_vec(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
 }
 
 #[inline]
-pub const fn fx_bolt_init_parent_orientation() -> ([f32; 4], [f32; 3]) {
+pub const fn bolt_init_parent_orientation() -> ([f32; 4], [f32; 3]) {
     (FX_BOLT_PARENT_IDENTITY_QUAT, [0.0; 3])
 }
 
 #[inline]
-pub const fn fx_bolt_record_index_from_byte_delta(delta: i32) -> i32 {
+pub const fn bolt_record_index_from_byte_delta(delta: i32) -> i32 {
     (delta + ((delta >> 31) & 0x1f)) >> 5
 }
 
 #[inline]
-pub const fn fx_bolt_init_next_index(i: i32) -> i32 {
+pub const fn bolt_init_next_index(i: i32) -> i32 {
     if i < FX_BOLT_INIT_LAST {
         i + 1
     } else {
@@ -211,7 +211,7 @@ pub const fn fx_bolt_init_next_index(i: i32) -> i32 {
 }
 
 #[inline]
-pub const fn fx_bolt_alloc(first_free: i32, next_at_taken: i32) -> Option<(i32, i32)> {
+pub const fn bolt_alloc(first_free: i32, next_at_taken: i32) -> Option<(i32, i32)> {
     if first_free == FX_BOLT_FREE_NONE {
         None
     } else {
@@ -219,14 +219,14 @@ pub const fn fx_bolt_alloc(first_free: i32, next_at_taken: i32) -> Option<(i32, 
     }
 }
 
-pub fn fx_bolt_compose_orientation(
+pub fn bolt_compose_orientation(
     parent_quat: [f32; 4],
     parent_origin: [f32; 3],
     bone_quat: [f32; 4],
     bone_origin: [f32; 3],
 ) -> ([f32; 4], [f32; 3]) {
-    let quat = fx_quat_mul(parent_quat, bone_quat);
-    let rotated = fx_quat_transform_vec(parent_quat, bone_origin);
+    let quat = quat_mul(parent_quat, bone_quat);
+    let rotated = quat_transform_vec(parent_quat, bone_origin);
     (
         quat,
         [
@@ -238,7 +238,7 @@ pub fn fx_bolt_compose_orientation(
 }
 
 #[inline]
-pub fn fx_update_effect_bolt(
+pub fn update_effect_bolt(
     effect_bolt: u8,
     packed: u32,
     centity_teleport: bool,
@@ -247,12 +247,12 @@ pub fn fx_update_effect_bolt(
     if effect_bolt == 0xff {
         return FxUpdateEffectBolt::Skip;
     }
-    if fx_bolt_handle_is_none(packed) {
+    if bolt_handle_is_none(packed) {
         return FxUpdateEffectBolt::Skip;
     }
-    let dobj = fx_bolt_dobj(packed);
-    let teleport = fx_bolt_centity_teleport_for_compare(dobj, centity_teleport);
-    if teleport == fx_bolt_teleport_bit(packed) && bone_ok {
+    let dobj = bolt_dobj(packed);
+    let teleport = bolt_centity_teleport_for_compare(dobj, centity_teleport);
+    if teleport == bolt_teleport_bit(packed) && bone_ok {
         FxUpdateEffectBolt::Refresh
     } else {
         FxUpdateEffectBolt::Lost

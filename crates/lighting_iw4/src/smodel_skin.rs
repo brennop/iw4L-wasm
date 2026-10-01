@@ -23,7 +23,7 @@ pub enum SmcCachedVertLighting {
 
     FromHandle {
         lighting_handle: u16,
-        div_0x100_by_height: u32,
+        inv_height_x256: u32,
     },
 }
 
@@ -73,11 +73,11 @@ fn lighting_bytes(kind: SmcCachedVertLighting, packed_binormal_bits: u32) -> [u8
         SmcCachedVertLighting::Packed(bytes) => bytes,
         SmcCachedVertLighting::FromHandle {
             lighting_handle,
-            div_0x100_by_height,
+            inv_height_x256,
         } => {
             let entry = u32::from(lighting_handle.wrapping_sub(1));
             let b0 = (entry.wrapping_mul(4).wrapping_add(2)) as u8;
-            let b1 = (div_0x100_by_height
+            let b1 = (inv_height_x256
                 .wrapping_mul(2)
                 .wrapping_add((entry >> 4) & 0xfc)) as u8;
             let b3 = ((((packed_binormal_bits as i32) >> 30) as u8) & 0xfe).wrapping_add(2);
@@ -102,7 +102,7 @@ fn write_u32(out: &mut [u8], off: usize, v: u32) {
     out[off..off + 4].copy_from_slice(&v.to_le_bytes());
 }
 
-pub fn r_skin_xsurface_static_vert(
+pub fn skin_xsurface_static_vert(
     dest: &mut [u8; PACKED_STRIDE],
     src: &[u8; PACKED_STRIDE],
     m: &[f32; 16],
@@ -135,7 +135,7 @@ pub fn r_skin_xsurface_static_vert(
     dest[28..32].copy_from_slice(&lit);
 }
 
-pub fn r_skin_xsurface_unique_vert(
+pub fn skin_xsurface_unique_vert(
     dest: &mut [u8; PACKED_STRIDE],
     src: &[u8; PACKED_STRIDE],
     m: &[f32; 16],
@@ -165,7 +165,7 @@ pub fn r_skin_xsurface_unique_vert(
     );
 }
 
-pub fn r_skin_xsurface_unique_verts(
+pub fn skin_xsurface_unique_verts(
     dest: &mut [[u8; PACKED_STRIDE]],
     src: &[[u8; PACKED_STRIDE]],
     m: &[f32; 16],
@@ -175,12 +175,12 @@ pub fn r_skin_xsurface_unique_verts(
         return Err(SmcSkinError::ShortDest);
     }
     for (out, row) in dest.iter_mut().zip(src.iter()) {
-        r_skin_xsurface_unique_vert(out, row, m, fixed_norm_axis);
+        skin_xsurface_unique_vert(out, row, m, fixed_norm_axis);
     }
     Ok(())
 }
 
-pub fn r_skin_xsurface_static_verts(
+pub fn skin_xsurface_static_verts(
     dest: &mut [u8],
     src: &[[u8; PACKED_STRIDE]],
     m: &[f32; 16],
@@ -197,14 +197,14 @@ pub fn r_skin_xsurface_static_verts(
     for (i, src_row) in src.iter().enumerate() {
         let off = i * PACKED_STRIDE;
         let mut row = [0u8; PACKED_STRIDE];
-        r_skin_xsurface_static_vert(&mut row, src_row, m, fixed_norm_axis, lighting);
+        skin_xsurface_static_vert(&mut row, src_row, m, fixed_norm_axis, lighting);
         dest[off..off + PACKED_STRIDE].copy_from_slice(&row);
     }
     Ok(())
 }
 
 #[must_use]
-pub fn r_skin_cached_static_model_cmd_matrix(
+pub fn skin_cached_static_model_cmd_matrix(
     origin: [f32; 3],
     axis: [[f32; 3]; 3],
     scale: f32,
@@ -235,7 +235,7 @@ pub struct SmcSkinSurface<'a> {
     pub lighting: SmcCachedVertLighting,
 }
 
-pub fn r_skin_cached_static_model_cmd(
+pub fn skin_cached_static_model_cmd(
     dest: &mut [u8],
     m: &[f32; 16],
     fixed_norm_axis: &[i32; 9],
@@ -250,7 +250,7 @@ pub fn r_skin_cached_static_model_cmd(
             .ok_or(SmcSkinError::ShortDest)?;
         let end = byte_off.checked_add(need).ok_or(SmcSkinError::ShortDest)?;
         let slice = dest.get_mut(byte_off..end).ok_or(SmcSkinError::ShortDest)?;
-        r_skin_xsurface_static_verts(slice, surf.packed, m, fixed_norm_axis, surf.lighting)?;
+        skin_xsurface_static_verts(slice, surf.packed, m, fixed_norm_axis, surf.lighting)?;
     }
     Ok(())
 }

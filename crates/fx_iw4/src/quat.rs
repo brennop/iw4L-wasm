@@ -1,5 +1,5 @@
 #[inline]
-pub fn fx_axis_to_quat(axis: [[f32; 3]; 3]) -> [f32; 4] {
+pub fn axis_to_quat(axis: [[f32; 3]; 3]) -> [f32; 4] {
     let m00 = axis[0][0];
     let m01 = axis[0][1];
     let m02 = axis[0][2];
@@ -58,12 +58,12 @@ pub fn fx_axis_to_quat(axis: [[f32; 3]; 3]) -> [f32; 4] {
 }
 
 #[inline]
-pub fn fx_quat_nlerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+pub fn quat_nlerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
     let sign = if dot < 0.0 { -1.0 } else { 1.0 };
     let s = t * sign;
     let one_minus = 1.0 - t;
-    fx_quat_normalize([
+    quat_normalize([
         one_minus * a[0] + s * b[0],
         one_minus * a[1] + s * b[1],
         one_minus * a[2] + s * b[2],
@@ -72,7 +72,7 @@ pub fn fx_quat_nlerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
 }
 
 #[inline]
-pub fn fx_quat_normalize(q: [f32; 4]) -> [f32; 4] {
+pub fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
     let len_sq = vec4_len_sq(q);
     if len_sq <= 0.0 {
         return q;

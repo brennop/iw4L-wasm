@@ -3,14 +3,14 @@ use std::cell::RefCell;
 use crate::draw_list::{
     DrawSurfListWorker, GfxCmdBufContext, GfxCmdBufDepthState, GfxDrawList, GfxDrawListHeapRecord,
     LIST_STATIC_MODEL_CACHED, LIST_STATIC_MODEL_PRETESS, LIST_STATIC_MODEL_RIGID,
-    LIST_STATIC_MODEL_SKINNED, LIST_WORLD_DRAWSURFS, LIST_XMODEL_RIGID, r_bind_draw_list_context,
-    r_dispatch_draw_list_records, r_end_draw_list, r_end_draw_list_shadow, r_setup_draw_list,
+    LIST_STATIC_MODEL_SKINNED, LIST_WORLD_DRAWSURFS, LIST_XMODEL_RIGID, bind_draw_list_context,
+    dispatch_draw_list_records, end_draw_list, end_draw_list_shadow, setup_draw_list,
 };
 use crate::tess_list::{
     GfxSmodelRigidEntry, GfxTrianglesListEntry, GfxXModelRigidEntry, SmodelRigidFlush,
-    TrianglesListFlush, XModelRigidFlush, r_tess_static_model_rigid_draw_surf_lighting,
-    r_tess_static_model_rigid_draw_surf_list, r_tess_triangles_list_generic,
-    r_tess_xmodel_rigid_draw_surf_lighting, smodel_rigid_list_step,
+    TrianglesListFlush, XModelRigidFlush, smodel_rigid_list_step,
+    tess_static_model_rigid_draw_surf_lighting, tess_static_model_rigid_draw_surf_list,
+    tess_triangles_list_generic, tess_xmodel_rigid_draw_surf_lighting,
 };
 use render_frame::PackedFrontendLists;
 
@@ -87,7 +87,7 @@ impl DrawSurfListWorker for WorldListWorker<'_> {
         }
         let base = self.cur as u32;
         self.flushes.extend(
-            r_tess_triangles_list_generic(&self.entries[self.cur..end], |_, _| false)
+            tess_triangles_list_generic(&self.entries[self.cur..end], |_, _| false)
                 .into_iter()
                 .map(|mut flush| {
                     flush.entry_start = flush.entry_start.saturating_add(base);
@@ -118,7 +118,7 @@ impl DrawSurfListWorker for SmodelListWorker<'_> {
         if self.cur >= self.entries.len() {
             return false;
         }
-        let step = r_tess_static_model_rigid_draw_surf_list(self.entries, self.cur, true);
+        let step = tess_static_model_rigid_draw_surf_list(self.entries, self.cur, true);
         if let Some(log) = self.emit {
             let mut log = log.borrow_mut();
             for i in self.cur..step.cur {
@@ -130,7 +130,7 @@ impl DrawSurfListWorker for SmodelListWorker<'_> {
         }
         let base = self.cur as u32;
         self.flushes.extend(
-            r_tess_static_model_rigid_draw_surf_lighting(&self.entries[self.cur..step.cur], false)
+            tess_static_model_rigid_draw_surf_lighting(&self.entries[self.cur..step.cur], false)
                 .into_iter()
                 .map(|mut flush| {
                     flush.entry_start = flush.entry_start.saturating_add(base);
@@ -175,7 +175,7 @@ impl DrawSurfListWorker for XModelListWorker<'_> {
         }
         let base = self.cur as u32;
         self.flushes.extend(
-            r_tess_xmodel_rigid_draw_surf_lighting(&self.entries[self.cur..step.cur], false)
+            tess_xmodel_rigid_draw_surf_lighting(&self.entries[self.cur..step.cur], false)
                 .into_iter()
                 .map(|mut flush| {
                     flush.entry_start = flush.entry_start.saturating_add(base);
@@ -252,7 +252,7 @@ fn dispatch_registered(
         kind_ids.push(u32::from(kind.id));
         which_slots.push(which);
     }
-    r_dispatch_draw_list_records(&mut recs, sorted, ctx, |i, ctx| {
+    dispatch_draw_list_records(&mut recs, sorted, ctx, |i, ctx| {
         let more = match which_slots[i] {
             Which::World => world.work(ctx),
             Which::XModel => xmodel.work(ctx),
@@ -276,16 +276,16 @@ fn dispatch_registered(
     });
 }
 
-pub fn r_draw_surf_list_work_shadow(packed: &PackedFrontendLists) -> ShadowDrawListWork {
-    let list = r_setup_draw_list(&packed.src, true, false);
+pub fn draw_surf_list_work_shadow(packed: &PackedFrontendLists) -> ShadowDrawListWork {
+    let list = setup_draw_list(&packed.src, true, false);
 
-    let ctx = r_bind_draw_list_context(0, 0, 3);
+    let ctx = bind_draw_list_context(0, 0, 3);
     run_packed_work(packed, list, ctx, false)
 }
 
-pub fn r_draw_surf_list_work_colour(packed: &PackedFrontendLists) -> ColourDrawListWork {
-    let list = r_setup_draw_list(&packed.src, true, false);
-    let ctx = r_bind_draw_list_context(0, 0, 0);
+pub fn draw_surf_list_work_colour(packed: &PackedFrontendLists) -> ColourDrawListWork {
+    let list = setup_draw_list(&packed.src, true, false);
+    let ctx = bind_draw_list_context(0, 0, 0);
     run_packed_work(packed, list, ctx, true)
 }
 
@@ -370,9 +370,9 @@ fn run_packed_work(
             ..GfxCmdBufDepthState::default()
         };
         let mut state = GfxCmdBufDepthState::default();
-        r_end_draw_list(&mut cmd, &mut state, None)
+        end_draw_list(&mut cmd, &mut state, None)
     } else {
-        r_end_draw_list_shadow()
+        end_draw_list_shadow()
     };
     ShadowDrawListWork {
         list,

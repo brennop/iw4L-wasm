@@ -12,7 +12,7 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
 .PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
 .PHONY: build-windows setup-windows release publish provision
-.PHONY: mr publish-check approved web web-serve
+.PHONY: mr publish-check approved duo web web-serve
 .PHONY: $(ARGS)
 
 $(ARGS):
@@ -21,8 +21,8 @@ $(ARGS):
 # Console script played into the running game. `make` itself cannot carry an
 # unknown `--cmds` flag (it parses its own options first and exits), so the
 # spelling here is a make variable; the launcher binary takes `--cmds` verbatim:
-#   make map mp_boneyard CMDS='spawn assault; hold +attack'
-#   cargo run -p launcher -- map mp_boneyard --cmds 'spawn assault; hold +attack'
+#   make map mp_boneyard CMDS='spawn 0; hold +attack'
+#   cargo run -p launcher -- map mp_boneyard --cmds 'spawn 0; hold +attack'
 CMDS ?=
 CMDS_ARG = $(if $(CMDS),--cmds '$(CMDS)',)
 ZONE ?=
@@ -39,18 +39,18 @@ CARGO = cargo
 # The scripted match. Jump on the spawn pad (open sky) before +forward carries under cover.
 # Trailing wait lets the automatic reload finish. `quit` flushes `.pftrace`.
 SCENARIO_ZONE ?= mp_boneyard
-SCENARIO_CMDS ?= wait world; spawn assault; force_match_start; hold +attack; bot add 3; wait 3s; press +gostand; hold +forward; wait 5s; wait 4s; quit
+SCENARIO_CMDS ?= wait world; spawn 0; force_match_start; hold +attack; bot add 3; wait 3s; press +gostand; hold +forward; wait 5s; wait 4s; quit
 # Truck 234 roof looking down + 7 bots RPG into the floor. Local does not fire:
 # `hold +attack` made the truck splash a suicide, which has no killcam.
 # Bots fire twice so the dump ring contains missiles. It does not replace
 # SCENARIO_CMDS. Five-number move/tp only — pitch 85 is the test.
 # Gate: T1/R1/R2/T6/K0/K1/K2/K3/K4/K6/K7/L1/F1/C1/P1/P2.
-CHAOS_CMDS ?= wait world; spawn assault; wait 2s; move -1066 1391 7 174 85; wait 1s; bot add 7; bot hold on; wait 3s; bot tp 1 -1066 1391 127 174 85; bot tp 2 -1073 1362 80 174 85; bot tp 3 519 -44 16 61 85; bot tp 4 528 -14 16 61 85; bot tp 5 62 915 80 180 85; bot tp 6 62 900 80 180 85; bot tp 7 80 915 80 180 85; bot give 1 rpg; bot give 2 rpg; bot give 3 rpg; bot give 4 rpg; bot give 5 rpg; bot give 6 rpg; bot give 7 rpg; wait 1s; bot fire all; wait 3s; bot fire all; wait 12s; quit
+CHAOS_CMDS ?= wait world; spawn 0; wait 2s; move -1066 1391 7 174 85; wait 1s; bot add 7; bot hold on; wait 3s; bot tp 1 -1066 1391 127 174 85; bot tp 2 -1073 1362 80 174 85; bot tp 3 519 -44 16 61 85; bot tp 4 528 -14 16 61 85; bot tp 5 62 915 80 180 85; bot tp 6 62 900 80 180 85; bot tp 7 80 915 80 180 85; bot give 1 rpg; bot give 2 rpg; bot give 3 rpg; bot give 4 rpg; bot give 5 rpg; bot give 6 rpg; bot give 7 rpg; wait 1s; bot fire all; wait 3s; bot fire all; wait 12s; quit
 # Live trace run (not a demo). `force_match_start` so holds are not frozen in
 # warmup. Local `+attack`/`+forward` plus `mouserate` (hold-yaw; not one-shot
 # `mousemove`). `bot add 16` is the console clamp. Wait 10s, then quit so the
 # native Perfetto session flushes.
-BENCH_LIVE_CMDS ?= wait world; spawn assault; force_match_start; hold +attack; hold +forward; mouserate 10; bot add 16; wait 10s; quit
+BENCH_LIVE_CMDS ?= wait world; spawn 0; force_match_start; hold +attack; hold +forward; mouserate 10; bot add 16; wait 10s; quit
 PERF_OVERHEAD_PAIRS ?= 10
 PERF_OVERHEAD_WARMUP_PAIRS ?= 1
 PROFILE_BIN = $(ROOT)/target/$(if $(filter dev,$(PROFILE)),debug,$(PROFILE))/iw4l
@@ -68,14 +68,14 @@ LIFECYCLE_SWAP_CMDS ?= wait world; wait 2s; disconnect; wait torn; wait 1s; map 
 # `wait world` after rust is scene.spawned; `wait ambient` is MapAmbientBooted.
 LIFECYCLE_REPLACE_CMDS ?= wait world; wait 2s; map mp_rust; wait world; wait ambient; quit
 # Match → demo (console `demo`). Records a few ticks first.
-LIFECYCLE_PLAY_IN_CMDS ?= wait world; spawn assault; wait 2s; record swap_in; wait 2s; stoprecord; demo swap_in; wait 20s; quit
+LIFECYCLE_PLAY_IN_CMDS ?= wait world; spawn 0; wait 2s; record swap_in; wait 2s; stoprecord; demo swap_in; wait 20s; quit
 # Demo → disconnect → main menu.
 # Theater occupancy is `theater` events; idle after torn is `cgame_hold`.
-LIFECYCLE_DEMO_OUT_CMDS ?= wait world; spawn assault; record swap_out; wait 2s; stoprecord; demo swap_out; wait 8s; disconnect; wait torn; wait 8s; quit
+LIFECYCLE_DEMO_OUT_CMDS ?= wait world; spawn 0; record swap_out; wait 2s; stoprecord; demo swap_out; wait 8s; disconnect; wait torn; wait 8s; quit
 # Demo → map (theater replaced by a live match).
 # `record` before InGame refuses: sim_cam/cmds_enabled arm on presented Alive;
 # sync `spawn` blocks until InGame, so the record below always arms.
-LIFECYCLE_DEMO_MAP_CMDS ?= wait world; spawn assault; record swap_map; wait 2s; stoprecord; demo swap_map; wait 1s; map mp_rust; wait world; wait 3s; quit
+LIFECYCLE_DEMO_MAP_CMDS ?= wait world; spawn 0; record swap_map; wait 2s; stoprecord; demo swap_map; wait 1s; map mp_rust; wait world; wait 3s; quit
 
 require-games:
 	@test -n "$(IW4L_GAMES)" || { echo "IW4L_GAMES unset — copy .env.example to .env and set the games root"; exit 1; }
@@ -120,7 +120,7 @@ BENCH_DEMO ?= $(DEMO)
 # The live-map script has to serve both halves: load the map, then stay long
 # enough that section two has gameplay frames to count. `force_match_start`
 # skips the 20 s warmup the controls are frozen through (docs/RUN.md).
-BENCH_MAP_CMDS ?= wait world; spawn assault; wait ambient; force_match_start; wait 10s; quit
+BENCH_MAP_CMDS ?= wait world; spawn 0; wait ambient; force_match_start; wait 10s; quit
 BENCH_DEMO_CMDS ?=
 bench: require-games
 	@test -n "$(or $(BENCH_DEMO),$(ZONE),$(ARGS))" || { echo "usage: make bench <demo>            e.g. make bench demo0011"; echo "       make bench ZONE=<zone>       e.g. make bench ZONE=mp_boneyard"; exit 1; }
@@ -217,6 +217,15 @@ lifecycle-demo-out: require-games
 lifecycle-demo-map: require-games
 	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_DEMO_MAP_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live demo-map
+
+HOST_CMDS ?= spawn 0
+CLIENT_CMDS ?= spawn 0
+MODE ?= dm
+export HOST_CMDS CLIENT_CMDS MODE ZONE PROFILE
+
+duo: require-games
+	cd $(ROOT) && $(CARGO) build $(PROFILE_ARG) -p launcher
+	cd $(ROOT) && $(CARGO) run --quiet -p xtask -- duo
 
 menu: require-games
 	cd $(ROOT) && $(CARGO) run $(PROFILE_ARG) -p launcher -- menu $(CMDS_ARG)
@@ -327,7 +336,7 @@ clean:
 help:
 	@echo "make map <zone>   run crates/launcher, zone e.g. mp_boneyard"
 	@echo "                  make map ZONE=iw5:mp_overwatch  (colon cannot be a make goal)"
-	@echo "                  add CMDS='spawn assault; hold +attack' to script it"
+	@echo "                  add CMDS='spawn 0; hold +attack' to script it"
 	@echo "                  sync-by-default: map/demo/disconnect/spawn block the FIFO"
 	@echo "                  until done; trailing '&' opts out (map mp_rust &)"
 	@echo "make play <demo>  play iw4l-artifacts/demos/<demo>.iw4ldemo, then quit"
@@ -357,6 +366,7 @@ help:
 	@echo "make lifecycle-demo-out  demo → disconnect → menu"
 	@echo "make lifecycle-demo-map  demo → map mp_rust"
 	@echo "make menu         run the main-menu shell (Maps / Settings / Quit)"
+	@echo "make duo          two windows through the master; HOST_CMDS / CLIENT_CMDS, ZONE / MODE"
 	@echo "                  add CMDS='wait 2s; quit' to script it"
 	@echo "make menu-shots   2D UI pack under iw4l-artifacts/menu-shots (no map)"
 	@echo "make launcher windows  build password-protected dev + prod portable ZIPs"

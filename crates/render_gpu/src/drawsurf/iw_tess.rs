@@ -22,13 +22,13 @@ use bevy::render::view::{ExtractedView, ViewTarget};
 use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy::shader::Shader;
 use hud::{HudTessBatch, HudTessGpuFrame, HudTessTechnique, HudTessVertex};
-use hud_iw4::{r_cmd_buf_set_2d_projection, r_set_2d_clip_coeffs};
+use hud_iw4::{cmd_buf_set_2d_projection, set_2d_clip_coeffs};
 
 use super::backend::{
     DYNAMIC_INDEX_BUFFER_CAPACITY, DYNAMIC_TESSELLATION_VB_CAPACITY, GfxCmdBufStreams,
     GfxDrawPrimArgs, GfxDynamicIndexBuffer, GfxDynamicVertexBuffer, GfxStreamSource0,
-    copy_tess_vertex_bytes, copy_u16_indices_into_ring, gfx_tess_stream0, r_draw_tess_technique,
-    r_set_stream_source,
+    copy_tess_vertex_bytes, copy_u16_indices_into_ring, draw_tess_technique, gfx_tess_stream0,
+    set_stream_source,
 };
 use crate::diag::render_frame_diag::SharedRenderStagesSlot;
 
@@ -346,7 +346,7 @@ fn prepare_iw_tess(
             meta.vb_token = meta.vb_token.wrapping_add(1).max(1);
             meta.cpu_vb_bytes.fill(0);
         }
-        let tess_draw = r_draw_tess_technique(
+        let tess_draw = draw_tess_technique(
             GfxDrawPrimArgs {
                 vertex_count: batch.vertex_count,
                 tri_count: batch.index_count / 3,
@@ -386,7 +386,7 @@ fn prepare_iw_tess(
             meta.cpu_ib.cur_index_count = 0;
             meta.cpu_ib_indices.fill(0);
         }
-        let index_append = meta.cpu_ib.r_set_index_data(tri_count);
+        let index_append = meta.cpu_ib.set_index_data(tri_count);
         if index_append.lock_byte_offset % 4 != 0 {
             continue;
         }
@@ -423,11 +423,11 @@ fn prepare_iw_tess(
     );
 
     let Some(projection) =
-        r_cmd_buf_set_2d_projection(extracted.0.surface_w as i32, extracted.0.surface_h as i32)
+        cmd_buf_set_2d_projection(extracted.0.surface_w as i32, extracted.0.surface_h as i32)
     else {
         return;
     };
-    let coeffs = r_set_2d_clip_coeffs(&projection);
+    let coeffs = set_2d_clip_coeffs(&projection);
     queue.write_buffer(&pipeline.params, 0, bytemuck::bytes_of(&coeffs));
 }
 
@@ -587,7 +587,7 @@ fn draw_iw_tess(
         if let Some(textures) = textures {
             pass.set_bind_group(1, textures, &[]);
         }
-        let action = r_set_stream_source(
+        let action = set_stream_source(
             &mut streams,
             geom.stream.buffer,
             geom.stream.offset,

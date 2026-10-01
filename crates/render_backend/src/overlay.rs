@@ -285,12 +285,12 @@ pub fn overlay_particle_cloud_tess_code_constants(
                 &code_transpose_matrix_row4(clip * world_from_local),
             );
         }
-        let matrix = fx_iw4::fx_particle_cloud_matrix_diag(cloud.size0, cloud.size1);
+        let matrix = fx_iw4::particle_cloud_matrix_diag(cloud.size0, cloud.size1);
         sources.set_constant_rows(
             u16::from(fx_iw4::FX_CODE_PARTICLE_CLOUD_MATRIX0) + slot as u16,
             &[float4_bits(matrix)],
         );
-        let color = fx_iw4::fx_particle_cloud_color_const(cloud.color);
+        let color = fx_iw4::particle_cloud_color_const(cloud.color);
         sources.set_constant_rows(
             u16::from(fx_iw4::FX_CODE_SPARK_COLOR0) + slot as u16,
             &[float4_bits(color)],
@@ -302,7 +302,7 @@ pub fn overlay_particle_cloud_tess_code_constants(
             );
             sources.set_constant_rows(
                 u16::from(fx_iw4::FX_CODE_FOUNTAIN_PARM0),
-                &[float4_bits(fx_iw4::fx_particle_fountain_parm0(cloud.scale))],
+                &[float4_bits(fx_iw4::particle_fountain_parm0(cloud.scale))],
             );
             sources.set_constant_rows(
                 u16::from(fx_iw4::FX_CODE_FOUNTAIN_PARM1),

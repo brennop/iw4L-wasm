@@ -44,7 +44,7 @@ gap, not "ordinary blending".
   kick and sway (`view_kick.rs`, `view_sway.rs`), items and projectiles.
   FPV actions come from the presented `weapAnim`, **never** from the
   keyboard; the identity of the FPV mesh is
-  `weapon_iw4::bg_get_viewmodel_weapon_index`.
+  `weapon_iw4::get_viewmodel_weapon_index`.
   The FPV consumer reads `PreparedFpv` only, never the weapon registry: views,
   rigs and material bindings are built before Ready; an equip picks one, and a
   mandatory material that failed is a refusal naming model, surface and

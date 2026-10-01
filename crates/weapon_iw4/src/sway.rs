@@ -115,7 +115,7 @@ pub fn sway_shellshock_landing_scale(
     (shell_shock_scale - 1.0) * weight + 1.0
 }
 
-pub fn bg_calculate_weapon_movement_sway(
+pub fn calculate_weapon_movement_sway(
     springs: &mut SwaySpringState,
     view_angles: [f32; 3],
     prev_view_angles: [f32; 3],

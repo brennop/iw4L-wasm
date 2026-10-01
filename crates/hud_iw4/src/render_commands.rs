@@ -1,7 +1,7 @@
 use crate::stretch_pic_cmd::{
-    AddStretchPicCmd, GFX_RENDER_CMD_BUF_SIZE, GfxCmdStretchPicArgs, r_add_cmd_draw_stretch_pic,
+    AddStretchPicCmd, GFX_RENDER_CMD_BUF_SIZE, GfxCmdStretchPicArgs, add_cmd_draw_stretch_pic,
 };
-use crate::{AddDrawTextCmd, GfxCmdDrawText2DArgs, r_add_cmd_draw_text};
+use crate::{AddDrawTextCmd, GfxCmdDrawText2DArgs, add_cmd_draw_text};
 
 #[derive(Debug)]
 pub struct GfxRenderCommandBuf<'a> {
@@ -31,7 +31,7 @@ impl<'a> GfxRenderCommandBuf<'a> {
         args: GfxCmdStretchPicArgs,
         color_ptr_null: bool,
     ) -> AddStretchPicCmd {
-        match r_add_cmd_draw_stretch_pic(self.buf, self.used, self.cap, args, color_ptr_null) {
+        match add_cmd_draw_stretch_pic(self.buf, self.used, self.cap, args, color_ptr_null) {
             AddStretchPicCmd::Refused => {
                 self.last = 0;
                 AddStretchPicCmd::Refused
@@ -49,7 +49,7 @@ impl<'a> GfxRenderCommandBuf<'a> {
         args: GfxCmdDrawText2DArgs<'_>,
         color_ptr_null: bool,
     ) -> AddDrawTextCmd {
-        match r_add_cmd_draw_text(self.buf, self.used, self.cap, args, color_ptr_null) {
+        match add_cmd_draw_text(self.buf, self.used, self.cap, args, color_ptr_null) {
             AddDrawTextCmd::Refused => {
                 self.last = 0;
                 AddDrawTextCmd::Refused
@@ -133,6 +133,6 @@ impl<'a> Iterator for GfxCmdWalk<'a> {
 }
 
 #[must_use]
-pub fn r_walk_render_commands(buf: &[u8], used: u32) -> GfxCmdWalk<'_> {
+pub fn walk_render_commands(buf: &[u8], used: u32) -> GfxCmdWalk<'_> {
     GfxCmdWalk::new(buf, used)
 }

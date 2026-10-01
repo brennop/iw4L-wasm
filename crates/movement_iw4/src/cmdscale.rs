@@ -20,7 +20,7 @@ pub struct CmdScaleWalkContext {
 }
 
 #[must_use]
-pub fn pm_cmd_scale_walk(ps: &PlayerState, cmd: &UserCmd, context: CmdScaleWalkContext) -> f32 {
+pub fn cmd_scale_walk(ps: &PlayerState, cmd: &UserCmd, context: CmdScaleWalkContext) -> f32 {
     let flags = ps.pm_flags;
     let sprinting_ads = (flags & 1) != 0 && ps.f_weapon_pos_frac > 0.0;
 

@@ -51,7 +51,7 @@ pub fn splash_duration_ms(cell: &str) -> i32 {
 }
 
 #[must_use]
-pub fn cg_activate_splash(
+pub fn activate_splash(
     slot: i32,
     row: i32,
     duration_ms: i32,

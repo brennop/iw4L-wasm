@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::{AnimClip, PartBits};
-use anim_iw4::{xanim_advance_goal_weight, xanim_advance_leaf_time};
+use crate::AnimClip;
+use anim_iw4::{PartBits, advance_goal_weight, advance_leaf_time};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct XAnimNodeId(pub u16);
@@ -321,7 +321,7 @@ impl XAnimTreeRuntime {
                 .parent
                 .is_none_or(|parent| self.states[parent.0 as usize].weight != 0.0);
             let state = &mut self.states[node];
-            let (weight, goal_time) = xanim_advance_goal_weight(
+            let (weight, goal_time) = advance_goal_weight(
                 state.weight,
                 state.goal_weight,
                 state.goal_time,
@@ -341,7 +341,7 @@ impl XAnimTreeRuntime {
                 continue;
             };
             let state = &mut self.states[node];
-            let (time, cycle) = xanim_advance_leaf_time(
+            let (time, cycle) = advance_leaf_time(
                 state.old_time,
                 state.cycle_count,
                 state.rate,

@@ -19,7 +19,7 @@ pub(crate) struct FxModelGeometry {
     pub(crate) surface_ranges: Vec<(u32, u32)>,
     pub(crate) materials: Vec<SmodelPassMaterial>,
     pub(crate) assets: Vec<FxModelAssetDraw>,
-    pub(crate) packed_vertices: assets::RetailPackedVertexPayload,
+    pub(crate) packed_vertices: asset_world::PackedVertexPayload,
 }
 
 #[derive(Resource, Default)]
@@ -70,7 +70,7 @@ impl FxModelDrawPlan {
         &self.geometry.surface_ranges
     }
 
-    pub fn packed_vertices(&self) -> &assets::RetailPackedVertexPayload {
+    pub fn packed_vertices(&self) -> &asset_world::PackedVertexPayload {
         &self.geometry.packed_vertices
     }
 

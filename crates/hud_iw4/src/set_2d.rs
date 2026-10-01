@@ -99,7 +99,7 @@ pub struct GfxSet2dMatrices {
 }
 
 #[must_use]
-pub fn r_get_viewport(source: &GfxCmdBufSource2d) -> GfxViewport {
+pub fn get_viewport(source: &GfxCmdBufSource2d) -> GfxViewport {
     if source.viewport_select == GFX_VIEWPORT_FULL {
         GfxViewport {
             x: 0,
@@ -113,7 +113,7 @@ pub fn r_get_viewport(source: &GfxCmdBufSource2d) -> GfxViewport {
 }
 
 #[must_use]
-pub fn r_cmd_buf_set_2d_projection(width: i32, height: i32) -> Option<[f32; 16]> {
+pub fn cmd_buf_set_2d_projection(width: i32, height: i32) -> Option<[f32; 16]> {
     if width <= 0 || height <= 0 {
         return None;
     }
@@ -139,8 +139,8 @@ fn identity44() -> [f32; 16] {
 }
 
 #[must_use]
-pub fn r_cmd_buf_set_2d(viewport: &GfxViewport) -> Option<GfxSet2dMatrices> {
-    let projection = r_cmd_buf_set_2d_projection(viewport.width, viewport.height)?;
+pub fn cmd_buf_set_2d(viewport: &GfxViewport) -> Option<GfxSet2dMatrices> {
+    let projection = cmd_buf_set_2d_projection(viewport.width, viewport.height)?;
     Some(GfxSet2dMatrices {
         view: identity44(),
         projection,
@@ -150,7 +150,7 @@ pub fn r_cmd_buf_set_2d(viewport: &GfxViewport) -> Option<GfxSet2dMatrices> {
 }
 
 #[must_use]
-pub fn r_set_2d_clip_xy(x: f32, y: f32, projection: &[f32; 16]) -> (f32, f32) {
+pub fn set_2d_clip_xy(x: f32, y: f32, projection: &[f32; 16]) -> (f32, f32) {
     (
         x * projection[0] + projection[12],
         y * projection[5] + projection[13],
@@ -158,20 +158,20 @@ pub fn r_set_2d_clip_xy(x: f32, y: f32, projection: &[f32; 16]) -> (f32, f32) {
 }
 
 #[must_use]
-pub fn r_set_2d_clip_coeffs(projection: &[f32; 16]) -> [f32; 4] {
+pub fn set_2d_clip_coeffs(projection: &[f32; 16]) -> [f32; 4] {
     [projection[0], projection[5], projection[12], projection[13]]
 }
 
 #[must_use]
-pub fn r_set_2d(source: &mut GfxCmdBufSource2d) -> Option<GfxSet2dMatrices> {
+pub fn set_2d(source: &mut GfxCmdBufSource2d) -> Option<GfxSet2dMatrices> {
     if source.view_mode == GFX_VIEW_MODE_2D {
         return None;
     }
     source.view_mode = GFX_VIEW_MODE_2D;
     source.viewport_is_dirty = 1;
     source.eye_offset = [0.0, 0.0, 0.0, 1.0];
-    let vp = r_get_viewport(source);
-    r_cmd_buf_set_2d(&vp)
+    let vp = get_viewport(source);
+    cmd_buf_set_2d(&vp)
 }
 
 #[must_use]
@@ -223,7 +223,7 @@ pub fn gfx_scene_def_float_time(float_time: f32) -> [u32; GFX_SCENE_DEF_DWORDS] 
 }
 
 #[must_use]
-pub fn r_cmd_buf_set_3d(eye_offset: [f32; 4]) -> [f32; 16] {
+pub fn cmd_buf_set_3d(eye_offset: [f32; 4]) -> [f32; 16] {
     let mut world = identity44();
     world[12] -= eye_offset[0];
     world[13] -= eye_offset[1];
@@ -237,7 +237,7 @@ pub struct GfxSet3dResult {
 }
 
 #[must_use]
-pub fn r_set_3d(
+pub fn set_3d(
     source: &mut GfxCmdBufSource2d,
     view_parms_3d: &[u32; GFX_VIEWPARMS_DWORDS],
 ) -> Option<GfxSet3dResult> {
@@ -249,7 +249,7 @@ pub fn r_set_3d(
     let origin = gfx_viewparms_origin(view_parms_3d);
     source.eye_offset = [origin[0], origin[1], origin[2], 1.0];
     Some(GfxSet3dResult {
-        world: r_cmd_buf_set_3d(source.eye_offset),
+        world: cmd_buf_set_3d(source.eye_offset),
     })
 }
 
@@ -258,7 +258,7 @@ fn view_parm_f32(view_parms: &[u32; GFX_VIEWPARMS_DWORDS], byte: usize) -> f32 {
 }
 
 #[must_use]
-pub fn r_derive_near_plane_constants(
+pub fn derive_near_plane_constants(
     view_parms: &[u32; GFX_VIEWPARMS_DWORDS],
 ) -> Option<GfxNearPlaneConstants> {
     let m33 = view_parm_f32(view_parms, GFX_VIEWPARMS_INV_VP_M33);
@@ -305,7 +305,7 @@ pub struct GfxBeginViewResult {
 }
 
 #[must_use]
-pub fn r_begin_view(
+pub fn begin_view(
     source: &mut GfxCmdBufSource2d,
     scene_def: &[u32; GFX_SCENE_DEF_DWORDS],
     view_parms_3d: &[u32; GFX_VIEWPARMS_DWORDS],
@@ -317,9 +317,9 @@ pub fn r_begin_view(
         f32::from_bits(scene_def[4]),
     ];
     source.view_mode = GFX_VIEW_MODE_NONE;
-    let set_3d = r_set_3d(source, view_parms_3d).expect("viewMode was 0");
+    let set_3d = set_3d(source, view_parms_3d).expect("viewMode was 0");
     let float_time = f32::from_bits(scene_def[1]);
-    let near_plane = r_derive_near_plane_constants(&source.view_parms);
+    let near_plane = derive_near_plane_constants(&source.view_parms);
     if let Some(np) = near_plane {
         source.nearplane_org = np.org;
         source.nearplane_dx = np.dx;

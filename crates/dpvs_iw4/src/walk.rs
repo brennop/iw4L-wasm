@@ -2,7 +2,7 @@ use crate::aabb::MAX_CLIP_PLANES;
 use crate::admit::portal_admits_eye;
 use crate::chop::chop_portal;
 use crate::clip::{PortalBevels, portal_clip_planes, portal_vert_hull_uv};
-use crate::convex_hull::{PortalHullPoints, add_vert_to_portal_hull_points, com_convex_hull};
+use crate::convex_hull::{PortalHullPoints, add_vert_to_portal_hull_points, convex_hull};
 use crate::portal::{portal_behind_any_plane, portal_behind_plane, portal_eye_dist};
 use crate::portal_heap::{
     HULL_POOL_NULL, PortalHeapNode, QUEUED_PORTAL_POOL, furthest_point_on_winding, heap_pop,
@@ -261,7 +261,7 @@ fn finalize_queued_hull_clip(
         return false;
     }
     let mut compact = [[0.0f32; 2]; crate::COM_CONVEX_HULL_MAX];
-    let h = com_convex_hull(&item.hull.points[..n], &mut compact);
+    let h = convex_hull(&item.hull.points[..n], &mut compact);
     if h == 0 {
         return false;
     }
@@ -287,7 +287,7 @@ pub(crate) fn finalize_queued_hull_no_frustum(item: &mut Queued, view_dir: [f32;
         return false;
     }
     let mut compact = [[0.0f32; 2]; crate::COM_CONVEX_HULL_MAX];
-    let h = com_convex_hull(&item.hull.points[..n], &mut compact);
+    let h = convex_hull(&item.hull.points[..n], &mut compact);
     if h == 0 {
         return false;
     }

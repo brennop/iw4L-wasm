@@ -4,8 +4,8 @@ use fx_iw4::{
     FX_SPARK_FOUNTAIN_CLUSTER_CAPACITY, FX_SPARK_FOUNTAIN_HANDLE_NONE,
     FX_SPARK_FOUNTAIN_MESH_CAPACITY, FX_SPAWN_BOLT_NONE, FX_SPOT_LIGHT_LIMIT,
     FX_STATUS_REF_COUNT_MASK_IW4, FX_TRAIL_ELEM_POOL_CAPACITY, FX_TRAIL_POOL_CAPACITY,
-    FxOrientFrame, fx_bolt_alloc, fx_bolt_init_next_index, fx_effect_handle_for_slot,
-    fx_effect_random_seed_from_msec, fx_status_is_unique_done,
+    FxOrientFrame, bolt_alloc, bolt_init_next_index, effect_handle_for_slot,
+    effect_random_seed_from_msec, status_is_unique_done,
 };
 
 use crate::elem::{FX_ELEM_HANDLE_NONE, FxElemSlot};
@@ -429,7 +429,7 @@ impl FxSystemHost {
     pub fn new() -> Self {
         let mut handles = Vec::with_capacity(FX_EFFECT_HANDLE_RING_SIZE as usize);
         for slot in 0..FX_EFFECT_POOL_CAPACITY {
-            handles.push(fx_effect_handle_for_slot(slot));
+            handles.push(effect_handle_for_slot(slot));
         }
         let mut elems: Vec<FxElemSlot> = (0..FX_ELEM_POOL_CAPACITY)
             .map(|_| FxElemSlot::default())
@@ -488,7 +488,7 @@ impl FxSystemHost {
             };
         }
         let bolt_next: Vec<i32> = (0..fx_iw4::FX_BOLT_RECORD_CAPACITY as i32)
-            .map(fx_bolt_init_next_index)
+            .map(bolt_init_next_index)
             .collect();
         let mut spark_fountain_meshes: Vec<crate::spark_fountain::FxSparkFountainMeshSlot> = (0
             ..FX_SPARK_FOUNTAIN_MESH_CAPACITY)
@@ -630,14 +630,22 @@ impl FxSystemHost {
             .filter_map(|(slot, effect)| {
                 (effect.ring_resident
                     && effect.def_name == def_name
-                    && fx_iw4::fx_bolt_dobj(effect.bolt_packed) == dobj
-                    && fx_iw4::fx_bolt_bone(effect.bolt_packed) == u32::from(bone))
+                    && fx_iw4::bolt_dobj(effect.bolt_packed) == dobj
+                    && fx_iw4::bolt_bone(effect.bolt_packed) == u32::from(bone))
                 .then_some(slot)
             })
             .collect();
         for slot in slots {
             crate::spawn::stop_effect_non_recursive(self, slot);
         }
+    }
+
+    pub fn stop_owned(&mut self, handle: u16) {
+        let Some(slot) = self.slot_index_for_handle(handle) else {
+            return;
+        };
+        crate::spawn::stop_effect_non_recursive(self, slot);
+        self.play_release_ownership(handle);
     }
 
     pub fn kill_def_newer_than(&mut self, def_name: &str, msec_begin: i32) {
@@ -673,11 +681,11 @@ impl FxSystemHost {
         mut resolve: impl FnMut(u32, u16) -> Option<FxResolvedBoltPose>,
     ) {
         for effect in &mut self.effects {
-            if !effect.ring_resident || fx_iw4::fx_bolt_handle_is_none(effect.bolt_packed) {
+            if !effect.ring_resident || fx_iw4::bolt_handle_is_none(effect.bolt_packed) {
                 continue;
             }
-            let dobj = fx_iw4::fx_bolt_dobj(effect.bolt_packed);
-            let bone = fx_iw4::fx_bolt_bone(effect.bolt_packed) as u16;
+            let dobj = fx_iw4::bolt_dobj(effect.bolt_packed);
+            let bone = fx_iw4::bolt_bone(effect.bolt_packed) as u16;
             match resolve(dobj, bone) {
                 Some(resolved) => {
                     effect.bolt_centity_teleport = resolved.centity_teleport;
@@ -740,7 +748,7 @@ impl FxSystemHost {
     }
 
     pub fn record_impact_mark_from_decal(&mut self, bolt: u8) -> crate::MarkImpactResult {
-        let skip_world = marks_iw4::fx_impact_mark_skip_world_from_stored_bolt(bolt);
+        let skip_world = marks_iw4::impact_mark_skip_world_from_stored_bolt(bolt);
         let result = self.marks.impact_mark(crate::MarkImpactRequest {
             skip_world,
             receivers: self.mark_receivers,
@@ -831,7 +839,7 @@ impl FxSystemHost {
             .get(first as usize)
             .copied()
             .unwrap_or(fx_iw4::FX_BOLT_FREE_NONE);
-        let (idx, new_first) = fx_bolt_alloc(first, next)?;
+        let (idx, new_first) = bolt_alloc(first, next)?;
         self.bolt_first_free = new_first;
         self.bolted_warn_count = self.bolted_warn_count.saturating_add(1);
         Some(idx as u8)
@@ -870,7 +878,7 @@ impl FxSystemHost {
         let slot = handle_to_slot(handle).expect("Init ring only holds valid slot handles");
 
         let effect = &mut self.effects[slot];
-        let (bolt_parent_quat, bolt_parent_origin) = fx_iw4::fx_bolt_init_parent_orientation();
+        let (bolt_parent_quat, bolt_parent_origin) = fx_iw4::bolt_init_parent_orientation();
         *effect = FxEffectSlot {
             def_name: def_name.to_owned(),
             catalog_index,
@@ -880,7 +888,7 @@ impl FxSystemHost {
             first_sorted_elem_handle: FX_ELEM_HANDLE_NONE,
             first_trail_handle: FX_ELEM_HANDLE_NONE,
 
-            random_seed: fx_effect_random_seed_from_msec(msec),
+            random_seed: effect_random_seed_from_msec(msec),
             own_handle: handle,
             packed_lighting: [0xff; 3],
             packed_lighting_src: FxPackedLightingSrc::White,
@@ -920,7 +928,7 @@ impl FxSystemHost {
     pub fn play_release_ownership(&mut self, handle: u16) {
         let unique = self
             .slot_for_handle(handle)
-            .map(|e| fx_status_is_unique_done(e.status))
+            .map(|e| status_is_unique_done(e.status))
             .unwrap_or(false);
         if unique {
             self.del_ref_to_effect(handle);

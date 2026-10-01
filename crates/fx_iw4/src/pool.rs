@@ -49,56 +49,56 @@ pub const FX_STATUS_UNIQUE_MASK: u32 = 0x1fff;
 pub const FX_STATUS_UNIQUE_DONE: u32 = 1;
 
 #[inline]
-pub const fn fx_effect_handle_from_byte_offset(byte_offset: u32) -> u16 {
+pub const fn effect_handle_from_byte_offset(byte_offset: u32) -> u16 {
     (byte_offset >> 2) as u16
 }
 
 #[inline]
-pub const fn fx_effect_byte_offset_from_handle(handle: u16) -> u32 {
+pub const fn effect_byte_offset_from_handle(handle: u16) -> u32 {
     (handle as u32) << 2
 }
 
 #[inline]
-pub const fn fx_effect_addr(effects_base: u32, handle: u16) -> u32 {
-    effects_base.wrapping_add(fx_effect_byte_offset_from_handle(handle))
+pub const fn effect_addr(effects_base: u32, handle: u16) -> u32 {
+    effects_base.wrapping_add(effect_byte_offset_from_handle(handle))
 }
 
 #[inline]
-pub const fn fx_effect_handle_for_slot(slot: u32) -> u16 {
-    fx_effect_handle_from_byte_offset(slot.wrapping_mul(FX_EFFECT_SLOT_SIZE as u32))
+pub const fn effect_handle_for_slot(slot: u32) -> u16 {
+    effect_handle_from_byte_offset(slot.wrapping_mul(FX_EFFECT_SLOT_SIZE as u32))
 }
 
 #[inline]
-pub const fn fx_elem_handle_from_ptr_delta(byte_delta: u32) -> u16 {
+pub const fn elem_handle_from_ptr_delta(byte_delta: u32) -> u16 {
     (byte_delta >> 2) as u16
 }
 
 #[inline]
-pub const fn fx_elem_addr(elems_base: u32, handle: u16) -> u32 {
+pub const fn elem_addr(elems_base: u32, handle: u16) -> u32 {
     elems_base.wrapping_add((handle as u32) << 2)
 }
 
 #[inline]
-pub const fn fx_trail_handle_from_byte_offset(byte_offset: u32) -> u16 {
+pub const fn trail_handle_from_byte_offset(byte_offset: u32) -> u16 {
     (byte_offset >> 2) as u16
 }
 
 #[inline]
-pub const fn fx_trail_handle_for_slot(slot: u32) -> u16 {
-    fx_trail_handle_from_byte_offset(slot.wrapping_mul(FX_TRAIL_RUNTIME_STRIDE as u32))
+pub const fn trail_handle_for_slot(slot: u32) -> u16 {
+    trail_handle_from_byte_offset(slot.wrapping_mul(FX_TRAIL_RUNTIME_STRIDE as u32))
 }
 
 #[inline]
-pub const fn fx_trail_addr(trails_base: u32, handle: u16) -> u32 {
+pub const fn trail_addr(trails_base: u32, handle: u16) -> u32 {
     trails_base.wrapping_add((handle as u32) << 2)
 }
 
 #[inline]
-pub const fn fx_trail_elem_handle_for_slot(slot: u32) -> u16 {
-    fx_trail_handle_from_byte_offset(slot.wrapping_mul(FX_TRAIL_ELEM_RUNTIME_STRIDE as u32))
+pub const fn trail_elem_handle_for_slot(slot: u32) -> u16 {
+    trail_handle_from_byte_offset(slot.wrapping_mul(FX_TRAIL_ELEM_RUNTIME_STRIDE as u32))
 }
 
 #[inline]
-pub const fn fx_trail_elem_addr(trail_elems_base: u32, handle: u16) -> u32 {
+pub const fn trail_elem_addr(trail_elems_base: u32, handle: u16) -> u32 {
     trail_elems_base.wrapping_add((handle as u32) << 2)
 }

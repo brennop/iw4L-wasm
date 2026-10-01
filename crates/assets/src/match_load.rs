@@ -5,8 +5,8 @@ use bevy::tasks::{Task, futures_lite::future};
 use frame::{ClientSet, LaunchIdentity, MapLoadApproved, MapLoadFailed};
 
 use crate::map_load_process::MapLoadProcess;
-use crate::progress::LoadProgress;
 use crate::session_load::{MatchLoadOutcome, PreparedMatch, load_prepared_match};
+use asset_transport::progress::LoadProgress;
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MapLoadApproval;
@@ -175,15 +175,15 @@ fn approve_map_load(
             );
             continue;
         }
-        let games = crate::GamesRoot(identity.games_root.clone());
-        let found = crate::find_zone_file(&games, &request.zone);
+        let games = asset_transport::GamesRoot(identity.games_root.clone());
+        let found = asset_transport::find_zone_file(&games, &request.zone);
         let zone = found
             .as_ref()
             .map(|zone| zone.zone_name.clone())
             .unwrap_or_else(|_| request.zone.clone());
         let zone_ff = found.map(|zone| zone.path);
         let common_mp = match &zone_ff {
-            Ok(path) => crate::find_runtime_common_mp(&games, path).map(|zone| zone.path),
+            Ok(path) => asset_transport::find_runtime_common_mp(&games, path).map(|zone| zone.path),
             Err(error) => Err(error.clone()),
         };
         let error = zone_ff

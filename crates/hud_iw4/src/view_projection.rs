@@ -5,7 +5,7 @@ pub const R_ZNEAR_DEFAULT: f32 = 4.0;
 pub const R_ZNEAR_FLOOR: f32 = 0.01;
 
 #[must_use]
-pub fn r_znear_from_refdef(refdef_z_near: f32, r_znear: f32) -> f32 {
+pub fn znear_from_refdef(refdef_z_near: f32, r_znear: f32) -> f32 {
     if refdef_z_near > 0.0 {
         return refdef_z_near;
     }
@@ -19,7 +19,7 @@ pub fn r_znear_from_refdef(refdef_z_near: f32, r_znear: f32) -> f32 {
 pub const R_ZNEAR_DEPTHHACK_DEFAULT: f32 = 0.1;
 
 #[must_use]
-pub fn r_depth_hack_near_clip(r_znear_depthhack: f32) -> f32 {
+pub fn depth_hack_near_clip(r_znear_depthhack: f32) -> f32 {
     -r_znear_depthhack
 }
 
@@ -28,7 +28,7 @@ pub const R_SUBWINDOW_EDGE_EPS: f32 = 1.0e-4;
 pub const R_SUBWINDOW_DEFAULT: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 
 #[must_use]
-pub fn r_subwindow_clamp(left: f32, right: f32, top: f32, bottom: f32) -> [f32; 4] {
+pub fn subwindow_clamp(left: f32, right: f32, top: f32, bottom: f32) -> [f32; 4] {
     let eps = R_SUBWINDOW_EDGE_EPS;
     let right_out = if left + eps > right {
         left + eps
@@ -44,7 +44,7 @@ pub fn r_subwindow_clamp(left: f32, right: f32, top: f32, bottom: f32) -> [f32; 
 }
 
 #[must_use]
-pub fn r_subwindow_to_viewport(
+pub fn subwindow_to_viewport(
     left: f32,
     right: f32,
     top: f32,
@@ -52,7 +52,7 @@ pub fn r_subwindow_to_viewport(
     rt_w: i32,
     rt_h: i32,
 ) -> crate::GfxViewport {
-    let [l, r, t, b] = r_subwindow_clamp(left, right, top, bottom);
+    let [l, r, t, b] = subwindow_clamp(left, right, top, bottom);
     let x0 = (l * rt_w as f32) as i32;
     let x1 = (r * rt_w as f32) as i32;
     let y0 = (t * rt_h as f32) as i32;
@@ -66,13 +66,13 @@ pub fn r_subwindow_to_viewport(
 }
 
 #[must_use]
-pub fn r_subwindow_is_full(left: f32, right: f32, top: f32, bottom: f32) -> bool {
-    let [l, r, t, b] = r_subwindow_clamp(left, right, top, bottom);
+pub fn subwindow_is_full(left: f32, right: f32, top: f32, bottom: f32) -> bool {
+    let [l, r, t, b] = subwindow_clamp(left, right, top, bottom);
     l == 0.0 && r == 1.0 && t == 0.0 && b == 1.0
 }
 
 #[must_use]
-pub fn r_setup_projection_matrix(tan_half_x: f32, tan_half_y: f32, z_near: f32) -> [f32; 16] {
+pub fn setup_projection_matrix(tan_half_x: f32, tan_half_y: f32, z_near: f32) -> [f32; 16] {
     let k = R_INFINITE_PERSPECTIVE_K;
     let mut m = [0.0f32; 16];
     m[0] = k / tan_half_x;
@@ -84,7 +84,7 @@ pub fn r_setup_projection_matrix(tan_half_x: f32, tan_half_y: f32, z_near: f32) 
 }
 
 #[must_use]
-pub fn r_setup_finite_projection_matrix(
+pub fn setup_finite_projection_matrix(
     tan_half_x: f32,
     tan_half_y: f32,
     z_near: f32,
@@ -104,7 +104,7 @@ pub fn r_setup_finite_projection_matrix(
 }
 
 #[must_use]
-pub fn r_matrix_for_viewer(axis: [[f32; 3]; 3]) -> [f32; 16] {
+pub fn matrix_for_viewer(axis: [[f32; 3]; 3]) -> [f32; 16] {
     let mut m = [0.0f32; 16];
     m[0] = -axis[1][0];
     m[1] = axis[2][0];
@@ -120,7 +120,7 @@ pub fn r_matrix_for_viewer(axis: [[f32; 3]; 3]) -> [f32; 16] {
 }
 
 #[must_use]
-pub fn r_matrix_multiply44(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+pub fn matrix_multiply44(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
     let mut o = [0.0f32; 16];
     o[0] = b[12] * a[3] + b[8] * a[2] + a[1] * b[4] + a[0] * b[0];
     o[1] = a[3] * b[13] + b[9] * a[2] + a[0] * b[1] + b[5] * a[1];
@@ -142,39 +142,39 @@ pub fn r_matrix_multiply44(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
 }
 
 #[must_use]
-pub fn r_compose_view_projection(
+pub fn compose_view_projection(
     view: &[f32; 16],
     proj: &[f32; 16],
     origin: [f32; 3],
 ) -> Option<([f32; 16], [f32; 16])> {
-    let vp = r_matrix_multiply44(view, proj);
-    let inv = r_matrix_inverse44(&vp)?;
+    let vp = matrix_multiply44(view, proj);
+    let inv = matrix_inverse44(&vp)?;
     let mut t = IDENTITY44;
     t[12] = origin[0];
     t[13] = origin[1];
     t[14] = origin[2];
-    let inv_vp = r_matrix_multiply44(&inv, &t);
+    let inv_vp = matrix_multiply44(&inv, &t);
     Some((vp, inv_vp))
 }
 
 #[must_use]
-pub fn r_set_view_parms_matrices(
+pub fn set_view_parms_matrices(
     origin: [f32; 3],
     axis: [[f32; 3]; 3],
     tan_half_x: f32,
     tan_half_y: f32,
     z_near: f32,
 ) -> Option<([f32; 16], [f32; 16])> {
-    let view = r_matrix_for_viewer(axis);
-    let proj = r_setup_projection_matrix(tan_half_x, tan_half_y, z_near);
-    r_compose_view_projection(&view, &proj, origin)
+    let view = matrix_for_viewer(axis);
+    let proj = setup_projection_matrix(tan_half_x, tan_half_y, z_near);
+    compose_view_projection(&view, &proj, origin)
 }
 
 const IDENTITY44: [f32; 16] = [
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
 
-fn r_matrix_inverse44(m: &[f32; 16]) -> Option<[f32; 16]> {
+fn matrix_inverse44(m: &[f32; 16]) -> Option<[f32; 16]> {
     let mut a = [[0.0f32; 8]; 4];
     for r in 0..4 {
         for c in 0..4 {

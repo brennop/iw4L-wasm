@@ -9,15 +9,16 @@ description = "Our console: input, parsing, execution, cvar storage, coverage re
 artifactfs.workspace = true
 web-time = { workspace = true }
 diag.workspace = true
-math_iw4.workspace = true
-dpvs_iw4.workspace = true
 bevy.workspace = true
 frame.workspace = true
 ui.workspace = true
+asset_core.workspace = true
+asset_game.workspace = true
+asset_transport.workspace = true
+asset_world.workspace = true
 assets = { path = "../assets" }
 audio = { path = "../audio" }
 input_iw4.workspace = true
-playerstate_iw4.workspace = true
 net = { path = "../net" }
 render = { path = "../render" }
 render_frontend.workspace = true

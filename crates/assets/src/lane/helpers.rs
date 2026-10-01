@@ -3,14 +3,15 @@ use std::collections::HashMap;
 use bevy::prelude::{Mat3, Quat, Transform, Vec3};
 use fastfile_iw4::{Ptr, ZoneStream};
 
-use crate::{
-    MapXModelAssetKey, MapXModelSceneAsset, MapXModelSceneCatalog, MaterialCatalog, ModelMesh,
-    PreparedMapModels, ScriptModelMetadata, ScriptModelPlacement, ScriptModelSceneInstance,
-    StaticModelDraw, StaticModelDrawError, StaticModelInstance, StaticModelPlacement,
+use asset_material::MaterialCatalog;
+use asset_world::{
+    MapXModelAssetKey, MapXModelSceneAsset, MapXModelSceneCatalog, ModelMesh, PreparedMapModels,
+    ScriptModelMetadata, ScriptModelPlacement, ScriptModelSceneInstance, StaticModelDraw,
+    StaticModelDrawError, StaticModelInstance, StaticModelPlacement,
     build_iw5_static_model_instances, build_iw5_xmodel_mesh, build_static_model_instances,
     build_t5_static_model_instances, build_t5_xmodel_mesh, build_xmodel_mesh, flag_descriptors,
     flag_descriptors_iw5, flag_descriptors_t5, map_script_structs, map_script_structs_iw5,
-    map_script_structs_t5, map_use_triggers, map_use_triggers_iw5, map_use_triggers_t5,
+    map_script_structs_t5, map_use_triggers_iw5, map_use_triggers_t5,
     script_brush_model_placements, script_brush_model_placements_iw5,
     script_brush_model_placements_t5, script_model_placements, script_model_placements_iw5,
     script_model_placements_t5,
@@ -46,7 +47,7 @@ impl MapXModelCatalog {
         Some(self.meshes.remove(index))
     }
 
-    pub(crate) fn set_capture_zone(&mut self, zone: crate::ZoneOwner) {
+    pub(crate) fn set_capture_zone(&mut self, zone: asset_core::ZoneOwner) {
         self.scene_assets.set_capture_zone(zone);
     }
 
@@ -57,7 +58,7 @@ impl MapXModelCatalog {
         slot: Ptr,
         insert_slot: Option<Ptr>,
         strings: &fastfile_iw4::ScriptStrings,
-        phys_presets: &crate::PhysPresetCatalog,
+        phys_presets: &asset_world::PhysPresetCatalog,
     ) {
         let Some(geometry) = stream.xmodel() else {
             self.failed += 1;
@@ -115,7 +116,7 @@ impl MapXModelCatalog {
             return;
         };
         let scene_key = MapXModelAssetKey(mesh.name.clone());
-        let scene_asset = crate::capture_xmodel_skel_t5(stream, strings, geometry, materials)
+        let scene_asset = asset_model::capture_xmodel_skel_t5(stream, strings, geometry, materials)
             .map(|skel| MapXModelSceneAsset::T5(std::sync::Arc::new(skel)))
             .unwrap_or(MapXModelSceneAsset::Unavailable {
                 reason: "T5 XModel scene skeleton capture failed",
@@ -144,7 +145,7 @@ impl MapXModelCatalog {
         stream: &fastfile_t5::ZoneStream<'_>,
         header: fastfile_t5::Ptr,
         strings: &fastfile_t5::ScriptStrings,
-        fx: &crate::FxCatalog,
+        fx: &asset_game::FxCatalog,
     ) -> fastfile_t5::Result<()> {
         use fastfile_t5::ZonePtr;
         let ZonePtr::Offset(name) = stream.ptr_at(header, 0)? else {
@@ -279,17 +280,27 @@ impl MapXModelCatalog {
             self.failed += 1;
             return;
         };
+        let Some(name) = geometry.name.and_then(|p| stream.cstr(p).ok()) else {
+            self.failed += 1;
+            return;
+        };
+        let scene_key = MapXModelAssetKey(name.to_owned());
+        let scene_asset = asset_model::capture_xmodel_skel_iw5_with_shared(
+            stream,
+            strings,
+            geometry,
+            materials,
+            &self.shared_surfaces,
+        )
+        .map(|skel| MapXModelSceneAsset::Iw5(std::sync::Arc::new(skel)))
+        .unwrap_or(MapXModelSceneAsset::Unavailable {
+            reason: "IW5 XModel scene skeleton capture failed",
+        });
+        self.scene_assets.insert(scene_key, scene_asset);
         let Ok(mesh) = build_iw5_xmodel_mesh(stream, geometry, Some(materials)) else {
             self.failed += 1;
             return;
         };
-        let scene_key = MapXModelAssetKey(mesh.name.clone());
-        let scene_asset = crate::capture_xmodel_skel_iw5(stream, strings, geometry, materials)
-            .map(|skel| MapXModelSceneAsset::Iw5(std::sync::Arc::new(skel)))
-            .unwrap_or(MapXModelSceneAsset::Unavailable {
-                reason: "IW5 XModel scene skeleton capture failed",
-            });
-        self.scene_assets.insert(scene_key, scene_asset);
         let index = self.meshes.len();
         self.meshes.push(mesh);
         let slot = Ptr {
@@ -332,9 +343,9 @@ impl MapXModelCatalog {
         &self,
         stream: &fastfile_t5::ZoneStream<'_>,
         geometry: fastfile_t5::ClipMapGeometry,
-        clip: &mut crate::ClipCollision,
-    ) -> Result<(), crate::ClipCollisionError> {
-        use crate::ClipCollisionError::{MissingTables, Truncated};
+        clip: &mut asset_world::ClipCollision,
+    ) -> Result<(), asset_world::ClipCollisionError> {
+        use asset_world::ClipCollisionError::{MissingTables, Truncated};
         let Some(rows) = geometry.static_models else {
             return if geometry.static_model_count == 0 {
                 Ok(())
@@ -396,7 +407,7 @@ impl MapXModelCatalog {
                     })
                     .collect(),
             };
-            clip.static_models.push(crate::ClipPlacedStaticModel {
+            clip.static_models.push(asset_world::ClipPlacedStaticModel {
                 index: index as u32,
                 name: name.to_owned(),
                 model: clipmap_iw4::ClipStaticModel {
@@ -444,7 +455,6 @@ pub(crate) fn build_static_model_draw(
     };
     let scripts = script_model_placements(stream);
     let brushes = script_brush_model_placements(stream);
-    let use_triggers = map_use_triggers(stream);
     let descriptors = flag_descriptors(stream);
     let structs = map_script_structs(stream);
     link_model_placements(
@@ -452,7 +462,6 @@ pub(crate) fn build_static_model_draw(
         static_error,
         &scripts,
         brushes,
-        use_triggers,
         descriptors,
         structs,
         catalog,
@@ -476,11 +485,10 @@ pub(crate) fn build_t5_static_model_draw(
     };
     let mut scripts = script_model_placements_t5(stream);
     let mut brushes = script_brush_model_placements_t5(stream);
-    let mut use_triggers = map_use_triggers_t5(stream);
     normalize_bomb_sites(
         &mut scripts,
         &mut brushes,
-        &mut use_triggers,
+        &map_use_triggers_t5(stream),
         "bombzone_dem",
     );
     let descriptors = flag_descriptors_t5(stream);
@@ -490,7 +498,6 @@ pub(crate) fn build_t5_static_model_draw(
         static_error,
         &scripts,
         brushes,
-        use_triggers,
         descriptors,
         structs,
         catalog,
@@ -514,8 +521,12 @@ pub(crate) fn build_iw5_static_model_draw(
     };
     let mut scripts = script_model_placements_iw5(stream);
     let mut brushes = script_brush_model_placements_iw5(stream);
-    let mut use_triggers = map_use_triggers_iw5(stream);
-    normalize_bomb_sites(&mut scripts, &mut brushes, &mut use_triggers, "dd_bombzone");
+    normalize_bomb_sites(
+        &mut scripts,
+        &mut brushes,
+        &map_use_triggers_iw5(stream),
+        "dd_bombzone",
+    );
     let descriptors = flag_descriptors_iw5(stream);
     let structs = map_script_structs_iw5(stream);
     link_model_placements(
@@ -523,7 +534,6 @@ pub(crate) fn build_iw5_static_model_draw(
         static_error,
         &scripts,
         brushes,
-        use_triggers,
         descriptors,
         structs,
         catalog,
@@ -532,9 +542,9 @@ pub(crate) fn build_iw5_static_model_draw(
 }
 
 fn normalize_bomb_sites(
-    scripts: &mut [crate::ScriptModelPlacement],
-    brushes: &mut [crate::ScriptBrushModelPlacement],
-    triggers: &mut [crate::MapUseTrigger],
+    scripts: &mut [asset_world::ScriptModelPlacement],
+    brushes: &mut [asset_world::ScriptBrushModelPlacement],
+    triggers: &[asset_world::MapUseTrigger],
     demolition_tag: &str,
 ) {
     let has_dedicated_sites = ["a", "b"].into_iter().all(|label| {
@@ -564,33 +574,15 @@ fn normalize_bomb_sites(
     for brush in brushes {
         normalize(&mut brush.gameobject);
     }
-    for trigger in triggers {
-        normalize(&mut trigger.gameobject);
-        if trigger.targetname == demolition_tag {
-            trigger.targetname = if trigger
-                .script_label
-                .trim_start_matches('_')
-                .eq_ignore_ascii_case("c")
-            {
-                "dd_overtime_bombzone"
-            } else {
-                "bombzone"
-            }
-            .to_owned();
-        } else if trigger.targetname == "bombzone" && has_dedicated_sites {
-            trigger.targetname = "sd_bombzone".to_owned();
-        }
-    }
 }
 
 pub(crate) fn link_model_placements(
     placements: Vec<StaticModelInstance>,
     mut static_error: Option<StaticModelDrawError>,
     scripts: &[ScriptModelPlacement],
-    script_brush_models: Vec<crate::ScriptBrushModelPlacement>,
-    map_use_triggers: Vec<crate::MapUseTrigger>,
-    flag_descriptors: Vec<crate::FlagDescriptor>,
-    script_structs: Vec<crate::MapScriptStruct>,
+    script_brush_models: Vec<asset_world::ScriptBrushModelPlacement>,
+    flag_descriptors: Vec<asset_world::FlagDescriptor>,
+    script_structs: Vec<asset_world::MapScriptStruct>,
     mut catalog: MapXModelCatalog,
     smodel_count: usize,
 ) -> PreparedMapModels {
@@ -735,9 +727,155 @@ pub(crate) fn link_model_placements(
         scene_assets: catalog.scene_assets,
         script_instances,
         script_brush_models,
-        map_use_triggers,
         flag_descriptors,
         script_structs,
         script_gaps,
     }
+}
+
+pub(super) fn report_map_models(
+    report: &mut Vec<String>,
+    models: &PreparedMapModels,
+    authored_slots: impl std::fmt::Display,
+) {
+    if let Some(error) = models.static_error.as_ref() {
+        report.push(format!("static models: {error}"));
+    }
+    let smodels = &models.static_draw;
+    report.push(format!(
+        "static models: {}/{authored_slots} authored slots resolved to {} unique meshes ({} unresolved)",
+        smodels.resolved_count(),
+        smodels.meshes.len(),
+        smodels.gaps
+    ));
+    report.push(format!(
+        "script_model: {} placements linked (MapEnts props; separate visibility owner)",
+        models.script_instances.len()
+    ));
+    report.push(format!(
+        "script_brushmodel: {} *N placements (SP_script_brushmodel, not DrawInst)",
+        models.script_brush_models.len()
+    ));
+}
+
+pub(super) fn report_ffa_spawns(report: &mut Vec<String>, spawns: &[asset_world::SpawnPoint]) {
+    report.push(format!(
+        "ffa spawns: {} mp_dm_spawn* ({} start)",
+        spawns.len(),
+        spawns.iter().filter(|p| p.is_initial()).count()
+    ));
+}
+
+pub(super) fn report_intermission(
+    report: &mut Vec<String>,
+    view: Option<&asset_world::IntermissionView>,
+) {
+    report.push(match view {
+        Some(view) => format!(
+            "camera: mp_global_intermission origin={:?} angles={:?}",
+            view.origin, view.angles
+        ),
+        None => "camera: mp_global_intermission not found".into(),
+    });
+}
+
+pub(super) fn report_world_batches(report: &mut Vec<String>, draw: &asset_world::WorldDraw) {
+    let lightmapped = draw.surface_lightmapped.iter().filter(|&&lit| lit).count();
+    report.push(format!(
+        "world batches: {lightmapped} lightmapped, {} fallback surfaces",
+        draw.surface_lightmapped.len() - lightmapped
+    ));
+}
+
+pub(super) fn report_dpvs(report: &mut Vec<String>, draw: &asset_world::WorldDraw) {
+    report.push(format!(
+        "dpvs: cells={} planes={} nodes={} sorted={} portal_verts={} cleared_boxes={}",
+        draw.dpvs.cell_count,
+        draw.dpvs.planes.len(),
+        draw.dpvs.nodes.len(),
+        draw.dpvs.sorted_surf_index.len(),
+        draw.dpvs.portal_verts.len(),
+        draw.dpvs.cleared_boxes
+    ));
+}
+
+pub(super) fn decode_reflection_probes(
+    report: &mut Vec<String>,
+    draw: &asset_world::WorldDraw,
+    materials: &MaterialCatalog,
+) -> Vec<Option<bevy::prelude::Image>> {
+    let images: Vec<_> = draw
+        .reflection_probes
+        .iter()
+        .map(|probe| {
+            let source = materials.images.get(probe.image?)?;
+            asset_material::decode_reflection_probe_cubemap(source)
+                .map_err(|error| {
+                    report.push(format!("reflection probe {} gap: {error}", source.name))
+                })
+                .ok()
+        })
+        .collect();
+    report.push(format!(
+        "reflection probes: {}/{} cubemaps decoded",
+        images.iter().flatten().count(),
+        images.len()
+    ));
+    images
+}
+
+pub(super) fn smodel_lighting_samples(
+    report: &mut Vec<String>,
+    grid: &asset_model::OwnedLightGrid,
+    origins: Vec<(usize, [f32; 3])>,
+    placements: &[Option<StaticModelPlacement>],
+    clip: Option<&asset_world::ClipCollision>,
+) -> Vec<asset_model::SmodelLightingSample> {
+    use asset_model::model_lighting::{
+        build_smodel_lighting_samples_with_sight, census_lit_fragment_tiles,
+    };
+    use lighting_iw4::LIGHT_GRID_SIGHT_CONTENT_MASK as MASK;
+    let origins: Vec<_> = origins
+        .into_iter()
+        .filter(|(slot, _)| placements.get(*slot).is_some_and(Option::is_some))
+        .collect();
+    let tiles = match clip {
+        Some(clip_map) => {
+            let clear = |start, end| clip_map.box_sight_clear(start, end, MASK);
+            let (tiles, census) =
+                build_smodel_lighting_samples_with_sight(&grid.view(), &origins, Some(&clear));
+            report.push(format!(
+                "smodel lighting: lit={} / candidates={} (blocked row={} trunc={} empty={}; CM sight mask=0x{MASK:x} corners need={} cleared={} suppressed={})",
+                census.lit,
+                census.candidates,
+                census.blocked_unmodelled_row,
+                census.blocked_truncated,
+                census.blocked_no_live_corner,
+                census.corners_needing_sight,
+                census.corners_needing_sight.saturating_sub(census.corners_sight_suppressed),
+                census.corners_sight_suppressed,
+            ));
+            tiles
+        }
+        None => {
+            let (tiles, census) =
+                build_smodel_lighting_samples_with_sight(&grid.view(), &origins, None);
+            report.push(format!(
+                "smodel lighting: lit={} / candidates={} (no clipmap — needsTrace corners suppressed; blocked row={} trunc={} empty={})",
+                census.lit,
+                census.candidates,
+                census.blocked_unmodelled_row,
+                census.blocked_truncated,
+                census.blocked_no_live_corner,
+            ));
+            tiles
+        }
+    };
+    if let Some(frag) = census_lit_fragment_tiles(&tiles) {
+        report.push(format!(
+            "smodel lit_fragment mid-grey: tiles={} lum min={:.4} max={:.4} mean={:.4} (specular=0)",
+            frag.tiles, frag.lum_min, frag.lum_max, frag.lum_mean
+        ));
+    }
+    tiles
 }

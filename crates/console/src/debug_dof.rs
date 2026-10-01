@@ -1,20 +1,22 @@
+use crate::debug_scalar::debug_scalars;
 use crate::{ConsoleCommand, ConsoleLine, ConsoleSettings, ConsoleState};
 use bevy::prelude::*;
 use render_frontend::assemble::drawsurf::dof::DofDvars;
 
-const NAMES: &[&str] = &[
-    "r_dof_enable",
-    "r_dof_tweak",
-    "r_dof_nearBlur",
-    "r_dof_farBlur",
-    "r_dof_viewModelStart",
-    "r_dof_viewModelEnd",
-    "r_dof_nearStart",
-    "r_dof_nearEnd",
-    "r_dof_farStart",
-    "r_dof_farEnd",
-    "r_dof_bias",
-];
+debug_scalars! {
+    DofDvars;
+    "r_dof_enable" { path: [enable], min: 0.0, max: 1.0, kind: bool },
+    "r_dof_tweak" { path: [tweak], min: 0.0, max: 1.0, kind: bool },
+    "r_dof_nearBlur" { path: [values.near_blur], min: 4.0, max: 10.0, kind: float },
+    "r_dof_farBlur" { path: [values.far_blur], min: 0.0, max: 10.0, kind: float },
+    "r_dof_viewModelStart" { path: [values.view_model_start], min: 0.0, max: 128.0, kind: float },
+    "r_dof_viewModelEnd" { path: [values.view_model_end], min: 0.0, max: 128.0, kind: float },
+    "r_dof_nearStart" { path: [values.near_start], min: 0.0, max: 1000.0, kind: float },
+    "r_dof_nearEnd" { path: [values.near_end], min: 0.0, max: 1000.0, kind: float },
+    "r_dof_farStart" { path: [values.far_start], min: 0.0, max: 80000.0, kind: float },
+    "r_dof_farEnd" { path: [values.far_end], min: 0.0, max: 80000.0, kind: float },
+    "r_dof_bias" { path: [bias], min: 0.1, max: 3.0, kind: float },
+}
 pub(crate) fn register(registry: &mut crate::ConsoleRegistry) {
     for &name in NAMES {
         registry.register(
@@ -44,42 +46,13 @@ pub(crate) fn route(
                 .ok_or(()),
             _ => Err(()),
         };
-        let (current, min, max) = match name {
-            "r_dof_enable" => (u8::from(dvars.enable) as f32, 0.0, 1.0),
-            "r_dof_tweak" => (u8::from(dvars.tweak) as f32, 0.0, 1.0),
-            "r_dof_nearBlur" => (dvars.values.near_blur, 4.0, 10.0),
-            "r_dof_farBlur" => (dvars.values.far_blur, 0.0, 10.0),
-            "r_dof_viewModelStart" => (dvars.values.view_model_start, 0.0, 128.0),
-            "r_dof_viewModelEnd" => (dvars.values.view_model_end, 0.0, 128.0),
-            "r_dof_nearStart" => (dvars.values.near_start, 0.0, 1000.0),
-            "r_dof_nearEnd" => (dvars.values.near_end, 0.0, 1000.0),
-            "r_dof_farStart" => (dvars.values.far_start, 0.0, 80000.0),
-            "r_dof_farEnd" => (dvars.values.far_end, 0.0, 80000.0),
-            "r_dof_bias" => (dvars.bias, 0.1, 3.0),
-            _ => unreachable!(),
-        };
+        let (current, min, max, is_bool) = scalar_current(&dvars, name);
         let msg = match parsed {
             Ok(None) => format!("{name} = {current} (domain {min}..{max})"),
             Ok(Some(value))
-                if (min..=max).contains(&value)
-                    && (!(name == "r_dof_enable" || name == "r_dof_tweak")
-                        || value == 0.0
-                        || value == 1.0) =>
+                if (min..=max).contains(&value) && (!is_bool || value == 0.0 || value == 1.0) =>
             {
-                match name {
-                    "r_dof_enable" => dvars.enable = value != 0.0,
-                    "r_dof_tweak" => dvars.tweak = value != 0.0,
-                    "r_dof_nearBlur" => dvars.values.near_blur = value,
-                    "r_dof_farBlur" => dvars.values.far_blur = value,
-                    "r_dof_viewModelStart" => dvars.values.view_model_start = value,
-                    "r_dof_viewModelEnd" => dvars.values.view_model_end = value,
-                    "r_dof_nearStart" => dvars.values.near_start = value,
-                    "r_dof_nearEnd" => dvars.values.near_end = value,
-                    "r_dof_farStart" => dvars.values.far_start = value,
-                    "r_dof_farEnd" => dvars.values.far_end = value,
-                    "r_dof_bias" => dvars.bias = value,
-                    _ => unreachable!(),
-                }
+                scalar_assign(&mut dvars, name, value);
                 format!("{name} = {value}")
             }
             _ => format!("usage: {name} [finite value {min}..{max}]"),

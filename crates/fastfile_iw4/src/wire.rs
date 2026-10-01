@@ -1,4 +1,6 @@
-use crate::{AssetType, Ptr, XFILE_BLOCK_VIRTUAL, XFILE_HEADER_LEN, parse_zone_header};
+use crate::{
+    AssetType, MAX_XFILE_COUNT, Ptr, XFILE_BLOCK_VIRTUAL, XFILE_HEADER_LEN, parse_zone_header,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Iw4WireFormat {
@@ -38,7 +40,7 @@ impl WirePointer {
         } else {
             let packed = u32::try_from(raw.checked_sub(1)?).ok()?;
             let block = (packed >> 28) as u8;
-            (block < 8).then_some(Self::Offset(Ptr {
+            ((block as usize) < MAX_XFILE_COUNT).then_some(Self::Offset(Ptr {
                 block,
                 offset: packed & 0x0fff_ffff,
             }))

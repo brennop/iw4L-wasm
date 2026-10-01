@@ -29,7 +29,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use web_time::Instant;
 
-use assets::LoadProgress;
+use asset_transport::LoadProgress;
 use bevy::prelude::*;
 use render::diag::capture::{CaptureQueue, CaptureRequest};
 
@@ -50,7 +50,7 @@ static REPORTED: AtomicBool = AtomicBool::new(false);
 /// later code pays for a `getenv` per span.
 pub fn arm() {
     perf::stats::arm();
-    assets::load_jobs::arm(enabled());
+    asset_transport::load_jobs::arm(enabled());
     if !enabled() {
         return;
     }
@@ -335,7 +335,7 @@ fn write_run_package(artifacts: &Path, lines: &[String]) -> Vec<String> {
         }
     }
 
-    let jobs = assets::load_jobs::snapshot();
+    let jobs = asset_transport::load_jobs::snapshot();
     let path = dir.join("load_jobs.csv");
     if jobs.rows.is_empty() {
         out.push("run package: load_jobs.csv not written — no load job was recorded".to_owned());

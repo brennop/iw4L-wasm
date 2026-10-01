@@ -1,7 +1,7 @@
 use weapon_iw4::{
     FireRecoilImpulse, FireRecoilPsScales, GunKickRange, GunKickSpring, ViewKickRange,
-    bg_weapon_fire_recoil, cg_kick_angles, fire_recoil_gun_range, fire_recoil_view_range,
-    gun_recoil_single_angle, kick_angles_center_speed, lerp_gun_kick_spring,
+    fire_recoil_gun_range, fire_recoil_view_range, gun_recoil_single_angle, kick_angles,
+    kick_angles_center_speed, lerp_gun_kick_spring, weapon_fire_recoil,
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -138,7 +138,7 @@ impl ViewKickState {
         let FireRecoilImpulse {
             kick_avel,
             gun_speed_delta,
-        } = bg_weapon_fire_recoil(view, gun, ps, unit01);
+        } = weapon_fire_recoil(view, gun, ps, unit01);
         self.kick_avel = kick_avel;
         self.gun_speed[0] += gun_speed_delta[0];
         self.gun_speed[1] += gun_speed_delta[1];
@@ -160,7 +160,7 @@ impl ViewKickState {
             kick.f_hip_view_kick_center_speed,
             kick.f_ads_view_kick_center_speed,
         );
-        cg_kick_angles(
+        kick_angles(
             &mut self.kick_angles,
             &mut self.kick_avel,
             frametime_ms,

@@ -57,7 +57,7 @@ impl AreaEntityWorldSnapshot {
         let mut cursor = world.free_head();
         while cursor != 0 {
             let index = usize::from(cursor);
-            assert!(index < free.len() && !free[index], "retail area free chain");
+            assert!(index < free.len() && !free[index], "area free chain");
             free[index] = true;
             free_order.push(cursor);
             cursor = world.sectors()[index].parent_or_next_free;
@@ -101,8 +101,8 @@ impl AreaEntityWorldSnapshot {
             .enumerate()
             .filter(|(_, link)| link.world_sector != 0)
             .map(|(entity_num, link)| {
-                let bounds = world.entity_bounds_rows()[entity_num]
-                    .expect("linked retail area entity has Bounds");
+                let bounds =
+                    world.entity_bounds_rows()[entity_num].expect("linked area entity has Bounds");
                 AreaEntityLinkSnapshot {
                     entity_num: entity_num as u16,
                     world_sector: link.world_sector,
@@ -204,7 +204,7 @@ impl AreaEntityWorldSnapshot {
             );
         }
 
-        clipmap_iw4::AreaEntityWorld::from_retail_rows(
+        clipmap_iw4::AreaEntityWorld::from_rows(
             world,
             free_order.first().copied().unwrap_or(0),
             sectors,

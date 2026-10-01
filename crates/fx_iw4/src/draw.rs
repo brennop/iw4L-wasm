@@ -57,7 +57,7 @@ pub const FX_DRAW_ELEM_HANDLER_PRESENT: [bool; FxElemType::DRAW_TABLE_COUNT] = [
 ];
 
 #[inline]
-pub const fn fx_draw_elem_handler_present(elem_type: u8) -> bool {
+pub const fn draw_elem_handler_present(elem_type: u8) -> bool {
     if (elem_type as usize) >= FX_DRAW_ELEM_HANDLER_PRESENT.len() {
         return false;
     }

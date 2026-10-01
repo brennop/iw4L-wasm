@@ -1,11 +1,7 @@
 use bevy::prelude::*;
-use frame::{
-    GameEnded, GameWin, GlassDestroyed, MatchEndingSoon, MatchEndingVerySoon, MatchTornDown,
-    PrematchDone, RoundSwitchNotify, RoundWin, SpawnedPlayerNotify,
-};
+use frame::{MatchTornDown, RuntimeRole};
 
 use crate::plugin::NetPlugin;
-use crate::role::RuntimeRole;
 use crate::schedule::{
     AUTHORITY_TOC, AuthoritySet, CLIENT_TOC, ClientSet, WORKER_CMD_AFTER, WORKER_CMD_END_FENCE,
     WORKER_CMD_RETAIL_NAMES, WORKER_CMD_TOC, WorkerCmdSet, configure_authority_sets,
@@ -72,15 +68,6 @@ fn probe_app() -> App {
     let mut app = App::new();
     app.add_plugins(bevy::time::TimePlugin);
     app.add_message::<MatchTornDown>();
-    app.add_message::<MatchEndingSoon>();
-    app.add_message::<MatchEndingVerySoon>();
-    app.add_message::<GameEnded>();
-    app.add_message::<PrematchDone>();
-    app.add_message::<GameWin>();
-    app.add_message::<RoundWin>();
-    app.add_message::<RoundSwitchNotify>();
-    app.add_message::<SpawnedPlayerNotify>();
-    app.add_message::<GlassDestroyed>();
     app
 }
 
@@ -166,7 +153,7 @@ pub fn worker_cmd_graph() -> Result<(), String> {
         let expected = WORKER_CMD_RETAIL_NAMES[index];
         if name != expected {
             return Err(format!(
-                "worker_cmd_name({set:?}) = {name:?}, retail table[{index}] = {expected:?}"
+                "worker_cmd_name({set:?}) = {name:?}, table[{index}] = {expected:?}"
             ));
         }
     }
@@ -193,7 +180,7 @@ pub fn worker_cmd_graph() -> Result<(), String> {
     ];
     if WORKER_CMD_END_FENCE != fence.as_slice() {
         return Err(format!(
-            "WORKER_CMD_END_FENCE {WORKER_CMD_END_FENCE:?} != retail vertex writers {fence:?}"
+            "WORKER_CMD_END_FENCE {WORKER_CMD_END_FENCE:?} != vertex writers {fence:?}"
         ));
     }
     Ok(())

@@ -25,7 +25,7 @@ pub fn add_predictable_event(ps: &mut PlayerState, event: i32, parm: i32) {
     ps.event_sequence = ps.event_sequence.wrapping_add(1) & 0x7ff;
 }
 
-pub fn pm_add_event(ps: &mut PlayerState, event: i32) {
+pub fn add_event(ps: &mut PlayerState, event: i32) {
     add_predictable_event(ps, event, 0);
 }
 

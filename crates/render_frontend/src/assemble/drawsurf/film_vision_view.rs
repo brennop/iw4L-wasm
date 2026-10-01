@@ -4,19 +4,26 @@ use super::dof::GlowDvars;
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct FilmVisionView {
-    pub current: Option<assets::FilmVision>,
+    pub current: Option<asset_world::FilmVision>,
+    pub script_forced: bool,
+    /// Hue in radians, gamma, exposure in stops, saturation.
+    pub grading: [f32; 4],
+    pub blur: f32,
     from: hud_iw4::VisionSetVars,
     to: hud_iw4::VisionSetVars,
     result: hud_iw4::VisionSetVars,
     lerp: hud_iw4::VisionSetLerpData,
-    last_map: Option<assets::FilmVision>,
-    override_vision: Option<assets::FilmVision>,
+    last_map: Option<asset_world::FilmVision>,
+    override_vision: Option<asset_world::FilmVision>,
 }
 
 impl Default for FilmVisionView {
     fn default() -> Self {
         Self {
             current: None,
+            script_forced: false,
+            grading: [0.0, 1.0, 0.0, 1.0],
+            blur: 0.0,
             from: hud_iw4::VisionSetVars::default(),
             to: hud_iw4::VisionSetVars::default(),
             result: hud_iw4::VisionSetVars::default(),
@@ -31,8 +38,8 @@ impl FilmVisionView {
     /// Select a preset, or restore the map with None. Call only for a ready view.
     pub fn select(
         &mut self,
-        map: Option<assets::FilmVision>,
-        preset: Option<assets::FilmVision>,
+        map: Option<asset_world::FilmVision>,
+        preset: Option<asset_world::FilmVision>,
         now_ms: i32,
         duration_ms: i32,
         allowed: bool,
@@ -42,7 +49,7 @@ impl FilmVisionView {
             self.result = pack_film_vision(map.unwrap_or_default());
             self.lerp.style = hud_iw4::VISION_SET_LERP_HOLD;
         }
-        let (current, _) = hud_iw4::cg_vision_sets_update(
+        let (current, _) = hud_iw4::vision_sets_update(
             now_ms,
             self.from,
             self.to,
@@ -52,7 +59,7 @@ impl FilmVisionView {
             script_forced,
         );
         let target = preset.or(map).unwrap_or_default();
-        (self.from, self.to, self.lerp) = hud_iw4::cg_vision_set_start(
+        (self.from, self.to, self.lerp) = hud_iw4::vision_set_start(
             now_ms,
             duration_ms,
             hud_iw4::VISION_SET_LERP_TO_SMOOTH,
@@ -66,7 +73,7 @@ impl FilmVisionView {
     }
 }
 
-pub fn pack_film_vision(vision: assets::FilmVision) -> hud_iw4::VisionSetVars {
+pub fn pack_film_vision(vision: asset_world::FilmVision) -> hud_iw4::VisionSetVars {
     hud_iw4::VisionSetVars {
         r_glow: vision.glow_enable,
         r_glow_bloom_cutoff: vision.glow_bloom_cutoff,
@@ -86,8 +93,8 @@ pub fn pack_film_vision(vision: assets::FilmVision) -> hud_iw4::VisionSetVars {
     }
 }
 
-pub fn unpack_film_vision(vars: hud_iw4::VisionSetVars) -> assets::FilmVision {
-    assets::FilmVision {
+pub fn unpack_film_vision(vars: hud_iw4::VisionSetVars) -> asset_world::FilmVision {
+    asset_world::FilmVision {
         enable: vars.r_film_enable,
         contrast: vars.r_film_contrast,
         brightness: vars.r_film_brightness,
@@ -108,18 +115,18 @@ pub fn unpack_film_vision(vars: hud_iw4::VisionSetVars) -> assets::FilmVision {
 #[must_use]
 pub fn presented_film_vision(
     view_ready: bool,
-    map_vision: Option<assets::FilmVision>,
-) -> Option<assets::FilmVision> {
+    map_vision: Option<asset_world::FilmVision>,
+) -> Option<asset_world::FilmVision> {
     if view_ready { map_vision } else { None }
 }
 
 #[must_use]
 pub fn presented_film_vision_with_glow_tweaks(
     view_ready: bool,
-    map_vision: Option<assets::FilmVision>,
+    map_vision: Option<asset_world::FilmVision>,
     use_tweaks: bool,
     tweaks: lighting_iw4::GlowViewInfo,
-) -> Option<assets::FilmVision> {
+) -> Option<asset_world::FilmVision> {
     if !view_ready {
         return None;
     }
@@ -127,7 +134,7 @@ pub fn presented_film_vision_with_glow_tweaks(
         return map_vision;
     }
     let mut vision = map_vision.unwrap_or_default();
-    let selected = lighting_iw4::r_select_glow_view_info(
+    let selected = lighting_iw4::select_glow_view_info(
         lighting_iw4::GlowViewInfo {
             enable: vision.glow_enable,
             cutoff: vision.glow_bloom_cutoff,
@@ -150,7 +157,7 @@ pub fn presented_film_vision_with_glow_tweaks(
 #[allow(clippy::too_many_arguments)]
 pub fn presented_film_vision_with_lerp(
     view_ready: bool,
-    map_vision: Option<assets::FilmVision>,
+    map_vision: Option<asset_world::FilmVision>,
     now_ms: i32,
     duration_ms: i32,
     slot: &mut FilmVisionView,
@@ -158,7 +165,7 @@ pub fn presented_film_vision_with_lerp(
     tweaks: lighting_iw4::GlowViewInfo,
     allowed: bool,
     script_forced: bool,
-) -> Option<assets::FilmVision> {
+) -> Option<asset_world::FilmVision> {
     if !view_ready {
         *slot = FilmVisionView::default();
         return None;
@@ -168,7 +175,7 @@ pub fn presented_film_vision_with_lerp(
         return None;
     };
     if slot.last_map != Some(map) {
-        let (from, to, lerp) = hud_iw4::cg_vision_set_start(
+        let (from, to, lerp) = hud_iw4::vision_set_start(
             now_ms,
             duration_ms,
             hud_iw4::VISION_SET_LERP_TO_LINEAR,
@@ -184,7 +191,7 @@ pub fn presented_film_vision_with_lerp(
             slot.result = slot.to;
         }
     }
-    let (vars, lerp) = hud_iw4::cg_vision_sets_update(
+    let (vars, lerp) = hud_iw4::vision_sets_update(
         now_ms,
         slot.from,
         slot.to,
@@ -199,42 +206,16 @@ pub fn presented_film_vision_with_lerp(
     presented_film_vision_with_glow_tweaks(true, Some(mixed), use_tweaks, tweaks)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IntroStage {
-    Waiting,
-    Starting,
-    Returning,
-    Playing,
-}
-
-fn intro_stage(phase: sim::MatchPhase, prematch: gamemode_iw4::PrematchStep) -> (IntroStage, i32) {
-    if phase != sim::MatchPhase::Warmup {
-        return (IntroStage::Playing, 0);
-    }
-    match prematch {
-        gamemode_iw4::PrematchStep::Starting { elapsed_ms } => {
-            let return_at = gamemode_iw4::MATCH_START_MS.saturating_sub(2000)
-                + gamemode_iw4::MATCH_START_PULSE_IN_MS as u32;
-            if elapsed_ms >= return_at {
-                (
-                    IntroStage::Returning,
-                    elapsed_ms.saturating_sub(return_at) as i32,
-                )
-            } else {
-                (IntroStage::Starting, 0)
-            }
-        }
-        _ => (IntroStage::Waiting, 0),
-    }
-}
-
 #[derive(Resource, Default)]
-struct MatchIntroVision {
-    stage: Option<IntroStage>,
+struct AppliedVision {
+    vision: Option<Option<sim::VisionChange>>,
+    pain: Option<Option<sim::VisionChange>>,
+    pain_slot: FilmVisionView,
+    pain_strength: f32,
 }
 
 pub fn register(app: &mut App) {
-    app.init_resource::<MatchIntroVision>();
+    app.init_resource::<AppliedVision>();
     app.init_resource::<FilmVisionView>().add_systems(
         Update,
         update_film_vision_view
@@ -243,91 +224,323 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_film_vision_view(
     view: Res<crate::prepare::scene::view_parms::PreparedSceneView>,
     scene: Res<crate::prepare::scene::world::WorldScene>,
     glow: Res<GlowDvars>,
-    clock: Res<net::CgFrameClock>,
+    clock: Res<net::FrameClock>,
     mut film: ResMut<FilmVisionView>,
     presented: Res<net::PresentedSnapshot>,
-    mut intro: ResMut<MatchIntroVision>,
+    local: Res<net::LocalPresentClient>,
+    mut applied: ResMut<AppliedVision>,
+    settings: Res<frame::GameSettings>,
 ) {
     if !view.ready {
-        intro.stage = None;
+        applied.vision = None;
     } else {
-        let (stage, age_ms) = presented
-            .snapshot()
-            .map_or((IntroStage::Waiting, 0), |snapshot| {
-                intro_stage(snapshot.meta.phase, snapshot.meta.prematch)
-            });
-        if intro.stage != Some(stage) {
-            match stage {
-                IntroStage::Waiting | IntroStage::Starting => {
-                    match scene.film_visions.get("vision/mpintro.vision") {
-                        Some(Ok(preset)) => film.select(
-                            scene.film_vision,
-                            Some(*preset),
-                            clock.time(),
-                            0,
-                            glow.allowed,
-                            glow.allowed_script_forced,
-                        ),
-                        Some(Err(error)) => diag::warn!(World, "match intro vision: {error:?}"),
-                        None => {}
-                    }
-                }
-                IntroStage::Returning => {
-                    if intro.stage.is_none()
-                        && let Some(Ok(preset)) = scene.film_visions.get("vision/mpintro.vision")
-                    {
-                        film.select(
-                            scene.film_vision,
-                            Some(*preset),
-                            clock.time() - age_ms,
-                            0,
-                            glow.allowed,
-                            glow.allowed_script_forced,
-                        );
-                    }
-                    film.select(
-                        scene.film_vision,
-                        None,
-                        clock.time() - age_ms,
-                        3000,
-                        glow.allowed,
-                        glow.allowed_script_forced,
-                    );
-                }
-                IntroStage::Playing if intro.stage.is_some() => {
-                    let duration = if intro.stage == Some(IntroStage::Returning) {
-                        3000
-                    } else {
-                        0
-                    };
-                    film.select(
-                        scene.film_vision,
-                        None,
-                        clock.time(),
-                        duration,
-                        glow.allowed,
-                        glow.allowed_script_forced,
-                    );
-                }
-                IntroStage::Playing => {}
+        let wanted = presented.snapshot().and_then(|snapshot| {
+            let meta = snapshot.meta.for_client(local.0)?;
+            let effects = &meta.view_effects;
+            let global = &snapshot.meta.objectives;
+            if meta.remote_missile.is_some() {
+                effects
+                    .missile_vision
+                    .clone()
+                    .or_else(|| global.missile_vision.clone())
+            } else if presented
+                .player(local.0)
+                .is_some_and(|ps| ps.other_flags & 0x8 != 0)
+            {
+                effects
+                    .thermal_vision
+                    .clone()
+                    .or_else(|| global.thermal_vision.clone())
+            } else if presented
+                .player(local.0)
+                .is_some_and(|ps| ps.weap_flags & playerstate_iw4::weap_flags::NIGHT_VISION != 0)
+                || meta
+                    .client_dvars
+                    .iter()
+                    .rev()
+                    .chain(global.server_info.iter().rev())
+                    .find(|(name, _)| name.eq_ignore_ascii_case("nightvision"))
+                    .is_some_and(|(_, value)| value == "1")
+            {
+                effects
+                    .night_vision
+                    .clone()
+                    .or_else(|| global.night_vision.clone())
+            } else {
+                effects
+                    .naked_vision
+                    .clone()
+                    .or_else(|| global.naked_vision.clone())
             }
-            intro.stage = Some(stage);
+        });
+        film.script_forced = wanted.is_some()
+            || presented
+                .snapshot()
+                .and_then(|s| {
+                    s.meta.for_client(local.0).map(|meta| {
+                        meta.client_dvars
+                            .iter()
+                            .chain(s.meta.objectives.server_info.iter())
+                            .any(|(name, _)| sim::is_postfx_dvar(name))
+                    })
+                })
+                .unwrap_or(false);
+        if applied.vision.as_ref() != Some(&wanted) {
+            let preset = wanted
+                .as_ref()
+                .and_then(|vision| loaded_script_vision(&scene, vision));
+            let duration_ms = match (&applied.vision, &wanted) {
+                (Some(_), Some(vision)) => vision.duration_ms,
+                _ => 0,
+            };
+            film.select(
+                scene.film_vision,
+                preset,
+                clock.time(),
+                duration_ms,
+                glow.allowed || wanted.is_some(),
+                glow.allowed_script_forced || wanted.is_some(),
+            );
+            applied.vision = Some(wanted);
         }
     }
+    let script_forced = film.script_forced;
     let mixed = presented_film_vision_with_lerp(
         view.ready,
         film.override_vision.or(scene.film_vision),
         clock.time(),
         0,
         &mut film,
-        glow.use_tweaks,
+        glow.use_tweaks && !script_forced,
         glow.tweak_view_info(),
-        glow.allowed,
-        glow.allowed_script_forced,
+        glow.allowed || script_forced,
+        glow.allowed_script_forced || script_forced,
     );
-    film.current = mixed;
+    let mut mixed = mixed;
+    if !view.ready {
+        *applied = AppliedVision::default();
+    } else if let Some(snapshot) = presented.snapshot() {
+        let wanted = snapshot
+            .meta
+            .for_client(local.0)
+            .and_then(|meta| meta.view_effects.pain_vision.clone())
+            .or_else(|| snapshot.meta.objectives.pain_vision.clone());
+        if applied.pain.as_ref() != Some(&wanted) {
+            let preset = wanted
+                .as_ref()
+                .and_then(|vision| loaded_script_vision(&scene, vision));
+            let duration = if applied.pain.is_some() {
+                wanted.as_ref().map_or(0, |v| v.duration_ms)
+            } else {
+                0
+            };
+            applied.pain_slot.select(
+                scene.film_vision,
+                preset,
+                clock.time(),
+                duration,
+                true,
+                true,
+            );
+            applied.pain = Some(wanted.clone());
+        }
+        let health = presented
+            .player(local.0)
+            .filter(|ps| ps.health > 0 && ps.max_health > 0 && ps.pm_type < 5)
+            .map(|ps| ps.health as f32 / ps.max_health as f32);
+        if let Some(health) = health.filter(|_| wanted.is_some()) {
+            if health <= 0.5 || applied.pain_strength > 0.0 {
+                let target = (1.0 - health).clamp(0.0, 1.0);
+                applied.pain_strength = target.max(applied.pain_strength - clock.frametime_secs());
+            }
+        } else {
+            applied.pain_strength = 0.0;
+        }
+        let pain_map = applied.pain_slot.override_vision.or(scene.film_vision);
+        let pain = presented_film_vision_with_lerp(
+            true,
+            pain_map,
+            clock.time(),
+            0,
+            &mut applied.pain_slot,
+            false,
+            glow.tweak_view_info(),
+            true,
+            true,
+        );
+        if let Some(pain) = pain.filter(|_| applied.pain_strength > 0.0) {
+            let base = pack_film_vision(match mixed {
+                Some(vision) => vision,
+                None => asset_world::FilmVision::default(),
+            });
+            mixed = Some(unpack_film_vision(hud_iw4::vision_lerp_vars(
+                base,
+                pack_film_vision(pain),
+                applied.pain_strength,
+                hud_iw4::VISION_SET_LERP_TO_LINEAR,
+            )));
+            film.script_forced = true;
+        }
+    }
+    film.current = if view.ready && !film.script_forced && settings.brightness != 0.0 {
+        let mut vision = mixed.unwrap_or(asset_world::FilmVision::default());
+        vision.enable = true;
+        vision.brightness += settings.brightness;
+        Some(vision)
+    } else {
+        mixed
+    };
+    film.grading = [0.0, 1.0, 0.0, 1.0];
+    film.blur = 0.0;
+    if !view.ready {
+        film.script_forced = false;
+        return;
+    }
+    if let Some(snapshot) = presented.snapshot() {
+        if let Some(meta) = snapshot.meta.for_client(local.0) {
+            film.blur = meta
+                .view_effects
+                .blur
+                .map_or(0.0, |blur| blur.sample(clock.time()));
+            let mut vision = match film.current {
+                Some(vision) => vision,
+                None => asset_world::FilmVision::default(),
+            };
+            let mut grading = film.grading;
+            let mut blur = film.blur;
+            let mut enable_override = None;
+            for (name, value) in snapshot
+                .meta
+                .objectives
+                .server_info
+                .iter()
+                .chain(meta.client_dvars.iter())
+            {
+                if matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "r_filmenable" | "r_filmtweakenable"
+                ) {
+                    if let Ok(value) = value.parse::<f32>() {
+                        if value.is_finite() {
+                            enable_override = Some(value != 0.0);
+                        }
+                    }
+                }
+                if apply_script_film_dvar(&mut vision, &mut grading, &mut blur, name, value) {
+                    film.script_forced = true;
+                }
+            }
+            if let Some(enable) = enable_override {
+                vision.enable = enable;
+            }
+            film.grading = grading;
+            film.blur = blur;
+            film.current = Some(vision);
+        }
+    }
+}
+
+fn loaded_script_vision(
+    scene: &crate::prepare::scene::world::WorldScene,
+    vision: &sim::VisionChange,
+) -> Option<asset_world::FilmVision> {
+    if vision.name.is_empty() {
+        return None;
+    }
+    let key = format!("vision/{}.vision", vision.name.to_ascii_lowercase());
+    match scene.film_visions.get(&key) {
+        Some(Ok(preset)) => Some(*preset),
+        Some(Err(error)) => {
+            diag::warn!(World, "vision {key}: {error:?}");
+            None
+        }
+        None => {
+            diag::warn!(World, "vision {key} is not loaded");
+            None
+        }
+    }
+}
+
+/// Values come from snapshot metadata, never from the console permission path.
+fn apply_script_film_dvar(
+    vision: &mut asset_world::FilmVision,
+    grading: &mut [f32; 4],
+    blur: &mut f32,
+    name: &str,
+    value: &str,
+) -> bool {
+    let name = name.to_ascii_lowercase().replace("r_filmtweak", "r_film");
+    let value = value.trim().trim_matches('"');
+    if matches!(
+        name.as_str(),
+        "r_filmlighttint" | "r_filmmediumtint" | "r_filmdarktint"
+    ) {
+        let Ok(values) = value
+            .split_whitespace()
+            .map(str::parse::<f32>)
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            return false;
+        };
+        if values.len() != 3 || !values.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let tint = [values[0], values[1], values[2]];
+        vision.enable = true;
+        match name.as_str() {
+            "r_filmlighttint" => vision.light_tint = tint,
+            "r_filmmediumtint" => vision.medium_tint = tint,
+            _ => vision.dark_tint = tint,
+        }
+        return true;
+    }
+    let Ok(v) = value.parse::<f32>() else {
+        return false;
+    };
+    if !v.is_finite() {
+        return false;
+    }
+    match name.as_str() {
+        "r_filmenable" => vision.enable = v != 0.0,
+        "r_filmusetweaks" | "r_glowusetweaks" => {}
+        "r_filmbrightness" | "r_brightness" => {
+            vision.enable = true;
+            vision.brightness = v;
+        }
+        "r_filmcontrast" | "r_contrast" => {
+            vision.enable = true;
+            vision.contrast = v;
+        }
+        "r_filmdesaturation" => {
+            vision.enable = true;
+            vision.desaturation = v;
+        }
+        "r_filmdesaturationdark" => {
+            vision.enable = true;
+            vision.desaturation_dark = v;
+        }
+        "r_filminvert" => {
+            vision.enable = true;
+            vision.invert = v != 0.0;
+        }
+        "r_glow" | "r_glowtweakenable" => vision.glow_enable = v != 0.0,
+        "r_glowradius0" | "r_glowtweakradius0" => vision.glow_radius = v,
+        "r_glowbloomintensity0" | "r_glowtweakbloomintensity0" => vision.glow_bloom_intensity = v,
+        "r_glowbloomcutoff" | "r_glowtweakbloomcutoff" => vision.glow_bloom_cutoff = v,
+        "r_glowbloomdesaturation" | "r_glowtweakbloomdesaturation" => {
+            vision.glow_bloom_desaturation = v
+        }
+        "r_hue" | "r_filmhue" => grading[0] = v.to_radians(),
+        "r_gamma" => grading[1] = v.max(0.001),
+        "r_exposure" => grading[2] = v,
+        "r_saturation" => grading[3] = v,
+        "r_blur" => *blur = v.max(0.0),
+        _ => return false,
+    }
+    true
 }

@@ -3,7 +3,7 @@ name = "render_material"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Pure material execution rules: R_SetupMaterial arm, pass ABI, SM3 decode, vertex family routing, runtime catalog, prepared tables, frame code bank."
+description = "Pure material execution rules: material setup, pass ABI, SM3 decode, vertex family routing, runtime catalog, prepared tables, frame code bank."
 
 [dependencies]
 asset_core.workspace = true

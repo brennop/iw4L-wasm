@@ -140,7 +140,7 @@ pub fn start_firing_restrict_kick_time(
         .saturating_add(fire_delay_ms)
 }
 
-pub fn bg_weapon_fire_recoil(
+pub fn weapon_fire_recoil(
     view: ViewKickRange,
     gun: GunKickRange,
     ps: FireRecoilPsScales,
@@ -175,7 +175,7 @@ pub fn kick_angles_center_speed(
     }
 }
 
-pub fn cg_kick_angles_step_axis(angle: &mut f32, avel: &mut f32, dt: f32, center_speed: f32) {
+pub fn kick_angles_step_axis(angle: &mut f32, avel: &mut f32, dt: f32, center_speed: f32) {
     if *avel == 0.0 && *angle == 0.0 {
         return;
     }
@@ -206,7 +206,7 @@ pub fn cg_kick_angles_step_axis(angle: &mut f32, avel: &mut f32, dt: f32, center
     }
 }
 
-pub fn cg_kick_angles(
+pub fn kick_angles(
     angles: &mut [f32; 3],
     avel: &mut [f32; 3],
     frametime_ms: i32,
@@ -217,7 +217,7 @@ pub fn cg_kick_angles(
         let step_ms = if t < KICK_STEP_MS { t } else { KICK_STEP_MS };
         let dt = step_ms as f32 * MS_TO_SEC;
         for i in 0..3 {
-            cg_kick_angles_step_axis(&mut angles[i], &mut avel[i], dt, center_speed);
+            kick_angles_step_axis(&mut angles[i], &mut avel[i], dt, center_speed);
         }
         t -= KICK_STEP_MS;
     }
@@ -284,7 +284,7 @@ pub fn gun_recoil_single_angle(
     false
 }
 
-pub fn bg_calculate_weapon_position_gun_recoil(
+pub fn calculate_weapon_position_gun_recoil(
     state: &mut GunRecoilPlacementState,
     frametime_secs: f32,
     weapon_pos_frac: f32,

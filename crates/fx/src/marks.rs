@@ -3,12 +3,11 @@ use marks_iw4::{
     FX_POINT_GROUP_CHAIN_NONE, FX_POINT_GROUP_LIMIT, FX_POINT_GROUP_NEXT_NONE,
     FX_TRI_GROUP_CHAIN_NONE, FX_TRI_GROUP_LIMIT, FX_TRI_GROUP_NEXT_NONE, FxAllocMarkRequest,
     FxMarkConstructed, FxMarkStagingPoint, FxMarkStagingTri, FxPointGroup, FxTriGroup,
-    GFX_MARK_MESH_VERTEX_STRIDE, GfxMarkMeshBudget, fx_alloc_and_construct_mark,
-    fx_copy_mark_points, fx_copy_mark_tris, fx_generate_mark_verts_begin,
-    fx_impact_mark_models_generate, fx_impact_mark_outer_gate, fx_init_mark_next_handle,
-    fx_init_point_next_slot, fx_init_tri_next_slot, fx_mark_context_is_world_list,
-    fx_mark_contexts_equal, fx_mark_point_groups_for_count, fx_mark_tri_groups_for_staging,
-    fx_pack_mark_world_vertex, r_add_mark_mesh_draw_surf,
+    GFX_MARK_MESH_VERTEX_STRIDE, GfxMarkMeshBudget, add_mark_mesh_draw_surf,
+    alloc_and_construct_mark, copy_mark_points, copy_mark_tris, generate_mark_verts_begin,
+    impact_mark_models_generate, impact_mark_outer_gate, init_mark_next_handle,
+    init_point_next_slot, init_tri_next_slot, mark_context_is_world_list, mark_contexts_equal,
+    mark_point_groups_for_count, mark_tri_groups_for_staging, pack_mark_world_vertex,
 };
 use std::collections::VecDeque;
 
@@ -122,15 +121,15 @@ impl FxMarksSystemHost {
         let n = FX_MARKS_LIMIT as usize;
         let mut next = vec![FX_MARK_HANDLE_NONE; n];
         for slot in 0..FX_MARKS_LIMIT {
-            next[slot as usize] = fx_init_mark_next_handle(slot);
+            next[slot as usize] = init_mark_next_handle(slot);
         }
         let mut tri_next = vec![FX_TRI_GROUP_NEXT_NONE; FX_TRI_GROUP_LIMIT as usize];
         for slot in 0..FX_TRI_GROUP_LIMIT {
-            tri_next[slot as usize] = fx_init_tri_next_slot(slot);
+            tri_next[slot as usize] = init_tri_next_slot(slot);
         }
         let mut point_next = vec![FX_POINT_GROUP_NEXT_NONE; FX_POINT_GROUP_LIMIT as usize];
         for slot in 0..FX_POINT_GROUP_LIMIT {
-            point_next[slot as usize] = fx_init_point_next_slot(slot);
+            point_next[slot as usize] = init_point_next_slot(slot);
         }
         Self {
             first_free: 0,
@@ -176,7 +175,7 @@ impl FxMarksSystemHost {
         staging_tris: &[FxMarkStagingTri],
         staging_points: &[FxMarkStagingPoint],
     ) -> Option<u16> {
-        if fx_alloc_and_construct_mark(&req, 0, 0).is_err() {
+        if alloc_and_construct_mark(&req, 0, 0).is_err() {
             return None;
         }
         if (staging_tris.len() as u32) < req.tri_count
@@ -186,8 +185,8 @@ impl FxMarksSystemHost {
         }
         let tris = &staging_tris[..req.tri_count as usize];
         let points = &staging_points[..req.point_count as usize];
-        let needed_tris = fx_mark_tri_groups_for_staging(tris);
-        let needed_points = fx_mark_point_groups_for_count(req.point_count);
+        let needed_tris = mark_tri_groups_for_staging(tris);
+        let needed_points = mark_point_groups_for_count(req.point_count);
         if needed_tris == 0 || needed_points == 0 {
             return None;
         }
@@ -202,12 +201,12 @@ impl FxMarksSystemHost {
         }
         let tri_head = self.pop_tri_chain(needed_tris)?;
         let point_head = self.pop_point_chain(needed_points)?;
-        let copied_tri = fx_copy_mark_tris(&mut self.tri_groups, tri_head, tris);
-        let copied_point = fx_copy_mark_points(&mut self.point_groups, point_head, points);
+        let copied_tri = copy_mark_tris(&mut self.tri_groups, tri_head, tris);
+        let copied_point = copy_mark_points(&mut self.point_groups, point_head, points);
         if copied_tri != req.tri_count || copied_point != req.point_count {
             return None;
         }
-        let mark = fx_alloc_and_construct_mark(&req, tri_head, point_head).ok()?;
+        let mark = alloc_and_construct_mark(&req, tri_head, point_head).ok()?;
         let handle = self.first_free;
         self.first_free = self.next[handle as usize];
         self.constructed[handle as usize] = Some(mark);
@@ -378,7 +377,7 @@ impl FxMarksSystemHost {
             let Some(mark) = self.constructed[slot as usize] else {
                 continue;
             };
-            if !fx_mark_context_is_world_list(mark.context as u8) && mark.context as u8 != 4 {
+            if !mark_context_is_world_list(mark.context as u8) && mark.context as u8 != 4 {
                 continue;
             }
             if self
@@ -415,7 +414,7 @@ impl FxMarksSystemHost {
         transform_point: &dyn Fn(FxMarkStagingPoint) -> FxMarkStagingPoint,
     ) -> Result<(), marks_iw4::GfxMarkMeshRefuse> {
         let (base_vert, _) =
-            fx_generate_mark_verts_begin(&mut census.budget, mark.point_count, mark.tri_count)?;
+            generate_mark_verts_begin(&mut census.budget, mark.point_count, mark.tri_count)?;
         census
             .verts
             .resize(census.budget.vert_n as usize, FxMarkStagingPoint::ZERO);
@@ -438,9 +437,9 @@ impl FxMarksSystemHost {
                 }
                 if let Some(row) = census.packed.get_mut(out_i) {
                     let pack = if matches!(mark.context as u8, 0 | 2) {
-                        fx_pack_mark_world_vertex
+                        pack_mark_world_vertex
                     } else {
-                        marks_iw4::fx_pack_mark_model_vertex
+                        marks_iw4::pack_mark_model_vertex
                     };
                     *row = pack(
                         &pt,
@@ -473,8 +472,8 @@ impl FxMarksSystemHost {
             };
             let n = remaining_tri.min(group.tri_count);
             if let Some(ctx) = cur_context {
-                if !fx_mark_contexts_equal(&ctx, &group.context) && batch_index_count != 0 {
-                    let _ = r_add_mark_mesh_draw_surf(&mut census.budget, batch_index_count);
+                if !mark_contexts_equal(&ctx, &group.context) && batch_index_count != 0 {
+                    let _ = add_mark_mesh_draw_surf(&mut census.budget, batch_index_count);
                     census.surfs.push(GfxMarkMeshSurf {
                         index_start: batch_index_start,
                         index_count: batch_index_count,
@@ -499,7 +498,7 @@ impl FxMarksSystemHost {
             }
             tri_handle = group.next;
         }
-        let _ = r_add_mark_mesh_draw_surf(&mut census.budget, batch_index_count);
+        let _ = add_mark_mesh_draw_surf(&mut census.budget, batch_index_count);
         census.surfs.push(GfxMarkMeshSurf {
             index_start: batch_index_start,
             index_count: batch_index_count,
@@ -510,7 +509,7 @@ impl FxMarksSystemHost {
     }
 
     pub fn impact_mark(&self, req: MarkImpactRequest) -> MarkImpactResult {
-        if !fx_impact_mark_outer_gate(req.receivers.fx_marks, self.no_marks) {
+        if !impact_mark_outer_gate(req.receivers.fx_marks, self.no_marks) {
             return MarkImpactResult {
                 entered: false,
                 against_world: false,
@@ -521,7 +520,7 @@ impl FxMarksSystemHost {
         MarkImpactResult {
             entered: true,
             against_world: !req.skip_world,
-            against_models: fx_impact_mark_models_generate(
+            against_models: impact_mark_models_generate(
                 req.receivers.fx_marks_ents,
                 req.receivers.fx_marks_smodels,
             ),

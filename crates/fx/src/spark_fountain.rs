@@ -1,12 +1,11 @@
 use fx_iw4::{
     FX_SPARK_FOUNTAIN_CELLS, FX_SPARK_FOUNTAIN_CLUSTER_MESH_MAX, FX_SPARK_FOUNTAIN_HANDLE_NONE,
-    FX_SPARK_FOUNTAIN_INTEGRATE_BUDGET, FX_SPARK_FOUNTAIN_INTEGRATE_CELLS,
-    fx_spark_fountain_accel_from_gravity, fx_spark_fountain_cone_dir,
-    fx_spark_fountain_handle_for_slot, fx_spark_fountain_integrate_cell,
-    fx_spark_fountain_integrate_cell_begin, fx_spark_fountain_isotropic_dir,
-    fx_spark_fountain_mark_ready, fx_spark_fountain_slot_for_handle,
-    fx_spark_fountain_spark_n_clamped, fx_spark_fountain_speed, fx_spark_fountain_spray_dir,
-    fx_spark_fountain_update_keyframe_cursor, msvcrt_rand,
+    FX_SPARK_FOUNTAIN_INTEGRATE_BUDGET, FX_SPARK_FOUNTAIN_INTEGRATE_CELLS, msvcrt_rand,
+    spark_fountain_accel_from_gravity, spark_fountain_cone_dir, spark_fountain_handle_for_slot,
+    spark_fountain_integrate_cell, spark_fountain_integrate_cell_begin,
+    spark_fountain_isotropic_dir, spark_fountain_mark_ready, spark_fountain_slot_for_handle,
+    spark_fountain_spark_n_clamped, spark_fountain_speed, spark_fountain_spray_dir,
+    spark_fountain_update_keyframe_cursor,
 };
 
 use crate::system::FxSystemHost;
@@ -93,7 +92,7 @@ pub(crate) fn alloc_spark_fountain(host: &mut FxSystemHost) -> Option<u16> {
         ..FxSparkFountainClusterSlot::default()
     };
     host.spark_fountain_live_count = host.spark_fountain_live_count.saturating_add(1);
-    Some(fx_spark_fountain_handle_for_slot(dense as u32))
+    Some(spark_fountain_handle_for_slot(dense as u32))
 }
 
 fn alloc_spark_fountain_mesh(host: &mut FxSystemHost) -> Option<u16> {
@@ -134,7 +133,7 @@ fn free_spark_fountain_mesh(host: &mut FxSystemHost, dense: u16) {
 }
 
 pub(crate) fn free_spark_fountain(host: &mut FxSystemHost, handle: u16) {
-    let Some(dense) = fx_spark_fountain_slot_for_handle(handle) else {
+    let Some(dense) = spark_fountain_slot_for_handle(handle) else {
         return;
     };
     if dense >= host.spark_fountains.len() || !host.spark_fountains[dense].occupied {
@@ -182,13 +181,13 @@ pub(crate) fn spray_spark_fountain(
     bounce_frac: f32,
     bounce_rand: f32,
 ) -> FountainSpray {
-    let Some(dense) = fx_spark_fountain_slot_for_handle(handle) else {
+    let Some(dense) = spark_fountain_slot_for_handle(handle) else {
         return FountainSpray::MeshFull;
     };
     if dense >= host.spark_fountains.len() || !host.spark_fountains[dense].occupied {
         return FountainSpray::MeshFull;
     }
-    let spark_n = fx_spark_fountain_spark_n_clamped(spark_count);
+    let spark_n = spark_fountain_spark_n_clamped(spark_count);
     let mut meshes = [FX_SPARK_FOUNTAIN_HANDLE_NONE; FX_SPARK_FOUNTAIN_CLUSTER_MESH_MAX as usize];
     let mut i = 0u8;
     while i < spark_n {
@@ -214,8 +213,8 @@ pub(crate) fn spray_spark_fountain(
             let rz = msvcrt_rand(&mut hold);
             let ry = msvcrt_rand(&mut hold);
             let rx = msvcrt_rand(&mut hold);
-            let dir = fx_spark_fountain_spray_dir(cone_axis, [rx, ry, rz], vel_cone_frac);
-            let speed = fx_spark_fountain_speed(msvcrt_rand(&mut hold), vel_min, vel_max);
+            let dir = spark_fountain_spray_dir(cone_axis, [rx, ry, rz], vel_cone_frac);
+            let speed = spark_fountain_speed(msvcrt_rand(&mut hold), vel_min, vel_max);
             host.spark_fountain_meshes[mesh].cells[cell as usize] = FxSparkFountainCell {
                 times: [0.0; 4],
                 origins: [origin, [0.0; 3], [0.0; 3], [0.0; 3]],
@@ -231,7 +230,7 @@ pub(crate) fn spray_spark_fountain(
         i = i.saturating_add(1);
     }
     host.spark_fountain_holdrand = hold;
-    let (ready, write_spark, keyframe) = fx_spark_fountain_mark_ready(spark_n, flags);
+    let (ready, write_spark, keyframe) = spark_fountain_mark_ready(spark_n, flags);
     host.spark_fountains[dense].spark_n = spark_n;
     host.spark_fountains[dense].mesh_idx = meshes;
     host.spark_fountains[dense].ready = ready;
@@ -255,12 +254,12 @@ pub(crate) fn emit_spark_fountain_custom_cells(
     age_msec: i32,
 ) -> Vec<[fx_iw4::GfxPosTexVertex; 8]> {
     use fx_iw4::{
-        FX_SPARK_FOUNTAIN_HANDLE_NONE, fx_spark_fountain_atlas_uv, fx_spark_fountain_boost,
-        fx_spark_fountain_cell_verts, fx_spark_fountain_generate_ribbon,
-        fx_spark_fountain_slot_for_handle, fx_spark_fountain_wrap_loop_time,
+        FX_SPARK_FOUNTAIN_HANDLE_NONE, spark_fountain_atlas_uv, spark_fountain_boost,
+        spark_fountain_cell_verts, spark_fountain_generate_ribbon, spark_fountain_slot_for_handle,
+        spark_fountain_wrap_loop_time,
     };
     let mut out = Vec::new();
-    let Some(dense) = fx_spark_fountain_slot_for_handle(handle) else {
+    let Some(dense) = spark_fountain_slot_for_handle(handle) else {
         return out;
     };
     let Some(cluster) = host.spark_fountains.get(dense).filter(|c| c.occupied) else {
@@ -270,12 +269,12 @@ pub(crate) fn emit_spark_fountain_custom_cells(
         return out;
     }
     let (warped, length_scale) =
-        fx_spark_fountain_boost(cluster.boost_time, cluster.boost_factor, age_msec as f32);
+        spark_fountain_boost(cluster.boost_time, cluster.boost_factor, age_msec as f32);
     let length = cluster.spark_length * length_scale;
     if length == 0.0 {
         return out;
     }
-    let wrapped = fx_spark_fountain_wrap_loop_time(warped, cluster.loop_time);
+    let wrapped = spark_fountain_wrap_loop_time(warped, cluster.loop_time);
     let t0 = wrapped - length;
     let mut s = 0u8;
     while s < cluster.spark_n {
@@ -288,7 +287,7 @@ pub(crate) fn emit_spark_fountain_custom_cells(
                 let mut cell = 0u32;
                 while cell < FX_SPARK_FOUNTAIN_CELLS {
                     let c = slot.cells[cell as usize];
-                    let Some((ribbon, uv_v_lerp)) = fx_spark_fountain_generate_ribbon(
+                    let Some((ribbon, uv_v_lerp)) = spark_fountain_generate_ribbon(
                         c.times,
                         c.origins,
                         c.vels,
@@ -299,8 +298,8 @@ pub(crate) fn emit_spark_fountain_custom_cells(
                         cell = cell.saturating_add(1);
                         continue;
                     };
-                    let uv = fx_spark_fountain_atlas_uv(0, 0, cell);
-                    out.push(fx_spark_fountain_cell_verts(
+                    let uv = spark_fountain_atlas_uv(0, 0, cell);
+                    out.push(spark_fountain_cell_verts(
                         ribbon, camera, size0, uv[0], uv[1], uv[2], uv[3], uv_v_lerp,
                     ));
                     cell = cell.saturating_add(1);
@@ -317,7 +316,7 @@ pub(crate) fn update_spark_fountain(
     handle: u16,
     mut on_trace: impl FnMut([f32; 3], [f32; 3]) -> (f32, [f32; 3]),
 ) {
-    let Some(dense) = fx_spark_fountain_slot_for_handle(handle) else {
+    let Some(dense) = spark_fountain_slot_for_handle(handle) else {
         return;
     };
     if dense >= host.spark_fountains.len() || !host.spark_fountains[dense].occupied {
@@ -335,19 +334,19 @@ pub(crate) fn update_spark_fountain(
     {
         return;
     }
-    let begin = fx_spark_fountain_integrate_cell_begin(keyframe) as usize;
+    let begin = spark_fountain_integrate_cell_begin(keyframe) as usize;
     let end =
         (begin + FX_SPARK_FOUNTAIN_INTEGRATE_CELLS as usize).min(FX_SPARK_FOUNTAIN_CELLS as usize);
     let gravity = host.spark_fountains[dense].gravity;
     let bounce_frac = host.spark_fountains[dense].bounce_frac;
     let bounce_rand = host.spark_fountains[dense].bounce_rand;
-    let accel = fx_spark_fountain_accel_from_gravity(gravity);
+    let accel = spark_fountain_accel_from_gravity(gravity);
     let mut hold = host.spark_fountain_holdrand;
     let mut i = begin;
     while i < end {
         let origin = host.spark_fountain_meshes[mesh as usize].cells[i].origins[0];
         let vel = host.spark_fountain_meshes[mesh as usize].cells[i].vels[0];
-        let (times, origins, vels) = fx_spark_fountain_integrate_cell(
+        let (times, origins, vels) = spark_fountain_integrate_cell(
             origin,
             vel,
             accel,
@@ -361,11 +360,8 @@ pub(crate) fn update_spark_fountain(
                     let rz = msvcrt_rand(&mut hold);
                     let ry = msvcrt_rand(&mut hold);
                     let rx = msvcrt_rand(&mut hold);
-                    let cube = fx_spark_fountain_isotropic_dir([rx, ry, rz]);
-                    (
-                        fraction,
-                        fx_spark_fountain_cone_dir(normal, cube, bounce_rand),
-                    )
+                    let cube = spark_fountain_isotropic_dir([rx, ry, rz]);
+                    (fraction, spark_fountain_cone_dir(normal, cube, bounce_rand))
                 }
             },
         );
@@ -377,7 +373,7 @@ pub(crate) fn update_spark_fountain(
         i = i.saturating_add(1);
     }
     host.spark_fountain_holdrand = hold;
-    let (write, keyframe) = fx_spark_fountain_update_keyframe_cursor(write, keyframe, spark_n);
+    let (write, keyframe) = spark_fountain_update_keyframe_cursor(write, keyframe, spark_n);
     host.spark_fountains[dense].write_spark = write;
     host.spark_fountains[dense].keyframe = keyframe;
 }

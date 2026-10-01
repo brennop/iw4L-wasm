@@ -1,7 +1,7 @@
 use crate::R_MARK_FRAGMENTS_WORLD_SURF_STACK;
 
 #[inline]
-pub fn fx_mark_sphere_hits_bounds(
+pub fn mark_sphere_hits_bounds(
     origin: [f32; 3],
     radius_sq: f32,
     mid: [f32; 3],
@@ -20,7 +20,7 @@ pub fn fx_mark_sphere_hits_bounds(
     acc <= radius_sq
 }
 
-pub fn fx_mark_model_local_box(
+pub fn mark_model_local_box(
     mark_origin: [f32; 3],
     mark_radius: f32,
     model_origin: [f32; 3],
@@ -47,7 +47,7 @@ pub fn fx_mark_model_local_box(
     ))
 }
 
-pub fn fx_mark_tri_aabb_hits_box(
+pub fn mark_tri_aabb_hits_box(
     v0: [f32; 3],
     v1: [f32; 3],
     v2: [f32; 3],
@@ -75,7 +75,7 @@ pub struct MarkWorldBoundsHits {
     pub capped: bool,
 }
 
-pub fn fx_mark_count_world_bounds_hits(
+pub fn mark_count_world_bounds_hits(
     origin: [f32; 3],
     radius_sq: f32,
     mids: &[[f32; 3]],
@@ -85,7 +85,7 @@ pub fn fx_mark_count_world_bounds_hits(
     let mut raw = 0u32;
     let mut i = 0;
     while i < n {
-        if fx_mark_sphere_hits_bounds(origin, radius_sq, mids[i], halves[i]) {
+        if mark_sphere_hits_bounds(origin, radius_sq, mids[i], halves[i]) {
             raw = raw.saturating_add(1);
         }
         i += 1;
@@ -100,12 +100,12 @@ pub fn fx_mark_count_world_bounds_hits(
 }
 
 #[inline]
-pub fn fx_mark_sorted_bit_surf(sorted_surf_index: &[u16], bit: usize) -> Option<usize> {
+pub fn mark_sorted_bit_surf(sorted_surf_index: &[u16], bit: usize) -> Option<usize> {
     sorted_surf_index.get(bit).copied().map(usize::from)
 }
 
 #[inline]
-pub fn fx_mark_aabb_overlaps_bounds(
+pub fn mark_aabb_overlaps_bounds(
     origin: [f32; 3],
     radius: f32,
     mid: [f32; 3],

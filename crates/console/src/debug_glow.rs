@@ -1,26 +1,26 @@
+use crate::debug_scalar::debug_scalars;
 use crate::{ConsoleCommand, ConsoleLine, ConsoleRegistry, ConsoleSettings, ConsoleState};
 use bevy::prelude::*;
 use render_frontend::assemble::drawsurf::dof::GlowDvars;
 
-const NAMES: &[&str] = &[
-    "r_glow",
-    "r_glowUseTweaks",
-    "r_glowTweakEnable",
-    "r_glowTweakRadius0",
-    "r_glowTweakBloomIntensity0",
-    "r_glowTweakBloomCutoff",
-    "r_glowTweakBloomDesaturation",
-    "r_glow_allowed",
-    "r_glow_allowed_script_forced",
-];
+debug_scalars! {
+    GlowDvars;
+    "r_glow" { path: [enable], min: 0.0, max: 1.0, kind: bool },
+    "r_glowUseTweaks" { path: [use_tweaks], min: 0.0, max: 1.0, kind: bool },
+    "r_glowTweakEnable" { path: [tweak_enable], min: 0.0, max: 1.0, kind: bool },
+    "r_glowTweakRadius0" { path: [tweak_radius], min: 0.0, max: 32.0, kind: float },
+    "r_glowTweakBloomIntensity0" { path: [tweak_intensity], min: 0.0, max: 20.0, kind: float },
+    "r_glowTweakBloomCutoff" { path: [tweak_cutoff], min: 0.0, max: 1.0, kind: float },
+    "r_glowTweakBloomDesaturation" { path: [tweak_desaturation], min: 0.0, max: 1.0, kind: float },
+    "r_glow_allowed" { path: [allowed], min: 0.0, max: 1.0, kind: bool },
+    "r_glow_allowed_script_forced" { path: [allowed_script_forced], min: 0.0, max: 1.0, kind: bool },
+}
 
 pub(crate) fn register(registry: &mut ConsoleRegistry) {
     for &name in NAMES {
         if registry.resolve(name).is_none() {
-            registry.register(
-                crate::CommandSpec::new(name)
-                    .usage(format!("{name} [value] — glow (`R_SetGlowInfo`)")),
-            );
+            registry
+                .register(crate::CommandSpec::new(name).usage(format!("{name} [value] — glow")));
         }
     }
 }
@@ -47,37 +47,13 @@ pub(crate) fn route(
                 .ok_or(()),
             _ => Err(()),
         };
-        let (current, min, max, is_bool) = match name {
-            "r_glow" => (u8::from(dvars.enable) as f32, 0.0, 1.0, true),
-            "r_glowUseTweaks" => (u8::from(dvars.use_tweaks) as f32, 0.0, 1.0, true),
-            "r_glowTweakEnable" => (u8::from(dvars.tweak_enable) as f32, 0.0, 1.0, true),
-            "r_glowTweakRadius0" => (dvars.tweak_radius, 0.0, 32.0, false),
-            "r_glowTweakBloomIntensity0" => (dvars.tweak_intensity, 0.0, 20.0, false),
-            "r_glowTweakBloomCutoff" => (dvars.tweak_cutoff, 0.0, 1.0, false),
-            "r_glowTweakBloomDesaturation" => (dvars.tweak_desaturation, 0.0, 1.0, false),
-            "r_glow_allowed" => (u8::from(dvars.allowed) as f32, 0.0, 1.0, true),
-            "r_glow_allowed_script_forced" => {
-                (u8::from(dvars.allowed_script_forced) as f32, 0.0, 1.0, true)
-            }
-            _ => unreachable!(),
-        };
+        let (current, min, max, is_bool) = scalar_current(&dvars, name);
         let msg = match parsed {
             Ok(None) => format!("{name} = {current} (domain {min}..{max})"),
             Ok(Some(value))
                 if (min..=max).contains(&value) && (!is_bool || value == 0.0 || value == 1.0) =>
             {
-                match name {
-                    "r_glow" => dvars.enable = value != 0.0,
-                    "r_glowUseTweaks" => dvars.use_tweaks = value != 0.0,
-                    "r_glowTweakEnable" => dvars.tweak_enable = value != 0.0,
-                    "r_glowTweakRadius0" => dvars.tweak_radius = value,
-                    "r_glowTweakBloomIntensity0" => dvars.tweak_intensity = value,
-                    "r_glowTweakBloomCutoff" => dvars.tweak_cutoff = value,
-                    "r_glowTweakBloomDesaturation" => dvars.tweak_desaturation = value,
-                    "r_glow_allowed" => dvars.allowed = value != 0.0,
-                    "r_glow_allowed_script_forced" => dvars.allowed_script_forced = value != 0.0,
-                    _ => unreachable!(),
-                }
+                scalar_assign(&mut dvars, name, value);
                 format!("{name} = {value}")
             }
             _ => format!("usage: {name} [finite value {min}..{max}]"),

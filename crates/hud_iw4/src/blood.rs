@@ -6,7 +6,7 @@ pub const HEALTH_FRAC_PM_TYPE_NONE: i32 = 8;
 
 const BLOOD_OVERLAY_HIDDEN_PM_TYPES: [i32; 6] = [2, 3, 5, 6, 8, 9];
 
-pub fn cg_get_health_fraction(health: i32, max_health: i32, pm_type: i32) -> f32 {
+pub fn get_health_fraction(health: i32, max_health: i32, pm_type: i32) -> f32 {
     if health == 0 || max_health == 0 || pm_type == HEALTH_FRAC_PM_TYPE_NONE {
         return 0.0;
     }
@@ -14,7 +14,7 @@ pub fn cg_get_health_fraction(health: i32, max_health: i32, pm_type: i32) -> f32
     raw.clamp(0.0, 1.0)
 }
 
-pub fn cg_blood_overlay_lerp(
+pub fn blood_overlay_lerp(
     mut intensity: f32,
     health_frac: f32,
     frametime_ms: i32,
@@ -34,7 +34,7 @@ pub fn cg_blood_overlay_lerp(
     intensity
 }
 
-pub fn cg_should_draw_blood_overlay(
+pub fn should_draw_blood_overlay(
     blood_enabled: bool,
     should_draw_hud: bool,
     in_killcam_hud_gate: bool,
@@ -46,7 +46,7 @@ pub fn cg_should_draw_blood_overlay(
     !BLOOD_OVERLAY_HIDDEN_PM_TYPES.contains(&pm_type)
 }
 
-pub fn cg_splatter_envelope(t: f32, fade_in_end: f32, full_in_end: f32, fade_out_end: f32) -> f32 {
+pub fn splatter_envelope(t: f32, fade_in_end: f32, full_in_end: f32, fade_out_end: f32) -> f32 {
     if t < fade_in_end {
         return t / fade_in_end;
     }
@@ -68,7 +68,7 @@ pub const PAIN_VISION_TRIGGER_HEALTH_DEFAULT: f32 = 0.55;
 
 pub const PAIN_VISION_LERP_OUT_RATE_DEFAULT: f32 = 0.3;
 
-pub fn cg_pain_vision_must_clear(
+pub fn pain_vision_must_clear(
     health_frac: f32,
     pm_type: i32,
     ps_block: bool,
@@ -77,7 +77,7 @@ pub fn cg_pain_vision_must_clear(
     health_frac == 0.0 || pm_type == 5 || ps_block || in_killcam_hud_gate
 }
 
-pub fn cg_pain_vision_wants_armed(health_frac: f32, trigger: f32, currently_active: bool) -> bool {
+pub fn pain_vision_wants_armed(health_frac: f32, trigger: f32, currently_active: bool) -> bool {
     if currently_active {
         health_frac != 1.0
     } else {
@@ -85,7 +85,7 @@ pub fn cg_pain_vision_wants_armed(health_frac: f32, trigger: f32, currently_acti
     }
 }
 
-pub fn cg_pain_vision_lerp_intensity(
+pub fn pain_vision_lerp_intensity(
     mut intensity: f32,
     health_frac: f32,
     frametime_ms: i32,

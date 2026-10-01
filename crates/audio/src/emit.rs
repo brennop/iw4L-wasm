@@ -48,7 +48,7 @@ pub fn emit_footstep_on_bob_wrap(
         snd_ent,
     });
     weapon_sounds.write(WeaponSound {
-        namespace: assets::AssetNamespace::Iw4,
+        namespace: asset_core::AssetNamespace::Iw4,
         alias: gear_rattle_alias(gait, local_player).to_owned(),
         origin_inches,
         snd_ent,
@@ -62,7 +62,7 @@ pub fn emit_weapon_fire(
     fire_player: Option<&str>,
     origin_inches: Option<[f32; 3]>,
     snd_ent: Option<u32>,
-    namespace: assets::AssetNamespace,
+    namespace: asset_core::AssetNamespace,
     weapon_sounds: &mut MessageWriter<WeaponSound>,
 ) -> bool {
     let Some(alias) = select_fire_alias(player_view, fire, fire_player) else {

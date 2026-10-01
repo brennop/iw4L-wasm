@@ -51,7 +51,7 @@ impl GlowViewInfo {
 }
 
 #[must_use]
-pub fn r_select_glow_view_info(
+pub fn select_glow_view_info(
     authored: GlowViewInfo,
     use_tweaks: bool,
     tweaks: GlowViewInfo,
@@ -60,7 +60,7 @@ pub fn r_select_glow_view_info(
 }
 
 #[must_use]
-pub fn r_using_glow(
+pub fn using_glow(
     enable: bool,
     intensity: f32,
     radius: f32,
@@ -71,7 +71,7 @@ pub fn r_using_glow(
 }
 
 #[must_use]
-pub fn r_set_glow_info(cutoff: f32, desaturation: f32, intensity: f32) -> Option<GlowBloomConsts> {
+pub fn set_glow_info(cutoff: f32, desaturation: f32, intensity: f32) -> Option<GlowBloomConsts> {
     if intensity == 0.0 {
         return None;
     }

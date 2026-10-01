@@ -12,7 +12,7 @@
 //! * `fanDataCount` words: the triangulation, three vertex indices per triangle packed
 //!   one byte each, four bytes to a word, zero padded. Indices address the outer
 //!   contour first and then each hole's vertices in the order the holes appear, which
-//!   is the same order [`fx_glass_decode_geo`] rebuilds them in, so the triangle count
+//!   is the same order [`glass_decode_geo`] rebuilds them in, so the triangle count
 //!   is implied by the contour sizes and needs no stored count.
 //!
 //! Cracked shards are concave and may enclose detached cracked islands, so neither
@@ -21,8 +21,8 @@
 
 use crate::glass::{
     FX_GLASS_GEOMETRY_DATA, FX_GLASS_PIECE_STATE, FX_GLASS_STATE_CRACK_DATA_COUNT,
-    FX_GLASS_STATE_FAN_DATA_COUNT, FX_GLASS_STATE_HOLE_DATA_COUNT, fx_glass_geo_vert,
-    fx_glass_pack_geo_vert, fx_glass_state_geo_start, fx_glass_state_vert_count,
+    FX_GLASS_STATE_FAN_DATA_COUNT, FX_GLASS_STATE_HOLE_DATA_COUNT, glass_geo_vert,
+    glass_pack_geo_vert, glass_state_geo_start, glass_state_vert_count,
 };
 
 /// `FxGlassShard::geoData` is 231 words, so no piece can exceed that.
@@ -117,16 +117,16 @@ impl FxGlassPieceGeo {
     }
 }
 
-pub fn fx_glass_pack_geo_count(count: u16) -> [u8; FX_GLASS_GEOMETRY_DATA] {
+pub fn glass_pack_geo_count(count: u16) -> [u8; FX_GLASS_GEOMETRY_DATA] {
     let c = count.to_le_bytes();
     [c[0], c[1], 0, 0]
 }
 
-pub fn fx_glass_geo_count(word: &[u8; FX_GLASS_GEOMETRY_DATA]) -> u16 {
+pub fn glass_geo_count(word: &[u8; FX_GLASS_GEOMETRY_DATA]) -> u16 {
     u16::from_le_bytes([word[0], word[1]])
 }
 
-pub fn fx_glass_pack_crack_header(
+pub fn glass_pack_crack_header(
     unique_vert_count: u16,
     begin_vert: u8,
     end_vert: u8,
@@ -136,29 +136,29 @@ pub fn fx_glass_pack_crack_header(
 }
 
 /// Words needed to hold `tri_n` packed triangles.
-pub fn fx_glass_fan_word_count(tri_n: usize) -> usize {
+pub fn glass_fan_word_count(tri_n: usize) -> usize {
     (tri_n * 3).div_ceil(FX_GLASS_GEOMETRY_DATA)
 }
 
 /// Triangles a contour of `border_vert_n` vertices with `hole_n` holes produces.
-pub fn fx_glass_tri_count(border_vert_n: usize, hole_n: usize) -> usize {
+pub fn glass_tri_count(border_vert_n: usize, hole_n: usize) -> usize {
     (border_vert_n + 2 * hole_n).saturating_sub(2)
 }
 
 /// Decodes one piece's geometry run. Pieces written before the crack port carry zero
 /// hole, crack and fan counts and decode as a convex fan, so old data still renders.
-pub fn fx_glass_decode_geo(
+pub fn glass_decode_geo(
     state: &[u8; FX_GLASS_PIECE_STATE],
     geo: &[[u8; FX_GLASS_GEOMETRY_DATA]],
 ) -> Option<FxGlassPieceGeo> {
-    let vert_n = usize::from(fx_glass_state_vert_count(state));
+    let vert_n = usize::from(glass_state_vert_count(state));
     let hole_words = usize::from(state[FX_GLASS_STATE_HOLE_DATA_COUNT]);
     let crack_words = usize::from(state[FX_GLASS_STATE_CRACK_DATA_COUNT]);
     let fan_words = usize::from(state[FX_GLASS_STATE_FAN_DATA_COUNT]);
     if !(3..=FX_GLASS_SHARD_VERT_MAX).contains(&vert_n) {
         return None;
     }
-    let start = usize::from(fx_glass_state_geo_start(state));
+    let start = usize::from(glass_state_geo_start(state));
     let total = vert_n
         .checked_add(hole_words)?
         .checked_add(crack_words)?
@@ -167,7 +167,7 @@ pub fn fx_glass_decode_geo(
 
     let mut out = FxGlassPieceGeo::default();
     for (i, word) in words[..vert_n].iter().enumerate() {
-        out.verts[i] = fx_glass_geo_vert(word);
+        out.verts[i] = glass_geo_vert(word);
     }
     out.vert_n = vert_n;
     let mut used = vert_n;
@@ -175,7 +175,7 @@ pub fn fx_glass_decode_geo(
     let mut cursor = vert_n;
     let hole_end = vert_n + hole_words;
     while cursor < hole_end {
-        let count = usize::from(fx_glass_geo_count(&words[cursor]));
+        let count = usize::from(glass_geo_count(&words[cursor]));
         cursor += 1;
         if count < 3 || cursor + count > hole_end || out.hole_n >= FX_GLASS_SHARD_HOLE_MAX {
             return None;
@@ -184,7 +184,7 @@ pub fn fx_glass_decode_geo(
             return None;
         }
         for k in 0..count {
-            out.verts[used + k] = fx_glass_geo_vert(&words[cursor + k]);
+            out.verts[used + k] = glass_geo_vert(&words[cursor + k]);
         }
         out.holes[out.hole_n] = FxGlassGeoSpan {
             start: used as u8,
@@ -199,7 +199,7 @@ pub fn fx_glass_decode_geo(
     let crack_end = hole_end + crack_words;
     while cursor < crack_end {
         let header = &words[cursor];
-        let count = usize::from(fx_glass_geo_count(header));
+        let count = usize::from(glass_geo_count(header));
         let begin_vert = header[2];
         let end_vert = header[3];
         cursor += 1;
@@ -210,7 +210,7 @@ pub fn fx_glass_decode_geo(
             return None;
         }
         for k in 0..count {
-            out.verts[used + k] = fx_glass_geo_vert(&words[cursor + k]);
+            out.verts[used + k] = glass_geo_vert(&words[cursor + k]);
         }
         out.cracks[out.crack_n] = FxGlassGeoCrack {
             begin_vert,
@@ -226,11 +226,11 @@ pub fn fx_glass_decode_geo(
     }
     out.vert_n = vert_n;
 
-    let want_tris = fx_glass_tri_count(out.border_vert_n, out.hole_n);
+    let want_tris = glass_tri_count(out.border_vert_n, out.hole_n);
     if fan_words == 0 {
         // No stored triangulation: rebuild one. A pre-crack piece is convex, so the
         // result is the same fan a convex piece always had.
-        let n = fx_glass_triangulate(
+        let n = glass_triangulate(
             &out.verts[..out.border_vert_n],
             &out.holes[..out.hole_n],
             &mut out.tris,
@@ -238,7 +238,7 @@ pub fn fx_glass_decode_geo(
         out.tri_n = n;
         return Some(out);
     }
-    if fan_words != fx_glass_fan_word_count(want_tris) || want_tris > FX_GLASS_SHARD_TRI_MAX {
+    if fan_words != glass_fan_word_count(want_tris) || want_tris > FX_GLASS_SHARD_TRI_MAX {
         return None;
     }
     let fans = &words[crack_end..crack_end + fan_words];
@@ -258,11 +258,11 @@ pub fn fx_glass_decode_geo(
 }
 
 /// Packs a triangulation into `out`, returning the word count.
-pub fn fx_glass_encode_fans(
+pub fn glass_encode_fans(
     tris: &[[u8; 3]],
     out: &mut [[u8; FX_GLASS_GEOMETRY_DATA]],
 ) -> Option<usize> {
-    let words = fx_glass_fan_word_count(tris.len());
+    let words = glass_fan_word_count(tris.len());
     if out.len() < words {
         return None;
     }
@@ -278,7 +278,7 @@ pub fn fx_glass_encode_fans(
     Some(words)
 }
 
-pub fn fx_glass_pack_verts(
+pub fn glass_pack_verts(
     verts: &[[i16; 2]],
     out: &mut [[u8; FX_GLASS_GEOMETRY_DATA]],
 ) -> Option<usize> {
@@ -286,7 +286,7 @@ pub fn fx_glass_pack_verts(
         return None;
     }
     for (dst, v) in out.iter_mut().zip(verts.iter()) {
-        *dst = fx_glass_pack_geo_vert(v[0], v[1]);
+        *dst = glass_pack_geo_vert(v[0], v[1]);
     }
     Some(verts.len())
 }
@@ -300,7 +300,7 @@ fn cross(o: [i16; 2], a: [i16; 2], b: [i16; 2]) -> i32 {
 }
 
 /// Twice the signed area of a closed contour; positive when wound counter-clockwise.
-pub fn fx_glass_contour_area_x2(verts: &[[i16; 2]]) -> i32 {
+pub fn glass_contour_area_x2(verts: &[[i16; 2]]) -> i32 {
     let mut acc = 0i32;
     for i in 0..verts.len() {
         let a = verts[i];
@@ -337,7 +337,7 @@ fn segments_cross(a: [i16; 2], b: [i16; 2], c: [i16; 2], d: [i16; 2]) -> bool {
 }
 
 /// Crossing-number containment against one closed contour.
-pub fn fx_glass_point_in_contour(verts: &[[i16; 2]], p: [f32; 2]) -> bool {
+pub fn glass_point_in_contour(verts: &[[i16; 2]], p: [f32; 2]) -> bool {
     let mut inside = false;
     let n = verts.len();
     for i in 0..n {
@@ -364,8 +364,8 @@ pub fn fx_glass_point_in_contour(verts: &[[i16; 2]], p: [f32; 2]) -> bool {
 /// A point already inside the outer contour and outside every hole is left alone;
 /// anything else moves to the nearest point on a border, so a graze at the edge of a
 /// shard still seeds its cracks on the shard instead of in empty space.
-pub fn fx_glass_clamp_to_piece(geo: &FxGlassPieceGeo, p: [f32; 2]) -> [f32; 2] {
-    if fx_glass_point_in_piece(geo, p) {
+pub fn glass_clamp_to_piece(geo: &FxGlassPieceGeo, p: [f32; 2]) -> [f32; 2] {
+    if glass_point_in_piece(geo, p) {
         return p;
     }
     let mut best = p;
@@ -397,12 +397,12 @@ pub fn fx_glass_clamp_to_piece(geo: &FxGlassPieceGeo, p: [f32; 2]) -> [f32; 2] {
     best
 }
 
-pub fn fx_glass_point_in_piece(geo: &FxGlassPieceGeo, p: [f32; 2]) -> bool {
-    if !fx_glass_point_in_contour(geo.outer(), p) {
+pub fn glass_point_in_piece(geo: &FxGlassPieceGeo, p: [f32; 2]) -> bool {
+    if !glass_point_in_contour(geo.outer(), p) {
         return false;
     }
     for hole in geo.holes() {
-        if fx_glass_point_in_contour(geo.span(*hole), p) {
+        if glass_point_in_contour(geo.span(*hole), p) {
             return false;
         }
     }
@@ -415,7 +415,7 @@ fn ring_reverse(ring: &mut [u8]) {
 
 /// Ear-clips a contour with holes. `verts` holds the outer contour followed by each
 /// hole's contour; `holes` names the hole spans. Returns the triangle count.
-pub fn fx_glass_triangulate(
+pub fn glass_triangulate(
     verts: &[[i16; 2]],
     holes: &[FxGlassGeoSpan],
     out: &mut [[u8; 3]],
@@ -429,7 +429,7 @@ pub fn fx_glass_triangulate(
     for (i, slot) in ring[..outer_n].iter_mut().enumerate() {
         *slot = i as u8;
     }
-    if fx_glass_contour_area_x2(&verts[..outer_n]) < 0 {
+    if glass_contour_area_x2(&verts[..outer_n]) < 0 {
         ring_reverse(&mut ring[..outer_n]);
     }
     for hole in holes {

@@ -1,17 +1,14 @@
 use core::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use math_iw4::{angle_vectors, get_lean_fraction};
-use playerstate_iw4::eflags;
+use playerstate_iw4::{eflags, pm_flags};
 
 use crate::kick::{
-    GunKickSpring, GunRecoilPlacementState, bg_calculate_weapon_position_gun_recoil,
+    GunKickSpring, GunRecoilPlacementState, calculate_weapon_position_gun_recoil,
     gun_recoil_angle_contribution,
 };
-use crate::sprint::PMF_SPRINTING;
 use crate::sway::{SwaySpringState, sway_contribution};
 use crate::weaponstate::WeaponState;
-
-pub const PMF_LADDER: u32 = 0x8;
 
 pub const VIEWHEIGHT_TARGET_PRONE: i32 = 0x0b;
 
@@ -46,9 +43,9 @@ pub struct WeaponBobState {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponStanceStaticOfsInputs {
-    pub ofs_at_0x168: [f32; 3],
+    pub ducked_ofs: [f32; 3],
 
-    pub ofs_at_0x18c: [f32; 3],
+    pub prone_ofs: [f32; 3],
 
     pub ads_aim_pitch: f32,
 
@@ -57,35 +54,35 @@ pub struct WeaponStanceStaticOfsInputs {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponMovementOfsInputs {
-    pub stand_move_at_0x138: [f32; 3],
+    pub stand_move: [f32; 3],
 
-    pub stand_rot_at_0x144: [f32; 3],
+    pub stand_rot: [f32; 3],
 
-    pub strafe_move_at_0x150: [f32; 3],
+    pub strafe_move: [f32; 3],
 
-    pub strafe_rot_at_0x15c: [f32; 3],
+    pub strafe_rot: [f32; 3],
 
-    pub ducked_move_at_0x174: [f32; 3],
+    pub ducked_move: [f32; 3],
 
-    pub ducked_rot_at_0x180: [f32; 3],
+    pub ducked_rot: [f32; 3],
 
-    pub prone_move_at_0x198: [f32; 3],
+    pub prone_move: [f32; 3],
 
-    pub prone_rot_at_0x1a4: [f32; 3],
+    pub prone_rot: [f32; 3],
 
-    pub pos_move_rate_at_0x1b0: f32,
+    pub pos_move_rate: f32,
 
-    pub pos_prone_move_rate_at_0x1b4: f32,
+    pub pos_prone_move_rate: f32,
 
-    pub stand_move_min_speed_at_0x1b8: f32,
+    pub stand_move_min_speed: f32,
 
-    pub ducked_move_min_speed_at_0x1bc: f32,
+    pub ducked_move_min_speed: f32,
 
-    pub prone_move_min_speed_at_0x1c0: f32,
+    pub prone_move_min_speed: f32,
 
-    pub pos_rot_rate_at_0x1c4: f32,
+    pub pos_rot_rate: f32,
 
-    pub pos_prone_rot_rate_at_0x1c8: f32,
+    pub pos_prone_rot_rate: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -109,22 +106,22 @@ pub struct WeaponMovementKinematics {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponBobInputs {
-    pub ads_bob_factor_at_0x330: f32,
+    pub ads_bob_factor: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponIdleInputs {
-    pub ads_idle_amount_at_0x36c: f32,
+    pub ads_idle_amount: f32,
 
-    pub hip_idle_amount_at_0x370: f32,
+    pub hip_idle_amount: f32,
 
-    pub ads_idle_speed_at_0x374: f32,
+    pub ads_idle_speed: f32,
 
-    pub hip_idle_speed_at_0x378: f32,
+    pub hip_idle_speed: f32,
 
-    pub idle_crouch_factor_at_0x37c: f32,
+    pub idle_crouch_factor: f32,
 
-    pub idle_prone_factor_at_0x380: f32,
+    pub idle_prone_factor: f32,
 }
 
 pub const WEAPON_IDLE_AMOUNT_DEFAULT: f32 = 80.0;
@@ -184,7 +181,7 @@ pub struct WeaponPlacementState {
 
     pub movement_origin: [f32; 3],
 
-    pub unfaded_angles_at_0x0f: [f32; 3],
+    pub unfaded_angles: [f32; 3],
     pub sway_springs: SwaySpringState,
     pub gun_recoil: GunRecoilPlacementState,
     pub bob: WeaponBobState,
@@ -266,7 +263,7 @@ pub fn stance_transition_fade(
     }
 }
 
-pub fn bg_weapon_stance_static_ofs(
+pub fn weapon_stance_static_ofs(
     ps: WeaponPlacementPsInputs,
     stance: WeaponStanceStaticOfsInputs,
     fade_globals: StanceTransitionFadeGlobals,
@@ -284,13 +281,13 @@ pub fn bg_weapon_stance_static_ofs(
     let prone = ps.e_flags & eflags::PRONE != 0;
 
     if duck {
-        origin_out[0] += fade * stance.ofs_at_0x168[0];
-        origin_out[1] += fade * stance.ofs_at_0x168[1];
-        origin_out[2] += fade * stance.ofs_at_0x168[2];
+        origin_out[0] += fade * stance.ducked_ofs[0];
+        origin_out[1] += fade * stance.ducked_ofs[1];
+        origin_out[2] += fade * stance.ducked_ofs[2];
     } else if prone {
-        origin_out[0] += fade * stance.ofs_at_0x18c[0];
-        origin_out[1] += fade * stance.ofs_at_0x18c[1];
-        origin_out[2] += fade * stance.ofs_at_0x18c[2];
+        origin_out[0] += fade * stance.prone_ofs[0];
+        origin_out[1] += fade * stance.prone_ofs[1];
+        origin_out[2] += fade * stance.prone_ofs[2];
     }
 
     if ps.aim_down_sight {
@@ -299,20 +296,20 @@ pub fn bg_weapon_stance_static_ofs(
 }
 
 #[inline]
-pub fn weapon_bob_ads_attenuation(weapon_pos_frac: f32, ads_bob_factor_at_0x330: f32) -> f32 {
+pub fn weapon_bob_ads_attenuation(weapon_pos_frac: f32, ads_bob_factor: f32) -> f32 {
     if weapon_pos_frac <= 0.0 {
         return 1.0;
     }
-    1.0 - weapon_pos_frac * (1.0 - ads_bob_factor_at_0x330)
+    1.0 - weapon_pos_frac * (1.0 - ads_bob_factor)
 }
 
 #[inline]
 pub fn weapon_bob_apply_ads_attenuation(
     bob: &mut WeaponBobState,
     weapon_pos_frac: f32,
-    ads_bob_factor_at_0x330: f32,
+    ads_bob_factor: f32,
 ) {
-    let scale = weapon_bob_ads_attenuation(weapon_pos_frac, ads_bob_factor_at_0x330);
+    let scale = weapon_bob_ads_attenuation(weapon_pos_frac, ads_bob_factor);
     bob.pitch *= scale;
     bob.yaw *= scale;
     bob.roll *= scale;
@@ -323,7 +320,7 @@ pub fn weapon_bob_set_waveform(state: &mut WeaponPlacementState, waveform: Weapo
     state.bob = waveform;
 }
 
-pub fn bg_calculate_weapon_movement_bob(
+pub fn calculate_weapon_movement_bob(
     state: &mut WeaponPlacementState,
     ps: WeaponPlacementPsInputs,
     bob_inputs: WeaponBobInputs,
@@ -334,7 +331,7 @@ pub fn bg_calculate_weapon_movement_bob(
         weapon_bob_apply_ads_attenuation(
             &mut state.bob,
             ps.weapon_pos_frac,
-            bob_inputs.ads_bob_factor_at_0x330,
+            bob_inputs.ads_bob_factor,
         );
     }
 }
@@ -357,7 +354,7 @@ fn weapon_bob_helper_amplitude(
         WEAPON_BOB_AMP_PRONE[idx]
     } else if view_height_target == VIEWHEIGHT_TARGET_CROUCH {
         ads_inner * WEAPON_BOB_AMP_DUCKED[idx]
-    } else if (pm_flags & PMF_SPRINTING) == 0 {
+    } else if (pm_flags & pm_flags::SPRINTING) == 0 {
         ads_inner * WEAPON_BOB_AMP_STANDING[idx]
     } else {
         WEAPON_BOB_AMP_SPRINTING[idx]
@@ -369,7 +366,7 @@ fn weapon_bob_helper_amplitude(
     amp
 }
 
-fn bg_calc_weapon_bob_vertical(
+fn calc_weapon_bob_vertical(
     cycle: f32,
     speed: f32,
     view_height_target: i32,
@@ -381,7 +378,7 @@ fn bg_calc_weapon_bob_vertical(
     (weapon_bob_sinf(cycle * 4.0 + FRAC_PI_2) * 0.2 + weapon_bob_sinf(cycle + cycle)) * 0.75 * amp
 }
 
-fn bg_calc_weapon_bob_horizontal(
+fn calc_weapon_bob_horizontal(
     cycle: f32,
     speed: f32,
     view_height_target: i32,
@@ -393,27 +390,25 @@ fn bg_calc_weapon_bob_horizontal(
     weapon_bob_sinf(cycle) * amp
 }
 
-pub fn bg_calculate_weapon_movement_bob_waveform(
-    inputs: WeaponBobWaveformInputs,
-) -> WeaponBobState {
+pub fn calculate_weapon_movement_bob_waveform(inputs: WeaponBobWaveformInputs) -> WeaponBobState {
     let bob = (f32::from(inputs.bob_cycle) / 255.0) * PI;
     let cycle = TAU + bob + bob + TAU + WEAPON_BOB_LAG * PI;
     let speed = WEAPON_BOB_AMPLITUDE_BASE * inputs.xyspeed;
-    let pitch = bg_calc_weapon_bob_vertical(
+    let pitch = calc_weapon_bob_vertical(
         cycle,
         speed,
         inputs.view_height_target,
         inputs.pm_flags,
         inputs.weapon_pos_frac,
     ) * -1.0;
-    let yaw = bg_calc_weapon_bob_horizontal(
+    let yaw = calc_weapon_bob_horizontal(
         cycle,
         speed,
         inputs.view_height_target,
         inputs.pm_flags,
         inputs.weapon_pos_frac,
     ) * -1.0;
-    let mut roll = bg_calc_weapon_bob_horizontal(
+    let mut roll = calc_weapon_bob_horizontal(
         cycle - WEAPON_BOB_UP_PHASE,
         WEAPON_BOB_AMPLITUDE_ROLL * speed,
         inputs.view_height_target,
@@ -475,46 +470,41 @@ pub fn weapon_placement_apply_origin(
     out[1] -= sway.origin[1];
     out[2] += sway.origin[2];
     if ps.lean_fraction != 0.0 {
-        panic!("lean origin sine via  not ported");
+        panic!("viewmodel lean origin is unsupported");
     }
     weapon_bob_rotate_origin(&mut out, state.bob);
     out
 }
 
-pub fn bg_weapon_idle_amount_speed(
-    ps: WeaponPlacementPsInputs,
-    idle: WeaponIdleInputs,
-) -> (f32, f32) {
+pub fn weapon_idle_amount_speed(ps: WeaponPlacementPsInputs, idle: WeaponIdleInputs) -> (f32, f32) {
     if ps.aim_down_sight {
-        let amount = (idle.ads_idle_amount_at_0x36c - idle.hip_idle_amount_at_0x370)
-            * ps.weapon_pos_frac
-            + idle.hip_idle_amount_at_0x370;
-        let speed = (idle.ads_idle_speed_at_0x374 - idle.hip_idle_speed_at_0x378)
-            * ps.weapon_pos_frac
-            + idle.hip_idle_speed_at_0x378;
+        let amount = (idle.ads_idle_amount - idle.hip_idle_amount) * ps.weapon_pos_frac
+            + idle.hip_idle_amount;
+        let speed =
+            (idle.ads_idle_speed - idle.hip_idle_speed) * ps.weapon_pos_frac + idle.hip_idle_speed;
         return (amount, speed);
     }
-    if idle.hip_idle_amount_at_0x370 != 0.0 {
-        return (idle.hip_idle_amount_at_0x370, idle.hip_idle_speed_at_0x378);
+    if idle.hip_idle_amount != 0.0 {
+        return (idle.hip_idle_amount, idle.hip_idle_speed);
     }
     (WEAPON_IDLE_AMOUNT_DEFAULT, 1.0)
 }
 
-pub fn bg_apply_idle_sway_scale(
+pub fn apply_idle_sway_scale(
     state: &mut WeaponPlacementState,
     ps: WeaponPlacementPsInputs,
     idle: WeaponIdleInputs,
     frametime: f32,
     angles: &mut [f32; 3],
 ) {
-    let (amount, speed) = bg_weapon_idle_amount_speed(ps, idle);
+    let (amount, speed) = weapon_idle_amount_speed(ps, idle);
     let add = libm::roundf(speed * WEAPON_IDLE_TIME_MS_SCALE * frametime) as i32;
     state.weap_idle_time = state.weap_idle_time.wrapping_add(add);
 
     let target = if ps.e_flags & eflags::PRONE != 0 {
-        idle.idle_prone_factor_at_0x380
+        idle.idle_prone_factor
     } else if ps.e_flags & eflags::DUCK != 0 {
-        idle.idle_crouch_factor_at_0x37c
+        idle.idle_crouch_factor
     } else {
         1.0
     };
@@ -545,7 +535,7 @@ pub fn bg_apply_idle_sway_scale(
     angles[2] += add_r;
 }
 
-pub fn bg_weapon_damage_kick_angles(
+pub fn weapon_damage_kick_angles(
     time: i32,
     damage_time: i32,
     v_dmg_pitch: f32,
@@ -594,11 +584,11 @@ pub fn weapon_placement_apply_angles(
     out[0] += sway.angles[0];
     out[1] += sway.angles[1];
     if ps.lean_fraction != 0.0 {
-        panic!("lean roll subtract via  not ported");
+        panic!("viewmodel lean roll is unsupported");
     }
-    out[0] += state.unfaded_angles_at_0x0f[0];
-    out[1] += state.unfaded_angles_at_0x0f[1];
-    out[2] += state.unfaded_angles_at_0x0f[2];
+    out[0] += state.unfaded_angles[0];
+    out[1] += state.unfaded_angles[1];
+    out[2] += state.unfaded_angles[2];
     weapon_bob_add_to_angles(&mut out, state.bob, ps.weapon_pos_frac, ps.overlay_reticle);
     let recoil = gun_recoil_angle_contribution(state.gun_recoil);
     out[0] += recoil[0];
@@ -627,7 +617,7 @@ fn clamp_unit(t: f32) -> f32 {
     if t > 1.0 { 1.0 } else { t }
 }
 
-pub fn bg_calculate_weapon_movement_targets(
+pub fn calculate_weapon_movement_targets(
     ps: WeaponPlacementPsInputs,
     kinematics: WeaponMovementKinematics,
     movement: WeaponMovementOfsInputs,
@@ -638,11 +628,11 @@ pub fn bg_calculate_weapon_movement_targets(
     let duck = ps.e_flags & eflags::DUCK != 0;
     let prone = ps.e_flags & eflags::PRONE != 0;
     let (mv, rot) = if prone {
-        (movement.prone_move_at_0x198, movement.prone_rot_at_0x1a4)
+        (movement.prone_move, movement.prone_rot)
     } else if duck {
-        (movement.ducked_move_at_0x174, movement.ducked_rot_at_0x180)
+        (movement.ducked_move, movement.ducked_rot)
     } else {
-        (movement.stand_move_at_0x138, movement.stand_rot_at_0x144)
+        (movement.stand_move, movement.stand_rot)
     };
     let mut speed_frac = (kinematics.xyspeed - min_speed) / (kinematics.speed - min_speed);
     if speed_frac >= 1.0 {
@@ -655,11 +645,11 @@ pub fn bg_calculate_weapon_movement_targets(
     let (fwd, _, _) = angle_vectors(kinematics.viewangles);
     let along = (fwd[0] * kinematics.velocity[0] + kinematics.velocity[1] * fwd[1]) * speed_frac
         / kinematics.xyspeed;
-    mad3(origin_out, movement.strafe_move_at_0x150, along);
-    mad3(angles_out, movement.strafe_rot_at_0x15c, along * ads_scale);
+    mad3(origin_out, movement.strafe_move, along);
+    mad3(angles_out, movement.strafe_rot, along * ads_scale);
 }
 
-pub fn bg_stance_movement_lerp(
+pub fn stance_movement_lerp(
     state: &mut WeaponPlacementState,
     origin_target: [f32; 3],
     angles_target: [f32; 3],
@@ -668,14 +658,14 @@ pub fn bg_stance_movement_lerp(
     prone: bool,
 ) {
     let pos_rate = if prone {
-        movement.pos_prone_move_rate_at_0x1b4
+        movement.pos_prone_move_rate
     } else {
-        movement.pos_move_rate_at_0x1b0
+        movement.pos_move_rate
     };
     let rot_rate = if prone {
-        movement.pos_prone_rot_rate_at_0x1c8
+        movement.pos_prone_rot_rate
     } else {
-        movement.pos_rot_rate_at_0x1c4
+        movement.pos_rot_rate
     };
     let pos_t = clamp_unit(pos_rate * kinematics.frametime);
     let rot_t = clamp_unit(rot_rate * kinematics.frametime);
@@ -694,29 +684,29 @@ pub fn base_stance_movement_angles(
     let duck = ps.e_flags & eflags::DUCK != 0;
     let prone = ps.e_flags & eflags::PRONE != 0;
     let min_speed = if prone {
-        movement.prone_move_min_speed_at_0x1c0
+        movement.prone_move_min_speed
     } else if duck {
-        movement.ducked_move_min_speed_at_0x1bc
+        movement.ducked_move_min_speed
     } else {
-        movement.stand_move_min_speed_at_0x1b8
+        movement.stand_move_min_speed
     };
     let moving = kinematics.xyspeed > min_speed && kinematics.speed > min_speed;
     let reloading = kinematics.weaponstate == WeaponState::Reloading as i32
         || kinematics.weaponstate_secondary == WeaponState::Reloading as i32;
     let night_vision = kinematics.weaponstate == WeaponState::NightVisionWear as i32
         || kinematics.weaponstate == WeaponState::NightVisionRemove as i32;
-    let ladder = (kinematics.pm_flags & PMF_LADDER) != 0;
+    let ladder = (kinematics.pm_flags & pm_flags::LADDER) != 0;
 
     let mut origin_target = [0.0_f32; 3];
     let mut angles_target = [0.0_f32; 3];
 
     if (duck || prone) && (!moving || !night_vision || !prone) {
         let mut pitch = 0.0_f32;
-        bg_weapon_stance_static_ofs(ps, stance, fade_globals, &mut pitch, &mut origin_target);
+        weapon_stance_static_ofs(ps, stance, fade_globals, &mut pitch, &mut origin_target);
         angles_target[0] += pitch;
     }
     if moving && !ladder && !reloading && !night_vision {
-        bg_calculate_weapon_movement_targets(
+        calculate_weapon_movement_targets(
             ps,
             kinematics,
             movement,
@@ -725,7 +715,7 @@ pub fn base_stance_movement_angles(
             &mut angles_target,
         );
     }
-    bg_stance_movement_lerp(
+    stance_movement_lerp(
         state,
         origin_target,
         angles_target,
@@ -762,7 +752,7 @@ pub fn weapon_placement_assemble(
 
     steps_out[step] = WeaponPlacementAssembleStep::GunRecoil;
     step += 1;
-    bg_calculate_weapon_position_gun_recoil(
+    calculate_weapon_position_gun_recoil(
         &mut state.gun_recoil,
         dt_secs,
         ps.weapon_pos_frac,
@@ -776,14 +766,14 @@ pub fn weapon_placement_assemble(
     steps_out[step] = WeaponPlacementAssembleStep::Bob;
     step += 1;
     if let Some(wave) = bob_waveform {
-        bg_calculate_weapon_movement_bob(state, ps, bob_inputs, wave);
+        calculate_weapon_movement_bob(state, ps, bob_inputs, wave);
     }
 
     steps_out[step] = WeaponPlacementAssembleStep::ApplyAngles;
     step += 1;
     let mut angles = weapon_placement_apply_angles(state, ps);
-    bg_apply_idle_sway_scale(state, ps, idle, kinematics.frametime, &mut angles);
-    let dmg = bg_weapon_damage_kick_angles(
+    apply_idle_sway_scale(state, ps, idle, kinematics.frametime, &mut angles);
+    let dmg = weapon_damage_kick_angles(
         state.damage_kick_time,
         state.damage_time,
         state.v_dmg_pitch,
@@ -804,9 +794,7 @@ pub fn weapon_placement_assemble(
 }
 
 pub fn weapon_placement_jump_land_ofs() -> [f32; 3] {
-    panic!(
-        "jump/land gun path UNLOCATED (V-JUMP-01/V-LAND-01); eye bob is CG_OffsetFirstPersonView"
-    );
+    panic!("jump/land gun path is not modelled; eye bob is the first-person view offset");
 }
 
 pub const DUAL_WIELD_VIEW_MODEL_OFFSET_LEFT_SCALE: f32 = 2.0;

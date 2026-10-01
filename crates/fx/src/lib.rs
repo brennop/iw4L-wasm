@@ -51,7 +51,7 @@ pub use system::{
 };
 pub use trail::{
     FxTrailCollideHit, FxTrailElemSlot, FxTrailSlot, alloc_trail, alloc_trail_elem,
-    trail_elem_handle_for_slot, trail_handle_for_slot, update_effect_trails, update_trail,
+    update_effect_trails, update_trail,
 };
 pub use update::{
     FxChildKind, FxChildSpawnRequest, FxElemMotionQuery, FxElemMotionResult, FxElemTraceHit,

@@ -1,12 +1,14 @@
 use bevy::prelude::*;
 
-use crate::CgFrameClock;
 use crate::ClientSet;
+use crate::FrameClock;
 use crate::authority::inbox::ClientCommandInbox;
 use crate::authority::runtime::{AuthorityWorld, ListenFanoutCensus};
-use crate::client::centity_runtime::CEntityRuntime;
-use crate::client::entities::CEntity;
-use crate::client::presented::{LocalPresentClient, PresentLocalCensus, PresentedSnapshot};
+use crate::client::presentation::centity_runtime::CEntityRuntime;
+use crate::client::presentation::entities::CEntity;
+use crate::client::presentation::presented::{
+    LocalPresentClient, PresentLocalCensus, PresentedSnapshot,
+};
 use crate::client::runtime::{ClientClock, ClientPredictionState, LastAdoptedSnapshot};
 use sim::ClientLifecycle;
 
@@ -34,7 +36,7 @@ fn latch_ingress_queue(
 }
 
 fn emit_feel(
-    clock: Option<Res<CgFrameClock>>,
+    clock: Option<Res<FrameClock>>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     client_clock: Option<Res<ClientClock>>,
@@ -79,7 +81,7 @@ fn emit_feel(
 }
 
 fn emit_remote(
-    clock: Option<Res<CgFrameClock>>,
+    clock: Option<Res<FrameClock>>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     last_adopted: Option<Res<LastAdoptedSnapshot>>,

@@ -279,8 +279,8 @@ impl MasterLaunchIntent {
         Self(MasterLaunchMode::Disabled)
     }
 
-    pub const fn browser_available(&self) -> bool {
-        matches!(self.0, MasterLaunchMode::Browser(_))
+    pub const fn configured(&self) -> bool {
+        !matches!(self.0, MasterLaunchMode::Disabled)
     }
 }
 

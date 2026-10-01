@@ -113,6 +113,7 @@ pub struct FpvGenerateArgs<'a> {
     pub active: &'a mut Option<Arc<PreparedFpvRig>>,
     pub cursor: &'a mut FpvPresentState,
     pub rocket: bool,
+    pub melee: bool,
     pub sample: Option<FpvAuthoritySample>,
     pub predicted_fire: bool,
     pub dual: bool,
@@ -127,6 +128,7 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
         active,
         cursor,
         rocket,
+        melee,
         sample,
         predicted_fire,
         dual,
@@ -162,7 +164,7 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
     };
     let dual_drawn = !left.is_empty();
 
-    let Some(prepared) = rigs.pick(rocket, dual_drawn) else {
+    let Some(prepared) = rigs.pick(rocket, dual_drawn, melee) else {
         *active = None;
         return FpvPoseKind::Refuse(FpvPoseRefuse::EyePoseFailed {
             gun_xmodel: equipped.gun_xmodel.clone(),
@@ -184,7 +186,13 @@ pub fn generate_fpv_pose(args: FpvGenerateArgs<'_>) -> FpvPoseKind {
     let left_pose = if dual_drawn {
         let offset = dual_offset
             .filter(|offset| *offset != 0.0)
-            .map(|offset| Vec3::new(offset, 0.0, 0.0))
+            .map(|offset| {
+                Vec3::from_array(weapon_iw4::dual_wield_view_model_origin_add(
+                    1,
+                    [-1.0, 0.0, 0.0],
+                    offset,
+                ))
+            })
             .unwrap_or(Vec3::ZERO);
         // The rig laid out a left hand, so a left hand that cannot be posed is
         // a plan with a hole in it. Refusing the frame is the honest answer.

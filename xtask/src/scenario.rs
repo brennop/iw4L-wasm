@@ -84,7 +84,7 @@ impl Claim {
 fn check(rows: &[Row]) -> Vec<Claim> {
     vec![
         reload_claim(rows),
-        jump_claim(rows),
+        claim(rows),
         bots_claim(rows),
         anim_claim(rows),
     ]
@@ -194,7 +194,7 @@ fn reload_claim(rows: &[Row]) -> Claim {
     claim
 }
 
-fn jump_claim(rows: &[Row]) -> Claim {
+fn claim(rows: &[Row]) -> Claim {
     let mut claim = Claim::new("B", "press +gostand launches, and hold +forward travels");
     let local = local_rows(rows);
     if local.is_empty() {
@@ -230,7 +230,7 @@ fn jump_claim(rows: &[Row]) -> Claim {
     claim.check(
         (peak_vz - JUMP_PEAK_VZ).abs() <= JUMP_VZ_TOLERANCE,
         format!(
-            "launch vz={peak_vz:.2} = retail {JUMP_LAUNCH_VZ:.2} less one tick of gravity              (expect {JUMP_PEAK_VZ:.2} ±{JUMP_VZ_TOLERANCE:.1})"
+            "launch vz={peak_vz:.2} = {JUMP_LAUNCH_VZ:.2} less one tick of gravity              (expect {JUMP_PEAK_VZ:.2} ±{JUMP_VZ_TOLERANCE:.1})"
         ),
     );
 
@@ -372,7 +372,7 @@ fn anim_claim(rows: &[Row]) -> Claim {
     let all_zero = legs.iter().all(|&v| v == 0) && torso.iter().all(|&v| v == 0);
     if all_zero {
         claim.note(
-            "all sampled values are 0 — BG_AnimParseAnimScript is not in pmove; this is the gap, not a passing 0x155 codec round-trip",
+            "all sampled values are 0 — the anim script is not in pmove; this is the gap, not a passing 0x155 codec round-trip",
         );
         claim.check(
             true,

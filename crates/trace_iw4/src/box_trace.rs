@@ -228,7 +228,7 @@ fn trace_through_brush(
 
         trace.surface_flags = lead_plane.map(|i| brush.flags_for_plane(i)).unwrap_or(0);
 
-        let (hit_type, hit_id) = crate::cm_brush_sweep_hit_kind(brush.glass_encoded);
+        let (hit_type, hit_id) = crate::brush_sweep_hit_kind(brush.glass_encoded);
         trace.hit_type = hit_type;
         trace.hit_id = hit_id;
         trace.walkable = 0;

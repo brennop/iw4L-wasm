@@ -9,7 +9,7 @@ pub struct AnimSceneSubmit;
 pub struct AnimDObjSceneModel {
     pub lod: i8,
     pub bone_count: u8,
-    pub skel: Arc<assets::ModelSkel>,
+    pub skel: Arc<asset_model::ModelSkel>,
 }
 
 #[derive(Message, Clone, Debug)]
@@ -29,7 +29,7 @@ pub struct AnimDObjSceneSubmission {
 
 #[derive(Resource, Default)]
 pub struct AnimDObjSceneSkels {
-    by_name: HashMap<String, Arc<assets::ModelSkel>>,
+    by_name: HashMap<String, Arc<asset_model::ModelSkel>>,
     seeded_for: Option<(usize, u64)>,
 }
 
@@ -63,7 +63,7 @@ impl AnimDObjSceneSkels {
     pub fn shared(
         &mut self,
         name: &str,
-        skel: &Arc<assets::ModelSkel>,
+        skel: &Arc<asset_model::ModelSkel>,
         lod: i8,
     ) -> AnimDObjSceneModel {
         let skel = Arc::clone(
@@ -78,7 +78,7 @@ impl AnimDObjSceneSkels {
         }
     }
 
-    pub fn model(&mut self, name: &str, skel: &assets::ModelSkel, lod: i8) -> AnimDObjSceneModel {
+    pub fn model(&mut self, name: &str, skel: &asset_model::ModelSkel, lod: i8) -> AnimDObjSceneModel {
         let skel = match self.by_name.get(name) {
             Some(skel) => Arc::clone(skel),
             None => {

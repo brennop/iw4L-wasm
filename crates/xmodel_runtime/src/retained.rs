@@ -2,10 +2,10 @@ use glam::{Mat4, Vec3};
 
 use crate::xanim_tree::{ActiveAdditiveLayer, ActiveXAnimLeaf};
 use crate::{
-    AnimInstance, Attach, DObj, DObjError, HidePartBits, Local, ModelPoseSrc, PartBits,
-    XAnimTreeError, XAnimTreeRuntime,
+    AnimInstance, Attach, DObj, DObjError, HidePartBits, ModelPoseSrc, XAnimTreeError,
+    XAnimTreeRuntime,
 };
-use anim_iw4::xanim_apply_additive;
+use anim_iw4::{Local, PartBits, apply_additive};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoneCollision {
@@ -390,7 +390,7 @@ fn apply_additive_layers(
             {
                 continue;
             }
-            let (rot, trans) = xanim_apply_additive(
+            let (rot, trans) = apply_additive(
                 dest[i].rotation,
                 dest[i].translation,
                 add[i].rotation,

@@ -29,16 +29,16 @@ struct ScriptModelDobjs {
 }
 
 struct PersistentScriptDobj {
-    dobj: std::sync::Arc<assets::DObj>,
-    reuse_key: assets::dobj::DObjReuseKey,
+    dobj: std::sync::Arc<xmodel_runtime::DObj>,
+    reuse_key: xmodel_runtime::DObjReuseKey,
 }
+
+const SPAWNED_PRESENCE: std::ops::Range<u32> = 0x4000_0000..0x8000_0000;
 
 #[derive(Component)]
-struct KillstreakSceneModel {
+struct SpawnedSceneModel {
     source: u32,
 }
-
-const KILLSTREAK_TARGETNAME: &str = "iw4l_killstreak";
 
 #[derive(Clone, Copy, Debug)]
 struct ScriptMoverCentitySample {
@@ -92,7 +92,7 @@ struct ScriptOwnerRow {
     entity: Entity,
     asset_index: usize,
     focused_owner_id: Option<u32>,
-    model: assets::MapXModelAssetKey,
+    model: asset_world::MapXModelAssetKey,
     world_from_local: Mat4,
     entnum: Option<u32>,
     camera_hidden: bool,
@@ -111,8 +111,8 @@ struct ScriptModelPoseProduct {
 }
 
 struct ScriptPosedAsset {
-    key: assets::MapXModelAssetKey,
-    dobj_state: assets::dobj::DObjSemanticState,
+    key: asset_world::MapXModelAssetKey,
+    dobj_state: xmodel_runtime::DObjSemanticState,
     camera_lods: Vec<Option<u8>>,
     surfaces: Vec<PosedModelSurface>,
     authored: Vec<Option<assets::MaterialIndex>>,
@@ -121,8 +121,8 @@ struct ScriptPosedAsset {
 impl ScriptModelPoseProduct {
     fn asset_index(
         &self,
-        key: &assets::MapXModelAssetKey,
-        dobj_state: &assets::dobj::DObjSemanticState,
+        key: &asset_world::MapXModelAssetKey,
+        dobj_state: &xmodel_runtime::DObjSemanticState,
         camera_lods: &[Option<u8>],
     ) -> Option<usize> {
         self.assets.iter().position(|asset| {
@@ -241,7 +241,7 @@ pub fn register_script_model_systems(app: &mut App) {
         .add_systems(
             Update,
             (
-                sync_killstreak_scene_models,
+                sync_spawned_scene_models,
                 apply_presented_script_model_dobjs,
                 apply_script_mover_centity_pose,
                 occupy_script_model_scene_ents,
@@ -265,165 +265,65 @@ pub fn register_script_model_systems(app: &mut App) {
         );
 }
 
-fn sync_killstreak_scene_models(
+fn sync_spawned_scene_models(
     mut commands: Commands,
     presented: Option<Res<net::PresentedSnapshot>>,
-    local: Option<Res<net::LocalPresentClient>>,
-    assets: Option<Res<assets::MapXModelSceneCatalog>>,
-    mut existing: Query<(
-        Entity,
-        &KillstreakSceneModel,
-        &mut WorldScriptModelInstance,
-        &mut Transform,
-        &mut Visibility,
-    )>,
+    mut existing: Query<(Entity, &SpawnedSceneModel, &mut WorldScriptModelInstance)>,
 ) {
     let Some(snapshot) = presented.as_ref().and_then(|p| p.snapshot()) else {
-        for (entity, _, _, _, _) in &mut existing {
+        for (entity, _, _) in &mut existing {
             commands.entity(entity).despawn();
         }
         return;
     };
-    let Some(assets) = assets else {
-        return;
-    };
-    let local_id = local.as_ref().map(|l| l.0);
-    let local_team = local_id
-        .and_then(|id| snapshot.meta.for_client(id))
-        .map_or(entity_iw4::TEAM_FREE, |m| m.client_state_team);
-    let mut desired = Vec::new();
-    for package in &snapshot.meta.care_packages {
-        let drop_at = package.ready_at_ms - gamemode_iw4::killstreaks::CRATE_DROP_MS as i32;
-        if sim::level_time_ms(snapshot.tick) < drop_at {
-            let source = sim::killstreak_model_source(sim::LITTLE_BIRD_MODEL_KIND, package.id);
-            if let Some(mover) = snapshot
-                .meta
-                .script_movers
-                .iter()
-                .find(|m| m.id.to_wire() == source)
-            {
-                desired.push((
-                    sim::LITTLE_BIRD_MODEL_KIND,
-                    package.id,
-                    gamemode_iw4::killstreaks::LITTLE_BIRD_MODEL,
-                    mover.state.tr_base,
-                ));
-            }
-            continue;
-        }
-        let source = sim::killstreak_model_source(sim::CRATE_MODEL_KIND, package.id);
-        let Some(mover) = snapshot
-            .meta
-            .script_movers
-            .iter()
-            .find(|m| m.id.to_wire() == source)
-        else {
-            continue;
-        };
-        let friendly = Some(package.owner) == local_id
-            || (snapshot.meta.kind.is_team() && package.team == local_team);
-        desired.push((
-            sim::CRATE_MODEL_KIND,
-            package.id,
-            if friendly {
-                gamemode_iw4::killstreaks::CRATE_FRIENDLY_MODEL
-            } else {
-                gamemode_iw4::killstreaks::CRATE_ENEMY_MODEL
-            },
-            mover.state.tr_base,
-        ));
-    }
-    for heli in &snapshot.meta.pave_lows {
-        desired.push((
-            sim::PAVELOW_MODEL_KIND,
-            heli.id,
-            if heli.team == entity_iw4::TEAM_AXIS {
-                gamemode_iw4::killstreaks::PAVELOW_MODELS[0]
-            } else {
-                gamemode_iw4::killstreaks::PAVELOW_MODELS[1]
-            },
-            heli.origin,
-        ));
-    }
-    for uav in &snapshot.meta.uavs {
-        if Some(uav.owner) == local_id || (snapshot.meta.kind.is_team() && uav.team == local_team) {
-            continue;
-        }
-        desired.push((
-            sim::UAV_MODEL_KIND,
-            uav.id,
-            gamemode_iw4::killstreaks::UAV_MODEL,
-            uav.origin,
-        ));
-    }
-    let desired_sources: std::collections::HashSet<u32> = desired
+    let movers: std::collections::HashMap<u32, &sim::ScriptMoverGentity> = snapshot
+        .meta
+        .script_movers
         .iter()
-        .map(|(kind, id, _, _)| sim::killstreak_model_source(*kind, *id))
+        .filter(|m| SPAWNED_PRESENCE.contains(&m.id.to_wire()))
+        .map(|m| (m.id.to_wire(), m))
         .collect();
-    for (entity, marker, _, _, _) in &mut existing {
-        if !desired_sources.contains(&marker.source) {
-            commands.entity(entity).despawn();
+    for (entity, marker, mut owner) in &mut existing {
+        match movers.get(&marker.source) {
+            Some(mover) => owner.gentity_number = u16::try_from(mover.state.number).ok(),
+            None => commands.entity(entity).despawn(),
         }
     }
-    for (kind, id, name, origin) in desired {
-        let source = sim::killstreak_model_source(kind, id);
-        let mover = snapshot
-            .meta
-            .script_movers
-            .iter()
-            .find(|m| m.id.to_wire() == source);
-        let Some(entnum) = mover.and_then(|m| u16::try_from(m.state.number).ok()) else {
+    let known: std::collections::HashSet<u32> = existing
+        .iter()
+        .map(|(_, marker, _)| marker.source)
+        .collect();
+    for (owner, state) in &snapshot.meta.entity_dobjs {
+        let Some(id) = owner.script_model() else {
             continue;
         };
-        let key = assets::MapXModelAssetKey(name.to_owned());
-        if !matches!(
-            assets.get(&key),
-            Some(
-                assets::MapXModelSceneAsset::Iw4(_)
-                    | assets::MapXModelSceneAsset::Iw5(_)
-                    | assets::MapXModelSceneAsset::T5(_)
-            )
-        ) {
+        let source = id.to_wire();
+        if known.contains(&source) {
             continue;
         }
-        let pos = Vec3::from_array(origin);
-        if let Some((_, _, mut owner, mut transform, mut visibility)) = existing
-            .iter_mut()
-            .find(|(_, marker, _, _, _)| marker.source == source)
-        {
-            if owner.current_model != key {
-                owner.current_model = key;
-                owner.dobj_state =
-                    assets::dobj::DObjSemanticState::bind_pose(name.to_owned(), source, 1);
-            }
-            owner.gentity_number = Some(entnum);
-            transform.translation = pos;
-            *visibility = Visibility::Inherited;
-        } else {
-            let transform = Transform::from_translation(pos);
-            commands.spawn((
-                KillstreakSceneModel { source },
+        let Some(mover) = movers.get(&source) else {
+            continue;
+        };
+        let Some(base) = state.composition.models.first() else {
+            continue;
+        };
+        let origin = mover.state.tr_base;
+        let transform = Transform::from_translation(Vec3::from_array(origin));
+        commands.spawn((
+            SpawnedSceneModel { source },
+            transform,
+            Visibility::Hidden,
+            WorldScriptModelInstance {
+                id: asset_world::ScriptModelId::from_source_ordinal(source),
+                authority_owner: Some(*owner),
+                current_model: asset_world::MapXModelAssetKey(base.model.clone()),
                 transform,
-                Visibility::Inherited,
-                WorldScriptModelInstance {
-                    id: assets::ScriptModelId::from_source_ordinal(source),
-                    authority_owner: None,
-                    current_model: key,
-                    transform,
-                    lighting_origin: origin,
-                    dobj_state: assets::dobj::DObjSemanticState::bind_pose(
-                        name.to_owned(),
-                        source,
-                        1,
-                    ),
-                    metadata: assets::ScriptModelMetadata {
-                        targetname: KILLSTREAK_TARGETNAME.to_owned(),
-                        ..Default::default()
-                    },
-                    gentity_number: Some(entnum),
-                },
-            ));
-        }
+                lighting_origin: origin,
+                dobj_state: state.clone(),
+                metadata: asset_world::ScriptModelMetadata::default(),
+                gentity_number: u16::try_from(mover.state.number).ok(),
+            },
+        ));
     }
 }
 
@@ -436,59 +336,12 @@ fn apply_presented_script_model_dobjs(
     };
     let mut by_owner: std::collections::BTreeMap<
         sim::AuthorityModelOwner,
-        &assets::dobj::DObjSemanticState,
+        &xmodel_runtime::DObjSemanticState,
     > = std::collections::BTreeMap::new();
     for (owner, state) in &snapshot.meta.entity_dobjs {
         by_owner.entry(*owner).or_insert(state);
     }
     for (mut owner, mut visibility) in &mut owners {
-        if owner.metadata.targetname == KILLSTREAK_TARGETNAME {
-            *visibility = Visibility::Inherited;
-            continue;
-        }
-        let source = owner.id.source_ordinal();
-        if let Some(flag) = snapshot
-            .meta
-            .objectives
-            .flags
-            .iter()
-            .find(|f| f.model_source == source)
-        {
-            let model = &snapshot.meta.objectives.flag_models[flag.owner as usize];
-            if !model.is_empty() {
-                if owner.current_model.0 != *model {
-                    owner.current_model = assets::MapXModelAssetKey(model.clone());
-                    owner.dobj_state = assets::dobj::DObjSemanticState::bind_pose(
-                        model.clone(),
-                        flag.owner as u32 + 1,
-                        1,
-                    );
-                }
-                *visibility = Visibility::Inherited;
-            } else {
-                *visibility = Visibility::Hidden;
-            }
-            continue;
-        }
-        if let Some(bomb) = snapshot
-            .meta
-            .objectives
-            .bombs
-            .iter()
-            .find(|b| b.view.model_source == source)
-        {
-            *visibility = if bomb.planted_at_ms.is_some() {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            continue;
-        }
-        let objective_visible = snapshot.meta.objectives.model_visible(source);
-        if objective_visible == Some(false) {
-            *visibility = Visibility::Hidden;
-            continue;
-        }
         let Some(authority_owner) = owner.authority_owner else {
             *visibility = Visibility::Hidden;
             continue;
@@ -502,32 +355,23 @@ fn apply_presented_script_model_dobjs(
             continue;
         };
         if owner.current_model.0 != base.model {
-            owner.current_model = assets::MapXModelAssetKey(base.model.clone());
+            owner.current_model = asset_world::MapXModelAssetKey(base.model.clone());
         }
         if owner.dobj_state != *state {
             owner.dobj_state = state.clone();
         }
 
-        *visibility = if objective_visible != Some(true)
-            && gamemode_iw4::setup_exploders_hides(
-                &owner.current_model.0,
-                &owner.metadata.targetname,
-                &owner.metadata.script_exploder,
-            ) {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        };
+        *visibility = Visibility::Inherited;
     }
 }
 
 fn sample_script_mover_pose(
     runtime: &net::CEntityRuntime,
-    at_time: net::ServerTime,
+    at_time_ms: i32,
 ) -> ([f32; 3], [f32; 3]) {
     (
-        entity_iw4::bg_evaluate_trajectory(&runtime.current.pos, at_time.ms()),
-        entity_iw4::bg_evaluate_trajectory(&runtime.current.apos, at_time.ms()),
+        entity_iw4::evaluate_trajectory(&runtime.current.pos, at_time_ms),
+        entity_iw4::evaluate_trajectory(&runtime.current.apos, at_time_ms),
     )
 }
 
@@ -537,40 +381,27 @@ fn apply_script_mover_centity_pose(
     runtimes: Query<&net::CEntityRuntime>,
     mut owners: Query<(&WorldScriptModelInstance, &mut Transform)>,
     mut persist: ResMut<ScriptModelDobjs>,
+    cg_clock: Option<Res<net::FrameClock>>,
 ) {
     persist.mover_pose.clear();
     let Some(slots) = slots else {
         return;
     };
-    let Some(snapshot) = presented.as_ref().and_then(|value| value.snapshot()) else {
+    let Some(presented) = presented.as_ref() else {
         return;
     };
-    let at_time = net::ServerTime::from_tick(snapshot.tick);
+    let Some(snapshot) = presented.snapshot() else {
+        return;
+    };
+    let at_time = cg_clock
+        .as_ref()
+        .filter(|clock| clock.started())
+        .map(|clock| clock.time())
+        .unwrap_or_else(|| sim::level_time_ms(snapshot.tick));
+    let at_time = presented.trajectory_time_ms(at_time);
     for (owner, mut transform) in &mut owners {
         let mapent = owner.id.source_ordinal();
-        if let Some(bomb) = snapshot
-            .meta
-            .objectives
-            .bombs
-            .iter()
-            .find(|b| b.view.model_source == mapent)
-        {
-            transform.translation = Vec3::from_array(bomb.bomb_origin);
-            let [pitch, yaw, roll] = bomb.bomb_angles.map(f32::to_radians);
-            transform.rotation = Quat::from_euler(EulerRot::ZYX, yaw, pitch, roll);
-            persist
-                .mover_pose
-                .insert(mapent, ScriptMoverCentitySample::posed(bomb.bomb_angles));
-            continue;
-        }
-        let is_fan = owner.metadata.targetname == sim::FAN_BLADE_ROTATE_TARGETNAME
-            || owner.metadata.targetname == sim::FAN_BLADE_ROTATE_FAST_TARGETNAME;
         let Some(number) = owner.gentity_number else {
-            if is_fan {
-                persist
-                    .mover_pose
-                    .insert(mapent, ScriptMoverCentitySample::skip("no_number"));
-            }
             continue;
         };
         let Some(entity) = slots.entity_for_number(number) else {
@@ -601,7 +432,7 @@ fn apply_script_mover_centity_pose(
 }
 
 fn occupy_script_model_scene_ents(
-    assets: Option<Res<assets::MapXModelSceneCatalog>>,
+    assets: Option<Res<asset_world::MapXModelSceneCatalog>>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
     owners: Query<(&WorldScriptModelInstance, &Transform, &Visibility)>,
     persist: Res<ScriptModelDobjs>,
@@ -623,8 +454,8 @@ fn occupy_script_model_scene_ents(
         let Some(skels) = presented_skel_arcs(&assets, &owner.dobj_state) else {
             continue;
         };
-        let skel_refs: Vec<&assets::ModelSkel> = skels.iter().map(|skel| skel.as_ref()).collect();
-        if dobj_lod_culled(
+        let skel_refs: Vec<&asset_model::ModelSkel> = skels.iter().map(|skel| skel.as_ref()).collect();
+        if lod_culled(
             &skel_refs,
             transform.translation.to_array(),
             eye,
@@ -673,7 +504,7 @@ fn occupy_script_model_scene_ents(
 }
 
 fn pose_script_models(
-    assets: Option<Res<assets::MapXModelSceneCatalog>>,
+    assets: Option<Res<asset_world::MapXModelSceneCatalog>>,
     atlas: Option<Res<WorldModelLightingAtlas>>,
     atpoint: Res<render_scene::DynAtPointLookup>,
     facts: Res<WorldPresentFacts>,
@@ -728,11 +559,7 @@ fn pose_script_models(
         let owner_id = owner
             .authority_owner
             .and_then(|owner| owner.script_model())
-            .map(|id| id.to_wire())
-            .or_else(|| {
-                (owner.metadata.targetname == KILLSTREAK_TARGETNAME)
-                    .then_some(owner.id.source_ordinal())
-            });
+            .map(|id| id.to_wire());
         let focused_owner_id = focus_id.filter(|wanted| owner_id == Some(*wanted));
         if let Some(id) = focused_owner_id {
             focus.refuse(id, &owner.current_model.0, "unclassified_branch");
@@ -760,7 +587,7 @@ fn pose_script_models(
         };
         let origin = transform.translation.to_array();
 
-        if dobj_lod_culled(&skels, origin, eye, skinned_ramp) {
+        if lod_culled(&skels, origin, eye, skinned_ramp) {
             if let Some(id) = focused_owner_id {
                 focus.refuse(id, &owner.current_model.0, "lod_culled");
             }
@@ -786,7 +613,7 @@ fn pose_script_models(
             live_ids.insert(id);
             let request = owner
                 .dobj_state
-                .resolve_request(|name| xanims.as_ref()?.0.clip(assets::AssetNamespace::Iw4, name));
+                .resolve_request(|name| xanims.as_ref()?.0.clip(asset_core::AssetNamespace::Iw4, name));
             let index = if let Some(index) =
                 product.asset_index(&owner.current_model, &owner.dobj_state, &camera_lods)
             {
@@ -896,7 +723,7 @@ fn pose_script_models(
 }
 
 fn commit_script_model_draw_plan(
-    assets: Option<Res<assets::MapXModelSceneCatalog>>,
+    assets: Option<Res<asset_world::MapXModelSceneCatalog>>,
     atlas: Option<Res<WorldModelLightingAtlas>>,
     tess: Option<Res<TessMaterials>>,
     facts: Res<WorldPresentFacts>,
@@ -1072,8 +899,8 @@ fn commit_script_model_draw_plan(
 fn append_or_overwrite_script_pose(
     product: &mut ScriptModelPoseProduct,
     live_assets: &[usize],
-    key: assets::MapXModelAssetKey,
-    dobj_state: assets::dobj::DObjSemanticState,
+    key: asset_world::MapXModelAssetKey,
+    dobj_state: xmodel_runtime::DObjSemanticState,
     camera_lods: Vec<Option<u8>>,
     surfaces: Vec<PosedModelSurface>,
     authored: Vec<Option<assets::MaterialIndex>>,
@@ -1110,23 +937,23 @@ fn append_or_overwrite_script_pose(
     index
 }
 
-fn script_dobj_reuse_key(state: &assets::dobj::DObjSemanticState) -> assets::dobj::DObjReuseKey {
+fn script_dobj_reuse_key(state: &xmodel_runtime::DObjSemanticState) -> xmodel_runtime::DObjReuseKey {
     let mut parts = Vec::with_capacity(state.composition.models.len() * 2);
     for model in &state.composition.models {
         parts.push(model.model.as_str());
         parts.push(model.attach_tag.as_deref().unwrap_or(""));
     }
-    assets::dobj::DObjReuseKey {
+    xmodel_runtime::DObjReuseKey {
         e_type: entity_iw4::ET_SCRIPTMOVER,
-        model: assets::dobj::dobj_model_token(&parts),
+        model: xmodel_runtime::model_token(&parts),
     }
 }
 
 fn append_or_overwrite_script_model(
     plan: &mut ScriptModelDrawPlan,
     live_assets: &[usize],
-    key: assets::MapXModelAssetKey,
-    dobj_state: assets::dobj::DObjSemanticState,
+    key: asset_world::MapXModelAssetKey,
+    dobj_state: xmodel_runtime::DObjSemanticState,
     camera_lods: Vec<Option<u8>>,
     surfaces: &[PosedModelSurface],
     materials: &[Option<SmodelPassMaterial>],
@@ -1145,8 +972,8 @@ fn append_or_overwrite_script_model(
 }
 
 fn script_model_pose_topology_matches(
-    retained: &assets::dobj::DObjSemanticState,
-    incoming: &assets::dobj::DObjSemanticState,
+    retained: &xmodel_runtime::DObjSemanticState,
+    incoming: &xmodel_runtime::DObjSemanticState,
 ) -> bool {
     retained.composition == incoming.composition
         && retained.requested_parts == incoming.requested_parts
@@ -1168,16 +995,16 @@ fn script_model_pose_topology_matches(
 }
 
 pub(crate) fn presented_skel_arcs(
-    catalog: &assets::MapXModelSceneCatalog,
-    state: &assets::dobj::DObjSemanticState,
-) -> Option<Vec<std::sync::Arc<assets::ModelSkel>>> {
+    catalog: &asset_world::MapXModelSceneCatalog,
+    state: &xmodel_runtime::DObjSemanticState,
+) -> Option<Vec<std::sync::Arc<asset_model::ModelSkel>>> {
     let mut skels = Vec::with_capacity(state.composition.models.len());
     for descriptor in &state.composition.models {
         let skel = match catalog.get_name(&descriptor.model)? {
-            assets::MapXModelSceneAsset::Iw4(skel)
-            | assets::MapXModelSceneAsset::Iw5(skel)
-            | assets::MapXModelSceneAsset::T5(skel) => std::sync::Arc::clone(skel),
-            assets::MapXModelSceneAsset::Unavailable { .. } => return None,
+            asset_world::MapXModelSceneAsset::Iw4(skel)
+            | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T5(skel) => std::sync::Arc::clone(skel),
+            asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
         if skel.pose.is_none() {
             return None;
@@ -1188,16 +1015,16 @@ pub(crate) fn presented_skel_arcs(
 }
 
 pub(crate) fn presented_skels<'a>(
-    catalog: &'a assets::MapXModelSceneCatalog,
-    state: &assets::dobj::DObjSemanticState,
-) -> Option<Vec<&'a assets::ModelSkel>> {
+    catalog: &'a asset_world::MapXModelSceneCatalog,
+    state: &xmodel_runtime::DObjSemanticState,
+) -> Option<Vec<&'a asset_model::ModelSkel>> {
     let mut skels = Vec::with_capacity(state.composition.models.len());
     for descriptor in &state.composition.models {
         let skel = match catalog.get_name(&descriptor.model)? {
-            assets::MapXModelSceneAsset::Iw4(skel)
-            | assets::MapXModelSceneAsset::Iw5(skel)
-            | assets::MapXModelSceneAsset::T5(skel) => skel.as_ref(),
-            assets::MapXModelSceneAsset::Unavailable { .. } => return None,
+            asset_world::MapXModelSceneAsset::Iw4(skel)
+            | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T5(skel) => skel.as_ref(),
+            asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
         if skel.pose.is_none() {
             return None;
@@ -1208,24 +1035,24 @@ pub(crate) fn presented_skels<'a>(
 }
 
 pub fn collect_presented_models<'a>(
-    catalog: &'a assets::MapXModelSceneCatalog,
-    state: &assets::dobj::DObjSemanticState,
+    catalog: &'a asset_world::MapXModelSceneCatalog,
+    state: &xmodel_runtime::DObjSemanticState,
 ) -> Option<(
-    Vec<(&'a assets::ModelPoseSrc, Option<assets::Attach>)>,
-    Vec<&'a assets::ModelSkel>,
+    Vec<(&'a xmodel_runtime::ModelPoseSrc, Option<xmodel_runtime::Attach>)>,
+    Vec<&'a asset_model::ModelSkel>,
 )> {
     let mut skels = Vec::with_capacity(state.composition.models.len());
     let mut attaches = Vec::with_capacity(state.composition.models.len());
     for (index, descriptor) in state.composition.models.iter().enumerate() {
         let skel = match catalog.get_name(&descriptor.model)? {
-            assets::MapXModelSceneAsset::Iw4(skel)
-            | assets::MapXModelSceneAsset::Iw5(skel)
-            | assets::MapXModelSceneAsset::T5(skel) => skel,
-            assets::MapXModelSceneAsset::Unavailable { .. } => return None,
+            asset_world::MapXModelSceneAsset::Iw4(skel)
+            | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T5(skel) => skel,
+            asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
         let attach = match (descriptor.parent_model, descriptor.attach_tag.as_ref()) {
             (None, None) if index == 0 => None,
-            (Some(parent), Some(tag)) if usize::from(parent) < index => Some(assets::Attach {
+            (Some(parent), Some(tag)) if usize::from(parent) < index => Some(xmodel_runtime::Attach {
                 parent_model: usize::from(parent),
                 tag: tag.clone(),
             }),
@@ -1245,15 +1072,15 @@ pub fn collect_presented_models<'a>(
 fn compose_or_reuse_script_dobj(
     persist: &mut ScriptModelDobjs,
     id: u32,
-    catalog: &assets::MapXModelSceneCatalog,
-    state: &assets::dobj::DObjSemanticState,
+    catalog: &asset_world::MapXModelSceneCatalog,
+    state: &xmodel_runtime::DObjSemanticState,
     prepared: &crate::anim::model_materials::PreparedModelMaterials,
 ) -> Option<()> {
     let key = script_dobj_reuse_key(state);
     let reuse = persist
         .by_id
         .get(&id)
-        .is_some_and(|slot| assets::dobj::dobj_reuse_matches(slot.reuse_key, key));
+        .is_some_and(|slot| xmodel_runtime::reuse_matches(slot.reuse_key, key));
     if reuse {
         return Some(());
     }
@@ -1264,7 +1091,7 @@ fn compose_or_reuse_script_dobj(
     };
     let dobj = match single {
         Some(dobj) => dobj,
-        None => std::sync::Arc::new(assets::DObj::build(&specs).ok()?),
+        None => std::sync::Arc::new(xmodel_runtime::DObj::build(&specs).ok()?),
     };
     persist.by_id.insert(
         id,
@@ -1277,14 +1104,14 @@ fn compose_or_reuse_script_dobj(
 }
 
 pub fn pose_script_dobj_with_materials(
-    catalog: Option<&assets::MapXModelSceneCatalog>,
-    skels: &[&assets::ModelSkel],
-    dobj: &assets::DObj,
-    request: &assets::dobj::DObjPoseRequest,
+    catalog: Option<&asset_world::MapXModelSceneCatalog>,
+    skels: &[&asset_model::ModelSkel],
+    dobj: &xmodel_runtime::DObj,
+    request: &xmodel_runtime::DObjPoseRequest,
     lod_view: Option<DObjLodView>,
     skin_entries: &[dpvs_iw4::SceneEntSkinEntry],
 ) -> Option<(Vec<PosedModelSurface>, Vec<Option<assets::MaterialIndex>>)> {
-    let world = assets::dobj::pose_dobj(dobj, request, Mat4::IDENTITY).ok()?;
+    let world = xmodel_runtime::pose_dobj(dobj, request, Mat4::IDENTITY).ok()?;
     let skin = dobj.skin_matrices(&world);
     let mut surfaces = Vec::new();
     let mut materials = Vec::new();
@@ -1316,7 +1143,7 @@ pub fn pose_script_dobj_with_materials(
             },
             lod,
         )?;
-        let key = assets::MapXModelAssetKey(skel.name.clone());
+        let key = asset_world::MapXModelAssetKey(skel.name.clone());
         let mut posed = posed;
         for surface in &mut posed {
             surface.model = model as u16;
@@ -1339,7 +1166,7 @@ pub struct DObjLodView {
 }
 
 pub(crate) fn submodel_camera_lod(
-    skel: &assets::ModelSkel,
+    skel: &asset_model::ModelSkel,
     view: Option<DObjLodView>,
 ) -> Option<u8> {
     let Some(view) = view else {
@@ -1348,8 +1175,8 @@ pub(crate) fn submodel_camera_lod(
     smodel_camera_lod(skel.lod, view.origin, 1.0, view.eye, view.ramp)
 }
 
-fn dobj_lod_culled(
-    skels: &[&assets::ModelSkel],
+fn lod_culled(
+    skels: &[&asset_model::ModelSkel],
     origin: [f32; 3],
     eye: Option<[f32; 3]>,
     ramp: LodRampArgs,

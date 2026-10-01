@@ -26,7 +26,7 @@ fn log_image_asset_memory(images: &Assets<Image>) {
         "image asset memory: assets={count} main_world_retained={:.1}MiB uploaded={:.1}MiB rss={:.0}MiB",
         mib(main_bytes),
         mib(render_bytes),
-        assets::process_resident_bytes().map_or(0.0, |bytes| bytes as f64 / (1024.0 * 1024.0)),
+        asset_transport::process_resident_bytes().map_or(0.0, |bytes| bytes as f64 / (1024.0 * 1024.0)),
     );
 }
 
@@ -35,8 +35,8 @@ fn exact_color_handle_for_runtime_mat(
     exact_handles: &[Option<Handle<Image>>],
 ) -> Option<Handle<Image>> {
     let binding = material
-        .texture_semantic(assets::TS_COLOR_MAP)
-        .or_else(|| material.texture_semantic(assets::TS_2D))?;
+        .texture_semantic(asset_material::TS_COLOR_MAP)
+        .or_else(|| material.texture_semantic(asset_material::TS_2D))?;
     exact_handles.get(binding.0 as usize).cloned().flatten()
 }
 
@@ -59,7 +59,7 @@ fn stitch_fx_color_by_asset(
     }
 }
 
-pub(crate) fn fx_world_color_images(
+pub(crate) fn world_color_images(
     scene: &WorldScene,
     exact_material_handles: &[Option<Handle<Image>>],
     tracers: Option<&PreparedTracers>,
@@ -142,11 +142,11 @@ pub(crate) fn fx_world_color_images(
         else {
             continue;
         };
-        assets::insert_fx_color_image(&mut fx_color_by_name, &material.name, handle.clone());
-        assets::insert_fx_color_image(&mut fx_keys, &material.name, (material.sort_key, 0));
+        asset_game::insert_fx_color_image(&mut fx_color_by_name, &material.name, handle.clone());
+        asset_game::insert_fx_color_image(&mut fx_keys, &material.name, (material.sort_key, 0));
     }
-    let stub_aliases = assets::alias_fx_color_map_stubs(&mut fx_color_by_name);
-    let _ = assets::alias_fx_color_map_stubs(&mut fx_keys);
+    let stub_aliases = asset_game::alias_fx_color_map_stubs(&mut fx_color_by_name);
+    let _ = asset_game::alias_fx_color_map_stubs(&mut fx_keys);
     diag::info!(
         World,
         "fx color maps: {} bind keys (stub_aliases={stub_aliases}, material_keys={}) — handles from exact pool, not CPU clones",
@@ -155,16 +155,16 @@ pub(crate) fn fx_world_color_images(
     );
     diag::info!(
         World,
-        "fx tracer color maps by asset: {tracer_unique} unique / {tracer_bound} bound defs (CG_DrawTracer)",
+        "fx tracer color maps by asset: {tracer_unique} unique / {tracer_bound} bound defs",
     );
     diag::info!(
         World,
-        "fx elem color maps by asset: {} unique / {elem_bound} bound visuals (FX_GenerateSpriteVerts)",
+        "fx elem color maps by asset: {} unique / {elem_bound} bound visuals",
         colors_by_asset.len()
     );
     diag::info!(
         World,
-        "fx mark color maps by asset: {} unique / {mark_bound} unique Bound (FX_ImpactMark) — not sprite colors_by_asset",
+        "fx mark color maps by asset: {} unique / {mark_bound} unique Bound — not sprite colors_by_asset",
         mark_colors_by_asset.len()
     );
     if let Some(fx) = fx_catalog {
@@ -252,10 +252,10 @@ pub(crate) fn prepare_fx_model_geometry(
         let name = models.name_at(index).unwrap_or_default();
         let binding = (|| {
             let pose = entry.skel.pose.as_ref()?;
-            let dobj = assets::DObj::build(&[(pose, None)]).ok()?;
-            let state = assets::dobj::DObjSemanticState::bind_pose(name.to_owned(), 1, 1);
+            let dobj = xmodel_runtime::DObj::build(&[(pose, None)]).ok()?;
+            let state = xmodel_runtime::DObjSemanticState::bind_pose(name.to_owned(), 1, 1);
             let request = state.resolve_request(|_| None).ok()?;
-            let world = assets::dobj::pose_dobj(&dobj, &request, Mat4::IDENTITY).ok()?;
+            let world = xmodel_runtime::pose_dobj(&dobj, &request, Mat4::IDENTITY).ok()?;
             let skin = dobj.skin_matrices(&world);
             Some((dobj, request, skin))
         })();
@@ -329,7 +329,7 @@ pub fn install(
     tracers: Option<&PreparedTracers>,
     fx_catalog: Option<&PreparedFxCatalog>,
 ) {
-    let fx_images = fx_world_color_images(scene, &exact_material_handles, tracers, fx_catalog);
+    let fx_images = world_color_images(scene, &exact_material_handles, tracers, fx_catalog);
     commands.insert_resource(fx_images);
     let exact_material_views = exact_material_handles.iter().flatten().count();
     let exact_probe_views = reflection_probe_handles.iter().flatten().count();

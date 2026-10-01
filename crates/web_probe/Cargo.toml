@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 assets.workspace = true
+asset_transport.workspace = true
 diag.workspace = true
 gamefs.workspace = true
 web-time = { workspace = true }

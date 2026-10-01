@@ -5,7 +5,6 @@ mod asset_type;
 mod content;
 mod envelope;
 mod load;
-pub mod shader;
 mod stream;
 mod wire;
 mod zone;
@@ -22,8 +21,9 @@ pub use envelope::{
     MAGIC_UNSIGNED, Signing, ZONE_VERSION_PC, parse_file_header,
 };
 pub use load::{
-    AssetLinkSink, FontCapture, GlyphCapture, MenuDefCapture, MenuItemLayout, MenuRectCapture,
-    MenuScriptKind, load_asset_at, load_asset_at_observed, load_asset_at_with, load_asset_body,
+    AssetLinkSink, FontCapture, GlyphCapture, MenuChoiceValue, MenuDefCapture, MenuItemLayout,
+    MenuRectCapture, MenuScriptKind, load_asset_at, load_asset_at_observed, load_asset_at_with,
+    load_asset_body,
 };
 pub use stream::{
     alloc_stream_pos, convert_offset_to_alias, convert_offset_to_pointer, inc_stream_pos,
@@ -31,9 +31,9 @@ pub use stream::{
 };
 pub use zone::{
     BLOCK_STACK_CAP, BlockType, ClipMapGeometry, ComWorldGeometry, FxEffectDefGeometry,
-    FxImpactTableGeometry, FxWorldGeometry, GGlassDataGeometry, GfxImageGeometry,
-    GfxLightDefGeometry, GfxLightGridGeometry, GfxLightmapPair, GfxSunEffectsGeometry,
-    GfxWorldGeometry, MAX_LIGHTMAP_PAGES, MAX_XFILE_COUNT, MapEntsGeometry, MaterialGeometry,
+    FxImpactTableGeometry, FxWorldGeometry, GfxImageGeometry, GfxLightDefGeometry,
+    GfxLightGridGeometry, GfxLightmapPair, GfxSunEffectsGeometry, GfxWorldGeometry,
+    GlassDataGeometry, MAX_LIGHTMAP_PAGES, MAX_XFILE_COUNT, MapEntsGeometry, MaterialGeometry,
     PTR_SIZE, PhysPresetGeometry, Ptr, Result, ShaderGeometry, TECHNIQUE_ARGUMENT_CAP,
     TECHNIQUE_PASS_ROW_CAP, TechniqueArgumentGeometry, TechniqueGraphGeometry,
     TechniquePassGeometry, TechniqueSetGeometry, TracerDefGeometry, VertexDeclGeometry,

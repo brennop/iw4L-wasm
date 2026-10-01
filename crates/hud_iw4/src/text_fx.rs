@@ -41,7 +41,7 @@ pub fn rand_with_seed(seed: &mut i32) -> i32 {
 }
 
 #[must_use]
-pub fn r_font_get_random_letter(seed: i32) -> u32 {
+pub fn font_get_random_letter(seed: i32) -> u32 {
     let mut seed = seed;
     let i = rand_with_seed(&mut seed).rem_euclid(FX_RANDOM_CHARS.len() as i32) as usize;
     u32::from(FX_RANDOM_CHARS[i])
@@ -154,7 +154,7 @@ pub struct DecayingLetter {
 }
 
 #[must_use]
-pub fn fx_decay_tick_count(fx_decay_duration: i32) -> Option<i32> {
+pub fn decay_tick_count(fx_decay_duration: i32) -> Option<i32> {
     let ratio = (f64::from(fx_decay_duration) / 1000.0) as f32;
     let ticks = (f64::from(ratio) * FX_DECAY_TICKS_PER_SECOND) as i32;
     (ticks != 0).then_some(ticks)
@@ -169,7 +169,7 @@ pub fn get_decaying_letter_info(
     fx_decay_duration: i32,
     alpha: u8,
 ) -> Option<DecayingLetter> {
-    let tick_count = fx_decay_tick_count(fx_decay_duration)?;
+    let tick_count = decay_tick_count(fx_decay_duration)?;
     let tick = rand_with_seed(seed) % tick_count;
     let time_limit = tick.saturating_mul(fx_decay_duration / tick_count);
     let mut out = DecayingLetter {
@@ -192,7 +192,7 @@ pub fn get_decaying_letter_info(
         out.draw_extra_fx_char = true;
         out.letter = FX_EXTRA_CHAR_LETTER;
     } else {
-        out.letter = r_font_get_random_letter(scramble);
+        out.letter = font_get_random_letter(scramble);
     }
     let gone = (decay_time_elapsed + FX_DECAY_LETTER_FADE_MS - time_limit) as f32
         / FX_DECAY_LETTER_FADE_MS as f32;
@@ -258,7 +258,7 @@ impl TextPulseSound {
 }
 
 #[must_use]
-pub fn cl_play_text_fx_pulse_sounds(
+pub fn play_text_fx_pulse_sounds(
     current_time: i32,
     str_length: i32,
     fx_birth_time: i32,

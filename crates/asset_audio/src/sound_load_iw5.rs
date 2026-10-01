@@ -424,6 +424,8 @@ impl Iw5SoundCapture {
                 .unwrap_or(0),
             volume_falloff,
             t5_distance_curves: None,
+            near_falloff: None,
+            voice_priority: None,
             envelop_min: s
                 .f32_at(row, s.layout(sz::SND_ALIAS_ENVELOP_MIN_OFF, 128))
                 .unwrap_or(0.0),

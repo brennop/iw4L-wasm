@@ -13,8 +13,8 @@ use fastfile_t5::{GfxWorldGeometry, ZonePtr, ZoneStream};
 
 use crate::world_draw::{
     CameraRangeKind, CameraSurfRange, CameraSurfRanges, DpvsWorldData, OwnedPortal,
-    RetailWorldVertexPayload, SurfaceDrawFields, WorldBatch, WorldDraw, WorldLightmap,
-    WorldLightmapGap, WorldPrimaryLight, WorldReflectionProbe,
+    SurfaceDrawFields, WorldBatch, WorldDraw, WorldLightmap, WorldLightmapGap, WorldPrimaryLight,
+    WorldReflectionProbe, WorldVertexPayload,
 };
 use crate::world_mesh::{
     WorldMeshError, WorldMeshStats, normalize_or_up, unpack_color, unpack_unit_vec,
@@ -86,7 +86,7 @@ fn iw4_ptr(p: fastfile_t5::Ptr) -> Iw4Ptr {
 pub fn build_t5_world_draw(
     s: &ZoneStream<'_>,
     geometry: GfxWorldGeometry,
-    materials: MaterialCatalog,
+    mut materials: MaterialCatalog,
 ) -> Result<(WorldDraw, MaterialCatalog), WorldMeshError> {
     let Some(vertices) = geometry.vertices else {
         return Err(WorldMeshError::NoGeometry);
@@ -98,7 +98,63 @@ pub fn build_t5_world_draw(
         return Err(WorldMeshError::NoGeometry);
     };
 
-    let mut retail_vertices = Vec::with_capacity(geometry.vertex_count);
+    if let Some(table) = geometry.terrain_scorch_images {
+        let images: [Option<usize>; 31] =
+            std::array::from_fn(|index| materials.image_index(iw4_ptr(table.at(index * 4))));
+        let white = materials
+            .image_index_by_key(asset_material::AssetNamespace::T5, "$white")
+            .unwrap_or_else(|| {
+                let index = materials.images.len();
+                materials.images.push(asset_material::AuthoredImage {
+                    namespace: asset_material::AssetNamespace::T5,
+                    name: asset_material::AssetRef::decode("$white"),
+                    map_type: 3,
+                    semantic: 2,
+                    category: 1,
+                    use_srgb_reads: false,
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                    level_count: 1,
+                    format: 21,
+                    payload: std::sync::Arc::new(vec![255; 4]),
+                    decoded: None,
+                    common_owned: false,
+                    decoded_variant: None,
+                    decoded_by: None,
+                    pending_decode: None,
+                });
+                index
+            });
+        for material in &mut materials.materials {
+            let Some(types) = material.t5_layered_surface_types else {
+                continue;
+            };
+            for layer in 0..((types >> 29) as usize).min(4) {
+                let surface = ((types >> (layer * 6)) & 0x3f) as usize;
+                let image = images
+                    .get(surface)
+                    .copied()
+                    .flatten()
+                    .or(images[0])
+                    .or(Some(white));
+                material
+                    .textures
+                    .push(asset_material::MaterialTextureBinding {
+                        name_hash: asset_material::t5_code_remap::terrain_scorch_binding_hash(
+                            layer,
+                        ),
+                        name_start: b'i',
+                        name_end: b'0' + layer as u8,
+                        sampler_state: 0x62,
+                        semantic: 2,
+                        image,
+                    });
+            }
+        }
+    }
+
+    let mut packed_vertices = Vec::with_capacity(geometry.vertex_count);
     let mut positions = Vec::with_capacity(geometry.vertex_count);
     let mut normals = Vec::with_capacity(geometry.vertex_count);
     let mut tangents = Vec::with_capacity(geometry.vertex_count);
@@ -110,11 +166,11 @@ pub fn build_t5_world_draw(
 
     for i in 0..geometry.vertex_count {
         let v = vertices.at(i * iw4_sz::GFX_WORLD_VERTEX);
-        let mut retail = [0u8; fastfile_t5::size::GFX_WORLD_VERTEX];
-        for (offset, byte) in retail.iter_mut().enumerate() {
+        let mut packed = [0u8; fastfile_t5::size::GFX_WORLD_VERTEX];
+        for (offset, byte) in packed.iter_mut().enumerate() {
             *byte = s.u8_at(v, offset).map_err(|_| WorldMeshError::NoGeometry)?;
         }
-        retail_vertices.push(retail);
+        packed_vertices.push(packed);
         let xyz = [
             s.f32_at(v, 0).map_err(|_| WorldMeshError::NoGeometry)?,
             s.f32_at(v, 4).map_err(|_| WorldMeshError::NoGeometry)?,
@@ -411,7 +467,7 @@ pub fn build_t5_world_draw(
             batches,
             lightmap,
             stats,
-            retail_vertices: RetailWorldVertexPayload::T5(retail_vertices),
+            packed_vertices: WorldVertexPayload::T5(packed_vertices),
             vertex_layer,
             surface_vertex_layer,
             surface_first_vertex,

@@ -46,7 +46,7 @@ impl ModelIndexStream {
             self.close_open_epoch();
         }
         let epoch = u32::try_from(self.closed.len()).unwrap_or(u32::MAX);
-        let append = self.ring.r_set_index_data(count / 3);
+        let append = self.ring.set_index_data(count / 3);
         copy_u32_indices_into_ring(&mut self.dest, append.base_index, indices);
         Ok((epoch, append))
     }
@@ -80,7 +80,7 @@ pub struct D3dDrawIndexedPrimitive {
     pub primitive_count: u32,
 }
 
-pub fn r_draw_indexed_primitive(args: GfxDrawPrimArgs) -> D3dDrawIndexedPrimitive {
+pub fn draw_indexed_primitive(args: GfxDrawPrimArgs) -> D3dDrawIndexedPrimitive {
     D3dDrawIndexedPrimitive {
         primitive_type: D3DPT_TRIANGLELIST,
         base_vertex_index: 0,
@@ -140,7 +140,7 @@ pub fn prim_args_from_xmodel_flush(
     }
 }
 
-pub fn r_set_index_data_source_copy(
+pub fn set_index_data_source_copy(
     stream: &mut ModelIndexStream,
     source: &[u32],
     index_byte_offset: u32,
@@ -153,27 +153,27 @@ pub fn r_set_index_data_source_copy(
     stream.append_indices(src)
 }
 
-pub fn r_set_index_data_smodel_flush(
+pub fn set_index_data_smodel_flush(
     stream: &mut ModelIndexStream,
     source: &[u32],
     flush: SmodelRigidFlush,
 ) -> Result<(u32, IndexDataAppend, GfxDrawPrimArgs), ModelIndexRingCopyRefuse> {
     let (epoch, append) =
-        r_set_index_data_source_copy(stream, source, flush.index_byte_offset, flush.tri_count)?;
+        set_index_data_source_copy(stream, source, flush.index_byte_offset, flush.tri_count)?;
     Ok((epoch, append, prim_args_from_smodel_flush(flush, append)))
 }
 
-pub fn r_set_index_data_xmodel_flush(
+pub fn set_index_data_xmodel_flush(
     stream: &mut ModelIndexStream,
     source: &[u32],
     flush: XModelRigidFlush,
 ) -> Result<(u32, IndexDataAppend, GfxDrawPrimArgs), ModelIndexRingCopyRefuse> {
     let (epoch, append) =
-        r_set_index_data_source_copy(stream, source, flush.index_byte_offset, flush.tri_count)?;
+        set_index_data_source_copy(stream, source, flush.index_byte_offset, flush.tri_count)?;
     Ok((epoch, append, prim_args_from_xmodel_flush(flush, append)))
 }
 
-pub fn r_draw_indexed_from_shadow_work(work: &ShadowDrawListWork) -> Vec<D3dDrawIndexedPrimitive> {
+pub fn draw_indexed_from_shadow_work(work: &ShadowDrawListWork) -> Vec<D3dDrawIndexedPrimitive> {
     let mut ring = GfxDynamicIndexBuffer {
         cur_index_count: 0,
         capacity: DYNAMIC_INDEX_BUFFER_CAPACITY,
@@ -186,30 +186,30 @@ pub fn r_draw_indexed_from_shadow_work(work: &ShadowDrawListWork) -> Vec<D3dDraw
             + work.smodel_cached_flushes.len(),
     );
     for flush in &work.world_flushes {
-        out.push(r_draw_indexed_primitive(prim_args_from_world_flush(*flush)));
+        out.push(draw_indexed_primitive(prim_args_from_world_flush(*flush)));
     }
     for flush in &work.xmodel_flushes {
-        let append = ring.r_set_index_data(flush.tri_count);
-        out.push(r_draw_indexed_primitive(prim_args_from_xmodel_flush(
+        let append = ring.set_index_data(flush.tri_count);
+        out.push(draw_indexed_primitive(prim_args_from_xmodel_flush(
             *flush, append,
         )));
     }
     for flush in &work.smodel_flushes {
-        let append = ring.r_set_index_data(flush.tri_count);
-        out.push(r_draw_indexed_primitive(prim_args_from_smodel_flush(
+        let append = ring.set_index_data(flush.tri_count);
+        out.push(draw_indexed_primitive(prim_args_from_smodel_flush(
             *flush, append,
         )));
     }
     for flush in &work.smodel_pretess_flushes {
-        out.push(r_draw_indexed_primitive(GfxDrawPrimArgs {
+        out.push(draw_indexed_primitive(GfxDrawPrimArgs {
             vertex_count: lighting_iw4::SMC_BANK_VERTS,
             tri_count: flush.tri_count,
             base_index: flush.index_byte_offset / 2,
         }));
     }
     for flush in &work.smodel_cached_flushes {
-        let append = ring.r_set_index_data(flush.tri_count);
-        out.push(r_draw_indexed_primitive(prim_args_from_smodel_flush(
+        let append = ring.set_index_data(flush.tri_count);
+        out.push(draw_indexed_primitive(prim_args_from_smodel_flush(
             *flush, append,
         )));
     }

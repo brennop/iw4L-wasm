@@ -5,7 +5,8 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
 use crate::{GameUiFont, UiLayer, UiLayerVisibility, game_text_font};
 
-pub use assets::{LoadProgress, LoadingPreviewSource, LoadingScreen};
+pub use asset_transport::LoadProgress;
+pub use assets::{LoadingPreviewSource, LoadingScreen};
 
 use crate::load_table::{RowState, format_elapsed, project, total_elapsed};
 
@@ -30,7 +31,7 @@ fn spawn_overlay_ui_camera(commands: &mut Commands) {
             clear_color: ClearColorConfig::Custom(Color::NONE),
             ..default()
         },
-        IsDefaultUiCamera,
+        crate::UiCamera,
         OverlayUiCamera,
     ));
 }
@@ -164,7 +165,7 @@ pub(crate) fn spawn_loading_screen(
             clear_color: ClearColorConfig::Custom(LOADING_CLEAR),
             ..default()
         },
-        IsDefaultUiCamera,
+        crate::UiCamera,
         LoadingCamera,
     ));
 
@@ -291,8 +292,8 @@ fn begin_loading_preview_decode(
     };
 
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        let stage = progress.begin(assets::StageId::Preview, None);
-        let decoded = match assets::decode_map_preview(&zone_ff, &map_name) {
+        let stage = progress.begin(asset_transport::StageId::Preview, None);
+        let decoded = match asset_material::decode_map_preview(&zone_ff, &map_name) {
             Ok(decoded) => decoded,
             Err(error) => {
                 diag::warn!(Ui, "loading: preview index: {error}");
@@ -517,7 +518,7 @@ pub(crate) struct StatusTable {
     request: Option<u64>,
     head: Option<Entity>,
     spacer: Option<Entity>,
-    slots: Vec<(Option<assets::StageId>, Entity)>,
+    slots: Vec<(Option<asset_transport::StageId>, Entity)>,
 }
 
 impl StatusTable {

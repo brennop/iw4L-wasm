@@ -1,5 +1,5 @@
-use crate::pm_weapon::{WeaponCmd, WeaponHandState, WeaponTickEvent};
-use crate::weap_anim::{pm_start_weapon_anim, weap_anim_event};
+use crate::tick::{WeaponCmd, WeaponHandState, WeaponTickEvent};
+use crate::weap_anim::{start_weapon_anim, weap_anim_event};
 use crate::weaponstate::WeaponState;
 use playerstate_iw4::buttons;
 use playerstate_iw4::pm_flags;
@@ -31,9 +31,12 @@ pub struct OffhandInvRow {
 
     pub cook_off_hold: bool,
 
-    pub offhand_hold_is_cancelable_at_0x681: Option<bool>,
+    pub offhand_hold_is_cancelable: Option<bool>,
 
     pub weap_type: i32,
+    pub has_detonator: bool,
+    pub detonate_delay_ms: i32,
+    pub detonate_time_ms: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,7 +75,7 @@ impl Default for OffhandCmd {
     }
 }
 
-pub fn bg_get_first_available_offhand(
+pub fn get_first_available_offhand(
     inventory: &[OffhandInvRow; OFFHAND_INV_SLOTS],
     wanted_class: i32,
 ) -> u32 {
@@ -102,8 +105,8 @@ fn offhand_hold_cancel_requested(cmd: &WeaponCmd) -> bool {
         return false;
     }
     offhand_row(&cmd.offhand, cmd.offhand.off_hand_index.max(0) as u32)
-        .and_then(|r| r.offhand_hold_is_cancelable_at_0x681)
-        .unwrap_or_else(|| panic!("offhand hold cancel flag +0x681 missing in source format"))
+        .and_then(|r| r.offhand_hold_is_cancelable)
+        .unwrap_or_else(|| panic!("offhand hold cancel flag missing in source format"))
 }
 
 fn admits_check_for_offhand(weaponstate: i32) -> bool {
@@ -122,7 +125,7 @@ pub(crate) fn in_offhand_family(weaponstate: i32) -> bool {
     (0x10..=0x15).contains(&weaponstate)
 }
 
-pub fn pm_weapon_update_grenade_throw(
+pub fn weapon_update_grenade_throw(
     hand: &mut WeaponHandState,
     cmd: &mut WeaponCmd,
 ) -> Option<WeaponTickEvent> {
@@ -150,7 +153,7 @@ pub fn pm_weapon_update_grenade_throw(
         if row.cook_off_hold {
             let weapon = cmd.offhand.off_hand_index as u32;
             spend_offhand_inventory_round(cmd, weapon);
-            pm_weapon_offhand_end(hand, cmd);
+            weapon_offhand_end(hand, cmd);
             cmd.offhand.grenade_time_left = 0;
             return (weapon != 0).then_some(WeaponTickEvent::OffhandCookedOff { weapon });
         }
@@ -164,7 +167,7 @@ pub fn pm_weapon_update_grenade_throw(
         cmd.offhand.grenade_time_left = -1;
         let weapon = cmd.offhand.off_hand_index as u32;
         spend_offhand_inventory_round(cmd, weapon);
-        pm_weapon_offhand_end(hand, cmd);
+        weapon_offhand_end(hand, cmd);
         cmd.offhand.grenade_time_left = 0;
         return (weapon != 0).then_some(WeaponTickEvent::OffhandCookedOff { weapon });
     }
@@ -186,7 +189,7 @@ fn spend_offhand_inventory_round(cmd: &mut WeaponCmd, weapon: u32) {
     }
 }
 
-pub fn pm_weapon_enter_offhand(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
+pub fn weapon_enter_offhand(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
     let prior = hand.weaponstate;
     let putting_away = matches!(
         prior,
@@ -202,15 +205,29 @@ pub fn pm_weapon_enter_offhand(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) 
     } else if !putting_away {
         hand.weapon_time = cmd.offhand.held_quick_drop_time_ms;
         if cmd.pm_type < 8 {
-            pm_start_weapon_anim(&mut hand.weap_anim, weap_anim_event::QUICK_DROP);
+            start_weapon_anim(&mut hand.weap_anim, weap_anim_event::QUICK_DROP);
         }
     }
 }
 
-pub fn pm_weapon_offhand_prepare(
+pub fn weapon_offhand_prepare(
     hand: &mut WeaponHandState,
     cmd: &mut WeaponCmd,
 ) -> Option<WeaponTickEvent> {
+    let row = offhand_row(&cmd.offhand, cmd.offhand.off_hand_index as u32);
+    if let Some(row) = row.filter(|row| row.has_detonator && row.ammo <= 0) {
+        hand.weaponstate = WeaponState::Offhand as i32;
+        hand.weapon_time = row.detonate_time_ms.max(1);
+        hand.weapon_delay = row.detonate_delay_ms.max(1);
+        cmd.weap_flags |= weap_flags::OFFHAND_VIEW;
+        if cmd.pm_type < 8 {
+            start_weapon_anim(
+                &mut hand.weap_anim,
+                crate::weap_anim::weap_anim_event::DETONATE,
+            );
+        }
+        return None;
+    }
     let hold = offhand_row(&cmd.offhand, cmd.offhand.off_hand_index as u32)
         .map(|r| r.hold_fire_time_ms)
         .unwrap_or(0);
@@ -219,14 +236,14 @@ pub fn pm_weapon_offhand_prepare(
     hand.weapon_time = hold;
     hand.weapon_delay = 0;
     if cmd.pm_type < 8 {
-        pm_start_weapon_anim(&mut hand.weap_anim, weap_anim_event::HOLD_FIRE);
+        start_weapon_anim(&mut hand.weap_anim, weap_anim_event::HOLD_FIRE);
     }
     (cmd.offhand.off_hand_index != 0).then_some(WeaponTickEvent::OffhandPrepare {
         weapon: cmd.offhand.off_hand_index as u32,
     })
 }
 
-pub fn pm_weapon_offhand_hold(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
+pub fn weapon_offhand_hold(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
     cmd.weap_flags |= weap_flags::OFFHAND_VIEW;
     hand.weaponstate = WeaponState::OffhandHold as i32;
     hand.weapon_time = 0;
@@ -236,13 +253,13 @@ pub fn pm_weapon_offhand_hold(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
         .unwrap_or(0);
 }
 
-pub fn pm_weapon_offhand_start(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
+pub fn weapon_offhand_start(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
     let still_held = (cmd.old_buttons & (BUTTON_FRAG | BUTTON_SMOKE)) != 0
         && (cmd.buttons & (BUTTON_FRAG | BUTTON_SMOKE)) != 0;
 
     if still_held && (cmd.weap_flags & 0x1080) == 0 {
         if offhand_hold_cancel_requested(cmd) {
-            pm_weapon_offhand_end(hand, cmd);
+            weapon_offhand_end(hand, cmd);
             cmd.offhand.grenade_time_left = 0;
             return;
         }
@@ -258,11 +275,11 @@ pub fn pm_weapon_offhand_start(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) 
     hand.weapon_delay = fire_delay;
     cmd.weap_flags |= weap_flags::OFFHAND_VIEW;
     if cmd.pm_type < 8 {
-        pm_start_weapon_anim(&mut hand.weap_anim, weap_anim_event::FIRE);
+        start_weapon_anim(&mut hand.weap_anim, weap_anim_event::FIRE);
     }
 }
 
-pub fn pm_weapon_offhand_throw(
+pub fn weapon_offhand_throw(
     hand: &mut WeaponHandState,
     cmd: &mut WeaponCmd,
 ) -> Option<WeaponTickEvent> {
@@ -291,7 +308,7 @@ pub fn pm_weapon_offhand_throw(
     })
 }
 
-pub fn pm_weapon_offhand_end(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
+pub fn weapon_offhand_end(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
     if hand.weapon == 0 {
         hand.weapon_time = 0;
         hand.weapon_delay = 1;
@@ -299,7 +316,7 @@ pub fn pm_weapon_offhand_end(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
         hand.weapon_time = cmd.switch_quick_raise_time_ms;
         hand.weapon_delay = 0;
         if cmd.pm_type < 8 {
-            pm_start_weapon_anim(&mut hand.weap_anim, weap_anim_event::QUICK_RAISE);
+            start_weapon_anim(&mut hand.weap_anim, weap_anim_event::QUICK_RAISE);
         }
     }
     hand.weaponstate = WeaponState::OffhandEnd as i32;
@@ -308,7 +325,7 @@ pub fn pm_weapon_offhand_end(hand: &mut WeaponHandState, cmd: &mut WeaponCmd) {
     cmd.offhand.grenade_time_left = 0;
 }
 
-pub fn pm_weapon_advance_offhand(
+pub fn weapon_advance_offhand(
     hand: &mut WeaponHandState,
     cmd: &mut WeaponCmd,
     delayed_action: bool,
@@ -321,7 +338,7 @@ pub fn pm_weapon_advance_offhand(
         Ok(WeaponState::OffhandInit | WeaponState::OffhandPrepare)
     ) && offhand_hold_cancel_requested(cmd);
     if cancel {
-        pm_weapon_offhand_end(hand, cmd);
+        weapon_offhand_end(hand, cmd);
         cmd.offhand.grenade_time_left = 0;
         return None;
     }
@@ -329,31 +346,39 @@ pub fn pm_weapon_advance_offhand(
         return None;
     }
     match WeaponState::from_i32(hand.weaponstate) {
-        Ok(WeaponState::OffhandInit) if hand.weapon_time <= 0 => {
-            pm_weapon_offhand_prepare(hand, cmd)
-        }
+        Ok(WeaponState::OffhandInit) if hand.weapon_time <= 0 => weapon_offhand_prepare(hand, cmd),
         Ok(WeaponState::OffhandPrepare) if hand.weapon_time <= 0 => {
-            pm_weapon_offhand_hold(hand, cmd);
+            weapon_offhand_hold(hand, cmd);
             None
         }
         Ok(WeaponState::OffhandHold) if hand.weapon_time <= 0 => {
             if cmd.offhand.grenade_time_left >= 0 {
-                pm_weapon_offhand_start(hand, cmd);
+                weapon_offhand_start(hand, cmd);
             } else {
-                pm_weapon_offhand_end(hand, cmd);
+                weapon_offhand_end(hand, cmd);
             }
             None
         }
         Ok(WeaponState::OffhandStart) => {
             if delayed_action {
-                pm_weapon_offhand_throw(hand, cmd)
+                weapon_offhand_throw(hand, cmd)
             } else {
-                pm_weapon_offhand_end(hand, cmd);
+                weapon_offhand_end(hand, cmd);
+                None
+            }
+        }
+        Ok(WeaponState::Offhand) => {
+            if delayed_action {
+                Some(WeaponTickEvent::Detonated {
+                    weapon: cmd.offhand.off_hand_index as u32,
+                })
+            } else {
+                weapon_offhand_end(hand, cmd);
                 None
             }
         }
         Ok(WeaponState::OffhandEnd) if hand.weapon_time <= 0 => {
-            crate::melee::pm_weapon_settle_ready(
+            crate::melee::weapon_settle_ready(
                 hand,
                 &mut cmd.weap_flags,
                 &mut cmd.pm_flags,
@@ -365,7 +390,7 @@ pub fn pm_weapon_advance_offhand(
     }
 }
 
-pub fn pm_weapon_check_for_offhand(
+pub fn weapon_check_for_offhand(
     hand: &mut WeaponHandState,
     cmd: &mut WeaponCmd,
 ) -> Option<WeaponTickEvent> {
@@ -385,7 +410,7 @@ pub fn pm_weapon_check_for_offhand(
     if (cmd.e_flags & 0x100000) != 0 {
         return None;
     }
-    if (cmd.pm_flags & pm_flags::BLOCK_OFFHAND_OTS) != 0 {
+    if (cmd.pm_flags & pm_flags::SPRINTING) != 0 {
         return None;
     }
     if !admits_check_for_offhand(hand.weaponstate) {
@@ -404,7 +429,16 @@ pub fn pm_weapon_check_for_offhand(
         return None;
     };
 
-    let picked = bg_get_first_available_offhand(&cmd.offhand.inventory, wanted);
+    let picked = get_first_available_offhand(&cmd.offhand.inventory, wanted);
+    let picked = if picked == 0 {
+        cmd.offhand
+            .inventory
+            .iter()
+            .find(|row| row.weapon != 0 && row.offhand_class == wanted && row.has_detonator)
+            .map_or(0, |row| row.weapon)
+    } else {
+        picked
+    };
     if picked == 0 {
         return None;
     }
@@ -413,9 +447,9 @@ pub fn pm_weapon_check_for_offhand(
     let prepare = cmd.offhand.cursor_hint_ent == CURSOR_HINT_NONE
         && (hand.weapon == 0 || hand.weaponstate == WeaponState::OffhandEnd as i32);
     if prepare {
-        pm_weapon_offhand_prepare(hand, cmd)
+        weapon_offhand_prepare(hand, cmd)
     } else {
-        pm_weapon_enter_offhand(hand, cmd);
+        weapon_enter_offhand(hand, cmd);
         None
     }
 }

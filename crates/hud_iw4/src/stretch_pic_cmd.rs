@@ -75,7 +75,7 @@ pub fn unpack_color_bgra(bgra: [u8; 4]) -> [f32; 4] {
 }
 
 #[must_use]
-pub fn r_convert_color_to_bytes(color: [f32; 4]) -> [u8; 4] {
+pub fn convert_color_to_bytes(color: [f32; 4]) -> [u8; 4] {
     [
         pack_color_channel(color[2]),
         pack_color_channel(color[1]),
@@ -96,7 +96,7 @@ fn pack_color_channel(x: f32) -> u8 {
 }
 
 #[must_use]
-pub fn r_add_cmd_draw_stretch_pic(
+pub fn add_cmd_draw_stretch_pic(
     buf: &mut [u8],
     used: u32,
     cap: u32,
@@ -128,7 +128,7 @@ pub fn r_add_cmd_draw_stretch_pic(
     let packed = if color_ptr_null {
         [0xff, 0xff, 0xff, 0xff]
     } else {
-        r_convert_color_to_bytes(args.color)
+        convert_color_to_bytes(args.color)
     };
     buf[start + GFX_CMD_STRETCHPIC_COLOR..end].copy_from_slice(&packed);
     AddStretchPicCmd::Wrote { used: used + size }
@@ -164,7 +164,7 @@ pub fn parse_gfx_cmd_stretch_pic(cmd: &[u8]) -> Option<GfxCmdStretchPic> {
 }
 
 #[must_use]
-pub fn rb_draw_stretch_pic_corners(
+pub fn draw_stretch_pic_corners(
     x: f32,
     y: f32,
     w: f32,
@@ -215,7 +215,7 @@ impl GfxTessVertex2d {
 }
 
 #[must_use]
-pub fn rb_set_vertex_2d(x: f32, y: f32, s: f32, t: f32, color: u32) -> GfxTessVertex2d {
+pub fn set_vertex_2d(x: f32, y: f32, s: f32, t: f32, color: u32) -> GfxTessVertex2d {
     GfxTessVertex2d {
         xyzw: [x, y, 0.0, 1.0],
         color,
@@ -225,7 +225,7 @@ pub fn rb_set_vertex_2d(x: f32, y: f32, s: f32, t: f32, color: u32) -> GfxTessVe
 }
 
 #[must_use]
-pub fn rb_draw_stretch_pic_pack(
+pub fn draw_stretch_pic_pack(
     x: f32,
     y: f32,
     w: f32,
@@ -237,10 +237,10 @@ pub fn rb_draw_stretch_pic_pack(
     color: u32,
 ) -> [GfxTessVertex2d; 4] {
     [
-        rb_set_vertex_2d(x, y, s0, t0, color),
-        rb_set_vertex_2d(x + w, y, s1, t0, color),
-        rb_set_vertex_2d(x + w, y + h, s1, t1, color),
-        rb_set_vertex_2d(x, y + h, s0, t1, color),
+        set_vertex_2d(x, y, s0, t0, color),
+        set_vertex_2d(x + w, y, s1, t0, color),
+        set_vertex_2d(x + w, y + h, s1, t1, color),
+        set_vertex_2d(x, y + h, s0, t1, color),
     ]
 }
 

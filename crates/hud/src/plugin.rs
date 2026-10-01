@@ -11,21 +11,22 @@ use crate::compass::{CompassRaster, spawn_compass, update_compass};
 use crate::flash::{FlashGpuJob, FlashWhiteoutLatch, update_flash_whiteout};
 use crate::gaps::{HudPresentationGaps, report_hud_gaps};
 use crate::gpu_list::{self, HudTessPass};
-use crate::hitmarker::{HitmarkerLatch, PendingHitmarker, spawn_hitmarker, update_hitmarker};
+use crate::hud_elems::{
+    HudElemsBackRaster, HudElemsRaster, spawn_hud_elems, spawn_hud_elems_back, update_hud_elems,
+};
 use crate::images::HudImages;
 use crate::iris::{IrisLetterboxFill, spawn_iris, update_iris};
 use crate::killcam_skip::{KillcamSkipRaster, spawn_killcam_skip, update_killcam_skip};
 use crate::killfeed::{KillfeedRaster, KillfeedWindow, spawn_killfeed, update_killfeed};
 use crate::mantle_hint::{MantleHintRaster, spawn_mantle_hint, update_mantle_hint};
-use crate::match_start::{MatchStartRaster, spawn_match_start, update_match_start};
 use crate::playercard::{
     PlayerCardCache, PlayerCardRaster, UiLocalVars, spawn_playercard, update_playercard,
 };
-use crate::reticle::{ReticleAdsLatch, ReticleSpreadLatch, spawn_reticle, update_reticle};
-use crate::score_popup::{ScorePopupRaster, spawn_score_popup, update_score_popup};
+use crate::reticle::{ReticleAdsLatch, spawn_reticle, update_reticle};
 use crate::scorebar::{ScorebarRaster, spawn_scorebar, update_scorebar};
 use crate::scoreboard::{ScoreboardRaster, spawn_scoreboard, update_scoreboard};
 use crate::splash::{PendingSplash, SplashRaster, SplashSlots, spawn_splash, update_splash};
+use crate::targetmap::{TargetmapRaster, spawn_targetmap, update_targetmap};
 use crate::weaponbar::{WeaponbarRaster, spawn_weaponbar, update_weaponbar};
 
 #[derive(Component)]
@@ -36,18 +37,15 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         crate::gpu_list::register(app);
-        let _ = crate::scorebar::sys_milliseconds();
+        let _ = crate::scorebar::milliseconds();
         app.init_resource::<HudImages>()
             .init_resource::<HudPresentationGaps>()
             .init_resource::<ReticleAdsLatch>()
-            .init_resource::<ReticleSpreadLatch>()
             .init_resource::<IrisLetterboxFill>()
             .init_resource::<BloodOverlayLatch>()
             .init_resource::<BloodGpuJob>()
             .init_resource::<FlashWhiteoutLatch>()
             .init_resource::<FlashGpuJob>()
-            .init_resource::<HitmarkerLatch>()
-            .init_resource::<PendingHitmarker>()
             .init_resource::<PendingSplash>()
             .init_resource::<SplashSlots>()
             .init_resource::<KillfeedWindow>()
@@ -60,13 +58,14 @@ impl Plugin for HudPlugin {
             .init_resource::<HudStageStamp>()
             .init_resource::<crate::expr_cache::MenuExprCache>()
             .init_resource::<crate::hudelem::HudElemSoundLatch>()
+            .init_resource::<crate::menus::ScriptMenus>()
             .add_message::<net::SvcCardSlotCmd>()
             .add_message::<net::SvcOpenMenuCmd>();
 
-        frame::register_ui_sound(app);
+        frame::register_ui_contracts(app);
         crate::overhead_names::register(app);
         app.add_message::<LifeStarted>()
-            .add_observer(crate::killfeed::cg_obituary)
+            .add_observer(crate::killfeed::obituary)
             .add_systems(
                 Update,
                 (
@@ -77,6 +76,7 @@ impl Plugin for HudPlugin {
                     sync_zone_atlases,
                     warm_hud_images,
                     ensure_hud_root,
+                    sync_frontend_camera,
                     hud_stamp_setup,
                     ApplyDeferred,
                     hud_stamp_deferred,
@@ -100,7 +100,6 @@ impl Plugin for HudPlugin {
                             update_blood_overlay,
                             hud_stage_close::<2>,
                             update_flash_whiteout,
-                            update_hitmarker,
                             hud_stage_close::<3>,
                             update_compass,
                             hud_stage_close::<4>,
@@ -111,14 +110,15 @@ impl Plugin for HudPlugin {
                             .chain(),
                         (
                             update_scorebar,
-                            update_score_popup,
                             update_splash,
                             update_killfeed,
                             update_scoreboard,
                             update_killcam_skip,
                             update_mantle_hint,
                             crate::use_hint::update,
-                            update_match_start,
+                            update_hud_elems,
+                            update_targetmap,
+                            crate::menus::update_script_menus,
                             hud_stage_close::<7>,
                         )
                             .chain(),
@@ -141,8 +141,10 @@ impl Plugin for HudPlugin {
                     flush_scoreboard_tess,
                     flush_mantle_hint_tess,
                     flush_use_hint_tess,
-                    flush_match_start_tess,
+                    flush_hud_elems_tess,
+                    flush_targetmap_tess,
                     flush_blood_tess,
+                    flush_script_menus_tess,
                 )
                     .chain()
                     .after(hud_stage_close::<7>)
@@ -159,15 +161,16 @@ impl Plugin for HudPlugin {
 }
 
 fn hud_root_should_show(screen: AppScreen, ui_draw: bool) -> bool {
-    matches!(screen, AppScreen::InGame) && ui_draw
+    matches!(screen, AppScreen::InGame | AppScreen::ClassSelect) && ui_draw
 }
 
 fn hide_tess_when_hud_hidden(
     root: Res<HudRootVisible>,
+    screen: Res<AppScreen>,
     mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
     mut latches: Query<&mut crate::gpu_list::GpuListLatch>,
 ) {
-    if root.0 == Some(1) {
+    if root.0 == Some(1) || *screen == AppScreen::MainMenu {
         return;
     }
     frame.clear_geometry();
@@ -248,7 +251,10 @@ fn sync_map_zone_tree(mut hud_images: ResMut<HudImages>, report: Option<Res<Laun
     hud_images.adopt_map_zone(zone_ff);
 }
 
-fn sync_zone_atlases(catalog: Option<Res<assets::MenuCatalog>>, mut hud_images: ResMut<HudImages>) {
+fn sync_zone_atlases(
+    catalog: Option<Res<asset_game::MenuCatalog>>,
+    mut hud_images: ResMut<HudImages>,
+) {
     if hud_images.zone_installed() {
         return;
     }
@@ -259,12 +265,42 @@ fn sync_zone_atlases(catalog: Option<Res<assets::MenuCatalog>>, mut hud_images: 
 }
 
 fn warm_hud_images(
-    catalog: Option<Res<assets::MenuCatalog>>,
+    catalog: Option<Res<asset_game::MenuCatalog>>,
     compass: Option<Res<assets::SessionCompass>>,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
 ) {
     hud_images.warm_present_stems(&mut images, catalog.as_deref(), compass.as_deref());
+}
+
+#[derive(Component)]
+struct FrontendCamera;
+
+fn sync_frontend_camera(
+    mut commands: Commands,
+    screen: Res<AppScreen>,
+    cameras: Query<Entity, With<FrontendCamera>>,
+) {
+    if *screen == AppScreen::MainMenu {
+        if cameras.is_empty() {
+            commands.spawn((
+                FrontendCamera,
+                Camera3d::default(),
+                bevy::camera::CompositingSpace::Srgb,
+                bevy::core_pipeline::tonemapping::Tonemapping::None,
+                Camera {
+                    order: -1,
+                    ..default()
+                },
+                bevy::render::view::Msaa::Off,
+                frame::UiCamera,
+            ));
+        }
+    } else {
+        for camera in &cameras {
+            commands.entity(camera).despawn();
+        }
+    }
 }
 
 fn ensure_hud_root(mut commands: Commands, existing: Query<Entity, With<HudRoot>>) {
@@ -287,31 +323,31 @@ fn ensure_hud_root(mut commands: Commands, existing: Query<Entity, With<HudRoot>
             crate::font_overlay::spawn_overlay(root, crate::overhead_names::OverheadNamesRaster);
             spawn_reticle(root);
             spawn_iris(root);
-            spawn_hitmarker(root);
+            spawn_hud_elems_back(root);
             spawn_compass(root);
             spawn_scorebar(root);
             spawn_weaponbar(root);
             spawn_splash(root);
-            spawn_score_popup(root);
             spawn_killfeed(root);
             spawn_killcam_skip(root);
             spawn_playercard(root);
             spawn_scoreboard(root);
             spawn_mantle_hint(root);
             crate::font_overlay::spawn_overlay(root, crate::use_hint::UseHintRaster);
-            spawn_match_start(root);
+            spawn_hud_elems(root);
+            spawn_targetmap(root);
+            crate::menus::spawn_script_menus(root);
         });
 }
 
 fn sync_hud_visibility(
     screen: Res<AppScreen>,
     ui_draw: Option<Res<UiDraw>>,
-    input: Option<Res<frame::HudInputView>>,
     mut roots: Query<&mut Visibility, With<HudRoot>>,
     mut visible: ResMut<HudRootVisible>,
 ) {
     let ui_on = ui_draw.is_some_and(|d| d.0);
-    let show = hud_root_should_show(*screen, ui_on) && !input.is_some_and(|input| input.menu_open);
+    let show = hud_root_should_show(*screen, ui_on);
     visible.0 = Some(i32::from(show));
     for mut vis in &mut roots {
         let want = if show {
@@ -389,17 +425,6 @@ fn flush_hud_tess(
             Without<CompassRaster>,
             Without<ScorebarRaster>,
             Without<WeaponbarRaster>,
-            Without<ScorePopupRaster>,
-        ),
-    >,
-    mut score_popup: Query<
-        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
-        (
-            With<ScorePopupRaster>,
-            Without<CompassRaster>,
-            Without<ScorebarRaster>,
-            Without<WeaponbarRaster>,
-            Without<SplashRaster>,
         ),
     >,
     mut killfeed: Query<
@@ -410,7 +435,6 @@ fn flush_hud_tess(
             Without<ScorebarRaster>,
             Without<WeaponbarRaster>,
             Without<SplashRaster>,
-            Without<ScorePopupRaster>,
         ),
     >,
 ) {
@@ -424,7 +448,6 @@ fn flush_hud_tess(
     let scorebar_job = std::mem::take(&mut pass.scorebar);
     let weaponbar_job = std::mem::take(&mut pass.weaponbar);
     let splash_job = std::mem::take(&mut pass.splash);
-    let score_popup_job = std::mem::take(&mut pass.score_popup);
     let killfeed_job = std::mem::take(&mut pass.killfeed);
     if let Ok((_, mut host, mut latch)) = compass.single_mut() {
         gpu_list::apply_tess_job(
@@ -474,18 +497,6 @@ fn flush_hud_tess(
             h,
         );
     }
-    if let Ok((_, mut host, mut latch)) = score_popup.single_mut() {
-        gpu_list::apply_tess_job(
-            score_popup_job,
-            &mut host,
-            &mut latch,
-            &mut hud_images,
-            &mut images,
-            &mut frame,
-            w,
-            h,
-        );
-    }
     if let Ok((_, mut host, mut latch)) = killfeed.single_mut() {
         gpu_list::apply_tess_job(
             killfeed_job,
@@ -517,6 +528,66 @@ fn flush_killcam_skip_tess(
     }
     let job = std::mem::take(&mut pass.killcam_skip);
     if let Ok((_, mut host, mut latch)) = skip.single_mut() {
+        gpu_list::apply_tess_job(
+            job,
+            &mut host,
+            &mut latch,
+            &mut hud_images,
+            &mut images,
+            &mut frame,
+            surface.width(),
+            surface.height(),
+        );
+    }
+}
+
+fn flush_targetmap_tess(
+    surface: Res<crate::surface::Hud2dSurface>,
+    mut pass: ResMut<HudTessPass>,
+    mut hud_images: ResMut<HudImages>,
+    mut images: ResMut<Assets<Image>>,
+    mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    mut raster: Query<
+        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
+        With<TargetmapRaster>,
+    >,
+) {
+    let _body = gpu_list::TessBody::open();
+    if !surface.is_ready() {
+        return;
+    }
+    let job = std::mem::take(&mut pass.targetmap);
+    if let Ok((_, mut host, mut latch)) = raster.single_mut() {
+        gpu_list::apply_tess_job(
+            job,
+            &mut host,
+            &mut latch,
+            &mut hud_images,
+            &mut images,
+            &mut frame,
+            surface.width(),
+            surface.height(),
+        );
+    }
+}
+
+fn flush_script_menus_tess(
+    surface: Res<crate::surface::Hud2dSurface>,
+    mut pass: ResMut<HudTessPass>,
+    mut hud_images: ResMut<HudImages>,
+    mut images: ResMut<Assets<Image>>,
+    mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    mut raster: Query<
+        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
+        With<crate::menus::ScriptMenuRaster>,
+    >,
+) {
+    let _body = gpu_list::TessBody::open();
+    if !surface.is_ready() {
+        return;
+    }
+    let job = std::mem::take(&mut pass.script_menus);
+    if let Ok((_, mut host, mut latch)) = raster.single_mut() {
         gpu_list::apply_tess_job(
             job,
             &mut host,
@@ -620,33 +691,43 @@ fn flush_scoreboard_tess(
     }
 }
 
-fn flush_match_start_tess(
+fn flush_hud_elems_tess(
     surface: Res<crate::surface::Hud2dSurface>,
     mut pass: ResMut<HudTessPass>,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
     mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
-    mut start: Query<
+    mut front: Query<
         (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
-        With<MatchStartRaster>,
+        (With<HudElemsRaster>, Without<HudElemsBackRaster>),
+    >,
+    mut back: Query<
+        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
+        With<HudElemsBackRaster>,
     >,
 ) {
     let _body = gpu_list::TessBody::open();
     if !surface.is_ready() {
         return;
     }
-    let job = std::mem::take(&mut pass.match_start);
-    if let Ok((_, mut host, mut latch)) = start.single_mut() {
-        gpu_list::apply_tess_job(
-            job,
-            &mut host,
-            &mut latch,
-            &mut hud_images,
-            &mut images,
-            &mut frame,
-            surface.width(),
-            surface.height(),
-        );
+    let front_job = std::mem::take(&mut pass.hud_elems);
+    let back_job = std::mem::take(&mut pass.hud_elems_back);
+    for (job, raster) in [
+        (front_job, front.single_mut()),
+        (back_job, back.single_mut()),
+    ] {
+        if let Ok((_, mut host, mut latch)) = raster {
+            gpu_list::apply_tess_job(
+                job,
+                &mut host,
+                &mut latch,
+                &mut hud_images,
+                &mut images,
+                &mut frame,
+                surface.width(),
+                surface.height(),
+            );
+        }
     }
 }
 

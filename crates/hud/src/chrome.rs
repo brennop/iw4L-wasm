@@ -1,7 +1,7 @@
-use assets::{FontDef, LocalizeCatalog, MenuCatalog, MenuDef, MenuItem, MenuRect};
+use asset_game::{FontDef, LocalizeCatalog, MenuCatalog, MenuDef, MenuItem, MenuRect};
 use hud_iw4::{
     ExprError, ExprHost, item_text_origin, item_text_paint_scale, next_letter,
-    r_normalized_text_scale, ui_get_font_handle, ui_text_height, window_paint_scale_rect,
+    normalized_text_scale, ui_get_font_handle, ui_text_height, window_paint_scale_rect,
 };
 
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance};
@@ -41,7 +41,7 @@ pub(crate) enum ChromeGapKind {
     FloatExpTarget,
     MaterialExp,
     OwnerDraw,
-    RetailFont,
+    AssetFont,
     Localize,
     TextExp,
 }
@@ -214,6 +214,50 @@ pub(crate) fn execute_chrome_menu_ex(
     frame
 }
 
+pub(crate) fn item_screen_rects(
+    menu: &MenuDef,
+    host: &impl ExprHost,
+    surface: &crate::surface::Hud2dSurface,
+    exprs: &mut MenuExprCache,
+) -> Vec<(usize, [f32; 4])> {
+    if !menu.vis_exp.is_empty() && !matches!(exprs.is_true(&menu.vis_exp, host), Ok(true)) {
+        return Vec::new();
+    }
+    let Ok(parent) = apply_menu_float_rect(&menu.rect, menu, host, exprs) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (index, item) in menu.items.iter().enumerate() {
+        if !matches!(exprs.is_true(&item.vis_exp, host), Ok(true)) {
+            continue;
+        }
+        let Ok(style) = evaluate_item_style(
+            &parent,
+            &menu.rect,
+            item,
+            host,
+            exprs,
+            ChromeMenuAnim::IDENTITY,
+        ) else {
+            continue;
+        };
+        let r = style.rect;
+        let a = surface.apply_rect(r.x, r.y, r.w, r.h, r.horz_align as i32, r.vert_align as i32);
+        let (x0, x1) = if a.w < 0.0 {
+            (a.x + a.w, a.x)
+        } else {
+            (a.x, a.x + a.w)
+        };
+        let (y0, y1) = if a.h < 0.0 {
+            (a.y + a.h, a.y)
+        } else {
+            (a.y, a.y + a.h)
+        };
+        out.push((index, [x0, y0, x1, y1]));
+    }
+    out
+}
+
 fn paint_item(
     menu: &MenuDef,
     index: usize,
@@ -327,7 +371,7 @@ fn paint_text(
     exprs: &mut MenuExprCache,
     frame: &mut ChromeFrame,
 ) {
-    let resolved = match resolve_text(item, host, assets.localize, exprs) {
+    let mut resolved = match resolve_text(item, host, assets.localize, exprs) {
         Ok(Some(text)) => text,
         Ok(None) => {
             frame.coverage.painted();
@@ -338,6 +382,21 @@ fn paint_text(
             return;
         }
     };
+    let mut at = 0;
+    while let Some(start) = resolved.text[at..].find("[{") {
+        let start = start + at;
+        let Some(end) = resolved.text[start + 2..].find("}]") else {
+            break;
+        };
+        let end = start + 2 + end;
+        if let Some(label) = host.binding_label(&resolved.text[start + 2..end]) {
+            let replacement = format!("[{label}]");
+            resolved.text.replace_range(start..end + 2, &replacement);
+            at = start + replacement.len();
+        } else {
+            at = end + 2;
+        }
+    }
     if resolved.text.is_empty() {
         frame.coverage.painted();
         return;
@@ -348,63 +407,106 @@ fn paint_text(
         item.text_scale,
     );
     let Some(font) = assets.catalog.and_then(|c| c.font(font_name)) else {
-        frame.coverage.gap(index, ChromeGapKind::RetailFont);
+        frame.coverage.gap(index, ChromeGapKind::AssetFont);
         return;
     };
 
     let draw_text_scale = item_text_paint_scale(item.text_scale, anim.scale);
-    let scale = r_normalized_text_scale(font.pixel_height, draw_text_scale);
-    let measured_w = ui_text_width(font, &resolved.text, item.text_scale);
-    let measured_h = ui_text_height(item.text_scale);
-    let rect = &style.rect;
-    let (x, y) = item_text_origin(
-        rect.x,
-        rect.y,
-        rect.w,
-        rect.h,
-        item.text_align_mode,
-        item.text_align_x,
-        item.text_align_y,
-        measured_w,
-        measured_h,
+    let scale = normalized_text_scale(font.pixel_height, draw_text_scale);
+    let wrap_width = (style.rect.w.abs() - item.text_align_x.max(0.0)).max(1.0);
+    let lines = menu_text_lines(
+        &resolved.text,
+        (item.static_flags & 0x0080_0000 != 0).then_some(wrap_width),
+        |text| ui_text_width(font, text, item.text_scale),
     );
-    let applied = surface.apply_rect(
-        x,
-        y,
-        scale,
-        scale,
-        rect.horz_align as i32,
-        rect.vert_align as i32,
-    );
-    frame.list.cmds.push(Draw2dCmd {
-        material_namespace: crate::images::HUD_CHROME_NAMESPACE,
-        x: (applied.x + 0.5).floor(),
-        y: (applied.y + 0.5).floor(),
-        w: applied.w,
-        h: applied.h,
-        s0: 0.0,
-        t0: 0.0,
-        s1: 1.0,
-        t1: 1.0,
-        color: style.fore_color,
-        material: assets::AssetRef::bare_name(&font.material).to_owned(),
-        op: Draw2dOp::TextRun {
-            font: font_name.to_owned(),
+    for (line, text) in lines.into_iter().enumerate() {
+        let measured_w = ui_text_width(font, &text, item.text_scale);
+        let measured_h = ui_text_height(item.text_scale);
+        let rect = &style.rect;
+        let (x, y) = item_text_origin(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            item.text_align_mode,
+            item.text_align_x,
+            item.text_align_y,
+            measured_w,
+            measured_h,
+        );
+        let applied = surface.apply_rect(
+            x,
+            y + line as f32 * measured_h,
             scale,
-            text: resolved.text,
-            loc_key: resolved.loc_key,
+            scale,
+            rect.horz_align as i32,
+            rect.vert_align as i32,
+        );
+        frame.list.cmds.push(Draw2dCmd {
+            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            x: (applied.x + 0.5).floor(),
+            y: (applied.y + 0.5).floor(),
+            w: applied.w,
+            h: applied.h,
+            s0: 0.0,
+            t0: 0.0,
+            s1: 1.0,
+            t1: 1.0,
+            color: style.fore_color,
+            material: asset_core::AssetRef::bare_name(&font.material).to_owned(),
+            op: Draw2dOp::TextRun {
+                font: font_name.to_owned(),
+                scale,
+                text,
+                loc_key: resolved.loc_key.clone(),
 
-            style: item.text_style,
-            fx: None,
-            glow: text_run_glow(font, style.glow_color),
-        },
-        provenance: Draw2dProvenance::MenuItem {
-            menu: menu.name.clone(),
-            index,
-        },
-        layer: 1,
-    });
+                style: item.text_style,
+                fx: None,
+                glow: text_run_glow(font, style.glow_color),
+            },
+            provenance: Draw2dProvenance::MenuItem {
+                menu: menu.name.clone(),
+                index,
+            },
+            layer: 1,
+        });
+    }
     frame.coverage.painted();
+}
+
+fn menu_text_lines(text: &str, width: Option<f32>, measure: impl Fn(&str) -> f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let Some(width) = width else {
+            lines.push(paragraph.to_owned());
+            continue;
+        };
+        let mut line = String::new();
+        for word in paragraph.split_whitespace() {
+            let candidate = if line.is_empty() {
+                word.to_owned()
+            } else {
+                format!("{line} {word}")
+            };
+            if measure(&candidate) <= width {
+                line = candidate;
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            for ch in word.chars() {
+                let mut candidate = line.clone();
+                candidate.push(ch);
+                if !line.is_empty() && measure(&candidate) > width {
+                    lines.push(std::mem::take(&mut line));
+                }
+                line.push(ch);
+            }
+        }
+        lines.push(line);
+    }
+    lines
 }
 
 pub(crate) fn text_run_glow(font: &FontDef, color: [f32; 4]) -> Option<crate::draw2d::TextRunGlow> {
@@ -417,7 +519,7 @@ pub(crate) fn text_run_glow(font: &FontDef, color: [f32; 4]) -> Option<crate::dr
         &font.glow_material
     };
     Some(crate::draw2d::TextRunGlow {
-        material: assets::AssetRef::bare_name(material).to_owned(),
+        material: asset_core::AssetRef::bare_name(material).to_owned(),
         color,
     })
 }
@@ -437,7 +539,7 @@ pub(crate) fn push_owner_text(
         args.item.text_scale,
     );
     let Some(font) = args.assets.catalog.and_then(|c| c.font(font_name)) else {
-        return Err(ChromeGapKind::RetailFont);
+        return Err(ChromeGapKind::AssetFont);
     };
     let measured_w = ui_text_width(font, text, args.item.text_scale);
     let measured_h = ui_text_height(args.item.text_scale);
@@ -472,7 +574,7 @@ pub(crate) fn push_owner_text_right_of_rect(
         args.item.text_scale,
     );
     let Some(font) = args.assets.catalog.and_then(|c| c.font(font_name)) else {
-        return Err(ChromeGapKind::RetailFont);
+        return Err(ChromeGapKind::AssetFont);
     };
     let width = ui_text_width(font, text, args.item.text_scale).trunc();
     let x = args.rect.x + args.rect.w - width - right_inset;
@@ -492,7 +594,7 @@ fn push_owner_text_run(
     frame: &mut ChromeFrame,
 ) {
     let draw_text_scale = item_text_paint_scale(args.item.text_scale, args.anim.scale);
-    let scale = r_normalized_text_scale(font.pixel_height, draw_text_scale);
+    let scale = normalized_text_scale(font.pixel_height, draw_text_scale);
     let applied = args.surface.apply_rect(
         x,
         y,
@@ -512,7 +614,7 @@ fn push_owner_text_run(
         s1: 1.0,
         t1: 1.0,
         color,
-        material: assets::AssetRef::bare_name(&font.material).to_owned(),
+        material: asset_core::AssetRef::bare_name(&font.material).to_owned(),
         op: Draw2dOp::TextRun {
             font: font_name.to_owned(),
             scale,
@@ -531,7 +633,7 @@ fn push_owner_text_run(
 pub(crate) fn push_owner_pic(
     args: &OwnerDrawArgs<'_>,
     material: String,
-    material_namespace: assets::AssetNamespace,
+    material_namespace: asset_core::AssetNamespace,
     color: [f32; 4],
     op: Draw2dOp,
     frame: &mut ChromeFrame,
@@ -601,7 +703,10 @@ fn resolve_text(
             loc_key: String::new(),
         }));
     }
-    if let Some(key) = raw.strip_prefix('@') {
+    if let Some(key) = raw
+        .strip_prefix('@')
+        .filter(|_| item.item_type != 4 && !item.text_literal)
+    {
         let Some(table) = loc else {
             return Err(ChromeGapKind::Localize);
         };
@@ -620,10 +725,10 @@ fn resolve_text(
 }
 
 pub(crate) fn ui_text_width(font: &FontDef, text: &str, text_scale: f32) -> f32 {
-    r_text_width(font, text) as f32 * r_normalized_text_scale(font.pixel_height, text_scale)
+    text_width(font, text) as f32 * normalized_text_scale(font.pixel_height, text_scale)
 }
 
-pub(crate) fn r_text_width(font: &FontDef, text: &str) -> i32 {
+pub(crate) fn text_width(font: &FontDef, text: &str) -> i32 {
     let mut width = 0i32;
     let mut max_width = 0i32;
     let mut chars = text.chars().peekable();
@@ -791,22 +896,27 @@ fn push_stretch(
     if rect.w.abs() <= f32::EPSILON || rect.h.abs() <= f32::EPSILON {
         return;
     }
-    let (x, y, w, h) = window_paint_scale_rect(rect.x, rect.y, rect.w, rect.h, anim.scale);
+    let (x, y, w, h) =
+        window_paint_scale_rect(rect.x, rect.y, rect.w.abs(), rect.h.abs(), anim.scale);
     if w.abs() <= f32::EPSILON || h.abs() <= f32::EPSILON {
         return;
     }
     let applied = surface.apply_rect(x, y, w, h, rect.horz_align as i32, rect.vert_align as i32);
     let color = style.fill_color(item);
+    let (material_namespace, material) = match asset_core::AssetKey::parse(&material) {
+        Ok(key) if key.kind == asset_core::AssetKind::Material => (key.namespace, key.name),
+        _ => (crate::images::HUD_CHROME_NAMESPACE, material),
+    };
     list.cmds.push(Draw2dCmd {
-        material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+        material_namespace,
         x: applied.x,
         y: applied.y,
         w: applied.w,
         h: applied.h,
-        s0: 0.0,
-        t0: 0.0,
-        s1: 1.0,
-        t1: 1.0,
+        s0: if rect.w < 0.0 { 1.0 } else { 0.0 },
+        t0: if rect.h < 0.0 { 1.0 } else { 0.0 },
+        s1: if rect.w < 0.0 { 0.0 } else { 1.0 },
+        t1: if rect.h < 0.0 { 0.0 } else { 1.0 },
         color,
         material,
         op: Draw2dOp::StretchPic,

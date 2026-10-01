@@ -319,7 +319,7 @@ pub fn rebuild_portal_hull_winding(
         uv[i] = portal_vert_hull_uv(verts[i], hull_axis);
     }
     let mut hull2 = [[0.0f32; 2]; crate::convex_hull::COM_CONVEX_HULL_MAX];
-    let h = crate::com_convex_hull(&uv[..n], &mut hull2);
+    let h = crate::convex_hull(&uv[..n], &mut hull2);
     if h == 0 {
         return 0;
     }

@@ -1,19 +1,20 @@
-use assets::{PreparedWeapons, WeaponBodyFacts, WeaponKickFacts};
+use asset_game::{WeaponBodyFacts, WeaponKickFacts};
+use assets::PreparedWeapons;
 use bevy::prelude::*;
 use frame::{LifeStarted, ViewSubject};
 use hud_iw4::{
-    CG_FOV_MIN_DEFAULT, CG_FOV_SCALE_DEFAULT, CgCalcFovInputs, WeaponAdsOverlayFacts,
-    cg_calc_fov_from_ads, cg_horizontal_to_vertical_fov_deg, cg_zoom_sensitivity,
+    CG_FOV_MIN_DEFAULT, CG_FOV_SCALE_DEFAULT, FovInputs, WeaponAdsOverlayFacts, calc_fov_from_ads,
+    horizontal_to_vertical_fov_deg, zoom_sensitivity,
 };
 use math_iw4::{add_lean_to_position, angle_vectors};
 use net::{
-    AppliedEntityEventWalk, CgFrameClock, ClientActionInput, LocalPresentClient, PresentedSnapshot,
+    AppliedEntityEventWalk, ClientActionInput, FrameClock, LocalPresentClient, PresentedSnapshot,
 };
+use playerstate_iw4::ENTITYNUM_NONE;
 use weapon_iw4::{
     VIEW_DAMAGE_UNDIRECTED, VIEW_ORG_BOB_Z_MIN_OFS, ViewAngleBobInputs, ViewOrgBobInputs,
-    bg_crash_land_fall_height, bg_crash_land_view_dip, bg_get_viewmodel_weapon_index,
-    bg_land_origin_z, bg_view_angle_bob, bg_view_damage_angles, bg_view_org_bob,
-    bg_viewweapon_land_origin_z, cg_damage_feedback_kick,
+    crash_land_fall_height, crash_land_view_dip, damage_feedback_kick, get_viewmodel_weapon_index,
+    land_origin_z, view_angle_bob, view_damage_angles, view_org_bob, viewweapon_land_origin_z,
 };
 
 use crate::anim::view_kick_state::{KickParams, ViewKickState, add_kick_to_viewangles};
@@ -24,6 +25,8 @@ use crate::occupancy::third_person::{
 };
 use render_scene::{FlyCamera, FpvLens, SimCamera, transform_from_iw_view};
 use render_scene::{WorldCameraPose, WorldScriptModelInstance};
+
+const MISSILE_CAM_FOV: f32 = 15.0;
 
 fn kick_params(k: &WeaponKickFacts) -> KickParams {
     KickParams {
@@ -160,7 +163,7 @@ pub fn reset_view_kick_on_life_started(
 }
 
 pub fn tick_session_view_kick(
-    clock: Res<CgFrameClock>,
+    clock: Res<FrameClock>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     weapons: Option<Res<PreparedWeapons>>,
@@ -170,7 +173,7 @@ pub fn tick_session_view_kick(
     let Some(ps) = presented.player(local.0) else {
         return;
     };
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+    let viewmodel = get_viewmodel_weapon_index(ps);
     if viewmodel != kick.last_weapon_id {
         kick.state.reset();
         kick.sway.reset();
@@ -235,7 +238,7 @@ pub fn tick_session_view_kick(
 
 pub fn sync_camera_from_presented(
     mut killcam: Local<super::killcam::KillcamCamera>,
-    clock: Res<CgFrameClock>,
+    clock: Res<FrameClock>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     sim_cam: Res<SimCamera>,
@@ -263,7 +266,7 @@ pub fn sync_camera_from_presented(
     let Some(ps) = presented.player(local.0) else {
         return;
     };
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+    let viewmodel = get_viewmodel_weapon_index(ps);
     if let Some((pose, fov, focus_distance)) = killcam.update(
         &presented,
         local.0,
@@ -272,6 +275,7 @@ pub fn sync_camera_from_presented(
         weapons.as_deref(),
         death_cam_clip.0.as_deref(),
     ) {
+        let pose = earthquake_pose(pose, &presented, clock.time());
         let eye = transform_from_iw_view(pose);
         for mut transform in &mut q {
             transform.translation = eye.translation;
@@ -279,7 +283,7 @@ pub fn sync_camera_from_presented(
         }
         for mut projection in &mut lenses {
             if let Projection::Perspective(perspective) = &mut *projection {
-                perspective.fov = cg_horizontal_to_vertical_fov_deg(fov).to_radians();
+                perspective.fov = horizontal_to_vertical_fov_deg(fov).to_radians();
             }
         }
         kick.horiz_fov_deg = fov;
@@ -289,16 +293,17 @@ pub fn sync_camera_from_presented(
         return;
     }
     if let Some(pose) = remote_missile_camera(&presented, local.0, clock.time()) {
+        let pose = earthquake_pose(pose, &presented, clock.time());
         let eye = transform_from_iw_view(pose);
         for mut transform in &mut q {
             transform.translation = eye.translation;
             transform.rotation = eye.rotation;
         }
-        let horiz = gamemode_iw4::killstreaks::PREDATOR_FOV;
+        let horiz = MISSILE_CAM_FOV;
         if let Some(actions) = actions.as_deref_mut() {
-            actions.fov_scale = cg_zoom_sensitivity(horiz) * actions.shellshock_look_scale;
+            actions.fov_scale = zoom_sensitivity(horiz) * actions.shellshock_look_scale;
         }
-        let vertical = cg_horizontal_to_vertical_fov_deg(horiz).to_radians();
+        let vertical = horizontal_to_vertical_fov_deg(horiz).to_radians();
         for mut projection in lenses.iter_mut() {
             if let Projection::Perspective(perspective) = &mut *projection {
                 perspective.fov = vertical;
@@ -312,6 +317,7 @@ pub fn sync_camera_from_presented(
         else {
             return;
         };
+        let pose = earthquake_pose(pose, &presented, clock.time());
         let eye = transform_from_iw_view(pose);
         for mut transform in &mut q {
             transform.translation = eye.translation;
@@ -356,12 +362,12 @@ pub fn sync_camera_from_presented(
         clock.time(),
     );
     let bob_angles = match weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)) {
-        Some(facts) if facts.body_resolved => bg_view_angle_bob(ViewAngleBobInputs {
+        Some(facts) if facts.body_resolved => view_angle_bob(ViewAngleBobInputs {
             org,
             e_flags: ps.e_flags,
             overlay_reticle: facts.overlay_reticle,
-            ads_bob_factor_at_0x330: facts.ads_bob_factor_at_0x330,
-            ads_view_bob_mult_at_0x334: facts.ads_view_bob_mult_at_0x334,
+            ads_bob_factor: facts.ads_bob_factor,
+            ads_view_bob_mult: facts.ads_view_bob_mult,
             time: clock.time(),
             damage_time: kick.damage_time,
             v_dmg_pitch: kick.v_dmg_pitch,
@@ -373,7 +379,7 @@ pub fn sync_camera_from_presented(
             weap_idle_time: kick.weap_idle_time,
             view_last_idle_factor: kick.view_last_idle_factor,
         }),
-        _ => bg_view_damage_angles(ViewAngleBobInputs {
+        _ => view_damage_angles(ViewAngleBobInputs {
             org,
             time: clock.time(),
             damage_time: kick.damage_time,
@@ -396,7 +402,7 @@ pub fn sync_camera_from_presented(
         ps.origin[1] + offset[1],
         ps.origin[2] + offset[2] + ps.view_height_current,
     ];
-    let bob = bg_view_org_bob(org);
+    let bob = view_org_bob(org);
     origin[2] += bob.vertical;
 
     let (fwd, right, up) = angle_vectors(angles);
@@ -413,7 +419,7 @@ pub fn sync_camera_from_presented(
     );
     origin[2] += land_ofs;
     let delta_ms = clock.time().wrapping_sub(kick.land_time);
-    kick.viewweapon_land_z = bg_viewweapon_land_origin_z(delta_ms, kick.land_change);
+    kick.viewweapon_land_z = viewweapon_land_origin_z(delta_ms, kick.land_change);
     kick.viewweapon_land_view = [
         kick.viewweapon_land_z * fwd[2],
         kick.viewweapon_land_z * right[2],
@@ -424,8 +430,9 @@ pub fn sync_camera_from_presented(
     if origin[2] < min_z {
         origin[2] = min_z;
     }
-    kick.refdef_vieworg = origin;
-    let pose = WorldCameraPose { origin, angles };
+    let pose = earthquake_pose(WorldCameraPose { origin, angles }, &presented, clock.time());
+    kick.refdef_vieworg = pose.origin;
+    kick.refdef_view_angles = pose.angles;
     let eye = transform_from_iw_view(pose);
     for mut transform in &mut q {
         transform.translation = eye.translation;
@@ -478,7 +485,7 @@ fn apply_fpv_lens_fov(
     } else {
         base_fov
     };
-    let inputs = CgCalcFovInputs {
+    let inputs = FovInputs {
         cg_fov: base_fov,
         pm_type,
         link_flags,
@@ -490,12 +497,12 @@ fn apply_fpv_lens_fov(
         fov_scale: CG_FOV_SCALE_DEFAULT,
         fov_min: CG_FOV_MIN_DEFAULT,
     };
-    let (horiz, _) = cg_calc_fov_from_ads(&inputs, f_weapon_pos_frac, b_position_to_ads, &overlay);
-    let zoom_sensitivity = cg_zoom_sensitivity(horiz);
+    let (horiz, _) = calc_fov_from_ads(&inputs, f_weapon_pos_frac, b_position_to_ads, &overlay);
+    let zoom_sensitivity = zoom_sensitivity(horiz);
     if let Some(actions) = actions {
         actions.fov_scale = zoom_sensitivity * actions.shellshock_look_scale;
     }
-    let vertical = cg_horizontal_to_vertical_fov_deg(horiz).to_radians();
+    let vertical = horizontal_to_vertical_fov_deg(horiz).to_radians();
     for mut projection in lenses.iter_mut() {
         if let Projection::Perspective(perspective) = &mut *projection {
             perspective.fov = vertical;
@@ -503,8 +510,6 @@ fn apply_fpv_lens_fov(
     }
     Some(horiz)
 }
-
-const ENTITYNUM_NONE: i32 = 0x7FF;
 
 fn stamp_and_land_origin_z(
     kick: &mut SessionViewKick,
@@ -518,13 +523,13 @@ fn stamp_and_land_origin_z(
         && kick.last_ground_entity == ENTITYNUM_NONE
         && ground_entity != ENTITYNUM_NONE
     {
-        if let Some(fall) = bg_crash_land_fall_height(
+        if let Some(fall) = crash_land_fall_height(
             gravity,
             kick.last_origin[2],
             origin[2],
             kick.last_velocity[2],
         ) {
-            let dip = bg_crash_land_view_dip(fall);
+            let dip = crash_land_view_dip(fall);
             if dip > 0 {
                 kick.land_change = -(dip as f32);
                 kick.land_time = cg_time;
@@ -537,7 +542,7 @@ fn stamp_and_land_origin_z(
     kick.last_ground_entity = ground_entity;
     kick.have_land_prev = true;
     let delta = cg_time.wrapping_sub(kick.land_time) as f32;
-    bg_land_origin_z(delta, kick.land_change)
+    land_origin_z(delta, kick.land_change)
 }
 
 fn stamp_damage_feedback(
@@ -552,7 +557,7 @@ fn stamp_damage_feedback(
 ) {
     let mut stamped = false;
     if kick.have_damage_prev && damage_event != kick.last_damage_event && damage_count != 0 {
-        let punch = cg_damage_feedback_kick(damage_yaw, damage_pitch, damage_count, viewangles);
+        let punch = damage_feedback_kick(damage_yaw, damage_pitch, damage_count, viewangles);
         kick.v_dmg_pitch = punch.v_dmg_pitch;
         kick.v_dmg_roll = punch.v_dmg_roll;
         kick.damage_time = cg_time.max(1);
@@ -560,7 +565,7 @@ fn stamp_damage_feedback(
     }
     if !stamped && hurt.0 > 0 {
         hurt.0 -= 1;
-        let punch = cg_damage_feedback_kick(
+        let punch = damage_feedback_kick(
             VIEW_DAMAGE_UNDIRECTED,
             VIEW_DAMAGE_UNDIRECTED,
             1,
@@ -575,7 +580,7 @@ fn stamp_damage_feedback(
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
-pub struct CgGunOffset {
+pub struct GunOffset {
     pub x: f32,
 
     pub y: f32,
@@ -583,7 +588,7 @@ pub struct CgGunOffset {
     pub z: f32,
 }
 
-impl CgGunOffset {
+impl GunOffset {
     pub fn xyz(self) -> [f32; 3] {
         [self.x, self.y, self.z]
     }
@@ -612,4 +617,21 @@ pub(crate) fn iw_view_placement_to_bevy_camera_local(
         rotation: crate::anim::fpv_pose::placement_angles_to_bevy_camera_quat(angles_deg),
         ..Default::default()
     }
+}
+
+fn earthquake_pose(
+    mut pose: WorldCameraPose,
+    presented: &PresentedSnapshot,
+    now_ms: i32,
+) -> WorldCameraPose {
+    if let Some(snapshot) = presented.snapshot() {
+        let eye = pose.origin;
+        for quake in &snapshot.meta.objectives.earthquakes {
+            let offset = quake.angle_offset(eye, now_ms);
+            for (angle, delta) in pose.angles.iter_mut().zip(offset) {
+                *angle += delta;
+            }
+        }
+    }
+    pose
 }

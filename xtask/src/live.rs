@@ -160,10 +160,7 @@ fn torn_claim(rows: &[Row], reason: &str) -> Claim {
 }
 
 fn world_hold_claim(rows: &[Row]) -> Claim {
-    let mut claim = Claim::new(
-        "L2",
-        "R_ShutdownWorld emptied spawned / gpu_plan / glass (D191/D192)",
-    );
+    let mut claim = Claim::new("L2", "world shutdown emptied spawned / gpu_plan / glass");
     let hits = rows
         .iter()
         .filter(|r| {
@@ -181,7 +178,7 @@ fn world_hold_claim(rows: &[Row]) -> Claim {
 }
 
 fn sim_hold_claim(rows: &[Row]) -> Claim {
-    let mut claim = Claim::new("L3", "G_ShutdownGame + loopback reset (D188/D189)");
+    let mut claim = Claim::new("L3", "game shutdown + loopback reset");
     let hits = rows
         .iter()
         .filter(|r| {
@@ -199,7 +196,7 @@ fn sim_hold_claim(rows: &[Row]) -> Claim {
 }
 
 fn ambient_hold_claim(rows: &[Row]) -> Claim {
-    let mut claim = Claim::new("L4", "SND_StopAmbient cleared MapAmbientBooted (D190)");
+    let mut claim = Claim::new("L4", "ambient stop cleared MapAmbientBooted");
     let hits = rows
         .iter()
         .filter(|r| r.name == "ambient_hold" && r.booted == Some(0))
@@ -260,10 +257,7 @@ fn world_ready_after_rust_claim(rows: &[Row]) -> Claim {
 }
 
 fn rust_ambient_not_desert_claim(rows: &[Row]) -> Claim {
-    let mut claim = Claim::new(
-        "L7",
-        "rust ambient boot is not leftover boneyard desert (D190)",
-    );
+    let mut claim = Claim::new("L7", "ambient boot is not leftover boneyard desert");
     let Some(rust) = rows
         .iter()
         .filter(|r| r.name == "match_installed" && r.zone.as_deref() == Some("mp_rust"))

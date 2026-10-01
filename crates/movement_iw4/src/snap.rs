@@ -26,7 +26,7 @@ fn round_ties_even(x: f32) -> f32 {
     libm::copysignf(rounded, x)
 }
 
-pub fn pm_end_tick_velocity(ps: &mut PlayerState, pml: &Pml) {
+pub fn end_tick_velocity(ps: &mut PlayerState, pml: &Pml) {
     let dt = pml.frametime;
     if dt > 0.0 {
         let mv = [

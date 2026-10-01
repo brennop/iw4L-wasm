@@ -1,5 +1,5 @@
 use math_iw4::{angle_normalize_360, angle_subtract, yaw_vectors_2d};
-use playerstate_iw4::{ENTITYNUM_NONE, PlayerState};
+use playerstate_iw4::{ENTITYNUM_NONE, PlayerState, pm_flags};
 use trace_iw4::Trace;
 
 use crate::{CollisionBackend, GroundTraceInput, StanceSurface, stance_surface_type};
@@ -51,13 +51,13 @@ pub fn player_prone_allowed<C: CollisionBackend>(
     if weapon_blocks_prone {
         return false;
     }
-    if (ps.pm_flags & crate::PMF_PRONE) != 0 {
+    if (ps.pm_flags & pm_flags::PRONE) != 0 {
         return true;
     }
     if ps.ground_entity_num == ENTITYNUM_NONE && !prone_special_air_ok(ps) {
         return false;
     }
-    bg_check_prone(
+    check_prone(
         collision,
         ps.origin,
         f_size,
@@ -75,10 +75,10 @@ pub fn player_prone_allowed<C: CollisionBackend>(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "preserves the proven BG_CheckProne call boundary"
+    reason = "one call boundary for the prone check"
 )]
 #[must_use]
-pub fn bg_check_prone<C: CollisionBackend>(
+pub fn check_prone<C: CollisionBackend>(
     collision: &C,
     origin: [f32; 3],
     f_size: f32,

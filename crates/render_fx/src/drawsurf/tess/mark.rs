@@ -40,10 +40,10 @@ impl GfxMarkSubKey {
             lmap: if context[0] == 3 {
                 marks_iw4::GFX_SURFACE_LIGHTMAP_NONE
             } else {
-                marks_iw4::fx_mark_context_lmap(context)
+                marks_iw4::mark_context_lmap(context)
             },
-            primary_light: marks_iw4::fx_mark_context_primary_light(context),
-            probe: marks_iw4::fx_mark_context_probe(context),
+            primary_light: marks_iw4::mark_context_primary_light(context),
+            probe: marks_iw4::mark_context_probe(context),
         }
     }
 }

@@ -297,7 +297,6 @@ dependencies = [
  "fastfile_iw4",
  "fastfile_iw5",
  "fastfile_t5",
- "weapon_iw4",
  "xmodel_runtime",
 ]
 
@@ -341,6 +340,8 @@ dependencies = [
  "fastfile_t5",
  "fx_iw4",
  "gamefs",
+ "serde",
+ "serde_json",
  "weapon_iw4",
  "web-time",
  "xmodel_runtime",
@@ -377,7 +378,6 @@ dependencies = [
 name = "asset_model"
 version = "0.1.0"
 dependencies = [
- "anim_iw4",
  "asset_core",
  "asset_iw4",
  "asset_material",
@@ -428,7 +428,6 @@ dependencies = [
  "fastfile_t5",
  "fx_iw4",
  "lighting_iw4",
- "trace_iw4",
  "weapon_iw4",
  "xmodel_runtime",
 ]
@@ -437,7 +436,6 @@ dependencies = [
 name = "assets"
 version = "0.1.0"
 dependencies = [
- "anim_iw4",
  "asset_anim",
  "asset_audio",
  "asset_core",
@@ -448,23 +446,19 @@ dependencies = [
  "asset_transport",
  "asset_world",
  "async-lock",
- "bcdec_rs",
  "bevy",
  "clipmap_iw4",
  "diag",
- "dpvs_iw4",
  "fastfile_iw4",
  "fastfile_iw5",
  "fastfile_t5",
  "frame",
- "fx_iw4",
  "gamefs",
  "libc",
  "lighting_iw4",
  "png",
  "render_material",
  "serde_json",
- "trace_iw4",
  "weapon_iw4",
  "web-time",
  "xmodel_runtime",
@@ -580,24 +574,26 @@ dependencies = [
 name = "audio"
 version = "0.1.0"
 dependencies = [
+ "asset_audio",
+ "asset_core",
+ "asset_game",
  "asset_iw4",
+ "asset_transport",
  "assets",
  "bevy",
  "diag",
+ "entity_iw4",
  "frame",
  "gamemode_iw4",
  "hud_iw4",
  "js-sys",
- "killcam_iw4",
  "movement_iw4",
  "net",
  "perf",
  "playerstate_iw4",
  "sim",
- "sound_iw4",
  "symphonia",
  "wasm-bindgen",
- "weapon_iw4",
  "web-sys",
  "web-time",
 ]
@@ -2055,18 +2051,26 @@ name = "bootstrap"
 version = "0.1.0"
 dependencies = [
  "artifactfs",
+ "asset_audio",
+ "asset_core",
+ "asset_game",
+ "asset_material",
+ "asset_transport",
  "assets",
  "audio",
  "bevy",
  "bots",
  "console",
  "diag",
+ "frame",
  "hud",
  "libc",
+ "master_protocol",
  "net",
  "perf",
  "render",
  "render_frontend",
+ "render_gpu",
  "replay",
  "serde_json",
  "session",
@@ -2080,18 +2084,19 @@ dependencies = [
 name = "bots"
 version = "0.1.0"
 dependencies = [
+ "asset_transport",
  "assets",
  "bevy",
  "diag",
  "entity_iw4",
  "frame",
  "gamemode_iw4",
- "glam",
  "math_iw4",
  "movement_iw4",
  "net",
  "playerstate_iw4",
  "sim",
+ "trace_iw4",
  "weapon_iw4",
  "web-time",
 ]
@@ -2285,20 +2290,21 @@ name = "console"
 version = "0.1.0"
 dependencies = [
  "artifactfs",
+ "asset_core",
+ "asset_game",
+ "asset_transport",
+ "asset_world",
  "assets",
  "audio",
  "bevy",
  "bots",
  "diag",
- "dpvs_iw4",
  "entity_iw4",
  "frame",
  "hud",
  "input_iw4",
- "math_iw4",
  "net",
  "perf",
- "playerstate_iw4",
  "render",
  "render_frontend",
  "render_fx",
@@ -3370,6 +3376,10 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hud"
 version = "0.1.0"
 dependencies = [
+ "asset_core",
+ "asset_game",
+ "asset_material",
+ "asset_transport",
  "assets",
  "bevy",
  "diag",
@@ -3377,7 +3387,6 @@ dependencies = [
  "frame",
  "gamemode_iw4",
  "hud_iw4",
- "killcam_iw4",
  "math_iw4",
  "movement_iw4",
  "net",
@@ -3631,7 +3640,6 @@ dependencies = [
  "rustls-pemfile",
  "rustls-platform-verifier",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -3738,6 +3746,7 @@ name = "launcher"
 version = "0.1.0"
 dependencies = [
  "artifactfs",
+ "asset_transport",
  "assets",
  "bevy",
  "bootstrap",
@@ -4071,6 +4080,7 @@ dependencies = [
 name = "net"
 version = "0.1.0"
 dependencies = [
+ "anim_iw4",
  "bevy",
  "diag",
  "entity_iw4",
@@ -4094,6 +4104,7 @@ dependencies = [
  "tokio-util",
  "weapon_iw4",
  "web-time",
+ "xmodel_runtime",
  "zstd",
 ]
 
@@ -5136,36 +5147,17 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "render"
 version = "0.1.0"
 dependencies = [
- "anim_iw4",
  "artifactfs",
- "asset_iw4",
- "asset_world",
  "assets",
- "audio",
  "bevy",
- "bytemuck",
- "d3d9_sm3",
- "d3d9_state",
  "diag",
- "dpvs_iw4",
- "entity_iw4",
- "fastfile_iw4",
  "frame",
  "fx",
- "fx_iw4",
- "gamemode_iw4",
  "hud",
- "hud_iw4",
- "lighting_iw4",
- "marks_iw4",
- "math_iw4",
- "miniz_oxide",
  "naga",
  "net",
  "perf",
- "playerstate_iw4",
  "render_anim",
- "render_backend",
  "render_frame",
  "render_frontend",
  "render_fx",
@@ -5173,8 +5165,6 @@ dependencies = [
  "render_scene",
  "serde",
  "serde_json",
- "sim",
- "weapon_iw4",
  "web-time",
 ]
 
@@ -5183,7 +5173,14 @@ name = "render_anim"
 version = "0.1.0"
 dependencies = [
  "anim_iw4",
+ "asset_anim",
+ "asset_core",
+ "asset_game",
  "asset_iw4",
+ "asset_material",
+ "asset_model",
+ "asset_transport",
+ "asset_world",
  "assets",
  "audio",
  "bevy",
@@ -5194,7 +5191,6 @@ dependencies = [
  "frame",
  "fx",
  "fx_iw4",
- "gamemode_iw4",
  "hud_iw4",
  "lighting_iw4",
  "math_iw4",
@@ -5242,23 +5238,26 @@ name = "render_frontend"
 version = "0.1.0"
 dependencies = [
  "anim_iw4",
+ "asset_audio",
+ "asset_core",
+ "asset_game",
  "asset_iw4",
+ "asset_material",
+ "asset_model",
+ "asset_transport",
  "asset_world",
  "assets",
  "audio",
  "bevy",
  "bytemuck",
- "d3d9_decl",
  "d3d9_sm3",
  "d3d9_state",
  "diag",
  "dpvs_iw4",
  "entity_iw4",
- "fastfile_iw4",
  "frame",
  "fx",
  "fx_iw4",
- "gamemode_iw4",
  "hud_iw4",
  "lighting_iw4",
  "marks_iw4",
@@ -5275,13 +5274,19 @@ dependencies = [
  "sim",
  "weapon_iw4",
  "web-time",
+ "xmodel_runtime",
 ]
 
 [[package]]
 name = "render_fx"
 version = "0.1.0"
 dependencies = [
+ "asset_audio",
+ "asset_core",
+ "asset_game",
  "asset_iw4",
+ "asset_model",
+ "asset_world",
  "assets",
  "audio",
  "bevy",
@@ -5305,11 +5310,13 @@ dependencies = [
 name = "render_gpu"
 version = "0.1.0"
 dependencies = [
+ "asset_core",
  "asset_iw4",
+ "asset_material",
+ "asset_world",
  "assets",
  "bevy",
  "bytemuck",
- "d3d9_decl",
  "d3d9_sm3",
  "d3d9_state",
  "diag",
@@ -5343,6 +5350,10 @@ dependencies = [
 name = "render_scene"
 version = "0.1.0"
 dependencies = [
+ "asset_game",
+ "asset_material",
+ "asset_model",
+ "asset_world",
  "assets",
  "bevy",
  "diag",
@@ -5353,6 +5364,7 @@ dependencies = [
  "math_iw4",
  "render_material",
  "sim",
+ "xmodel_runtime",
 ]
 
 [[package]]
@@ -5369,7 +5381,6 @@ dependencies = [
  "diag",
  "frame",
  "getrandom 0.3.4",
- "movement_iw4",
  "net",
  "perf",
  "playerstate_iw4",
@@ -5679,20 +5690,29 @@ dependencies = [
 name = "session"
 version = "0.1.0"
 dependencies = [
+ "asset_anim",
+ "asset_audio",
+ "asset_core",
+ "asset_game",
+ "asset_model",
+ "asset_transport",
+ "asset_world",
  "assets",
  "audio",
  "bevy",
- "bots",
+ "clipmap_iw4",
  "diag",
  "frame",
  "gamemode_iw4",
+ "hud_iw4",
  "net",
  "perf",
- "render",
  "render_frontend",
  "render_fx",
  "sim",
+ "weapon_iw4",
  "web-time",
+ "xmodel_runtime",
 ]
 
 [[package]]
@@ -5738,7 +5758,7 @@ dependencies = [
  "movement_iw4",
  "perf",
  "playerstate_iw4",
- "sound_iw4",
+ "sha2",
  "trace_iw4",
  "weapon_iw4",
  "xmodel_runtime",
@@ -5849,13 +5869,6 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "sound_iw4"
-version = "0.1.0"
-dependencies = [
- "killcam_iw4",
 ]
 
 [[package]]
@@ -6400,6 +6413,10 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "artifactfs",
+ "asset_core",
+ "asset_game",
+ "asset_material",
+ "asset_transport",
  "assets",
  "bevy",
  "diag",
@@ -6741,6 +6758,7 @@ dependencies = [
 name = "web_probe"
 version = "0.1.0"
 dependencies = [
+ "asset_transport",
  "assets",
  "bevy",
  "diag",

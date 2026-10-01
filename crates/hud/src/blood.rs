@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use frame::{AppScreen, LifeStarted, UiDraw, ViewSubject};
 use hud_iw4::{
-    HUD_BLOOD_OVERLAY_LERP_RATE_DEFAULT, cg_blood_overlay_lerp, cg_get_health_fraction,
-    cg_should_draw_blood_overlay,
+    HUD_BLOOD_OVERLAY_LERP_RATE_DEFAULT, blood_overlay_lerp, get_health_fraction,
+    should_draw_blood_overlay,
 };
-use net::{CgFrameClock, LocalPresentClient, PresentedSnapshot};
+use net::{FrameClock, LocalPresentClient, PresentedSnapshot};
 
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate};
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps};
@@ -52,7 +52,7 @@ fn gpu_stretch_bits_unchanged(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_blood_overlay(
-    cg_clock: Res<CgFrameClock>,
+    cg_clock: Res<FrameClock>,
     screen: Res<AppScreen>,
     surface: Res<crate::surface::Hud2dSurface>,
     presented: Res<PresentedSnapshot>,
@@ -79,7 +79,7 @@ pub(crate) fn update_blood_overlay(
         request_hide(&mut job, latch.packed.is_empty());
         return;
     };
-    let health_frac = cg_get_health_fraction(ps.health, ps.max_health, ps.pm_type);
+    let health_frac = get_health_fraction(ps.health, ps.max_health, ps.pm_type);
     let in_killcam = view.in_killcam();
     let in_killcam_hud_gate = in_killcam && ps.kill_cam_entity != playerstate_iw4::ENTITYNUM_NONE;
 
@@ -100,7 +100,7 @@ pub(crate) fn update_blood_overlay(
 
     let blood_enabled = true;
     let should_draw_hud = ui_draw.is_some_and(|d| d.0);
-    let should_draw = cg_should_draw_blood_overlay(
+    let should_draw = should_draw_blood_overlay(
         blood_enabled,
         should_draw_hud,
         in_killcam_hud_gate,
@@ -113,7 +113,7 @@ pub(crate) fn update_blood_overlay(
     }
 
     let frametime_ms = cg_clock.frametime();
-    latch.intensity = cg_blood_overlay_lerp(
+    latch.intensity = blood_overlay_lerp(
         latch.intensity,
         health_frac,
         frametime_ms,

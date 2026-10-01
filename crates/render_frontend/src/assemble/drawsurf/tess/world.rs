@@ -22,7 +22,7 @@ pub struct WorldPassMaterial {
     pub sun: Option<WorldSun>,
     pub alpha_mode: AlphaMode,
 
-    pub draw_mode: Option<assets::MaterialDrawMode>,
+    pub draw_mode: Option<asset_material::MaterialDrawMode>,
     pub square_color_map: bool,
     pub env_map_parms: [f32; 4],
     pub uv_anim: [f32; 4],
@@ -32,11 +32,11 @@ pub struct WorldPassMaterial {
     pub cull_mode: Option<Face>,
 }
 
-pub use render_frame::RetailWorldVertexRefusal;
+pub use render_frame::WorldVertexRefusal;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct WorldDrawGpuPlan {
-    pub retail_vertices: assets::RetailWorldVertexPayload,
+    pub packed_vertices: asset_world::WorldVertexPayload,
 
     pub surface_material: Vec<u32>,
 
@@ -52,27 +52,27 @@ pub struct WorldDrawGpuPlan {
 }
 
 impl WorldDrawGpuPlan {
-    pub fn exact_retail_vertices(
+    pub fn exact_packed_vertices(
         &self,
-    ) -> Result<&[[u8; asset_iw4::size::GFX_WORLD_VERTEX]], RetailWorldVertexRefusal> {
+    ) -> Result<&[[u8; asset_iw4::size::GFX_WORLD_VERTEX]], WorldVertexRefusal> {
         let table_stride =
             asset_iw4::vertex_decl::stream_extent(asset_iw4::vertex_decl::WORLD_VERTEX_TYPE, 0);
         if table_stride != Some(asset_iw4::size::GFX_WORLD_VERTEX as u16) {
-            return Err(RetailWorldVertexRefusal::RetailStrideMismatch { table_stride });
+            return Err(WorldVertexRefusal::StrideMismatch { table_stride });
         }
         let vertices = if let Some(share) = self.vertex_share.as_ref() {
             share.as_slice()
         } else {
-            match self.retail_vertices.type2_stream0() {
+            match self.packed_vertices.type2_stream0() {
                 Ok(vertices) => vertices,
                 Err(source_layout) => {
-                    return Err(RetailWorldVertexRefusal::ForeignLayout { source_layout });
+                    return Err(WorldVertexRefusal::ForeignLayout { source_layout });
                 }
             }
         };
         if vertices.len() != self.decoded_vertices().len() {
-            return Err(RetailWorldVertexRefusal::VertexCountMismatch {
-                retail: vertices.len(),
+            return Err(WorldVertexRefusal::VertexCountMismatch {
+                packed: vertices.len(),
                 decoded: self.decoded_vertices().len(),
             });
         }
@@ -98,17 +98,17 @@ impl WorldDrawGpuPlan {
     pub fn publish_extract_shares(&mut self) {
         if self.vertex_share.is_none() {
             match std::mem::replace(
-                &mut self.retail_vertices,
-                assets::RetailWorldVertexPayload::Unavailable {
-                    source_layout: "retail payload published for extract",
+                &mut self.packed_vertices,
+                asset_world::WorldVertexPayload::Unavailable {
+                    source_layout: "packed payload published for extract",
                 },
             ) {
-                assets::RetailWorldVertexPayload::Iw4(rows)
-                | assets::RetailWorldVertexPayload::Iw5(rows)
-                | assets::RetailWorldVertexPayload::T5(rows) => {
+                asset_world::WorldVertexPayload::Iw4(rows)
+                | asset_world::WorldVertexPayload::Iw5(rows)
+                | asset_world::WorldVertexPayload::T5(rows) => {
                     self.vertex_share = Some(Arc::new(rows));
                 }
-                unavailable => self.retail_vertices = unavailable,
+                unavailable => self.packed_vertices = unavailable,
             }
         }
     }
@@ -119,10 +119,10 @@ impl WorldDrawGpuPlan {
         lightmap_handles: &[Option<crate::assemble::drawsurf::RuntimeLightmapHandles>],
         reflection_probe_handles: &[Option<Handle<Image>>],
     ) -> Self {
-        let retail_vertices = std::mem::replace(
-            &mut scene.retained_retail_vertices,
-            assets::RetailWorldVertexPayload::Unavailable {
-                source_layout: "retail payload consumed by WorldDrawGpuPlan",
+        let packed_vertices = std::mem::replace(
+            &mut scene.retained_packed_vertices,
+            asset_world::WorldVertexPayload::Unavailable {
+                source_layout: "packed payload consumed by WorldDrawGpuPlan",
             },
         );
         let vertex_layer = scene.retained_vertex_layer.clone();
@@ -167,15 +167,15 @@ impl WorldDrawGpuPlan {
                 .material
                 .and_then(|id| scene.runtime_material_catalog.derived(id));
             let color = runtime.and_then(|m| {
-                m.texture_semantic(assets::TS_COLOR_MAP)
+                m.texture_semantic(asset_material::TS_COLOR_MAP)
                     .and_then(|id| exact_handles.get(id.0 as usize).and_then(Clone::clone))
             });
             let normal = runtime.and_then(|m| {
-                m.texture_semantic(assets::TS_NORMAL_MAP)
+                m.texture_semantic(asset_material::TS_NORMAL_MAP)
                     .and_then(|id| exact_handles.get(id.0 as usize).and_then(Clone::clone))
             });
             let specular = runtime.and_then(|m| {
-                m.texture_semantic(assets::TS_SPECULAR_MAP)
+                m.texture_semantic(asset_material::TS_SPECULAR_MAP)
                     .and_then(|id| exact_handles.get(id.0 as usize).and_then(Clone::clone))
             });
             let probe = reflection_probe_handles
@@ -227,7 +227,7 @@ impl WorldDrawGpuPlan {
         let Some(cull) = scene.cull.as_ref() else {
             let upload_pending = !vertices.is_empty();
             let mut plan = Self {
-                retail_vertices,
+                packed_vertices,
                 surface_material: Vec::new(),
                 surface_sampler_inputs: Vec::new(),
                 materials,
@@ -277,7 +277,7 @@ impl WorldDrawGpuPlan {
 
         let upload_pending = !vertices.is_empty() && !indices.is_empty();
         let mut plan = Self {
-            retail_vertices,
+            packed_vertices,
             surface_material,
             surface_sampler_inputs,
             materials,
@@ -328,7 +328,7 @@ pub(crate) fn build_world_draw_gpu_plan(
             );
         }
     }
-    let exact_vertex_status = match plan.exact_retail_vertices() {
+    let exact_vertex_status = match plan.exact_packed_vertices() {
         Ok(vertices) => format!("READY records={} stride=0x2c", vertices.len()),
         Err(refusal) => format!("REFUSED({refusal:?})"),
     };

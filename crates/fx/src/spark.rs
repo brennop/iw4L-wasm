@@ -1,10 +1,10 @@
 use fx_iw4::{
     FX_SPARK_CLOUD_HANDLE_NONE, FX_SPARK_CLOUD_HISTORY_CAPACITY, FX_SPARK_CLOUD_HISTORY_STRIDE,
     FX_SPARK_CLOUD_SAMPLE_MASK, FX_SPARK_CLOUD_SAMPLE_RING, FxOrientFrame, FxOrientSpawnParams,
-    FxOrientation, GfxParticleCloud, fx_clamp_elem_rotation_time, fx_empty_particle_cloud,
-    fx_get_elem_angles_axis, fx_get_orientation, fx_orientation_pos_to_world,
-    fx_spark_cloud_handle_for_slot, fx_sparkcloud_build_triplet, fx_sparkcloud_fill_sample,
-    fx_sparkcloud_history_advance, fx_sparkcloud_history_should_advance,
+    FxOrientation, GfxParticleCloud, clamp_elem_rotation_time, empty_particle_cloud,
+    get_elem_angles_axis, get_orientation, orientation_pos_to_world, spark_cloud_handle_for_slot,
+    sparkcloud_build_triplet, sparkcloud_fill_sample, sparkcloud_history_advance,
+    sparkcloud_history_should_advance,
 };
 
 use crate::system::FxSystemHost;
@@ -27,7 +27,7 @@ impl Default for FxSparkCloudHistorySlot {
             read_idx: 0,
             write_idx: 0,
             last_time: 0,
-            samples: [fx_empty_particle_cloud(); FX_SPARK_CLOUD_SAMPLE_RING as usize],
+            samples: [empty_particle_cloud(); FX_SPARK_CLOUD_SAMPLE_RING as usize],
             next_free: FX_SPARK_CLOUD_HANDLE_NONE,
         }
     }
@@ -58,7 +58,7 @@ pub struct FxSparkCloudInstance {
 
 #[inline]
 pub fn spark_handle_for_slot(slot: u32) -> u16 {
-    fx_spark_cloud_handle_for_slot(slot)
+    spark_cloud_handle_for_slot(slot)
 }
 
 #[inline]
@@ -96,7 +96,7 @@ pub fn alloc_spark_cloud(host: &mut FxSystemHost) -> Option<u16> {
         read_idx: 0,
         write_idx: 0,
         last_time: 0,
-        samples: [fx_empty_particle_cloud(); FX_SPARK_CLOUD_SAMPLE_RING as usize],
+        samples: [empty_particle_cloud(); FX_SPARK_CLOUD_SAMPLE_RING as usize],
         next_free: FX_SPARK_CLOUD_HANDLE_NONE,
     };
     Some(spark_handle_for_slot(dense as u32))
@@ -139,9 +139,8 @@ pub fn update_spark_history(
     let Some(slot) = host.spark_clouds.get_mut(dense).filter(|s| s.occupied) else {
         return;
     };
-    if fx_sparkcloud_history_should_advance(slot.write_idx, slot.last_time, msec_now) {
-        let (read, write, t) =
-            fx_sparkcloud_history_advance(slot.read_idx, slot.write_idx, msec_now);
+    if sparkcloud_history_should_advance(slot.write_idx, slot.last_time, msec_now) {
+        let (read, write, t) = sparkcloud_history_advance(slot.read_idx, slot.write_idx, msec_now);
         slot.read_idx = read;
         slot.write_idx = write;
         slot.last_time = t;
@@ -150,7 +149,7 @@ pub fn update_spark_history(
         return;
     }
     let idx = ((slot.write_idx.wrapping_sub(1)) & FX_SPARK_CLOUD_SAMPLE_MASK) as usize;
-    slot.samples[idx] = fx_sparkcloud_fill_sample(
+    slot.samples[idx] = sparkcloud_fill_sample(
         world_origin,
         elem_axis,
         size0,
@@ -167,7 +166,7 @@ pub fn spark_elem_orientation(
     effect_alt: &FxOrientFrame,
     spawn: Option<FxOrientSpawnParams>,
 ) -> FxOrientation {
-    fx_get_orientation(flags, effect_now, effect_alt, spawn)
+    get_orientation(flags, effect_now, effect_alt, spawn)
 }
 
 pub fn spark_elem_world_origin(
@@ -178,7 +177,7 @@ pub fn spark_elem_world_origin(
     spawn: Option<FxOrientSpawnParams>,
 ) -> [f32; 3] {
     let orient = spark_elem_orientation(flags, effect_now, effect_alt, spawn);
-    fx_orientation_pos_to_world(orient.origin, orient.axis, elem_origin)
+    orientation_pos_to_world(orient.origin, orient.axis, elem_origin)
 }
 
 pub fn spark_elem_axis(
@@ -190,8 +189,8 @@ pub fn spark_elem_axis(
     at_rest_fraction: u8,
     effect_axis: [[f32; 3]; 3],
 ) -> [[f32; 3]; 3] {
-    let rot_t = fx_clamp_elem_rotation_time(age_msec as f32, life_msec as f32, at_rest_fraction);
-    fx_get_elem_angles_axis(spawn_angles, angular_velocity, seed, rot_t, effect_axis)
+    let rot_t = clamp_elem_rotation_time(age_msec as f32, life_msec as f32, at_rest_fraction);
+    get_elem_angles_axis(spawn_angles, angular_velocity, seed, rot_t, effect_axis)
 }
 
 pub fn build_spark_cloud_instance(
@@ -213,7 +212,7 @@ pub fn build_spark_cloud_instance(
     if latest.size0 == 0.0 || latest.placement_scale == 0.0 {
         return None;
     }
-    let clouds = fx_sparkcloud_build_triplet(
+    let clouds = sparkcloud_build_triplet(
         &slot.samples,
         slot.read_idx,
         slot.write_idx,

@@ -194,7 +194,7 @@ pub const LOW_AMMO_WARNING_PULSE_MIN: f32 = 0.0;
 pub const LOW_AMMO_WARNING_PULSE_MAX: f32 = 1.5;
 
 #[must_use]
-pub fn cg_low_ammo_warning_outer_gate(pm_type: i32, e_flags: u32, weapon: u32) -> bool {
+pub fn low_ammo_warning_outer_gate(pm_type: i32, e_flags: u32, weapon: u32) -> bool {
     pm_type < 8 && pm_type != 5 && (e_flags & LOW_AMMO_WARNING_EFLAGS_SILENCE) == 0 && weapon != 0
 }
 
@@ -204,7 +204,7 @@ pub fn weaponstate_skips_low_ammo_warning(weaponstate: i32) -> bool {
 }
 
 #[must_use]
-pub fn cg_check_player_for_low_clip(
+pub fn check_player_for_low_clip(
     clip: i32,
     clip_size: i32,
     threshold: f32,
@@ -214,7 +214,7 @@ pub fn cg_check_player_for_low_clip(
 }
 
 #[must_use]
-pub fn cg_low_ammo_warning_kind(
+pub fn low_ammo_warning_kind(
     stock: i32,
     clip_total: i32,
     clip_size: i32,
@@ -233,7 +233,7 @@ pub fn cg_low_ammo_warning_kind(
 }
 
 #[must_use]
-pub fn cg_low_ammo_warning_pulse_frac(cg_time_ms: i32) -> f32 {
+pub fn low_ammo_warning_pulse_frac(cg_time_ms: i32) -> f32 {
     let t = cg_time_ms as f32 * 0.001;
     let amp = (LOW_AMMO_WARNING_PULSE_MAX - LOW_AMMO_WARNING_PULSE_MIN) * 0.5;
     let bias = LOW_AMMO_WARNING_PULSE_MIN + amp;
@@ -242,7 +242,7 @@ pub fn cg_low_ammo_warning_pulse_frac(cg_time_ms: i32) -> f32 {
 }
 
 #[must_use]
-pub fn cg_low_ammo_warning_color_pair(kind: LowAmmoWarningKind) -> ([f32; 4], [f32; 4]) {
+pub fn low_ammo_warning_color_pair(kind: LowAmmoWarningKind) -> ([f32; 4], [f32; 4]) {
     match kind {
         LowAmmoWarningKind::Reload => ([0.9, 0.9, 0.9, 0.8], [1.0, 1.0, 1.0, 1.0]),
         LowAmmoWarningKind::NoAmmo => ([0.8, 0.0, 0.0, 0.8], [1.0, 0.0, 0.0, 1.0]),
@@ -278,10 +278,8 @@ pub struct LowAmmoWarningQuery {
 }
 
 #[must_use]
-pub fn cg_draw_player_weapon_low_ammo_warning(
-    q: LowAmmoWarningQuery,
-) -> Option<LowAmmoWarningKind> {
-    if !cg_low_ammo_warning_outer_gate(q.pm_type, q.e_flags, q.weapon) {
+pub fn draw_player_weapon_low_ammo_warning(q: LowAmmoWarningQuery) -> Option<LowAmmoWarningKind> {
+    if !low_ammo_warning_outer_gate(q.pm_type, q.e_flags, q.weapon) {
         return None;
     }
     if q.ammo_counter_clip == 0 {
@@ -293,7 +291,7 @@ pub fn cg_draw_player_weapon_low_ammo_warning(
         if weaponstate_skips_low_ammo_warning(q.weaponstate[i]) {
             continue;
         }
-        if cg_check_player_for_low_clip(q.clip[i], q.clip_size, q.threshold, q.clip_only) {
+        if check_player_for_low_clip(q.clip[i], q.clip_size, q.threshold, q.clip_only) {
             live = true;
             break;
         }
@@ -302,5 +300,5 @@ pub fn cg_draw_player_weapon_low_ammo_warning(
         return None;
     }
     let clip_total = q.clip[0] + if hands > 1 { q.clip[1] } else { 0 };
-    cg_low_ammo_warning_kind(q.stock, clip_total, q.clip_size)
+    low_ammo_warning_kind(q.stock, clip_total, q.clip_size)
 }

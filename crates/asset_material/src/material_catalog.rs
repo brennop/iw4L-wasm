@@ -396,6 +396,7 @@ pub struct AuthoredMaterial {
     pub texture_atlas: Option<[u8; 2]>,
 
     pub surface_type_bits: Option<u32>,
+    pub t5_layered_surface_types: Option<u32>,
 
     pub state_flags: u8,
 
@@ -1479,6 +1480,7 @@ impl MaterialCatalog {
             info_game_flags: geometry.info_game_flags,
             texture_atlas: Some(geometry.texture_atlas),
             surface_type_bits: geometry.surface_type_bits,
+            t5_layered_surface_types: None,
             state_flags: geometry.state_flags,
             camera_region: geometry.camera_region,
             state_bits: read_state_bits(
@@ -2023,6 +2025,16 @@ fn remap_t5_owned_shader_argument(argument: OwnedShaderArgument) -> Option<Owned
                 row_count,
             }
         }),
+        OwnedShaderArgument::CodePixelSampler { destination, index }
+            if (0x1d..=0x20).contains(&index) =>
+        {
+            Some(OwnedShaderArgument::MaterialPixelSampler {
+                destination,
+                name_hash: crate::t5_code_remap::terrain_scorch_binding_hash(
+                    (index - 0x1d) as usize,
+                ),
+            })
+        }
         OwnedShaderArgument::CodePixelSampler { destination, index } => {
             crate::t5_code_remap::remap_code_texture_index(index)
                 .map(|index| OwnedShaderArgument::CodePixelSampler { destination, index })
@@ -2445,6 +2457,7 @@ impl MaterialCatalog {
                 info_game_flags: geometry.info_game_flags,
                 texture_atlas: None,
                 surface_type_bits: Some(geometry.surface_type_bits),
+                t5_layered_surface_types: Some(geometry.layered_surface_types),
                 state_flags: geometry.state_flags,
                 camera_region: geometry.camera_region,
                 state_bits: read_state_bits(
@@ -2774,6 +2787,7 @@ impl MaterialCatalog {
             info_game_flags,
             texture_atlas: None,
             surface_type_bits: None,
+            t5_layered_surface_types: None,
             state_flags,
             camera_region,
             state_bits: read_state_bits(

@@ -7,7 +7,7 @@ use crate::anim::xmodel_pose::PosedModelSurface;
 use crate::occupancy::script_model::pose_script_dobj_with_materials;
 use crate::{
     MissileDrawPlan, MissileOwnerDraw, XMODEL_OBJECT_ID_MISSILE_BASE, append_missile_surfaces,
-    dobj_lighting_box_half,
+    lighting_box_half,
 };
 use anim_iw4::DOBJ_RADIUS_PARENT_ROOT;
 use render_scene::{
@@ -26,11 +26,13 @@ pub struct MissileOccupancy {
 pub struct OccupiedMissile {
     pub index: usize,
     pub id: Option<u32>,
+    pub entnum: Option<u32>,
     pub weapon: u32,
+    pub ignited: bool,
     pub origin: [f32; 3],
     pub angles: [f32; 3],
     pub name: String,
-    pub namespace: assets::AssetNamespace,
+    pub namespace: asset_core::AssetNamespace,
     pub lighting_origin: [f32; 3],
     pub lighting_owner: ModelLightingOwner,
 }
@@ -42,11 +44,11 @@ struct MissilePoseProduct {
 
 struct MissilePosed {
     index: usize,
-    id: Option<u32>,
+    entnum: Option<u32>,
     origin: [f32; 3],
     angles: [f32; 3],
     name: String,
-    namespace: assets::AssetNamespace,
+    namespace: asset_core::AssetNamespace,
     lighting_origin: [f32; 3],
     lighting_owner: ModelLightingOwner,
     surfaces: Vec<PosedModelSurface>,
@@ -81,10 +83,12 @@ pub struct MissileBoltState {
 }
 
 pub struct MissileBoltRow {
+    pub projectile: Option<u32>,
     pub weapon: u32,
     pub trail_played: bool,
     pub beacon_played: bool,
     pub ignition_played: bool,
+    pub ignition_fx_played: bool,
 }
 
 pub fn register_missile_systems(app: &mut App) {
@@ -125,7 +129,7 @@ pub fn missile_lighting_origin(origin: [f32; 3]) -> [f32; 3] {
 
 pub fn missile_pose_catalog(
     assets: Option<&assets::PreparedProjectileMeshes>,
-) -> Option<&assets::ProjectileMeshCatalog> {
+) -> Option<&asset_model::ProjectileMeshCatalog> {
     assets
         .map(|prepared| &prepared.0)
         .filter(|catalog| !catalog.is_empty())
@@ -145,7 +149,7 @@ fn occupy_missile_scene_ents(
     mut occupancy: ResMut<MissileOccupancy>,
     mut scene_skels: ResMut<AnimDObjSceneSkels>,
     mut scene_submissions: MessageWriter<AnimDObjSceneSubmission>,
-    cg_clock: Option<Res<net::CgFrameClock>>,
+    cg_clock: Option<Res<net::FrameClock>>,
     local: Option<Res<net::LocalPresentClient>>,
 ) {
     occupancy.rows.clear();
@@ -174,7 +178,7 @@ fn occupy_missile_scene_ents(
         })
         .map(|link| link.projectile);
     for (index, row) in rows.iter().enumerate() {
-        if entity_iw4::cg_missile_nodraw(0, row.launch_time(), at_time).is_some() {
+        if entity_iw4::missile_nodraw(0, row.launch_time(), at_time).is_some() {
             continue;
         }
         if piloted.is_some() && row.authoritative_id() == piloted {
@@ -186,7 +190,7 @@ fn occupy_missile_scene_ents(
         };
         let ns = weapons_reg
             .and_then(|reg| reg.namespace_of(row.weapon()))
-            .unwrap_or(assets::AssetNamespace::Iw4);
+            .unwrap_or(asset_core::AssetNamespace::Iw4);
         let Some(entry) = catalog.get(ns, name) else {
             continue;
         };
@@ -200,21 +204,28 @@ fn occupy_missile_scene_ents(
             net::PresentedProjectile::Predicted { .. } => row.origin_at(at_time),
         };
         let lighting_origin = missile_lighting_origin(origin);
-        let angles = entity_iw4::bg_evaluate_trajectory(&row.apos(), at_time);
-        let entnum = row.authoritative_id().map(|id| id.0).unwrap_or(0);
-        scene_submissions.write(AnimDObjSceneSubmission {
-            render_fx_flags: 0,
-            has_tree: false,
-            origin,
-            lighting_origin,
-            radius: entry.skel.radius,
-            entnum,
-            quat: Some(scene_quat_from_angles(angles)),
-            occupy_model_n: 1,
-            models: vec![scene_skels.shared(name, &entry.skel, 0)],
-            hide_part_bits: [0; 6],
-            store_skin: true,
-        });
+        let angles = entity_iw4::evaluate_trajectory(&row.apos(), at_time);
+        let entnum = match row {
+            net::PresentedProjectile::Authoritative(projectile) => {
+                u32::try_from(projectile.entnum).ok()
+            }
+            net::PresentedProjectile::Predicted { .. } => None,
+        };
+        if let Some(entnum) = entnum {
+            scene_submissions.write(AnimDObjSceneSubmission {
+                render_fx_flags: 0,
+                has_tree: false,
+                origin,
+                lighting_origin,
+                radius: entry.skel.radius,
+                entnum,
+                quat: Some(scene_quat_from_angles(angles)),
+                occupy_model_n: 1,
+                models: vec![scene_skels.shared(name, &entry.skel, 0)],
+                hide_part_bits: [0; 6],
+                store_skin: true,
+            });
+        }
         let lighting_owner = match row.authoritative_id() {
             Some(id) => ModelLightingOwner::Missile(id.0),
             None => ModelLightingOwner::PredictedMissile {
@@ -225,7 +236,16 @@ fn occupy_missile_scene_ents(
         occupancy.rows.push(OccupiedMissile {
             index,
             id: row.authoritative_id().map(|id| id.0),
+            entnum,
             weapon: row.weapon(),
+            ignited: match row {
+                net::PresentedProjectile::Authoritative(p) => weapons_reg
+                    .and_then(|reg| reg.facts_of(p.weapon))
+                    .is_none_or(|facts| {
+                        at_time >= p.spawn_time_ms.saturating_add(facts.ignition_delay_ms)
+                    }),
+                net::PresentedProjectile::Predicted { .. } => false,
+            },
             origin,
             angles,
             name: name.to_owned(),
@@ -242,23 +262,23 @@ fn publish_missile_dobj_poses(
     mut dobj_poses: ResMut<crate::anim::dobj_pose::HostDObjPoseFrame>,
 ) {
     for row in &occupancy.rows {
-        let Some(id) = row.id else {
+        let Some(entnum) = row.entnum else {
             continue;
         };
         let Some(dobj) = prepared.projectile_dobj(row.namespace, &row.name) else {
             continue;
         };
         let entity_world = missile_world_from_local(row.origin, row.angles);
-        let Ok(local) = assets::dobj::pose_dobj_with_controller(
+        let Ok(local) = xmodel_runtime::pose_dobj_with_controller(
             dobj,
-            &assets::dobj::DObjPoseRequest::bind_pose(),
+            &xmodel_runtime::DObjPoseRequest::bind_pose(),
             Mat4::IDENTITY,
             |_, _, _| {},
         ) else {
             continue;
         };
 
-        let _ = dobj_poses.publish(id, true, 0, entity_world, &local);
+        let _ = dobj_poses.publish(entnum, true, 0, entity_world, &local);
     }
 }
 
@@ -275,8 +295,13 @@ fn pose_missiles(
         return;
     };
     for row in &occupancy.rows {
-        let entnum = row.id.unwrap_or(0);
-        let slot = missile_scene_slot(&gfx.scene, entnum);
+        let slot = row
+            .entnum
+            .map(|entnum| missile_scene_slot(&gfx.scene, entnum))
+            .unwrap_or(MissileSceneSlot {
+                hidden: false,
+                skin_entries: &[],
+            });
         if slot.hidden {
             continue;
         }
@@ -286,7 +311,7 @@ fn pose_missiles(
         let Some(dobj) = prepared.projectile_dobj(row.namespace, &row.name) else {
             continue;
         };
-        let dobj_state = assets::dobj::DObjSemanticState::bind_pose(row.name.clone(), 1, 1);
+        let dobj_state = xmodel_runtime::DObjSemanticState::bind_pose(row.name.clone(), 1, 1);
         let Ok(request) = dobj_state.resolve_request(|_| None) else {
             continue;
         };
@@ -302,7 +327,7 @@ fn pose_missiles(
         };
         product.rows.push(MissilePosed {
             index: row.index,
-            id: row.id,
+            entnum: row.entnum,
             origin: row.origin,
             angles: row.angles,
             name: row.name.clone(),
@@ -345,7 +370,6 @@ fn append_missile_draws(
         unreachable!("required missile draw resources checked above");
     };
     for row in &product.rows {
-        let entnum = row.id.unwrap_or(0);
         let Some(entry) = catalog.get(row.namespace, &row.name) else {
             continue;
         };
@@ -365,7 +389,7 @@ fn append_missile_draws(
         let box_half = entry
             .skel
             .radius
-            .and_then(|radius| dobj_lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
+            .and_then(|radius| lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
         let lookup_fallback = atpoint.fallback(row.lighting_origin, box_half);
         let pending_lighting = Some(lighting_requests.request(ModelLightingRequest {
             owner: row.lighting_owner,
@@ -402,7 +426,7 @@ fn append_missile_draws(
                 reflection_probe_index: 0,
                 packed_lighting: None,
                 is_scope: false,
-                scene_entnum: Some(entnum),
+                scene_entnum: row.entnum,
                 caster_bound,
             });
         }

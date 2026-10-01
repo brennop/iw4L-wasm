@@ -4,8 +4,8 @@ use std::sync::Arc;
 use bevy::prelude::*;
 
 use crate::occupancy::dyn_ent::xmodel_phys_hull;
-use assets::ClipCollision;
-use net::CgFrameClock;
+use asset_world::ClipCollision;
+use net::FrameClock;
 use render_scene::DynEntModelEntity;
 use render_scene::WorldDynEntInstance;
 
@@ -68,8 +68,8 @@ pub(crate) fn register_dyn_ent_phys(app: &mut App) {
 pub fn step_phys_world0(
     mut world: ResMut<DynEntPhysWorld>,
     clip: Res<DynEntPhysClip>,
-    clock: Option<Res<CgFrameClock>>,
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    clock: Option<Res<FrameClock>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     mut impulses: MessageReader<DynEntPhysImpulse>,
     mut instances: Query<
         (Entity, &mut WorldDynEntInstance, &mut Transform),
@@ -84,7 +84,7 @@ pub fn step_phys_world0(
         if inst.dead {
             continue;
         }
-        let Some(props) = assets::retail_dyn_ent_props(inst.ty) else {
+        let Some(props) = asset_world::dyn_ent_props(inst.ty) else {
             continue;
         };
         if !props.use_physics {
@@ -120,7 +120,7 @@ pub fn step_phys_world0(
     let now = clock
         .as_deref()
         .filter(|clock| clock.started())
-        .map(CgFrameClock::time);
+        .map(FrameClock::time);
     let mut advanced_ms = 0;
     if let Some(now) = now {
         match world.last_time {

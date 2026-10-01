@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use web_time::Instant;
 
-use assets::load_jobs::{JobRow, Jobs};
+use asset_transport::load_jobs::{JobRow, Jobs};
 use perf::frames::{FrameRow, Frames, flag};
 use perf::{Counter, Span};
 

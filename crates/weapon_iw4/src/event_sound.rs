@@ -117,15 +117,15 @@ pub const fn slot_for_event(event: i32, player_view: bool) -> Option<usize> {
     }
 }
 
-pub fn pm_begin_reload_event(facts: &crate::pm_weapon::WeaponCombatFacts, clip: i32) -> i32 {
+pub fn begin_reload_event(facts: &crate::tick::WeaponCombatFacts, clip: i32) -> i32 {
     if facts.segmented_reload {
         EV_RELOAD_START
     } else {
-        pm_reload_insert_event(facts, clip)
+        reload_insert_event(facts, clip)
     }
 }
 
-pub fn pm_reload_insert_event(facts: &crate::pm_weapon::WeaponCombatFacts, clip: i32) -> i32 {
+pub fn reload_insert_event(facts: &crate::tick::WeaponCombatFacts, clip: i32) -> i32 {
     if facts.weap_type == 0 && clip <= 0 {
         EV_RELOAD_FROM_EMPTY
     } else {

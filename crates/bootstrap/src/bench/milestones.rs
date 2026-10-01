@@ -5,12 +5,14 @@
 use std::path::{Path, PathBuf};
 use web_time::Instant;
 
-use assets::{LoadLaneTiming, LoadProgress, LoadingScreen, MatchLoadBusy, MatchLoadRequest};
+use asset_transport::{LoadLaneTiming, LoadProgress};
+use assets::{LoadingScreen, MatchLoadBusy, MatchLoadRequest};
 use audio::MapAmbientBooted;
 use bevy::prelude::*;
+use frame::MatchInstalled;
 use render_frontend::prepare::scene::cull::DpvsFrameStats;
 use render_frontend::prepare::scene::world::WorldScene;
-use session::MatchInstalled;
+use render_gpu::ColourWorkingSet;
 
 /// Consecutive frames with a working colour set before the picture counts as
 /// rendered: one frame can hit while a pipeline is still compiling.
@@ -145,7 +147,7 @@ pub(crate) fn poll(
     screen: Option<Res<ui::AppScreen>>,
     ambient: Option<Res<MapAmbientBooted>>,
     stats: Option<Res<DpvsFrameStats>>,
-    working: Option<Res<render::ColourWorkingSet>>,
+    working: Option<Res<ColourWorkingSet>>,
 ) {
     let now = Instant::now();
     let saw_request = request.is_some() || busy.is_some_and(|busy| busy.0);

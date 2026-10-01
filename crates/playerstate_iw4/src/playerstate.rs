@@ -134,20 +134,42 @@ pub mod other_flags {
 }
 
 pub mod pm_flags {
+    pub const PRONE: u32 = 0x1;
+
+    pub const CROUCH: u32 = 0x2;
+
+    pub const MANTLE: u32 = 0x4;
+
+    pub const LADDER: u32 = 0x8;
+
+    pub const ADS_INTENT: u32 = 0x10;
+
+    pub const BACKWARDS_RUN: u32 = 0x20;
+
+    pub const WALKING: u32 = 0x40;
+
     pub const TIME_HARDLANDING: u32 = 0x80;
 
-    pub const BLOCK_OFFHAND_OTS: u32 = 0x4000;
+    pub const PRONEMOVE_OVERRIDDEN: u32 = 0x200;
 
-    pub const MELEE_CHARGE: u32 = 0x10000;
+    pub const LADDER_FALL: u32 = 0x1000;
+
+    pub const JUMPING: u32 = 0x2000;
+
+    pub const SPRINTING: u32 = 0x4000;
 
     pub const SHELLSHOCKED: u32 = 0x8000;
 
-    pub const LAST_STAND: u32 = 0x0040_0000;
+    pub const MELEE_CHARGE: u32 = 0x10000;
 
-    pub const PRONEMOVE_OVERRIDDEN: u32 = 0x200;
+    pub const SPRINT_BLOCKED: u32 = 0x0002_0000;
+
+    pub const LAST_STAND: u32 = 0x0040_0000;
 }
 
 pub mod weap_flags {
+    pub const NIGHT_VISION: u32 = 0x40;
+
     pub const OFFHAND_VIEW: u32 = 0x2;
 
     pub const NO_ADS: u32 = 0x20;
@@ -158,7 +180,7 @@ pub mod weap_flags {
 }
 
 #[must_use]
-pub fn bg_get_viewmodel_weapon_index(ps: &PlayerState) -> u32 {
+pub fn get_viewmodel_weapon_index(ps: &PlayerState) -> u32 {
     if (ps.weap_flags & weap_flags::OFFHAND_VIEW) != 0 {
         u32::try_from(ps.off_hand_index).unwrap_or(0)
     } else {
@@ -305,6 +327,8 @@ impl PlayerState {
 pub const PERK_PISTOLDEATH: u32 = 1 << 7;
 
 pub const PERK_QUIETER: u32 = 1 << 8;
+
+pub const PERK_SCAVENGER: u32 = 1 << 22;
 
 pub const PERK_COLDBLOODED: u32 = 1 << 27;
 

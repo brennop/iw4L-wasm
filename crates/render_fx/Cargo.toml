@@ -6,7 +6,12 @@ license.workspace = true
 description = "Bevy-facing FX presentation producer over the pure fx host pool."
 
 [dependencies]
+asset_audio.workspace = true
+asset_core.workspace = true
+asset_game.workspace = true
 asset_iw4.workspace = true
+asset_model.workspace = true
+asset_world.workspace = true
 assets.workspace = true
 audio.workspace = true
 diag.workspace = true

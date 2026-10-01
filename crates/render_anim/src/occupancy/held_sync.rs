@@ -8,7 +8,7 @@ use crate::occupancy::fpv_present::{
     FpvHeldLife, FpvHeldSettled, FpvPlacementRoot, FpvState, FpvStatusGap, PendingFpvSpawn,
     PendingFpvSpawnRequest, SessionViewmodel,
 };
-use weapon_iw4::bg_get_viewmodel_weapon_index;
+use weapon_iw4::get_viewmodel_weapon_index;
 
 pub fn sync_fpv_to_held_weapon(
     mut commands: Commands,
@@ -110,7 +110,11 @@ pub fn sync_fpv_to_held_weapon(
             );
         }
     }
-    let held = bg_get_viewmodel_weapon_index(ps);
+    let held = prepared
+        .table()
+        .map_or(get_viewmodel_weapon_index(ps), |t| {
+            crate::occupancy::fpv_present::fpv_viewmodel_weapon(ps, t)
+        });
 
     if held == 0 {
         if session_vm.0.is_some() || pending_fpv.0.is_some() || settled.0 != Some(0) {

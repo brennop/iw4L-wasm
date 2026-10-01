@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use assets::FxDefinitions;
+use asset_game::FxDefinitions;
 use bevy::prelude::*;
 use fx::FxSystemHost;
 use fx_iw4::FxPostLight;
@@ -11,13 +11,13 @@ use crate::present::FxElemInfoCache;
 pub struct PreparedFxCatalog(pub FxDefinitions);
 
 #[derive(Resource, Default)]
-pub struct PreparedFxModels(pub assets::FxModelCatalog);
+pub struct PreparedFxModels(pub asset_game::FxModelCatalog);
 
 #[derive(Resource, Default)]
 pub struct PreparedFxElemInfos(pub FxElemInfoCache);
 
 #[derive(Resource, Default)]
-pub struct PreparedImpactFx(pub Option<assets::OwnedFxImpactTable>);
+pub struct PreparedImpactFx(pub Option<asset_game::OwnedFxImpactTable>);
 
 #[derive(Resource, Default)]
 pub struct FxWorldColorImages {
@@ -106,7 +106,7 @@ pub struct HostFxPostLights {
 
 impl HostFxPostLights {
     pub fn add(&mut self, light: FxPostLight) {
-        if !fx_iw4::fx_post_light_add_allows(self.queued.len() as u32) {
+        if !fx_iw4::post_light_add_allows(self.queued.len() as u32) {
             self.cap_full = self.cap_full.saturating_add(1);
             return;
         }

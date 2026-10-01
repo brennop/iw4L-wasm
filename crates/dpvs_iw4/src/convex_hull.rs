@@ -288,7 +288,7 @@ fn grow_initial_hull(
     hull_point_count
 }
 
-pub fn com_convex_hull(points: &[[f32; 2]], hull: &mut [[f32; 2]]) -> usize {
+pub fn convex_hull(points: &[[f32; 2]], hull: &mut [[f32; 2]]) -> usize {
     let n = points.len();
     if !(3..=COM_CONVEX_HULL_MAX).contains(&n) || hull.is_empty() {
         return 0;
@@ -331,7 +331,7 @@ pub fn add_vert_to_portal_hull_points(hull: &mut PortalHullPoints, uv: [f32; 2])
     let mut n = usize::from(hull.count);
     if n == COM_CONVEX_HULL_MAX {
         let mut compact = [[0.0f32; 2]; COM_CONVEX_HULL_MAX];
-        let h = com_convex_hull(&hull.points[..n], &mut compact);
+        let h = convex_hull(&hull.points[..n], &mut compact);
         if h == COM_CONVEX_HULL_MAX || h == 0 {
             if h == COM_CONVEX_HULL_MAX {
                 return false;

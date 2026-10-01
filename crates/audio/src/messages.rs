@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use assets::AssetNamespace;
+use asset_core::AssetNamespace;
 
 pub const SND_ENT_LOCAL: u32 = 0;
 
@@ -69,6 +69,6 @@ pub struct LandSound {
     pub snd_ent: Option<u32>,
 }
 
-pub fn snd_ent_from_number(number: i32) -> Option<u32> {
+pub fn ent_from_number(number: i32) -> Option<u32> {
     u32::try_from(number).ok()
 }

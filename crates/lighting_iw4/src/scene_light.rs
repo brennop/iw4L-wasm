@@ -195,7 +195,7 @@ pub enum AddOmniLightRefuse {
     Cap,
 }
 
-pub fn r_add_omni_light_to_scene_allows(
+pub fn add_omni_light_to_scene_allows(
     world_present: bool,
     radius: f32,
     live_count: u32,
@@ -212,7 +212,7 @@ pub fn r_add_omni_light_to_scene_allows(
     Ok(())
 }
 
-pub fn r_omni_light_pack(origin: [f32; 3], radius: f32, color_bgr: [f32; 3]) -> GfxLightPack {
+pub fn omni_light_pack(origin: [f32; 3], radius: f32, color_bgr: [f32; 3]) -> GfxLightPack {
     GfxLightPack {
         light_type: GFX_LIGHT_TYPE_OMNI,
         color: color_bgr,
@@ -262,7 +262,7 @@ impl SpotLightConeDvars {
     }
 }
 
-pub fn r_spot_light_clamp_end(start_radius: f32, end_radius: f32, radius: f32) -> f32 {
+pub fn spot_light_clamp_end(start_radius: f32, end_radius: f32, radius: f32) -> f32 {
     let mut end = end_radius;
     if end <= start_radius {
         end = start_radius + R_SPOT_LIGHT_EPS;
@@ -273,19 +273,19 @@ pub fn r_spot_light_clamp_end(start_radius: f32, end_radius: f32, radius: f32) -
     end
 }
 
-pub fn r_spot_light_offset(start_radius: f32, end_radius: f32, radius: f32) -> f32 {
+pub fn spot_light_offset(start_radius: f32, end_radius: f32, radius: f32) -> f32 {
     start_radius / ((end_radius - start_radius) / radius)
 }
 
-pub fn r_spot_light_pack(
+pub fn spot_light_pack(
     origin: [f32; 3],
     forward: [f32; 3],
     radius: f32,
     color_bgr: [f32; 3],
     cone: SpotLightConeDvars,
 ) -> GfxLightPack {
-    let end = r_spot_light_clamp_end(cone.start_radius, cone.end_radius, radius);
-    let offset = r_spot_light_offset(cone.start_radius, end, radius);
+    let end = spot_light_clamp_end(cone.start_radius, cone.end_radius, radius);
+    let offset = spot_light_offset(cone.start_radius, end, radius);
     let dir = [
         forward[0] * R_SPOT_LIGHT_DIR_SIGN,
         forward[1] * R_SPOT_LIGHT_DIR_SIGN,

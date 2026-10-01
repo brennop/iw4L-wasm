@@ -10,7 +10,6 @@ web-time = { workspace = true }
 gamefs.workspace = true
 render_material.workspace = true
 diag.workspace = true
-anim_iw4.workspace = true
 xmodel_runtime.workspace = true
 asset_core.workspace = true
 asset_anim.workspace = true
@@ -25,15 +24,11 @@ fastfile_iw4.workspace = true
 fastfile_t5.workspace = true
 fastfile_iw5.workspace = true
 asset_iw4.workspace = true
-dpvs_iw4.workspace = true
 clipmap_iw4.workspace = true
-trace_iw4.workspace = true
 # Light-grid CPU sample chain for authored smodel `$model_lighting` tiles.
 lighting_iw4.workspace = true
-fx_iw4.workspace = true
 bevy.workspace = true
 frame.workspace = true
-bcdec_rs.workspace = true
 serde_json.workspace = true
 async-lock.workspace = true
 png.workspace = true

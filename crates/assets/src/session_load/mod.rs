@@ -4,20 +4,27 @@ use std::sync::Arc;
 use bevy::tasks::{TaskPool, TaskPoolBuilder};
 
 use crate::{
-    BodyMeshCatalog, ClipCollision, FpvMeshBuild, FpvMeshCatalog, FxCatalog, IntermissionView,
-    LocalizeCatalog, MP_LOCALIZED_ZONES, MaterialCatalog, PreparedGaps, PreparedMap,
-    ProjectileMeshBuild, WeaponBuild, WeaponRegistry, WorldDraw, WorldWeaponBuild,
-    WorldWeaponCatalog, XAnimBuild, XAnimCatalog, find_common_mp_for_envelope,
-    find_common_mp_for_zone, find_runtime_common_mp, find_runtime_zone, find_zone_file_version,
-    find_zone_for_tree, games_root_from_env,
+    PreparedGaps, PreparedMap,
     lane::{LoadedWorld, lane},
     lane_capability::PreparedCapability,
+};
+use asset_anim::{XAnimBuild, XAnimCatalog};
+use asset_game::{
+    FxCatalog, LocalizeCatalog, MP_LOCALIZED_ZONES, WeaponBuild, WeaponRegistry,
     load_localize_catalog_in_lane,
-    material_images::ImageDemandPlan,
-    open_zone_shared, peek_zone_version,
-    progress::{LoadProgress, StageHandle, StageId},
+};
+use asset_material::{ImageDemandPlan, MaterialCatalog};
+use asset_model::{
+    BodyMeshCatalog, FpvMeshBuild, FpvMeshCatalog, ProjectileMeshBuild, WorldWeaponBuild,
+    WorldWeaponCatalog,
 };
 use asset_transport::load_jobs::{self, JobKind};
+use asset_transport::{
+    LoadProgress, StageHandle, StageId, find_common_mp_for_envelope, find_common_mp_for_zone,
+    find_runtime_common_mp, find_runtime_zone, find_zone_file_version, find_zone_for_tree,
+    games_root_from_env, open_zone_shared, peek_zone_version,
+};
+use asset_world::{ClipCollision, IntermissionView, WorldDraw};
 
 pub use asset_world::WorldDrawPolicy;
 
@@ -86,44 +93,44 @@ fn set_thread_cpus(_cpus: &[usize]) {}
 #[derive(Default, Clone)]
 pub struct PreparedWorld {
     pub draw: Option<WorldDraw>,
-    pub dynamic_light: Option<crate::ResolvedLightDef>,
-    pub static_model_meshes: Vec<crate::ModelMesh>,
+    pub dynamic_light: Option<asset_world::ResolvedLightDef>,
+    pub static_model_meshes: Vec<asset_world::ModelMesh>,
 
-    pub static_model_instances: Vec<Option<crate::StaticModelPlacement>>,
+    pub static_model_instances: Vec<Option<asset_world::StaticModelPlacement>>,
 
-    pub map_xmodel_scene_assets: crate::MapXModelSceneCatalog,
+    pub map_xmodel_scene_assets: asset_world::MapXModelSceneCatalog,
 
-    pub script_model_instances: Vec<crate::ScriptModelSceneInstance>,
+    pub script_model_instances: Vec<asset_world::ScriptModelSceneInstance>,
 
-    pub script_brush_models: Vec<crate::ScriptBrushModelPlacement>,
+    pub script_brush_models: Vec<asset_world::ScriptBrushModelPlacement>,
 
-    pub map_use_triggers: Vec<crate::MapUseTrigger>,
+    pub flag_descriptors: Vec<asset_world::FlagDescriptor>,
 
-    pub flag_descriptors: Vec<crate::FlagDescriptor>,
+    pub script_structs: Vec<asset_world::MapScriptStruct>,
 
-    pub script_structs: Vec<crate::MapScriptStruct>,
+    pub dyn_ents: asset_world::DynEntCatalog,
 
-    pub dyn_ents: crate::DynEntCatalog,
+    pub smodel_lighting_samples: Vec<asset_model::SmodelLightingSample>,
 
-    pub smodel_lighting_samples: Vec<crate::SmodelLightingSample>,
+    pub light_grid: Option<asset_model::OwnedLightGrid>,
 
-    pub light_grid: Option<crate::OwnedLightGrid>,
+    pub fx: asset_game::FxCatalog,
 
-    pub fx: crate::FxCatalog,
+    pub fx_models: asset_game::FxModelCatalog,
 
-    pub fx_models: crate::FxModelCatalog,
+    pub fx_glass: Option<asset_world::FxGlassReset>,
 
-    pub fx_glass: Option<crate::FxGlassReset>,
-
-    pub impact_fx: Option<crate::OwnedFxImpactTable>,
+    pub impact_fx: Option<asset_game::OwnedFxImpactTable>,
     pub reflection_probe_images: Vec<Option<bevy::prelude::Image>>,
     pub intermission_view: Option<IntermissionView>,
 
-    pub exp_fog: Option<crate::ExpFog>,
+    pub exp_fog: Option<asset_world::ExpFog>,
 
-    pub film_vision: Option<crate::FilmVision>,
-    pub film_visions:
-        std::collections::BTreeMap<String, Result<crate::FilmVision, crate::FilmVisionParseError>>,
+    pub film_vision: Option<asset_world::FilmVision>,
+    pub film_visions: std::collections::BTreeMap<
+        String,
+        Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
+    >,
 
     pub createart_name: Option<String>,
     pub min: [f32; 3],
@@ -135,9 +142,10 @@ pub struct PreparedWorld {
 
 #[derive(Default, Clone)]
 pub struct PreparedMatch {
+    pub scripts: crate::ScriptSources,
     pub world: PreparedWorld,
 
-    pub fx: crate::FxDefinitions,
+    pub fx: asset_game::FxDefinitions,
     pub materials: crate::MatchMaterials,
     pub clip: Option<Arc<ClipCollision>>,
     pub weapons: Arc<WeaponRegistry>,
@@ -145,12 +153,12 @@ pub struct PreparedMatch {
     pub bodies: Arc<BodyMeshCatalog>,
     pub world_weapons: WorldWeaponCatalog,
 
-    pub projectile_meshes: crate::ProjectileMeshCatalog,
+    pub projectile_meshes: asset_model::ProjectileMeshCatalog,
     pub xanims: XAnimCatalog,
     pub destructible_death: Vec<crate::DestructibleDeathRow>,
-    pub player_anim_sources: crate::PlayerAnimSources,
+    pub player_anim_sources: asset_anim::PlayerAnimSources,
 
-    pub tracers: crate::TracerDefinitions,
+    pub tracers: asset_game::TracerDefinitions,
 
     pub strings: LocalizeCatalog,
     pub report: Vec<String>,

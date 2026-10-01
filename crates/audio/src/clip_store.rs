@@ -5,7 +5,9 @@ use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
-use assets::{AssetNamespace, NamespaceSoundIwd, SoundCatalog};
+use asset_core::AssetNamespace;
+use asset_audio::SoundCatalog;
+use assets::NamespaceSoundIwd;
 use bevy::prelude::*;
 
 use crate::pcm::{PcmAudio, decode_audio_bytes};
@@ -877,7 +879,7 @@ fn prepare_jobs(
 ) -> Vec<Result<PreparedPcm, ClipError>> {
     let mut out: Vec<Option<Result<PreparedPcm, ClipError>>> = vec![None; jobs.len()];
 
-    let asked: Vec<(usize, &assets::LoadedSoundPcm)> = jobs
+    let asked: Vec<(usize, &asset_audio::LoadedSoundPcm)> = jobs
         .iter()
         .enumerate()
         .filter_map(|(i, job)| match job.key {
@@ -889,9 +891,9 @@ fn prepare_jobs(
         })
         .collect();
     if !asked.is_empty() {
-        let clips: Vec<assets::XwmaClip<'_>> = asked
+        let clips: Vec<asset_audio::XwmaClip<'_>> = asked
             .iter()
-            .map(|(_, sound)| assets::XwmaClip {
+            .map(|(_, sound)| asset_audio::XwmaClip {
                 packets: sound.encoded_bytes(),
                 seek_table: &sound.seek_table,
                 channels: sound.channels().max(0) as u32,
@@ -899,7 +901,7 @@ fn prepare_jobs(
             })
             .collect();
         let decode_at = Instant::now();
-        let decoded = assets::decode_t5_xwma_batch(&clips);
+        let decoded = asset_audio::decode_t5_xwma_batch(&clips);
         note_wall(ClipPath::Xwma, decode_at.elapsed());
         for ((i, sound), pcm) in asked.into_iter().zip(decoded) {
             let result = pcm
@@ -949,19 +951,19 @@ fn prepare_clip_now(
 /// Which decoder `prepare_loaded` will reach for, decided the same way it
 /// decides — the two read the same fields in the same order, so a clip cannot
 /// be counted under one path and decoded by another.
-fn loaded_path(sound: &assets::LoadedSoundPcm) -> Option<ClipPath> {
+fn loaded_path(sound: &asset_audio::LoadedSoundPcm) -> Option<ClipPath> {
     if sound.t5_adpcm_bytes().is_some() {
         Some(ClipPath::Adpcm)
     } else if sound.is_t5_xwma() {
         Some(ClipPath::Xwma)
-    } else if sound.format() == assets::MSS_PCM {
+    } else if sound.format() == asset_audio::MSS_PCM {
         Some(ClipPath::Pcm)
     } else {
         None
     }
 }
 
-fn prepare_loaded(sound: &assets::LoadedSoundPcm) -> Result<PreparedPcm, ClipError> {
+fn prepare_loaded(sound: &asset_audio::LoadedSoundPcm) -> Result<PreparedPcm, ClipError> {
     if let Some(bytes) = sound.t5_adpcm_bytes() {
         let channels = u16::try_from(sound.channels().max(1)).map_err(|_| ClipError::Decode)?;
         let pcm = crate::pcm::t5_stream::decode_adpcm(
@@ -979,7 +981,7 @@ fn prepare_loaded(sound: &assets::LoadedSoundPcm) -> Result<PreparedPcm, ClipErr
     }
     let decoded;
     let (bits, bytes) = if sound.is_t5_xwma() {
-        decoded = assets::decode_t5_xwma(
+        decoded = asset_audio::decode_t5_xwma(
             sound.encoded_bytes(),
             &sound.seek_table,
             sound.channels().max(0) as u32,

@@ -85,12 +85,10 @@ fn play_with_bolt(
             if let Some(target) = target
                 && let Some(effect) = host.slot_for_handle_mut(handle)
             {
-                let teleport = fx_iw4::fx_bolt_centity_teleport_for_compare(
-                    target.dobj,
-                    target.centity_teleport,
-                );
+                let teleport =
+                    fx_iw4::bolt_centity_teleport_for_compare(target.dobj, target.centity_teleport);
                 effect.bolt_packed =
-                    fx_iw4::fx_bolt_pack(target.dobj, teleport, u32::from(target.bone));
+                    fx_iw4::bolt_pack(target.dobj, teleport, u32::from(target.bone));
                 effect.bolt_centity_teleport = teleport;
                 effect.bolt_bone_pose = Some((target.orientation.origin, target.orientation.axis));
                 effect.origin = target.orientation.origin;
@@ -110,11 +108,11 @@ fn play_with_bolt(
 }
 
 pub fn axis_from_hit_normal(normal: [f32; 3]) -> [[f32; 3]; 3] {
-    fx_iw4::fx_vector_vectors(normal)
+    fx_iw4::vector_vectors(normal)
 }
 
 pub fn axis_from_impact_velocity(pre_vel: [f32; 3]) -> [[f32; 3]; 3] {
-    fx_iw4::fx_vector_vectors(pre_vel)
+    fx_iw4::vector_vectors(pre_vel)
 }
 
 pub fn spawn_impact_or_death_effect(host: &mut FxSystemHost, req: FxPlayRequest<'_>) -> PlayResult {

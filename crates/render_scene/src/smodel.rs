@@ -12,7 +12,7 @@ pub struct SmodelPassMaterial {
     pub atlas: Option<Handle<Image>>,
     pub alpha_mode: AlphaMode,
 
-    pub draw_mode: Option<assets::MaterialDrawMode>,
+    pub draw_mode: Option<asset_material::MaterialDrawMode>,
 
     pub cull_mode: Option<bevy::render::render_resource::Face>,
     pub env_map_parms: [f32; 4],
@@ -33,7 +33,7 @@ pub struct LodRampArgs {
 
     pub world_unit: Option<f32>,
 
-    pub t5: assets::t5_lod::LodParmsAxis,
+    pub t5: asset_model::t5_lod::LodParmsAxis,
 
     pub t5_no_lod_cull_out: bool,
 }
@@ -57,7 +57,7 @@ impl LodRampArgs {
 }
 
 pub fn smodel_camera_lod(
-    lod: Option<assets::ModelLodSelector>,
+    lod: Option<asset_model::ModelLodSelector>,
     origin: [f32; 3],
     scale: f32,
     eye: Option<Vec3>,
@@ -67,7 +67,7 @@ pub fn smodel_camera_lod(
         return Some(0);
     };
     match lod {
-        assets::ModelLodSelector::Iw4 {
+        asset_model::ModelLodSelector::Iw4 {
             lod_start,
             num_lods,
             lod_dist,
@@ -83,13 +83,13 @@ pub fn smodel_camera_lod(
             xmodel_get_lod_for_dist(lod_start, num_lods, lod_dist, mid, last)
         }
 
-        assets::ModelLodSelector::T5 { num_lods, lod_dist } => {
+        asset_model::ModelLodSelector::T5 { num_lods, lod_dist } => {
             let dx = eye.x - origin[0];
             let dy = eye.y - origin[1];
             let dz = eye.z - origin[2];
             let d = (dx * dx + dy * dy + dz * dz).sqrt();
             let (ramped, base) = ramp.t5.smodel_call_dists(d, scale);
-            assets::t5_lod::xmodel_get_lod_for_dist(
+            asset_model::t5_lod::xmodel_get_lod_for_dist(
                 num_lods,
                 lod_dist,
                 ramped,
@@ -114,7 +114,7 @@ pub struct AuthoredMaps {
     pub specular: Option<Handle<Image>>,
     pub alpha_mode: AlphaMode,
 
-    pub draw_mode: Option<assets::MaterialDrawMode>,
+    pub draw_mode: Option<asset_material::MaterialDrawMode>,
     pub cull_mode: Option<bevy::render::render_resource::Face>,
     pub env_map_parms: [f32; 4],
 }
@@ -132,8 +132,8 @@ pub fn runtime_maps(
         })
     };
     AuthoredMaps {
-        color: tex(assets::TS_COLOR_MAP),
-        specular: tex(assets::TS_SPECULAR_MAP),
+        color: tex(asset_material::TS_COLOR_MAP),
+        specular: tex(asset_material::TS_SPECULAR_MAP),
         alpha_mode: AlphaMode::Opaque,
         draw_mode: None,
         cull_mode: runtime.and_then(|m| runtime_cull_face(m.cull_mode)),
@@ -150,7 +150,7 @@ pub struct LodRampSkinnedDvar {
     pub t5_scale: f32,
     pub t5_bias: f32,
     pub t5_fov_threshold: f32,
-    pub t5: assets::t5_lod::LodParmsAxis,
+    pub t5: asset_model::t5_lod::LodParmsAxis,
 }
 
 impl Default for LodRampSkinnedDvar {
@@ -160,10 +160,10 @@ impl Default for LodRampSkinnedDvar {
             bias_mid: None,
             scale_last: None,
             world_unit: None,
-            t5_scale: assets::t5_lod::R_LOD_SCALE_SKINNED_DEFAULT,
-            t5_bias: assets::t5_lod::R_LOD_BIAS_SKINNED_DEFAULT,
-            t5_fov_threshold: assets::t5_lod::R_FOV_SCALE_THRESHOLD_DEFAULT,
-            t5: assets::t5_lod::LodParmsAxis::default(),
+            t5_scale: asset_model::t5_lod::R_LOD_SCALE_SKINNED_DEFAULT,
+            t5_bias: asset_model::t5_lod::R_LOD_BIAS_SKINNED_DEFAULT,
+            t5_fov_threshold: asset_model::t5_lod::R_FOV_SCALE_THRESHOLD_DEFAULT,
+            t5: asset_model::t5_lod::LodParmsAxis::default(),
         }
     }
 }

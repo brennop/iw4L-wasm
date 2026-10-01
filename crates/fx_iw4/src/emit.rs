@@ -1,4 +1,4 @@
-use crate::random::{FX_RAND_CH_EMIT_DIST, fx_random_table_f32};
+use crate::random::{FX_RAND_CH_EMIT_DIST, random_table_f32};
 
 pub const FX_EMIT_RESIDUAL_TO_DIST: f64 = 0.003_906_25;
 
@@ -33,21 +33,21 @@ impl FxEmitSchedule {
 }
 
 #[inline]
-pub fn fx_emit_dist_range(
+pub fn emit_dist_range(
     emit_dist_base: f32,
     emit_dist_amp: f32,
     emit_var_base: f32,
     emit_var_amp: f32,
     elem_random_seed: u32,
 ) -> (f32, f32) {
-    let r = fx_random_table_f32(elem_random_seed, FX_RAND_CH_EMIT_DIST);
+    let r = random_table_f32(elem_random_seed, FX_RAND_CH_EMIT_DIST);
     let base = emit_dist_base + emit_dist_amp * r + emit_var_base;
     let max = base + emit_var_amp;
     (base, max)
 }
 
 #[inline]
-pub fn fx_emit_pack_residual(residual_dist: f32, max_dist_per_emit: f32) -> u8 {
+pub fn emit_pack_residual(residual_dist: f32, max_dist_per_emit: f32) -> u8 {
     if max_dist_per_emit <= 0.0 {
         return 0;
     }
@@ -64,11 +64,11 @@ pub fn fx_emit_pack_residual(residual_dist: f32, max_dist_per_emit: f32) -> u8 {
 }
 
 #[inline]
-pub fn fx_emit_unpack_residual_start(emit_residual: u8, max_dist_per_emit: f32) -> f32 {
+pub fn emit_unpack_residual_start(emit_residual: u8, max_dist_per_emit: f32) -> f32 {
     -((emit_residual as f32) * max_dist_per_emit * (FX_EMIT_RESIDUAL_TO_DIST as f32))
 }
 
-pub fn fx_process_emitting_schedule(
+pub fn process_emitting_schedule(
     emit_residual: u8,
     origin_begin: [f32; 3],
     origin_end: [f32; 3],
@@ -96,7 +96,7 @@ pub fn fx_process_emitting_schedule(
         return out;
     }
     let dist_in_update = libm::sqrtf(dist_sq);
-    let mut dist_next = fx_emit_unpack_residual_start(emit_residual, max_dist_per_emit);
+    let mut dist_next = emit_unpack_residual_start(emit_residual, max_dist_per_emit);
     let mut dist_last;
     let msec_span = (msec_update_end.saturating_sub(msec_update_begin)).max(0) as f32;
     let var_amp = (max_dist_per_emit - base_dist_per_emit).max(0.0);
@@ -123,12 +123,12 @@ pub fn fx_process_emitting_schedule(
     }
 
     let residual_dist = dist_in_update - dist_last;
-    out.new_residual = fx_emit_pack_residual(residual_dist, max_dist_per_emit);
+    out.new_residual = emit_pack_residual(residual_dist, max_dist_per_emit);
     out
 }
 
 #[inline]
-pub fn fx_emit_lerp_origin(begin: [f32; 3], end: [f32; 3], lerp: f32) -> [f32; 3] {
+pub fn emit_lerp_origin(begin: [f32; 3], end: [f32; 3], lerp: f32) -> [f32; 3] {
     [
         begin[0] + (end[0] - begin[0]) * lerp,
         begin[1] + (end[1] - begin[1]) * lerp,

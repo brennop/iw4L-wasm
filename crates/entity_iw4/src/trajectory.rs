@@ -23,14 +23,14 @@ pub struct Trajectory {
     pub tr_base: [f32; 3],
 }
 
-pub fn bg_evaluate_trajectory(tr: &Trajectory, at_time: i32) -> [f32; 3] {
+pub fn evaluate_trajectory(tr: &Trajectory, at_time: i32) -> [f32; 3] {
     match tr.tr_type {
         0 | 1 | 9 | 0xc => tr.tr_base,
         2 | 10 => vec3_mad(tr.tr_base, trajectory_dt(tr.tr_time, at_time), tr.tr_delta),
         3 => evaluate_linear_stop(tr, at_time),
         5 | 6 | 0xb => evaluate_gravity(tr, at_time),
-        4 | 7 | 8 => panic!("BG_EvaluateTrajectory SINE/accel cases are not ported"),
-        _ => panic!("BG_EvaluateTrajectory unknown trType"),
+        4 | 7 | 8 => panic!("trajectory SINE/accel types are not supported"),
+        _ => panic!("unknown trType"),
     }
 }
 
@@ -61,7 +61,7 @@ fn evaluate_gravity(tr: &Trajectory, at_time: i32) -> [f32; 3] {
     origin
 }
 
-pub fn bg_evaluate_trajectory_delta(tr: &Trajectory, at_time: i32) -> [f32; 3] {
+pub fn evaluate_trajectory_delta(tr: &Trajectory, at_time: i32) -> [f32; 3] {
     match tr.tr_type {
         0 | 1 | 0xc => [0.0; 3],
         2 | 10 => tr.tr_delta,
@@ -81,8 +81,8 @@ pub fn bg_evaluate_trajectory_delta(tr: &Trajectory, at_time: i32) -> [f32; 3] {
                 tr.tr_delta[2] - dt * TRAJECTORY_GRAVITY_DELTA,
             ]
         }
-        4 | 7 | 8 => panic!("BG_EvaluateTrajectoryDelta SINE/accel cases are not ported"),
-        _ => panic!("BG_EvaluateTrajectoryDelta unknown trType"),
+        4 | 7 | 8 => panic!("trajectory delta SINE/accel types are not supported"),
+        _ => panic!("unknown trType"),
     }
 }
 

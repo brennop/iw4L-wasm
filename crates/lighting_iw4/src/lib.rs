@@ -47,14 +47,13 @@ pub use atapoint::{
 };
 pub use cull::{
     COM_PRIMARY_LIGHT_COS_HALF_FOV_EXPANDED, COM_PRIMARY_LIGHT_DIR, COM_PRIMARY_LIGHT_ORIGIN,
-    COM_PRIMARY_LIGHT_RADIUS, ComPrimaryLightCull, DYN_ENT_PRIMARY_LIGHT_LINK_DIST2_INIT,
-    DynEntPrimaryLightLink, LightRegionAxis, LightRegionHull, LightRegionHulls,
-    NonSunPrimaryWalkTrace, cull_box_from_cone, cull_box_from_conic_section_of_sphere,
-    cull_box_from_light_region_hull, cull_box_from_primary_light, cull_box_from_sphere,
-    cull_point_from_cone_expanded, cull_point_from_light_region_hull,
-    dyn_ent_links_to_primary_light, dyn_ent_primary_light_link, dyn_ent_primary_light_link_dist2,
-    light_region_culls_box, light_region_culls_point, lighting_query_box_half,
-    non_sun_primary_light_for_box, non_sun_primary_light_walk_trace,
+    COM_PRIMARY_LIGHT_RADIUS, DYN_ENT_PRIMARY_LIGHT_LINK_DIST2_INIT, DynEntPrimaryLightLink,
+    LightRegionAxis, LightRegionHull, LightRegionHulls, NonSunPrimaryWalkTrace, PrimaryLightCull,
+    cull_box_from_cone, cull_box_from_conic_section_of_sphere, cull_box_from_light_region_hull,
+    cull_box_from_primary_light, cull_box_from_sphere, cull_point_from_cone_expanded,
+    cull_point_from_light_region_hull, dyn_ent_links_to_primary_light, dyn_ent_primary_light_link,
+    dyn_ent_primary_light_link_dist2, light_region_culls_box, light_region_culls_point,
+    lighting_query_box_half, non_sun_primary_light_for_box, non_sun_primary_light_walk_trace,
 };
 pub use dlight::{
     R_DLIGHT_BACKEND_MAX, R_DLIGHT_LIMIT_DEFAULT, R_DLIGHT_LIMIT_MAX, SceneDlight,
@@ -74,7 +73,7 @@ pub use expand::{
     ModelLightingCapExceeded, ModelLightingCoords, ModelLightingExpandPitch,
     ModelLightingLookupScale, ModelLightingPackedCoords, ModelLightingTileIndex,
     ModelLightingTileRgba, TECHNIQUE_LIT, TEXTURE_SRC_CODE_LIGHT_ATTENUATION,
-    TEXTURE_SRC_CODE_MODEL_LIGHTING, check_smodel_lit_within_retail_cap,
+    TEXTURE_SRC_CODE_MODEL_LIGHTING, check_smodel_lit_within_cap,
     light_grid_expand_shell_to_tile_rgba, light_grid_expand_shell_to_tile_zyx,
     model_lighting_atlas_dims, model_lighting_atlas_slice_offset,
     model_lighting_coords_from_handle, model_lighting_entry_from_handle,
@@ -96,8 +95,8 @@ pub use glow::{
     CONST_SRC_CODE_GLOW_APPLY, CONST_SRC_CODE_GLOW_SETUP, GlowBloomConsts, GlowViewInfo,
     R_FULLBRIGHT_DEFAULT, R_GLOW_DEFAULT, R_GLOW_TWEAK_CUTOFF_DEFAULT, R_GLOW_TWEAK_ENABLE_DEFAULT,
     R_GLOW_TWEAK_INTENSITY0_DEFAULT, R_GLOW_TWEAK_INTENSITY0_MAX, R_GLOW_TWEAK_RADIUS0_DEFAULT,
-    R_GLOW_TWEAK_RADIUS0_MAX, R_GLOW_USE_TWEAKS_DEFAULT, r_select_glow_view_info, r_set_glow_info,
-    r_using_glow,
+    R_GLOW_TWEAK_RADIUS0_MAX, R_GLOW_USE_TWEAKS_DEFAULT, select_glow_view_info, set_glow_info,
+    using_glow,
 };
 pub use isvalid::{
     LIGHT_GRID_CELL_TO_INCHES_XY, LIGHT_GRID_CELL_TO_INCHES_Z, LIGHT_GRID_ISVALID_ORIGIN_SUB,
@@ -168,10 +167,10 @@ pub use scene_light::{
     R_SPOT_LIGHT_BRIGHTNESS_DEFAULT, R_SPOT_LIGHT_DIR_SIGN, R_SPOT_LIGHT_END_RADIUS_DEFAULT,
     R_SPOT_LIGHT_EPS, R_SPOT_LIGHT_EXPONENT_DEFAULT, R_SPOT_LIGHT_FOV_INNER_FRACTION_DEFAULT,
     R_SPOT_LIGHT_START_RADIUS_DEFAULT, ShadowableLightPack, SpotLightConeDvars,
-    color_srgb_to_linear, dir_light_position, light_diffuse, light_falloff_placement,
-    light_specular, light_spot_dir, light_spot_factors, omni_spot_light_position,
-    pack_shadowable_light, r_add_omni_light_to_scene_allows, r_omni_light_pack,
-    r_spot_light_clamp_end, r_spot_light_offset, r_spot_light_pack,
+    add_omni_light_to_scene_allows, color_srgb_to_linear, dir_light_position, light_diffuse,
+    light_falloff_placement, light_specular, light_spot_dir, light_spot_factors, omni_light_pack,
+    omni_spot_light_position, pack_shadowable_light, spot_light_clamp_end, spot_light_offset,
+    spot_light_pack,
 };
 pub use smodel_alloc::{
     SModelDirtyLightingAction, SModelLightingAlloc, SModelLightingCounters, SModelLightingGlob,
@@ -186,14 +185,13 @@ pub use smodel_cache::{
     SMODEL_BUCKET_RIGID, SMODEL_BUCKET_SKINNED, SMODEL_BUCKET_STRIDE, SmcAllocatorStorage,
     SmcCacheError, SmcDrawCacheIndex, SmcIndexBakeError, SmcLeafStorage, SmcLodCacheSpec,
     SmcPatchLock, SmcStorageLens, SmcTree, SmodelBucketPush, SmodelConsumedBucket,
-    SmodelSurfBucketLists, SmodelSurfPath, StaticModelCache, r_add_static_model_surf_to_bucket,
-    r_cache_static_model_indices, r_cache_static_model_indices_u16_slot, r_smc_draw_cache_index,
-    r_smc_stream_source_byte_offset, r_smodel_bucket_mask, r_smodel_bucket_source_path,
-    r_smodel_bucket_store_payload, r_smodel_dest_path, r_smodel_lod_is_rigid,
-    r_smodel_surf_bucket_push, r_smodel_surf_type, rb_patch_static_model_cache_lock,
-    rb_patch_static_model_cache_lock_for_miss, smc_cache_index_offset, smc_index,
-    smc_lod_cache_spec, smc_size_class_for_verts, smodel_bucket_lists_consume,
-    smodel_surf_sun_shadow_emits,
+    SmodelSurfBucketLists, SmodelSurfPath, StaticModelCache, add_static_model_surf_to_bucket,
+    cache_static_model_indices, cache_static_model_indices_u16_slot, patch_static_model_cache_lock,
+    patch_static_model_cache_lock_for_miss, smc_cache_index_offset, smc_draw_cache_index,
+    smc_index, smc_lod_cache_spec, smc_size_class_for_verts, smc_stream_source_byte_offset,
+    smodel_bucket_lists_consume, smodel_bucket_mask, smodel_bucket_source_path,
+    smodel_bucket_store_payload, smodel_dest_path, smodel_lod_is_rigid, smodel_surf_bucket_push,
+    smodel_surf_sun_shadow_emits, smodel_surf_type,
 };
 pub use smodel_cmd::{
     SMODEL_CACHED_CMD_MAX_BYTES, SMODEL_PRETESS_CMD_BYTES, SmodelCachedCmdPlan, SmodelCmdKind,
@@ -220,10 +218,9 @@ pub use smodel_lighting::{
 };
 pub use smodel_skin::{
     SMC_UNIT_VEC_FIXED_SCALE, SMC_UNIT_VEC_OUT_W, SMC_UNIT_VEC_PACK_BIAS, SmcCachedVertLighting,
-    SmcSkinError, SmcSkinSurface, local_transform_unit_vec, r_skin_cached_static_model_cmd,
-    r_skin_cached_static_model_cmd_matrix, r_skin_xsurface_static_vert,
-    r_skin_xsurface_static_verts, r_skin_xsurface_unique_vert, r_skin_xsurface_unique_verts,
-    setup_transform_unit_vec,
+    SmcSkinError, SmcSkinSurface, local_transform_unit_vec, setup_transform_unit_vec,
+    skin_cached_static_model_cmd, skin_cached_static_model_cmd_matrix, skin_xsurface_static_vert,
+    skin_xsurface_static_verts, skin_xsurface_unique_vert, skin_xsurface_unique_verts,
 };
 pub use spot_shadow::{
     GFX_SHADOWABLE_SLOT_STRIDE, GFX_SPOT_SHADOW_CMDBUF_ROW_STRIDE, GFX_SPOT_SHADOW_RT_LARGE,

@@ -40,7 +40,7 @@ pub fn or_shift_part_bits(dst: &mut [u32; 6], src: [u32; 6], bone_base: u32) {
 }
 
 #[must_use]
-pub fn dobj_surface_hidden(part_bits: &[u32; 6], hide: &[u32; 6], bone_base: u32) -> bool {
+pub fn surface_hidden(part_bits: &[u32; 6], hide: &[u32; 6], bone_base: u32) -> bool {
     let mut lifted = [0u32; 6];
     or_shift_part_bits(&mut lifted, *part_bits, bone_base);
     lifted.iter().zip(hide.iter()).any(|(a, b)| a & b != 0)

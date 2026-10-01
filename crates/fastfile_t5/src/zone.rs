@@ -486,6 +486,7 @@ pub struct GfxLightmapImages {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GfxWorldGeometry {
+    pub terrain_scorch_images: Option<Ptr>,
     pub vertices: Option<Ptr>,
     pub vertex_count: usize,
 
@@ -618,6 +619,7 @@ pub struct MaterialGeometry {
     pub draw_surf: u64,
 
     pub surface_type_bits: u32,
+    pub layered_surface_types: u32,
     pub sort_key: u8,
 
     pub info_game_flags: u8,

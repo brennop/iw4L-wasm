@@ -1,5 +1,5 @@
 use weapon_iw4::{
-    SwayContribution, SwaySpringState, WeaponSwayParams, bg_calculate_weapon_movement_sway,
+    SwayContribution, SwaySpringState, WeaponSwayParams, calculate_weapon_movement_sway,
     lerp_sway_params, sway_contribution,
 };
 
@@ -45,7 +45,7 @@ impl ViewSwayState {
         } else {
             hip
         };
-        bg_calculate_weapon_movement_sway(
+        calculate_weapon_movement_sway(
             &mut self.springs,
             view_angles,
             prev,

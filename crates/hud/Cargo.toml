@@ -9,6 +9,10 @@ description = "Draws what hud_iw4 computes / Snapshot presents."
 web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
+asset_core.workspace = true
+asset_game.workspace = true
+asset_material.workspace = true
+asset_transport.workspace = true
 assets.workspace = true
 hud_iw4 = { path = "../hud_iw4" }
 weapon_iw4 = { path = "../weapon_iw4" }
@@ -20,7 +24,6 @@ net = { path = "../net" }
 sim = { path = "../sim" }
 math_iw4.workspace = true
 gamemode_iw4.workspace = true
-killcam_iw4 = { path = "../killcam_iw4" }
 
 [lints]
 workspace = true

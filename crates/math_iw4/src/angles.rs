@@ -27,7 +27,7 @@ pub fn angles_to_axis(angles: [f32; 3]) -> [[f32; 3]; 3] {
 
 pub fn angle_normalize_360(angle: f32) -> f32 {
     let scaled = angle * RETAIL_DEGREES_TO_TURNS;
-    let turns = retail_floor(scaled);
+    let turns = format_floor(scaled);
     let normalized = (scaled - turns) * RETAIL_TURN_DEGREES;
     if 0.0 <= normalized - RETAIL_TURN_DEGREES {
         normalized - RETAIL_TURN_DEGREES
@@ -204,11 +204,11 @@ const RETAIL_TURN_DEGREES: f32 = 360.0;
 
 pub fn angle_subtract(a: f32, b: f32) -> f32 {
     let scaled = (a - b) * RETAIL_DEGREES_TO_TURNS;
-    let turns = retail_floor(scaled + RETAIL_HALF_TURN);
+    let turns = format_floor(scaled + RETAIL_HALF_TURN);
     (scaled - turns) * RETAIL_TURN_DEGREES
 }
 
-fn retail_floor(value: f32) -> f32 {
+fn format_floor(value: f32) -> f32 {
     let bits = value.to_bits();
     let sign = bits >> 31;
     let exponent = ((bits >> 23) & 0xff) as i32;

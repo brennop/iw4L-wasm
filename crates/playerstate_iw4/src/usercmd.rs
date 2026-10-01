@@ -45,6 +45,8 @@ pub mod buttons {
 
     pub const LOCATION_SELECT: u32 = 0x10000;
 
+    pub const LOCATION_CANCEL: u32 = 0x20000;
+
     pub const THROW: u32 = 0x80000;
 
     pub const REMOTE_CONTROL: u32 = 0x100000;

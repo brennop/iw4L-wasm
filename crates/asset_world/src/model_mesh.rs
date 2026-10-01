@@ -221,11 +221,11 @@ pub struct ModelSurfaceDraw {
 
     pub xsurface_vert_offset: u16,
 
-    pub collision: RetailXSurfaceCollisionPayload,
+    pub collision: XSurfaceCollisionPayload,
 }
 
 #[derive(Clone, Debug)]
-pub enum RetailXSurfaceCollisionPayload {
+pub enum XSurfaceCollisionPayload {
     Iw4(Vec<OwnedXRigidVertListCollision>),
     Unavailable { source_layout: &'static str },
 }
@@ -246,12 +246,12 @@ pub struct OwnedXSurfaceCollisionTree {
 }
 
 #[derive(Clone, Debug)]
-pub enum RetailPackedVertexPayload {
+pub enum PackedVertexPayload {
     Iw4(Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>),
     Unavailable { source_layout: &'static str },
 }
 
-impl Default for RetailPackedVertexPayload {
+impl Default for PackedVertexPayload {
     fn default() -> Self {
         Self::Unavailable {
             source_layout: "packed vertex payload not installed",
@@ -353,7 +353,7 @@ pub struct MapXModelSceneCatalog {
 
     phys_preset_name_hint_n: usize,
 
-    dynent_phys_preset_n: usize,
+    phys_preset_n: usize,
 
     surface_materials: BTreeMap<MapXModelAssetKey, Vec<Option<crate::MaterialIndex>>>,
     resolved: bool,
@@ -441,6 +441,25 @@ impl MapXModelSceneCatalog {
         self.assets.entry(key).or_insert(asset);
     }
 
+    pub fn remap_walk_materials(&mut self, donor_to_host: &[usize]) {
+        for asset in self.assets.values_mut() {
+            let (MapXModelSceneAsset::Iw4(skel)
+            | MapXModelSceneAsset::T5(skel)
+            | MapXModelSceneAsset::Iw5(skel)) = asset
+            else {
+                continue;
+            };
+            let skel = Arc::make_mut(skel);
+            for slot in &mut skel.surface_materials {
+                *slot = slot.and_then(|local| {
+                    donor_to_host
+                        .get(local.get())
+                        .map(|&host| asset_core::WalkLocalMaterialIndex::from_walk(host))
+                });
+            }
+        }
+    }
+
     pub fn absorb_captured(&mut self, mut earlier: Self) {
         for (index, key) in earlier.order.into_iter().enumerate() {
             let asset = earlier
@@ -468,8 +487,49 @@ impl MapXModelSceneCatalog {
         }
     }
 
+    pub fn retain_names(&mut self, names: &std::collections::BTreeSet<String>) {
+        self.assets.retain(|key, _| names.contains(&key.0));
+        self.surface_materials
+            .retain(|key, _| names.contains(&key.0));
+        let mut at = 0;
+        self.order.retain(|key| {
+            let keep = names.contains(&key.0);
+            if keep {
+                at += 1;
+            } else {
+                self.zones.remove(at);
+            }
+            keep
+        });
+    }
+
     pub fn set_capture_zone(&mut self, zone: ZoneOwner) {
         self.capture_zone = zone;
+    }
+
+    pub fn alias(&mut self, from: &str, to: &str) -> bool {
+        let Some(asset) = self
+            .assets
+            .get(to)
+            .filter(|asset| !matches!(asset, MapXModelSceneAsset::Unavailable { .. }))
+            .cloned()
+        else {
+            return false;
+        };
+        let zone = self
+            .index_by_name(to)
+            .map(|index| self.zone_of(index))
+            .unwrap_or_default();
+        let key = MapXModelAssetKey(from.to_owned());
+        match self.order.iter().position(|k| k == &key) {
+            Some(slot) => self.zones[slot] = zone,
+            None => {
+                self.order.push(key.clone());
+                self.zones.push(zone);
+            }
+        }
+        self.assets.insert(key, asset);
+        true
     }
 
     pub fn zone_of(&self, index: usize) -> ZoneOwner {
@@ -505,12 +565,12 @@ impl MapXModelSceneCatalog {
         self.phys_preset_name_hint_n
     }
 
-    pub fn dynent_phys_preset_n(&self) -> usize {
-        self.dynent_phys_preset_n
+    pub fn phys_preset_n(&self) -> usize {
+        self.phys_preset_n
     }
 
     pub fn set_dynent_phys_preset_n(&mut self, n: usize) {
-        self.dynent_phys_preset_n = n;
+        self.phys_preset_n = n;
     }
 
     pub fn note_xmodel_phys_preset(&mut self, slot: bool, named: bool) {
@@ -599,8 +659,6 @@ pub struct PreparedMapModels {
     pub script_instances: Vec<ScriptModelSceneInstance>,
 
     pub script_brush_models: Vec<crate::ScriptBrushModelPlacement>,
-
-    pub map_use_triggers: Vec<crate::MapUseTrigger>,
 
     pub flag_descriptors: Vec<crate::FlagDescriptor>,
 
@@ -1322,7 +1380,7 @@ pub fn build_iw5_xmodel_mesh(
             )),
             xsurface_base_index: 0,
             xsurface_vert_offset: 0,
-            collision: RetailXSurfaceCollisionPayload::Unavailable {
+            collision: XSurfaceCollisionPayload::Unavailable {
                 source_layout: "IW5 XSurface collision layout not retained",
             },
         });
@@ -1355,10 +1413,10 @@ fn capture_iw4_xsurface_collision(
     surface: Ptr,
     surface_index: usize,
     surface_tri_count: usize,
-) -> Result<RetailXSurfaceCollisionPayload, ModelMeshError> {
+) -> Result<XSurfaceCollisionPayload, ModelMeshError> {
     let count = stream.u32_at(surface, stream.layout(32, 48))? as usize;
     if count == 0 {
-        return Ok(RetailXSurfaceCollisionPayload::Iw4(Vec::new()));
+        return Ok(XSurfaceCollisionPayload::Iw4(Vec::new()));
     }
     let lists = resolved_ptr(stream, surface, stream.layout(36, 56))?;
     stream.slice_at(
@@ -1404,7 +1462,7 @@ fn capture_iw4_xsurface_collision(
             tree,
         });
     }
-    Ok(RetailXSurfaceCollisionPayload::Iw4(trees))
+    Ok(XSurfaceCollisionPayload::Iw4(trees))
 }
 
 fn capture_iw4_collision_tree(
@@ -1483,10 +1541,10 @@ fn capture_t5_xsurface_collision(
     surface: fastfile_t5::Ptr,
     surface_index: usize,
     surface_tri_count: usize,
-) -> Result<RetailXSurfaceCollisionPayload, ModelMeshError> {
+) -> Result<XSurfaceCollisionPayload, ModelMeshError> {
     let count = stream.u8_at(surface, 1)? as usize;
     if count == 0 {
-        return Ok(RetailXSurfaceCollisionPayload::Iw4(Vec::new()));
+        return Ok(XSurfaceCollisionPayload::Iw4(Vec::new()));
     }
     let lists = resolved_ptr_t5(stream, surface, 40)?;
     stream.slice_at(lists, 0, count * fastfile_t5::size::XRIGID_VERT_LIST)?;
@@ -1530,7 +1588,7 @@ fn capture_t5_xsurface_collision(
             tree,
         });
     }
-    Ok(RetailXSurfaceCollisionPayload::Iw4(trees))
+    Ok(XSurfaceCollisionPayload::Iw4(trees))
 }
 
 fn capture_t5_collision_tree(

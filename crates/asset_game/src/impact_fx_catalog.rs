@@ -90,13 +90,13 @@ impl ImpactFxCatalog {
             let mut nonflesh = std::array::from_fn(|_| String::new());
             let mut flesh = std::array::from_fn(|_| String::new());
             for (j, slot) in nonflesh.iter_mut().enumerate() {
-                match fx_name_at_cell(s, fx, e.at(j * s.pointer_bytes())) {
+                match name_at_cell(s, fx, e.at(j * s.pointer_bytes())) {
                     Ok(n) => *slot = n,
                     Err(()) => gaps += 1,
                 }
             }
             for (j, slot) in flesh.iter_mut().enumerate() {
-                match fx_name_at_cell(s, fx, e.at(s.layout(124, 248) + j * s.pointer_bytes())) {
+                match name_at_cell(s, fx, e.at(s.layout(124, 248) + j * s.pointer_bytes())) {
                     Ok(n) => *slot = n,
                     Err(()) => gaps += 1,
                 }
@@ -114,7 +114,7 @@ impl ImpactFxCatalog {
     }
 }
 
-fn fx_name_at_cell(
+fn name_at_cell(
     s: &ZoneStream<'_>,
     fx: &crate::FxCatalog,
     cell: fastfile_iw4::Ptr,
@@ -176,7 +176,7 @@ impl ImpactFxCatalog {
 impl OwnedFxImpactTable {
     pub fn impact_row(&self, impact_type: i32, exit: bool) -> Option<usize> {
         if !self.t5 {
-            return fx_iw4::fx_impact_table_row(impact_type, exit);
+            return fx_iw4::impact_table_row(impact_type, exit);
         }
         let exit = usize::from(exit);
         Some(match impact_type {

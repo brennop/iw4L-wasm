@@ -82,7 +82,7 @@ impl FxMarkStagingPoint {
     };
 }
 
-pub fn fx_mark_context_from_world_surface(lmap: u8, primary_light: u8, probe: u8) -> [u8; 7] {
+pub fn mark_context_from_world_surface(lmap: u8, primary_light: u8, probe: u8) -> [u8; 7] {
     let mut context = [0u8; 7];
     context[1] = lmap;
     context[5] = primary_light;
@@ -90,7 +90,7 @@ pub fn fx_mark_context_from_world_surface(lmap: u8, primary_light: u8, probe: u8
     context
 }
 
-pub fn fx_mark_context_from_smodel(
+pub fn mark_context_from_smodel(
     surf_index: u8,
     smodel_index: u16,
     primary_light: u8,
@@ -106,19 +106,19 @@ pub fn fx_mark_context_from_smodel(
     context
 }
 
-pub fn fx_mark_context_lmap(context: &[u8; 7]) -> u8 {
+pub fn mark_context_lmap(context: &[u8; 7]) -> u8 {
     context[1]
 }
 
-pub fn fx_mark_context_primary_light(context: &[u8; 7]) -> u8 {
+pub fn mark_context_primary_light(context: &[u8; 7]) -> u8 {
     context[5]
 }
 
-pub fn fx_mark_context_probe(context: &[u8; 7]) -> u8 {
+pub fn mark_context_probe(context: &[u8; 7]) -> u8 {
     context[6]
 }
 
-pub fn fx_mark_fragment_clip_planes(
+pub fn mark_fragment_clip_planes(
     origin: [f32; 3],
     axis: [[f32; 3]; 3],
     radius: f32,
@@ -144,7 +144,7 @@ pub fn fx_mark_fragment_clip_planes(
     planes
 }
 
-pub fn fx_mark_is_triangle_rejected(
+pub fn mark_is_triangle_rejected(
     mark_dir: [f32; 3],
     v0: [f32; 3],
     v1: [f32; 3],
@@ -161,7 +161,7 @@ pub fn fx_mark_is_triangle_rejected(
     len_sq * R_MARK_TRI_REJECT_LEN_SQ_SCALE > dot * dot
 }
 
-pub fn fx_mark_setup_world_clip_points(
+pub fn mark_setup_world_clip_points(
     v0: [f32; 3],
     v1: [f32; 3],
     v2: [f32; 3],
@@ -182,7 +182,7 @@ pub fn fx_mark_setup_world_clip_points(
     ]
 }
 
-pub fn fx_mark_chop_world_poly_behind_plane(
+pub fn mark_chop_world_poly_behind_plane(
     in_count: usize,
     inp: &[FxWorldMarkPoint],
     plane: [f32; 4],
@@ -268,7 +268,7 @@ fn lerp_point(a: FxWorldMarkPoint, b: FxWorldMarkPoint, t: f32) -> FxWorldMarkPo
     }
 }
 
-pub fn fx_mark_clip_world_triangle(
+pub fn mark_clip_world_triangle(
     mark_dir: [f32; 3],
     planes: &[[f32; 4]; R_MARK_CLIP_PLANE_COUNT],
     v0: [f32; 3],
@@ -276,17 +276,17 @@ pub fn fx_mark_clip_world_triangle(
     v2: [f32; 3],
 ) -> u32 {
     let mut pts = [FxWorldMarkPoint::ZERO; R_MARK_CHOP_MAX_POINTS];
-    fx_mark_clip_world_triangle_points(mark_dir, planes, v0, v1, v2, &mut pts)
+    mark_clip_world_triangle_points(mark_dir, planes, v0, v1, v2, &mut pts)
 }
 
-pub fn fx_mark_chop_world_triangle_points(
+pub fn mark_chop_world_triangle_points(
     planes: &[[f32; 4]; R_MARK_CLIP_PLANE_COUNT],
     v0: [f32; 3],
     v1: [f32; 3],
     v2: [f32; 3],
     out_pts: &mut [FxWorldMarkPoint],
 ) -> u32 {
-    let setup = fx_mark_setup_world_clip_points(v0, v1, v2);
+    let setup = mark_setup_world_clip_points(v0, v1, v2);
     let mut buf_a = [FxWorldMarkPoint::ZERO; R_MARK_CHOP_MAX_POINTS];
     let mut buf_b = [FxWorldMarkPoint::ZERO; R_MARK_CHOP_MAX_POINTS];
     buf_a[0] = setup[0];
@@ -301,7 +301,7 @@ pub fn fx_mark_chop_world_triangle_points(
         } else {
             (&buf_b[..], &mut buf_a[..])
         };
-        count = fx_mark_chop_world_poly_behind_plane(count, inp, planes[plane_i], out);
+        count = mark_chop_world_poly_behind_plane(count, inp, planes[plane_i], out);
         if count == 0 {
             return 0;
         }
@@ -318,7 +318,7 @@ pub fn fx_mark_chop_world_triangle_points(
     n as u32
 }
 
-pub fn fx_mark_clip_world_triangle_points(
+pub fn mark_clip_world_triangle_points(
     mark_dir: [f32; 3],
     planes: &[[f32; 4]; R_MARK_CLIP_PLANE_COUNT],
     v0: [f32; 3],
@@ -326,13 +326,13 @@ pub fn fx_mark_clip_world_triangle_points(
     v2: [f32; 3],
     out_pts: &mut [FxWorldMarkPoint],
 ) -> u32 {
-    if fx_mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
+    if mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
         return 0;
     }
-    fx_mark_chop_world_triangle_points(planes, v0, v1, v2, out_pts)
+    mark_chop_world_triangle_points(planes, v0, v1, v2, out_pts)
 }
 
-pub fn fx_mark_emit_brush_fragment(
+pub fn mark_emit_brush_fragment(
     used_tri: u32,
     used_point: u32,
     max_tris: u32,
@@ -394,7 +394,7 @@ pub fn fx_mark_emit_brush_fragment(
     Ok((tri_end, point_end))
 }
 
-pub fn fx_mark_clip_world_surfaces(
+pub fn mark_clip_world_surfaces(
     origin: [f32; 3],
     radius: f32,
     axis: [[f32; 3]; 3],
@@ -404,7 +404,7 @@ pub fn fx_mark_clip_world_surfaces(
     packed_indices: &[u32],
     surface_index_ranges: &[(u32, u32)],
 ) -> MarkWorldClipCensus {
-    let planes = fx_mark_fragment_clip_planes(origin, axis, radius);
+    let planes = mark_fragment_clip_planes(origin, axis, radius);
     let mark_dir = axis[0];
     let radius_sq = radius * radius;
     let n = core::cmp::min(
@@ -419,7 +419,7 @@ pub fn fx_mark_clip_world_surfaces(
         if stacked >= cap {
             break;
         }
-        if crate::fx_mark_sphere_hits_bounds(origin, radius_sq, mids[si], halves[si]) {
+        if crate::mark_sphere_hits_bounds(origin, radius_sq, mids[si], halves[si]) {
             stacked = stacked.saturating_add(1);
             let (start, count) = surface_index_ranges[si];
             let start = start as usize;
@@ -439,11 +439,11 @@ pub fn fx_mark_clip_world_surfaces(
                     let v0 = positions[i0];
                     let v1 = positions[i1];
                     let v2 = positions[i2];
-                    if fx_mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
+                    if mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
                         census.tri_rejected = census.tri_rejected.saturating_add(1);
                         continue;
                     }
-                    let pts = fx_mark_clip_world_triangle(mark_dir, &planes, v0, v1, v2);
+                    let pts = mark_clip_world_triangle(mark_dir, &planes, v0, v1, v2);
                     if pts < 3 {
                         census.clip_zero = census.clip_zero.saturating_add(1);
                     } else {
@@ -457,7 +457,7 @@ pub fn fx_mark_clip_world_surfaces(
     census
 }
 
-pub fn fx_mark_stage_world_surfaces(
+pub fn mark_stage_world_surfaces(
     origin: [f32; 3],
     radius: f32,
     axis: [[f32; 3]; 3],
@@ -475,7 +475,7 @@ pub fn fx_mark_stage_world_surfaces(
     points: &mut [FxMarkStagingPoint],
     retest_sphere: bool,
 ) -> MarkWorldStaging {
-    let planes = fx_mark_fragment_clip_planes(origin, axis, radius);
+    let planes = mark_fragment_clip_planes(origin, axis, radius);
     let mark_dir = axis[0];
     let radius_sq = radius * radius;
     let n = core::cmp::min(
@@ -491,8 +491,7 @@ pub fn fx_mark_stage_world_surfaces(
         if stacked >= cap || out.overflow {
             break;
         }
-        if !retest_sphere
-            || crate::fx_mark_sphere_hits_bounds(origin, radius_sq, mids[si], halves[si])
+        if !retest_sphere || crate::mark_sphere_hits_bounds(origin, radius_sq, mids[si], halves[si])
         {
             stacked = stacked.saturating_add(1);
             let (start, count) = surface_index_ranges[si];
@@ -516,12 +515,11 @@ pub fn fx_mark_stage_world_surfaces(
                     let v0 = positions[i0];
                     let v1 = positions[i1];
                     let v2 = positions[i2];
-                    if fx_mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
+                    if mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
                         out.census.tri_rejected = out.census.tri_rejected.saturating_add(1);
                         continue;
                     }
-                    let pts =
-                        fx_mark_chop_world_triangle_points(&planes, v0, v1, v2, &mut fragment);
+                    let pts = mark_chop_world_triangle_points(&planes, v0, v1, v2, &mut fragment);
                     if pts < 3 {
                         out.census.clip_zero = out.census.clip_zero.saturating_add(1);
                         continue;
@@ -536,7 +534,7 @@ pub fn fx_mark_stage_world_surfaces(
                     {
                         continue;
                     }
-                    match fx_mark_emit_brush_fragment(
+                    match mark_emit_brush_fragment(
                         out.used_tri,
                         out.used_point,
                         max_tris,

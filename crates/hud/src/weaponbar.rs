@@ -1,20 +1,18 @@
 use std::collections::HashMap;
 
-use assets::{
-    CapturedStringTable, MenuCatalog, PreparedLocalizedStrings, PreparedWeapons, SessionCompass,
-};
+use asset_game::{CapturedStringTable, MenuCatalog};
+use assets::{PreparedLocalizedStrings, PreparedWeapons, SessionCompass};
 use bevy::prelude::*;
 use bevy::ui::{Display, FocusPolicy};
 use hud_iw4::{
-    ExprError, ExprHost, LowAmmoWarningQuery, Operand, PERKS_INFO_HD_MENU, SCREEN_BLEND_FLASHED,
+    ExprError, ExprHost, LowAmmoWarningQuery, Operand, PERKS_INFO_HD_MENU, SCREEN_BLEND_BLURRED,
     SPECIALTY_NULL, WEAPON_NAME_FADE_DURATION_MS, WEAPON_NAME_FADE_TAIL_MS, WEAPONBAR_HD_MENU,
-    bg_get_perk_slot_index, bg_perk_code_key, cg_draw_player_weapon_low_ammo_warning,
-    cg_fade_color, cg_is_flashbanged, cg_low_ammo_warning_color_pair,
-    cg_low_ammo_warning_pulse_frac, vec4_lerp,
+    draw_player_weapon_low_ammo_warning, fade_color, get_perk_slot_index, is_flashbanged,
+    low_ammo_warning_color_pair, low_ammo_warning_pulse_frac, perk_code_key, vec4_lerp,
 };
-use net::{CgFrameClock, CgWeaponSelect, LocalPresentClient, PresentedSnapshot};
+use net::{FrameClock, LocalPresentClient, PresentedSnapshot, WeaponSelect};
 use playerstate_iw4::{PM_TYPE_DEAD, PlayerState};
-use weapon_iw4::{bg_get_viewmodel_weapon_index, bg_player_weapons_find_slot};
+use weapon_iw4::{get_viewmodel_weapon_index, player_weapons_find_slot};
 
 use crate::ammo::{
     OWNERDRAW_CLIP, OWNERDRAW_CLIP_LEFT, OWNERDRAW_COMPASS_RING, OWNERDRAW_LOW_AMMO,
@@ -32,7 +30,7 @@ use crate::gaps::{GapCause, HudGap, HudPresentationGaps, ImageMiss};
 use crate::gpu_list::{GpuListLatch, HudTessPass, TessJob};
 use crate::images::HudImages;
 use crate::playercard::UiLocalVars;
-use crate::scorebar::sys_milliseconds;
+use crate::scorebar::milliseconds;
 use crate::weapon_name::localized_weapon_name;
 
 const EFLAGS_HIDE_AMMO_HUD: u32 = 0x100000;
@@ -80,13 +78,15 @@ struct WeaponbarExprHost<'a> {
     input: Option<&'a frame::HudInputView>,
     ms: i32,
     cg_time: i32,
+    shock_screen_type: i32,
     in_killcam: bool,
     missilecam: bool,
     game_ended: bool,
     spectating_client: bool,
+    dvars: sim::ScriptDvars<'a>,
     local_vars: &'a UiLocalVars,
     catalog: Option<&'a MenuCatalog>,
-    menu: Option<&'a assets::MenuDef>,
+    menu: Option<&'a asset_game::MenuDef>,
     perk_slots: [u32; 8],
     weapon_script: String,
 
@@ -104,8 +104,12 @@ impl WeaponbarExprHost<'_> {
 }
 
 impl ExprHost for WeaponbarExprHost<'_> {
+    fn binding_label(&self, command: &str) -> Option<&str> {
+        self.input?.binding_keys.get(command).map(String::as_str)
+    }
+
     fn ui_active(&self) -> Result<i32, ExprError> {
-        Ok(i32::from(self.input.is_some_and(|i| i.menu_open)))
+        Ok(i32::from(self.input.is_some_and(|i| i.script_menu_open)))
     }
     fn action_slot_usable(&self, slot: i32) -> Result<i32, ExprError> {
         if self
@@ -191,7 +195,9 @@ impl ExprHost for WeaponbarExprHost<'_> {
         ))
     }
     fn dvar_int(&self, name: &str) -> Result<i32, ExprError> {
-        if name.eq_ignore_ascii_case("scr_gameended") {
+        if let Some(value) = self.dvars.int(name) {
+            Ok(value)
+        } else if name.eq_ignore_ascii_case("scr_gameended") {
             Ok(i32::from(self.game_ended))
         } else if name.eq_ignore_ascii_case("g_hardcore")
             || name.eq_ignore_ascii_case("onlinegame")
@@ -230,11 +236,11 @@ impl ExprHost for WeaponbarExprHost<'_> {
         Ok(Operand::Str(String::from(t.cell(row, col))))
     }
     fn get_perk(&self, name: &str) -> Result<Operand, ExprError> {
-        let Some(slot) = bg_get_perk_slot_index(name) else {
+        let Some(slot) = get_perk_slot_index(name) else {
             return Ok(Operand::Str(SPECIALTY_NULL.to_owned()));
         };
         let code = self.perk_slots.get(slot).copied().unwrap_or(0);
-        let Some(key) = bg_perk_code_key(code) else {
+        let Some(key) = perk_code_key(code) else {
             return Ok(Operand::Str(SPECIALTY_NULL.to_owned()));
         };
         let Some(t) = self.table("mp/perkTable.csv") else {
@@ -255,11 +261,11 @@ impl ExprHost for WeaponbarExprHost<'_> {
         let Some(ps) = self.ps else {
             return Ok(0);
         };
-        Ok(cg_is_flashbanged(
+        Ok(is_flashbanged(
             self.cg_time,
             ps.shellshock_time,
             ps.shellshock_duration,
-            SCREEN_BLEND_FLASHED,
+            self.shock_screen_type,
         ))
     }
     fn weapon_name(&self) -> Result<Operand, ExprError> {
@@ -353,7 +359,7 @@ fn paint_low_ammo(
     };
     let hands = if ammo.dual { 2 } else { 1 };
     let clip_alt = ammo.clip_alt.unwrap_or(0);
-    let Some(kind) = cg_draw_player_weapon_low_ammo_warning(LowAmmoWarningQuery {
+    let Some(kind) = draw_player_weapon_low_ammo_warning(LowAmmoWarningQuery {
         pm_type: state.ps.pm_type,
         e_flags: state.ps.e_flags,
         weapon: state.ps.weapon,
@@ -374,8 +380,8 @@ fn paint_low_ammo(
     let Some(text) = table.text(kind.loc_key()) else {
         return OwnerDrawPaint::Gap(ChromeGapKind::Localize);
     };
-    let (c1, c2) = cg_low_ammo_warning_color_pair(kind);
-    let pulse = cg_low_ammo_warning_pulse_frac(state.cg_time);
+    let (c1, c2) = low_ammo_warning_color_pair(kind);
+    let pulse = low_ammo_warning_pulse_frac(state.cg_time);
     let lerped = vec4_lerp(c1, c2, pulse);
     let color = [
         lerped[0].clamp(0.0, 1.0),
@@ -400,7 +406,7 @@ fn paint_weapon_name(
     }
     let mut color = args.color;
     if fade {
-        let Some(alpha) = cg_fade_color(
+        let Some(alpha) = fade_color(
             state.cg_time,
             state.select_time,
             WEAPON_NAME_FADE_DURATION_MS,
@@ -419,9 +425,9 @@ fn paint_weapon_name(
     }
 }
 
-fn cg_selected_weapon_index(ps: &PlayerState, selected: u32) -> u32 {
+fn selected_weapon_index(ps: &PlayerState, selected: u32) -> u32 {
     let owned = i32::try_from(selected)
-        .is_ok_and(|weapon| weapon != 0 && bg_player_weapons_find_slot(&ps.weapons, weapon) >= 0);
+        .is_ok_and(|weapon| weapon != 0 && player_weapons_find_slot(&ps.weapons, weapon) >= 0);
     if owned { selected } else { ps.weapon }
 }
 
@@ -498,6 +504,76 @@ fn background_stem(background: &str) -> Option<String> {
 
 const WEAPOVERLAYINTERFACE_JAVELIN: i32 = 1;
 
+fn ads_javelin(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
+    let viewmodel = get_viewmodel_weapon_index(ps);
+    viewmodel > 0
+        && ps.f_weapon_pos_frac == 1.0
+        && weapons
+            .0
+            .facts_of(viewmodel)
+            .is_some_and(|facts| facts.overlay_interface == WEAPOVERLAYINTERFACE_JAVELIN)
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct HudPlayerVis {
+    pub ui_active: bool,
+    pub flashbanged: bool,
+    pub weapon_script: String,
+    pub ads_javelin: bool,
+    pub missilecam: bool,
+    pub emp_jammed: bool,
+    pub game_ended: bool,
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct HudPlayerVisInput<'w> {
+    input: Option<Res<'w, frame::HudInputView>>,
+    weapons: Option<Res<'w, PreparedWeapons>>,
+    cg_clock: Res<'w, FrameClock>,
+}
+
+impl HudPlayerVisInput<'_> {
+    pub(crate) fn read(&self, presented: &PresentedSnapshot, local: sim::ClientId) -> HudPlayerVis {
+        let ui_active = self.input.as_ref().is_some_and(|i| i.script_menu_open);
+        let Some(ps) = presented.player(local) else {
+            return HudPlayerVis {
+                ui_active,
+                ..HudPlayerVis::default()
+            };
+        };
+        let snapshot = presented.snapshot();
+        let weapons = self.weapons.as_deref();
+        HudPlayerVis {
+            ui_active,
+            flashbanged: is_flashbanged(
+                self.cg_clock.time(),
+                ps.shellshock_time,
+                ps.shellshock_duration,
+                presented
+                    .shellshock(local)
+                    .map_or(SCREEN_BLEND_BLURRED, |shock| shock.screen_type),
+            ) != 0,
+            weapon_script: weapons
+                .map(|w| {
+                    w.0.script_name_of(get_viewmodel_weapon_index(ps))
+                        .to_owned()
+                })
+                .unwrap_or_default(),
+            ads_javelin: weapons.is_some_and(|w| ads_javelin(ps, w)),
+            missilecam: snapshot
+                .and_then(|s| s.meta.for_client(local))
+                .is_some_and(|m| m.remote_missile.is_some()),
+            emp_jammed: ps.other_flags & 0x400 != 0,
+            game_ended: snapshot.is_some_and(|s| {
+                matches!(
+                    s.meta.phase,
+                    sim::MatchPhase::Intermission | sim::MatchPhase::PostGame
+                )
+            }),
+        }
+    }
+}
+
 fn weapon_lock_view(
     ps: &PlayerState,
     weapons: &PreparedWeapons,
@@ -506,13 +582,7 @@ fn weapon_lock_view(
     projection: Option<&Projection>,
     surface: &crate::surface::Hud2dSurface,
 ) -> hud_iw4::WeaponLockView {
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
-    let ads_javelin = viewmodel > 0
-        && ps.f_weapon_pos_frac == 1.0
-        && weapons
-            .0
-            .facts_of(viewmodel)
-            .is_some_and(|facts| facts.overlay_interface == WEAPOVERLAYINTERFACE_JAVELIN);
+    let ads_javelin = ads_javelin(ps, weapons);
     let lock = meta
         .map(|m| m.weapon_lock)
         .filter(|lock| lock.weapon == ps.weapon && ps.health > 0)
@@ -551,7 +621,7 @@ fn ammo_hud_hidden(ps: &PlayerState) -> bool {
 
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct WeaponbarInput<'w, 's> {
-    select: Res<'w, CgWeaponSelect>,
+    select: Res<'w, WeaponSelect>,
     input: Option<Res<'w, frame::HudInputView>>,
     cameras: Query<'w, 's, &'static Projection, With<Camera3d>>,
 }
@@ -572,7 +642,7 @@ pub(crate) fn update_weaponbar(
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     view: Option<Res<frame::ViewSubject>>,
-    cg_clock: Res<CgFrameClock>,
+    cg_clock: Res<FrameClock>,
     client_input: WeaponbarInput,
 ) {
     if !surface.is_ready() {
@@ -602,13 +672,13 @@ pub(crate) fn update_weaponbar(
         .snapshot()
         .and_then(|s| s.meta.for_client(local.0));
     let ammo = weapons.as_ref().and_then(|w| weaponbar_ammo(ps, w, meta));
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+    let viewmodel = get_viewmodel_weapon_index(ps);
     let weapon_script = weapons
         .as_ref()
         .map(|w| w.0.script_name_of(viewmodel))
         .unwrap_or_default();
     let name = localized_weapon_name(
-        cg_selected_weapon_index(ps, client_input.select.index),
+        selected_weapon_index(ps, client_input.select.index),
         weapons.as_deref(),
         strings.as_deref(),
         &mut gaps,
@@ -626,8 +696,11 @@ pub(crate) fn update_weaponbar(
         weapons: weapons.as_deref(),
         ps: Some(ps),
         input: client_input.input.as_deref(),
-        ms: sys_milliseconds() as i32,
+        ms: milliseconds() as i32,
         cg_time: cg_clock.time(),
+        shock_screen_type: presented
+            .shellshock(local.0)
+            .map_or(SCREEN_BLEND_BLURRED, |shock| shock.screen_type),
         in_killcam: view.as_deref().is_some_and(|v| v.in_killcam()),
         missilecam: meta.is_some_and(|m| m.remote_missile.is_some()),
         game_ended: presented.snapshot().is_some_and(|s| {
@@ -637,6 +710,10 @@ pub(crate) fn update_weaponbar(
             )
         }),
         spectating_client: false,
+        dvars: presented
+            .snapshot()
+            .map(|s| s.meta.script_dvars(local.0))
+            .unwrap_or_default(),
         local_vars: &local_vars,
         catalog: Some(catalog),
         menu: None,
@@ -716,7 +793,7 @@ pub(crate) fn update_weaponbar(
         });
     }
 
-    for name in ["dpad_hd", "javelin_overlay_hd"] {
+    for name in ["dpad_hd", "javelin_overlay_hd", "missilecam_hud_hd"] {
         let Some(menu) = catalog.get(name) else {
             continue;
         };
@@ -793,7 +870,7 @@ pub(crate) fn update_weaponbar(
         });
     }
 
-    let mut fonts: HashMap<String, &assets::FontDef> = HashMap::new();
+    let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     let mut ring_miss = false;
     let mut perk_miss = false;
     for cmd in &list.cmds {

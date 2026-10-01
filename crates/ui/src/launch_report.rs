@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use frame::{LaunchIdentity, LaunchReport};
 
-use crate::class_store::SessionClassStore;
+use crate::classes::store::SessionClassStore;
 use crate::gap_hud::GapHud;
 
 pub fn publish_gap_hud(
@@ -62,10 +62,7 @@ pub fn publish_gap_hud(
         "- sky cubemap + alpha-test/blend/multiply from techset+stateBits are live; specular/probe/spot still gaps"
             .into(),
     );
-    body.push(
-        "- DPVS batches use material identity; retail-runtime MaterialInfo.drawSurf keys not yet"
-            .into(),
-    );
+    body.push("- DPVS batches use material identity; MaterialInfo.drawSurf keys not yet".into());
     body.push(
         "- FPV eye-posed hands+gun (bind baseMat + rigid verts); XAnim sample / full blend skin still gap"
             .into(),

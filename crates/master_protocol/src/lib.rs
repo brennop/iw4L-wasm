@@ -250,7 +250,7 @@ impl fmt::Display for AdmissionFailure {
             ),
             Self::ClassRegistry { host, peer } => write!(
                 f,
-                "class/loadout table mismatch: host={host:016x} peer={peer:016x}; use the same class setup as the host"
+                "class catalog mismatch: host={host:016x} peer={peer:016x}; use the same game build as the host"
             ),
         }
     }

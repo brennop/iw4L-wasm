@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use net::CgFrameClock;
+use net::FrameClock;
 use render_frame::{SunEffectsFrame, angular_lerp};
 
 use super::command_context::MapSunEffects;
@@ -26,7 +26,7 @@ pub(crate) fn publish_sun_effects_frame(
     mut track: Local<SunEffectsCameraTrack>,
     sun: Option<Res<MapSunEffects>>,
     prepared: Option<Res<PreparedSceneView>>,
-    clock: Option<Res<CgFrameClock>>,
+    clock: Option<Res<FrameClock>>,
     world_generation: Option<Res<frame::WorldGeneration>>,
     cameras: Query<(Entity, &GlobalTransform), (With<Camera3d>, Without<FpvLens>)>,
 ) {

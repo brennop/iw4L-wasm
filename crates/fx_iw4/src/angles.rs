@@ -1,12 +1,12 @@
-use crate::origin::fx_sample_float_range;
+use crate::origin::sample_float_range;
 use crate::random::{
     FX_RAND_CH_ANG_VEL_PITCH, FX_RAND_CH_ANG_VEL_ROLL, FX_RAND_CH_ANG_VEL_YAW,
     FX_RAND_CH_SPAWN_ANGLES_PITCH, FX_RAND_CH_SPAWN_ANGLES_ROLL, FX_RAND_CH_SPAWN_ANGLES_YAW,
-    fx_random_table_f32,
+    random_table_f32,
 };
 
 #[inline]
-pub fn fx_sample_elem_angles(
+pub fn sample_elem_angles(
     spawn_angles: [[f32; 2]; 3],
     angular_velocity: [[f32; 2]; 3],
     seed: u32,
@@ -24,15 +24,15 @@ pub fn fx_sample_elem_angles(
     ];
     let mut out = [0.0f32; 3];
     for i in 0..3 {
-        let spawn = fx_sample_float_range(
+        let spawn = sample_float_range(
             spawn_angles[i][0],
             spawn_angles[i][1],
-            fx_random_table_f32(seed, ch_spawn[i]),
+            random_table_f32(seed, ch_spawn[i]),
         );
-        let vel = fx_sample_float_range(
+        let vel = sample_float_range(
             angular_velocity[i][0],
             angular_velocity[i][1],
-            fx_random_table_f32(seed, ch_vel[i]),
+            random_table_f32(seed, ch_vel[i]),
         );
         out[i] = spawn + age_msec * vel;
     }
@@ -40,7 +40,7 @@ pub fn fx_sample_elem_angles(
 }
 
 #[inline]
-pub fn fx_angles_to_axis_radians(angles: [f32; 3]) -> [[f32; 3]; 3] {
+pub fn angles_to_axis_radians(angles: [f32; 3]) -> [[f32; 3]; 3] {
     let pitch = angles[0];
     let yaw = angles[1];
     let roll = angles[2];
@@ -58,7 +58,7 @@ pub fn fx_angles_to_axis_radians(angles: [f32; 3]) -> [[f32; 3]; 3] {
 }
 
 #[inline]
-pub fn fx_mat3_mul(a: [[f32; 3]; 3], b: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+pub fn mat3_mul(a: [[f32; 3]; 3], b: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
     let mut out = [[0.0f32; 3]; 3];
     for i in 0..3 {
         for j in 0..3 {
@@ -69,14 +69,14 @@ pub fn fx_mat3_mul(a: [[f32; 3]; 3], b: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
 }
 
 #[inline]
-pub fn fx_get_elem_angles_axis(
+pub fn get_elem_angles_axis(
     spawn_angles: [[f32; 2]; 3],
     angular_velocity: [[f32; 2]; 3],
     seed: u32,
     age_msec: f32,
     effect_axis: [[f32; 3]; 3],
 ) -> [[f32; 3]; 3] {
-    let angles = fx_sample_elem_angles(spawn_angles, angular_velocity, seed, age_msec);
-    let local = fx_angles_to_axis_radians(angles);
-    fx_mat3_mul(local, effect_axis)
+    let angles = sample_elem_angles(spawn_angles, angular_velocity, seed, age_msec);
+    let local = angles_to_axis_radians(angles);
+    mat3_mul(local, effect_axis)
 }

@@ -1,6 +1,6 @@
 use fx_iw4::{
     FX_ELEM_AT_REST_NONE, FX_ELEM_POOL_CAPACITY, FX_ELEM_RUNTIME_STRIDE,
-    FX_SPARK_CLOUD_HANDLE_NONE, fx_elem_handle_from_ptr_delta,
+    FX_SPARK_CLOUD_HANDLE_NONE, elem_handle_from_ptr_delta,
 };
 
 pub const FX_ELEM_HANDLE_NONE: u16 = 0xffff;
@@ -81,7 +81,7 @@ impl FxElemSlot {
 
 #[inline]
 pub fn elem_handle_for_slot(slot: u32) -> u16 {
-    fx_elem_handle_from_ptr_delta(slot.wrapping_mul(FX_ELEM_RUNTIME_STRIDE as u32))
+    elem_handle_from_ptr_delta(slot.wrapping_mul(FX_ELEM_RUNTIME_STRIDE as u32))
 }
 
 #[inline]

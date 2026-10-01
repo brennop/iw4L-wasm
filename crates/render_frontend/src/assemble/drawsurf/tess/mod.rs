@@ -22,12 +22,12 @@ pub enum TessKind {
     Glass,
 }
 
-pub use glass::{CgGlassTable, GfxGlassMeshPlan};
+pub use glass::{GfxGlassMeshPlan, GlassTable};
 pub use render_fx::drawsurf::tess::mark::GfxMarkSubKey;
 pub use render_fx::drawsurf::tess::mark::mark_mesh_surface_samplers;
 pub use render_fx::{FxCodeMeshPlan, FxParticleCloudPlan, GfxMarkMeshPlan};
-pub use smodel::{RetailPackedVertexRefusal, SmodelGpuPlan, SmodelPassMaterial, SmodelVertex};
-pub use world::{RetailWorldVertexRefusal, WorldDrawGpuPlan, WorldPassMaterial, WorldVertex};
+pub use smodel::{PackedVertexRefusal, SmodelGpuPlan, SmodelPassMaterial, SmodelVertex};
+pub use world::{WorldDrawGpuPlan, WorldPassMaterial, WorldVertex, WorldVertexRefusal};
 pub use xmodel::{
     DynEntDrawPlan, FpvDrawPlan, FxModelDrawPlan, ItemDrawPlan, MissileDrawPlan,
     RemoteBodyDrawPlan, ScriptModelDrawPlan, XModelDrawPlan,

@@ -109,7 +109,7 @@ pub enum SmodelSurfPath {
 }
 
 #[must_use]
-pub const fn r_smodel_surf_type(path: SmodelSurfPath) -> u8 {
+pub const fn smodel_surf_type(path: SmodelSurfPath) -> u8 {
     match path {
         SmodelSurfPath::Rigid => 2,
         SmodelSurfPath::Skinned => 5,
@@ -119,7 +119,7 @@ pub const fn r_smodel_surf_type(path: SmodelSurfPath) -> u8 {
 }
 
 #[must_use]
-pub fn r_smodel_bucket_source_path(bucket: i32) -> Option<SmodelSurfPath> {
+pub fn smodel_bucket_source_path(bucket: i32) -> Option<SmodelSurfPath> {
     match bucket & 3 {
         SMODEL_BUCKET_RIGID => Some(SmodelSurfPath::Rigid),
         SMODEL_BUCKET_SKINNED => Some(SmodelSurfPath::Skinned),
@@ -129,10 +129,7 @@ pub fn r_smodel_bucket_source_path(bucket: i32) -> Option<SmodelSurfPath> {
 }
 
 #[must_use]
-pub fn r_smodel_dest_path(
-    source: SmodelSurfPath,
-    cached_pretess_succeeded: bool,
-) -> SmodelSurfPath {
+pub fn smodel_dest_path(source: SmodelSurfPath, cached_pretess_succeeded: bool) -> SmodelSurfPath {
     if source == SmodelSurfPath::Cached && cached_pretess_succeeded {
         SmodelSurfPath::Pretess
     } else {
@@ -141,20 +138,20 @@ pub fn r_smodel_dest_path(
 }
 
 #[must_use]
-pub fn r_smodel_lod_is_rigid(surf_plus_1: &[u8]) -> bool {
+pub fn smodel_lod_is_rigid(surf_plus_1: &[u8]) -> bool {
     surf_plus_1.iter().all(|&b| b == 0)
 }
 
 #[must_use]
-pub fn r_add_static_model_surf_to_bucket(
+pub fn add_static_model_surf_to_bucket(
     lod: i32,
     smc_enable: bool,
     draw_inst_lighting_nonzero: bool,
-    lodinfo_plus_0x29: u8,
+    lod_smc_flag: u8,
     cache_index: u16,
     lod_is_rigid: bool,
 ) -> i32 {
-    if smc_enable && draw_inst_lighting_nonzero && lodinfo_plus_0x29 != 0 && cache_index != 0 {
+    if smc_enable && draw_inst_lighting_nonzero && lod_smc_flag != 0 && cache_index != 0 {
         return lod * SMODEL_BUCKET_STRIDE + SMODEL_BUCKET_CACHED;
     }
     if !lod_is_rigid {
@@ -188,7 +185,7 @@ pub enum SmodelBucketPush {
 }
 
 #[must_use]
-pub fn r_smodel_bucket_store_payload(bucket: i32, smodel_index: u16, cache_index: u16) -> u16 {
+pub fn smodel_bucket_store_payload(bucket: i32, smodel_index: u16, cache_index: u16) -> u16 {
     if bucket & 3 == SMODEL_BUCKET_CACHED {
         cache_index
     } else {
@@ -197,7 +194,7 @@ pub fn r_smodel_bucket_store_payload(bucket: i32, smodel_index: u16, cache_index
 }
 
 #[must_use]
-pub fn r_smodel_surf_bucket_push(
+pub fn smodel_surf_bucket_push(
     lists: &mut SmodelSurfBucketLists,
     bucket: i32,
     payload: u16,
@@ -229,7 +226,7 @@ pub struct SmodelConsumedBucket {
 }
 
 #[must_use]
-pub const fn r_smodel_bucket_mask(bucket: u8) -> Option<u32> {
+pub const fn smodel_bucket_mask(bucket: u8) -> Option<u32> {
     if bucket < SMODEL_BUCKET_LIST_N as u8 {
         Some(0x8000_0000u32 >> bucket)
     } else {
@@ -248,7 +245,7 @@ pub fn smodel_bucket_lists_consume(
         if active_mask & (0x8000_0000u32 >> bucket) == 0 {
             continue;
         }
-        let Some(source) = r_smodel_bucket_source_path(bucket as i32) else {
+        let Some(source) = smodel_bucket_source_path(bucket as i32) else {
             continue;
         };
         let count = lists.count[bucket];
@@ -285,7 +282,7 @@ pub const SMC_BANK_VERTS: u32 = 0x10000;
 
 pub const SMC_BANK_VB_BYTES: u32 = 0x0020_0000;
 
-pub fn r_smc_stream_source_byte_offset(cache_index: u16) -> Option<u32> {
+pub fn smc_stream_source_byte_offset(cache_index: u16) -> Option<u32> {
     if cache_index == 0 {
         return None;
     }
@@ -296,7 +293,7 @@ pub fn r_smc_stream_source_byte_offset(cache_index: u16) -> Option<u32> {
     Some((leaf & 0xffff_f000) << 9)
 }
 
-pub fn r_cache_static_model_indices_u16_slot(
+pub fn cache_static_model_indices_u16_slot(
     base_vert_index: u32,
     xsurface_base_index: u32,
 ) -> Option<u32> {
@@ -312,7 +309,7 @@ pub enum SmcIndexBakeError {
     SlotOverflow,
 }
 
-pub fn r_cache_static_model_indices(
+pub fn cache_static_model_indices(
     dest: &mut [u16],
     base_vert_index: u32,
     xsurface_base_index: u32,
@@ -325,7 +322,7 @@ pub fn r_cache_static_model_indices(
     if src_indices.len() < u16_n {
         return Err(SmcIndexBakeError::ShortSource);
     }
-    let slot = r_cache_static_model_indices_u16_slot(base_vert_index, xsurface_base_index)
+    let slot = cache_static_model_indices_u16_slot(base_vert_index, xsurface_base_index)
         .ok_or(SmcIndexBakeError::SlotOverflow)?;
     let end = (slot as usize)
         .checked_add(u16_n)
@@ -348,7 +345,7 @@ pub enum SmcDrawCacheIndex {
     Ambiguous,
 }
 
-pub fn r_smc_draw_cache_index(row: [u16; SMC_CACHE_INDEX_LODS]) -> SmcDrawCacheIndex {
+pub fn smc_draw_cache_index(row: [u16; SMC_CACHE_INDEX_LODS]) -> SmcDrawCacheIndex {
     let mut found = None;
     for index in row {
         if index == 0 {
@@ -528,7 +525,7 @@ impl SmcPatchLock {
     }
 }
 
-pub fn rb_patch_static_model_cache_lock(
+pub fn patch_static_model_cache_lock(
     base_vert_index: u32,
     class_verts: u32,
 ) -> Option<SmcPatchLock> {
@@ -545,7 +542,7 @@ pub fn rb_patch_static_model_cache_lock(
     })
 }
 
-pub fn rb_patch_static_model_cache_lock_for_miss(
+pub fn patch_static_model_cache_lock_for_miss(
     miss: CacheStaticModelSurface,
 ) -> Option<SmcPatchLock> {
     match miss {
@@ -553,7 +550,7 @@ pub fn rb_patch_static_model_cache_lock_for_miss(
             base_vert_index,
             verts,
             ..
-        } => rb_patch_static_model_cache_lock(base_vert_index, verts),
+        } => patch_static_model_cache_lock(base_vert_index, verts),
         CacheStaticModelSurface::Hit { .. } | CacheStaticModelSurface::Refused => None,
     }
 }

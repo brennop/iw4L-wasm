@@ -158,7 +158,7 @@ fn forget_relay_member(
 pub fn arm_master_bridge(
     settings: Res<frame::GameSettings>,
     intent: Res<MasterLaunchIntent>,
-    role: Res<crate::RuntimeRole>,
+    role: Res<frame::RuntimeRole>,
     authority: Option<Res<AuthorityWorld>>,
     prediction: Option<Res<crate::ClientPredictionState>>,
     descriptor: Option<Res<crate::MatchDescriptor>>,
@@ -210,7 +210,7 @@ pub fn arm_master_bridge(
     match &intent.0 {
         MasterLaunchMode::Disabled | MasterLaunchMode::Browser(_) => {}
         MasterLaunchMode::Host(config) => {
-            if *role != crate::RuntimeRole::Listen || udp_hub.is_some() {
+            if *role != frame::RuntimeRole::Listen || udp_hub.is_some() {
                 return;
             }
             let relay = spawn_host(config.clone(), settings.player_name.clone());
@@ -222,7 +222,7 @@ pub fn arm_master_bridge(
             commands.insert_resource(relay);
         }
         MasterLaunchMode::Join(config) => {
-            if *role != crate::RuntimeRole::Client || udp_link.is_some() {
+            if *role != frame::RuntimeRole::Client || udp_link.is_some() {
                 return;
             }
             let relay = spawn_join(config.clone(), settings.player_name.clone());
@@ -277,7 +277,7 @@ fn arm_master_browser(
 fn apply_master_menu_action(
     mut pending: ResMut<PendingMasterMenuAction>,
     mut intent: ResMut<MasterLaunchIntent>,
-    mut role: ResMut<crate::RuntimeRole>,
+    mut role: ResMut<frame::RuntimeRole>,
     browser: Option<Res<MasterBrowser>>,
     bridge: Option<Res<MasterBridge>>,
     mut commands: Commands,
@@ -338,7 +338,7 @@ fn apply_master_menu_action(
             if let Some(browser) = browser {
                 intent.0 = MasterLaunchMode::Browser(browser);
             }
-            *role = crate::RuntimeRole::Listen;
+            *role = frame::RuntimeRole::Listen;
             return;
         }
         MasterMenuAction::Host { .. } | MasterMenuAction::Join { .. } => {}
@@ -377,7 +377,7 @@ fn apply_master_menu_action(
                 requires,
                 have: browser.have,
             });
-            *role = crate::RuntimeRole::Listen;
+            *role = frame::RuntimeRole::Listen;
         }
         MasterMenuAction::Join {
             advert_id,
@@ -391,7 +391,7 @@ fn apply_master_menu_action(
                 mode,
                 have: browser.have,
             });
-            *role = crate::RuntimeRole::Client;
+            *role = frame::RuntimeRole::Client;
         }
     }
 }
@@ -631,7 +631,7 @@ fn apply_master_lifecycle(
                 && let Some(authority) = authority.as_ref()
                 && let Some(pending) = pending_notify.as_mut()
             {
-                pending.push_connected(crate::client_name_string(&authority.0, client));
+                pending.push_left(crate::client_name_string(&authority.0, client));
             }
         }
     }

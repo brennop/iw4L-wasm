@@ -333,7 +333,7 @@ impl AnimClip {
         }
         let start = self.abs_delta_trans(0.0);
         let end = self.abs_delta_trans(1.0);
-        anim_iw4::xanim_vec3_distance(start, end) / duration
+        anim_iw4::vec3_distance(start, end) / duration
     }
 
     #[must_use]

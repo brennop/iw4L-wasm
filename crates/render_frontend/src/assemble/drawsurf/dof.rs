@@ -132,7 +132,7 @@ fn update_dof(
     presented: Res<net::PresentedSnapshot>,
     local: Res<net::LocalPresentClient>,
     weapons: Option<Res<assets::PreparedWeapons>>,
-    clock: Res<net::CgFrameClock>,
+    clock: Res<net::FrameClock>,
     mut frame: ResMut<DofFrame>,
     mut scene: Local<DepthOfField>,
     clip: Res<crate::adapters::anim::dyn_ent::DynEntPhysClip>,
@@ -205,7 +205,7 @@ fn update_dof(
     ) {
         if let Some(range) = weapons
             .as_ref()
-            .and_then(|w| w.0.facts_of(weapon_iw4::bg_get_viewmodel_weapon_index(ps)))
+            .and_then(|w| w.0.facts_of(weapon_iw4::get_viewmodel_weapon_index(ps)))
             .and_then(|w| w.ads_dof)
         {
             scene.view_model_start = range[0] * ads;
@@ -223,15 +223,78 @@ fn update_dof(
             ..Default::default()
         };
     }
+    let script_dof = presented
+        .snapshot()
+        .and_then(|snapshot| snapshot.meta.for_client(local.0))
+        .map(|meta| meta.view_effects.depth_of_field)
+        .filter(sim::ScriptDepthOfField::overrides_scene);
+    if let Some(script) = script_dof {
+        scene.near_start = script.near_start;
+        scene.near_end = script.near_end;
+        scene.far_start = script.far_start;
+        scene.far_end = script.far_end;
+        scene.near_blur = script.near_blur;
+        scene.far_blur = script.far_blur;
+    }
+
+    let mut dof = if script_dof.is_some() {
+        *scene
+    } else if dvars.tweak {
+        dvars.values
+    } else if dvars.enable {
+        *scene
+    } else {
+        DepthOfField::default()
+    };
+    let mut bias = dvars.bias;
+    if let Some(snapshot) = presented.snapshot() {
+        if let Some(meta) = snapshot.meta.for_client(local.0) {
+            if snapshot
+                .meta
+                .objectives
+                .server_info
+                .iter()
+                .chain(meta.client_dvars.iter())
+                .any(|(name, _)| name.to_ascii_lowercase().starts_with("r_dof"))
+            {
+                dof = *scene;
+            }
+            let mut enabled = true;
+            for (name, value) in snapshot
+                .meta
+                .objectives
+                .server_info
+                .iter()
+                .chain(meta.client_dvars.iter())
+            {
+                let Ok(v) = value.parse::<f32>() else {
+                    continue;
+                };
+                if !v.is_finite() {
+                    continue;
+                }
+                match name.to_ascii_lowercase().as_str() {
+                    "r_dof_enable" => enabled = v != 0.0,
+                    "r_dof_viewmodelstart" => dof.view_model_start = v,
+                    "r_dof_viewmodelend" => dof.view_model_end = v,
+                    "r_dof_nearstart" => dof.near_start = v,
+                    "r_dof_nearend" => dof.near_end = v,
+                    "r_dof_farstart" => dof.far_start = v,
+                    "r_dof_farend" => dof.far_end = v,
+                    "r_dof_nearblur" => dof.near_blur = v,
+                    "r_dof_farblur" => dof.far_blur = v,
+                    "r_dof_bias" => bias = v,
+                    _ => {}
+                }
+            }
+            if !enabled {
+                dof = DepthOfField::default();
+            }
+        }
+    }
     *frame = DofFrame {
-        dof: if dvars.tweak {
-            dvars.values
-        } else if dvars.enable {
-            *scene
-        } else {
-            DepthOfField::default()
-        },
-        bias: dvars.bias,
+        dof,
+        bias,
         scene_near: znear.value,
         view_model_near: view.depth_hack_near,
     };

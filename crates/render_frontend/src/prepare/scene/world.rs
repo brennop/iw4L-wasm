@@ -103,11 +103,11 @@ pub struct WorldCull {
 
     pub surface_sort_keys: Vec<u8>,
 
-    pub capture: assets::WorldCapture,
+    pub capture: asset_world::WorldCapture,
 
-    pub brush_models: Vec<assets::GfxBrushModelSurfs>,
+    pub brush_models: Vec<asset_world::GfxBrushModelSurfs>,
 
-    pub brush_model_bounds: Vec<assets::GfxBrushModelBounds>,
+    pub brush_model_bounds: Vec<asset_world::GfxBrushModelBounds>,
 
     pub bmodel_world_from_local: Vec<Mat4>,
     pub dpvs: WorldDpvs,
@@ -162,7 +162,7 @@ pub struct WorldScene {
     /// decode plan. Two slots carrying the same variant hold byte-identical
     /// images under the same sampler and colour space, so the upload gives
     /// them one asset and a cloned handle instead of two textures.
-    pub exact_material_variants: Vec<Option<assets::ImageVariantId>>,
+    pub exact_material_variants: Vec<Option<asset_material::ImageVariantId>>,
 
     pub exact_material_names: Vec<String>,
     pub lightmaps: Vec<Option<WorldLightmap>>,
@@ -180,13 +180,13 @@ pub struct WorldScene {
 
     pub script_brush_targetnames: Vec<String>,
 
-    pub script_brush_models: Vec<assets::ScriptBrushModelPlacement>,
+    pub script_brush_models: Vec<asset_world::ScriptBrushModelPlacement>,
 
     pub static_model_instances: Vec<Option<WorldStaticModelInstance>>,
 
     pub smodel_mark_cpu: Option<SmodelMarkCpu>,
 
-    pub map_xmodel_scene_assets: assets::MapXModelSceneCatalog,
+    pub map_xmodel_scene_assets: asset_world::MapXModelSceneCatalog,
 
     pub script_model_instances: Vec<WorldScriptModelInstance>,
 
@@ -198,7 +198,7 @@ pub struct WorldScene {
 
     pub smodel_lighting_samples: Vec<WorldSmodelLightingSample>,
 
-    pub light_grid: Option<assets::OwnedLightGrid>,
+    pub light_grid: Option<asset_model::OwnedLightGrid>,
 
     pub model_lighting_image: Option<Handle<Image>>,
     pub model_lighting_dims: Option<lighting_iw4::ModelLightingAtlasDims>,
@@ -213,9 +213,9 @@ pub struct WorldScene {
 
     pub intermission_view: Option<WorldCameraPose>,
 
-    pub fx_glass: Option<assets::FxGlassReset>,
+    pub fx_glass: Option<asset_world::FxGlassReset>,
 
-    pub retained_retail_vertices: assets::RetailWorldVertexPayload,
+    pub retained_packed_vertices: asset_world::WorldVertexPayload,
 
     pub retained_vertex_layer: Vec<u8>,
     pub surface_vertex_layer: Vec<i32>,
@@ -230,12 +230,12 @@ pub struct WorldScene {
 
     pub retained_lightmap_uvs: Vec<[f32; 2]>,
 
-    pub exp_fog: Option<assets::ExpFog>,
+    pub exp_fog: Option<asset_world::ExpFog>,
 
-    pub film_vision: Option<assets::FilmVision>,
+    pub film_vision: Option<asset_world::FilmVision>,
     pub film_visions: std::collections::BTreeMap<
         String,
-        Result<assets::FilmVision, assets::FilmVisionParseError>,
+        Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
     >,
 
     pub createart_name: Option<String>,
@@ -254,7 +254,7 @@ pub struct WorldScene {
 
     pub primary_light_types: Vec<u8>,
 
-    pub primary_light_cull: Vec<lighting_iw4::ComPrimaryLightCull>,
+    pub primary_light_cull: Vec<lighting_iw4::PrimaryLightCull>,
 
     pub primary_light_pack: Vec<lighting_iw4::GfxLightPack>,
 
@@ -268,9 +268,9 @@ pub struct WorldScene {
 
     pub sun_primary_light_count: u32,
 
-    pub light_region_hulls: Option<Vec<Vec<assets::WorldLightRegionHull>>>,
+    pub light_region_hulls: Option<Vec<Vec<asset_world::WorldLightRegionHull>>>,
 
-    pub shadow_geometry: Vec<assets::WorldShadowGeometry>,
+    pub shadow_geometry: Vec<asset_world::WorldShadowGeometry>,
 
     pub outdoor_image: Option<u32>,
 
@@ -292,7 +292,7 @@ pub struct WorldScene {
 
     pub spawned: bool,
 
-    pub asset_ref: assets::AssetRefDumpCensus,
+    pub asset_ref: asset_material::AssetRefDumpCensus,
 }
 
 impl WorldScene {}
@@ -318,7 +318,7 @@ pub struct WorldDrawGeometry {
     pub lightmaps: Vec<Option<WorldLightmap>>,
     pub reflection_probes: Vec<Option<Image>>,
 
-    pub retail_vertices: assets::RetailWorldVertexPayload,
+    pub packed_vertices: asset_world::WorldVertexPayload,
 
     pub vertex_layer: Vec<u8>,
     pub surface_vertex_layer: Vec<i32>,
@@ -346,17 +346,17 @@ pub struct WorldDrawGeometry {
     pub sort_key_distortion: Option<u32>,
     pub surface_sort_keys: Vec<u8>,
 
-    pub capture: assets::WorldCapture,
+    pub capture: asset_world::WorldCapture,
 
-    pub brush_models: Vec<assets::GfxBrushModelSurfs>,
+    pub brush_models: Vec<asset_world::GfxBrushModelSurfs>,
 
-    pub brush_model_bounds: Vec<assets::GfxBrushModelBounds>,
+    pub brush_model_bounds: Vec<asset_world::GfxBrushModelBounds>,
 
     pub bmodel_world_from_local: Vec<Mat4>,
     pub static_model_meshes: Vec<WorldStaticModelMesh>,
 
     pub static_model_instances: Vec<Option<WorldStaticModelInstance>>,
-    pub map_xmodel_scene_assets: assets::MapXModelSceneCatalog,
+    pub map_xmodel_scene_assets: asset_world::MapXModelSceneCatalog,
     pub script_model_instances: Vec<WorldScriptModelInstance>,
 
     pub smodel_lighting_samples: Vec<WorldSmodelLightingSample>,
@@ -369,7 +369,7 @@ pub struct WorldStaticModelMesh {
     pub lod_surfaces: [Vec<WorldStaticModelSurface>; 4],
 
     pub lod_smc: Option<[[u8; 4]; 4]>,
-    pub lod: Option<assets::ModelLodSelector>,
+    pub lod: Option<asset_model::ModelLodSelector>,
 }
 
 impl WorldStaticModelMesh {
@@ -391,7 +391,7 @@ pub struct WorldStaticModelSurface {
     pub xsurface_plus_1: Option<u8>,
     pub xsurface_base_index: u16,
     pub xsurface_vert_offset: u16,
-    pub collision: assets::RetailXSurfaceCollisionPayload,
+    pub collision: asset_world::XSurfaceCollisionPayload,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -424,7 +424,7 @@ pub struct SmodelMarkSurface {
     pub index_start: u32,
     pub index_count: u32,
     pub material: Option<assets::MaterialIndex>,
-    pub collision: assets::RetailXSurfaceCollisionPayload,
+    pub collision: asset_world::XSurfaceCollisionPayload,
 }
 
 pub use render_scene::{WorldDynEntInstance, WorldScriptModelInstance};
@@ -481,8 +481,8 @@ fn mat4_from_origin_axis(origin: [f32; 3], axis: [[f32; 3]; 3]) -> Mat4 {
 
 pub(crate) fn authored_bmodel_world_from_local(
     model_n: usize,
-    script_brushes: &[assets::ScriptBrushModelPlacement],
-    dynent_brushes: &[assets::DynEntDef],
+    script_brushes: &[asset_world::ScriptBrushModelPlacement],
+    dynent_brushes: &[asset_world::DynEntDef],
 ) -> Vec<Mat4> {
     let mut slots: Vec<Option<Mat4>> = vec![None; model_n];
     for brush in script_brushes {
@@ -510,7 +510,7 @@ pub(crate) fn authored_bmodel_world_from_local(
 }
 
 pub(crate) fn world_dyn_ent_instances(
-    catalog: &assets::DynEntCatalog,
+    catalog: &asset_world::DynEntCatalog,
 ) -> (Vec<WorldDynEntInstance>, usize) {
     let mut instances = Vec::new();
     for def in &catalog.models {
@@ -520,7 +520,7 @@ pub(crate) fn world_dyn_ent_instances(
         instances.push(WorldDynEntInstance {
             index: def.index,
             ty: def.ty,
-            current_model: assets::MapXModelAssetKey(name.clone()),
+            current_model: asset_world::MapXModelAssetKey(name.clone()),
             transform: transform_from_gfx_placement(def.origin, def.quat),
             lighting_origin: def.origin,
             phys_preset: def.phys_preset.clone(),
@@ -533,9 +533,9 @@ pub(crate) fn world_dyn_ent_instances(
 }
 
 pub(crate) fn world_dyn_ent_brushes(
-    defs: &[assets::DynEntDef],
-    local_bounds: &[assets::GfxBrushModelBounds],
-    surfs: &[assets::GfxBrushModelSurfs],
+    defs: &[asset_world::DynEntDef],
+    local_bounds: &[asset_world::GfxBrushModelBounds],
+    surfs: &[asset_world::GfxBrushModelSurfs],
 ) -> Vec<WorldDynEntBrush> {
     defs.iter()
         .map(|def| WorldDynEntBrush {
@@ -557,7 +557,7 @@ pub(crate) fn world_dyn_ent_brushes(
 pub(crate) fn posed_brush_bounds(
     origin: [f32; 3],
     quat: [f32; 4],
-    local: assets::GfxBrushModelBounds,
+    local: asset_world::GfxBrushModelBounds,
 ) -> Bounds {
     let rotation = {
         let q = Quat::from_xyzw(quat[0], quat[1], quat[2], quat[3]);
@@ -613,13 +613,13 @@ fn sun_color_image(
 ) -> Option<u32> {
     let material = catalog.derived(material?)?;
     material
-        .texture_semantic(assets::TS_COLOR_MAP)
-        .or_else(|| material.texture_semantic(assets::TS_2D))
+        .texture_semantic(asset_material::TS_COLOR_MAP)
+        .or_else(|| material.texture_semantic(asset_material::TS_2D))
         .map(|image| image.0)
 }
 
 fn install_sun_effects(
-    capture: Option<&assets::SunEffectsCapture>,
+    capture: Option<&asset_world::SunEffectsCapture>,
     asset_ids: &[Option<usize>],
     catalog: &crate::assemble::drawsurf::RuntimeMaterialCatalog,
 ) -> Option<render_frame::SunEffectsDef> {
@@ -689,7 +689,7 @@ impl WorldScene {
             script_brush_models: Vec::new(),
             static_model_instances: Vec::new(),
             smodel_mark_cpu: None,
-            map_xmodel_scene_assets: assets::MapXModelSceneCatalog::default(),
+            map_xmodel_scene_assets: asset_world::MapXModelSceneCatalog::default(),
             script_model_instances: Vec::new(),
             dyn_ent_instances: Vec::new(),
             dyn_ent_brush_n: 0,
@@ -704,7 +704,7 @@ impl WorldScene {
             cull: None,
             intermission_view: None,
             fx_glass: None,
-            retained_retail_vertices: assets::RetailWorldVertexPayload::Unavailable {
+            retained_packed_vertices: asset_world::WorldVertexPayload::Unavailable {
                 source_layout: "synthetic bounds mesh",
             },
             retained_vertex_layer: Vec::new(),
@@ -746,7 +746,7 @@ impl WorldScene {
             exact_ifc_n: None,
             exact_opcode: None,
             spawned: false,
-            asset_ref: assets::AssetRefDumpCensus::default(),
+            asset_ref: asset_material::AssetRefDumpCensus::default(),
         }
     }
 
@@ -797,7 +797,7 @@ impl WorldScene {
             cull: None,
             intermission_view: None,
             fx_glass: None,
-            retained_retail_vertices: draw.retail_vertices,
+            retained_packed_vertices: draw.packed_vertices,
             retained_vertex_layer: draw.vertex_layer,
             surface_vertex_layer: draw.surface_vertex_layer,
             surface_first_vertex: draw.surface_first_vertex,
@@ -837,7 +837,7 @@ impl WorldScene {
             exact_ifc_n: None,
             exact_opcode: None,
             spawned: false,
-            asset_ref: assets::AssetRefDumpCensus::default(),
+            asset_ref: asset_material::AssetRefDumpCensus::default(),
         };
         let batch_count = scene.batches.len() as u32;
         let batch_lightmapped = scene
@@ -1028,7 +1028,7 @@ impl WorldScene {
 pub fn world_scene_from_draw(
     world: assets::PreparedWorld,
     materials: assets::MatchMaterials,
-    installed_owners: &[(assets::ScriptModelId, sim::AuthorityModelOwner)],
+    installed_owners: &[(asset_world::ScriptModelId, sim::AuthorityModelOwner)],
 ) -> Result<WorldScene, asset_world::SurfaceMaterialStampError> {
     let dynamic_light = world.dynamic_light;
     let fx_glass = world.fx_glass;
@@ -1086,7 +1086,7 @@ pub fn world_scene_from_draw(
         .collect();
     let runtime_material_catalog =
         crate::assemble::drawsurf::capture_runtime_catalog(&global_materials);
-    let asset_ref = assets::AssetRefDumpCensus::from_catalog(&global_materials);
+    let asset_ref = asset_material::AssetRefDumpCensus::from_catalog(&global_materials);
 
     let exact_material_images = global_materials
         .images
@@ -1348,7 +1348,7 @@ pub fn world_scene_from_draw(
         })
         .collect();
 
-    let convert_model = |model: assets::ModelMesh| WorldStaticModelMesh {
+    let convert_model = |model: asset_world::ModelMesh| WorldStaticModelMesh {
         name: model.name,
         lod_smc: model.lod_smc,
         lod: model.lod,
@@ -1472,7 +1472,7 @@ pub fn world_scene_from_draw(
             batches,
             lightmaps,
             reflection_probes: world.reflection_probe_images,
-            retail_vertices: draw.retail_vertices,
+            packed_vertices: draw.packed_vertices,
             vertex_layer: draw.vertex_layer,
             surface_vertex_layer: draw.surface_vertex_layer,
             surface_first_vertex: draw.surface_first_vertex,
@@ -1568,12 +1568,12 @@ pub fn world_scene_from_draw(
     scene.primary_light_cull = draw
         .primary_lights
         .iter()
-        .map(assets::WorldPrimaryLight::cull_input)
+        .map(asset_world::WorldPrimaryLight::cull_input)
         .collect();
     scene.primary_light_pack = draw
         .primary_lights
         .iter()
-        .map(assets::WorldPrimaryLight::gfx_light_pack)
+        .map(asset_world::WorldPrimaryLight::gfx_light_pack)
         .collect();
     scene.primary_light_attenuation = draw
         .primary_lights

@@ -13,6 +13,7 @@ pub enum FpvPartRole {
     Gun,
     Attachment,
     Rocket,
+    Knife,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +68,7 @@ pub struct FpvAssemblyKey {
     pub gun: FpvMeshIndex,
     pub attachments: Vec<FpvMeshIndex>,
     pub rocket: Option<FpvMeshIndex>,
+    pub knife: Option<FpvMeshIndex>,
     pub hide_tags: Vec<String>,
 }
 
@@ -74,6 +76,7 @@ pub struct FpvAssemblyKey {
 pub struct FpvSideAssemblies {
     pub bare: Arc<FpvAssembly>,
     pub rocket: Option<Arc<FpvAssembly>>,
+    pub melee: Option<Arc<FpvAssembly>>,
 }
 
 impl FpvSideAssemblies {
@@ -110,6 +113,7 @@ impl FpvAssembly {
         hands: FpvMeshIndex,
         mounts: &FpvMountPlan,
         rocket: bool,
+        knife: Option<FpvMeshIndex>,
         hide_tags: &[String],
     ) -> Result<Self, FpvAssemblyError> {
         let pose_of = |model: FpvMeshIndex| -> Result<&ModelPoseSrc, FpvAssemblyError> {
@@ -150,6 +154,16 @@ impl FpvAssembly {
                 Some(Attach {
                     parent_model: mount.parent_model,
                     tag: mount.tag.clone(),
+                }),
+            ));
+        }
+        if let Some(model) = knife {
+            parts.push((
+                model,
+                FpvPartRole::Knife,
+                Some(Attach {
+                    parent_model: 0,
+                    tag: "tag_knife_attach".into(),
                 }),
             ));
         }

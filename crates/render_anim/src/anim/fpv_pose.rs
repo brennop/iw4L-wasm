@@ -1,7 +1,7 @@
 use bevy::math::{Mat3, Mat4, Quat, Vec3, Vec4};
 
 pub use crate::anim::xmodel_pose::{FpvSurfOwner, PosedModelSurface};
-use assets::AnimClip;
+use xmodel_runtime::AnimClip;
 
 pub fn tag_view_to_bevy_mat3() -> Mat3 {
     Mat3::from_cols(

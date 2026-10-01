@@ -50,23 +50,41 @@ pub(crate) fn load_user_settings(
 }
 
 pub(crate) fn consume_menu_binding(
-    mut intents: MessageReader<ui::UiIntent>,
+    mut intents: MessageReader<frame::UiBindRequest>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut wheel: MessageReader<MouseWheel>,
+    (gamepads, active, mut settings): (
+        Query<&bevy::input::gamepad::Gamepad>,
+        Res<frame::ActivePad>,
+        ResMut<frame::GameSettings>,
+    ),
     mut pending: ResMut<PendingMenuBinding>,
+    mut capture: ResMut<frame::UiBindingCapture>,
     mut binds: ResMut<KeyBinds>,
     mut view: ResMut<ui::BindingView>,
 ) {
+    capture.consumed_input = false;
+    if capture.command.is_none() {
+        pending.id = None;
+        view.listening = None;
+    }
     let wheel_direction = wheel
         .read()
         .fold(None, |first, event| first.or_else(|| wheel_button(event.y)));
     let mut began = false;
     for intent in intents.read() {
-        if let ui::UiIntent::BeginBinding { id } = intent {
-            pending.id = Some(*id);
+        if let Some(id) = input_iw4::command_id_lookup(&intent.command) {
+            capture.command = Some(intent.command.clone());
+            pending.id = Some(id);
+            view.listening = Some(id);
+            view.revision = view.revision.wrapping_add(1);
             pending.armed = false;
             began = true;
+        } else {
+            capture.command = None;
+            pending.id = None;
+            view.listening = None;
         }
     }
     let Some(id) = pending.id else { return };
@@ -74,7 +92,33 @@ pub(crate) fn consume_menu_binding(
         pending.armed = true;
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    let pad = active.0.and_then(|entity| gamepads.get(entity).ok());
+    let pad_start =
+        pad.is_some_and(|pad| pad.just_pressed(bevy::input::gamepad::GamepadButton::Start));
+    let pad_button = pad.and_then(|pad| {
+        pad.get_just_pressed()
+            .copied()
+            .filter_map(crate::PadButton::from_gamepad_button)
+            .find(|button| *button != crate::PadButton::Start)
+    });
+    if let Some(button) = pad_button.filter(|_| !pad_start) {
+        capture.command = None;
+        capture.consumed_input = true;
+        binds.clear_command_on(id, true);
+        binds.set(BindButton::Pad(button), id);
+        if settings.pad_layout != frame::GameSettings::PAD_LAYOUT_CUSTOM {
+            settings.pad_layout = frame::GameSettings::PAD_LAYOUT_CUSTOM;
+            settings.touch();
+        }
+        pending.id = None;
+        pending.armed = false;
+        view.listening = None;
+        view.revision = view.revision.wrapping_add(1);
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) || pad_start {
+        capture.command = None;
+        capture.consumed_input = true;
         pending.id = None;
         pending.armed = false;
         view.listening = None;
@@ -95,7 +139,9 @@ pub(crate) fn consume_menu_binding(
         })
         .or(wheel_direction);
     let Some(button) = button else { return };
-    binds.clear_command(id);
+    capture.command = None;
+    capture.consumed_input = true;
+    binds.clear_command_on(id, false);
     binds.set(button, id);
     pending.id = None;
     pending.armed = false;
@@ -103,19 +149,42 @@ pub(crate) fn consume_menu_binding(
     view.revision = view.revision.wrapping_add(1);
 }
 
-pub(crate) fn sync_binding_view(binds: Res<KeyBinds>, mut view: ResMut<ui::BindingView>) {
-    if !binds.is_changed() {
+pub(crate) fn sync_binding_view(
+    binds: Res<KeyBinds>,
+    devices: Res<frame::InputDevices>,
+    mut view: ResMut<ui::BindingView>,
+    mut dvars: ResMut<frame::UiMenuDvars>,
+    mut style: Local<Option<frame::PromptStyle>>,
+) {
+    if !binds.is_changed() && *style == Some(devices.style) {
         return;
     }
-    let mut chords = std::collections::BTreeMap::<u32, Vec<String>>::new();
+    *style = Some(devices.style);
+    let mut chords = std::collections::BTreeMap::<u32, (Vec<String>, Vec<String>)>::new();
     for (button, id) in binds.iter() {
-        chords.entry(id).or_default().push(display_button(button));
+        let (keys, buttons) = chords.entry(id).or_default();
+        match button {
+            BindButton::Pad(pad) => buttons.push(pad.prompt(devices.style).to_owned()),
+            _ => keys.push(display_button(button)),
+        }
     }
     view.chords.clear();
-    for (id, mut names) in chords {
-        names.sort();
-        names.dedup();
-        view.chords.insert(id, names.join(" OR "));
+    for (id, (mut keys, mut buttons)) in chords {
+        keys.sort();
+        keys.dedup();
+        buttons.sort();
+        buttons.dedup();
+        let text = match (keys.is_empty(), buttons.is_empty()) {
+            (false, false) => format!("{} | {}", keys.join(" OR "), buttons.join(" OR ")),
+            (false, true) => keys.join(" OR "),
+            (true, false) => buttons.join(" OR "),
+            (true, true) => continue,
+        };
+        view.chords.insert(id, text);
+    }
+    // Publish every command so removing its last binding clears the old label.
+    for (id, command) in input_iw4::INPUT_COMMAND_NAMES.iter().enumerate().skip(1) {
+        dvars.set(&format!("ui_bind_{command}"), view.chord(id as u32));
     }
     view.revision = view.revision.wrapping_add(1);
 }
@@ -123,7 +192,8 @@ pub(crate) fn sync_binding_view(binds: Res<KeyBinds>, mut view: ResMut<ui::Bindi
 pub(crate) fn apply_master_volume(
     settings: Res<frame::GameSettings>,
     mut global: ResMut<GlobalVolume>,
-    mut sinks: Query<&mut AudioSink>,
+    mut sinks: Query<(Entity, &mut AudioSink, &bevy::audio::PlaybackSettings)>,
+    mut muted_volumes: Local<std::collections::HashMap<Entity, f32>>,
     applied: Option<ResMut<AppliedMasterVolume>>,
     mut commands: Commands,
 ) {
@@ -133,13 +203,23 @@ pub(crate) fn apply_master_volume(
     let previous = applied.as_ref().map_or(1.0, |value| value.0);
     let next = settings.master_volume;
     global.volume = Volume::Linear(next);
-    for mut sink in &mut sinks {
+    muted_volumes.retain(|entity, _| sinks.contains(*entity));
+    for (entity, mut sink, playback) in &mut sinks {
         let base = if previous > f32::EPSILON {
             sink.volume().to_linear() / previous
         } else {
-            sink.volume().to_linear()
+            muted_volumes
+                .get(&entity)
+                .copied()
+                .unwrap_or(playback.volume.to_linear())
         };
+        if next == 0.0 {
+            muted_volumes.insert(entity, base);
+        }
         sink.set_volume(Volume::Linear(base * next));
+    }
+    if next > 0.0 {
+        muted_volumes.clear();
     }
     if let Some(mut applied) = applied {
         applied.0 = next;
@@ -150,30 +230,43 @@ pub(crate) fn apply_master_volume(
 
 pub(crate) fn sync_player_name(
     settings: Res<frame::GameSettings>,
-    mut installed: MessageReader<frame::MatchInstalled>,
+    generation: Res<frame::WorldGeneration>,
+    has_world: Res<frame::HasWorld>,
+    role: Res<frame::RuntimeRole>,
     local: Option<Res<net::LocalPresentClient>>,
+    link: Option<Res<net::UdpClientLink>>,
     mut inbox: Option<ResMut<net::ClientActionInbox>>,
     mut seq: ResMut<net::ActionRequestIds>,
+    mut sent: Local<Option<(frame::WorldGeneration, sim::ClientId, [u8; 16])>>,
 ) {
-    let installed_now = installed.read().next().is_some();
-    if !settings.is_changed() && !installed_now {
+    if !has_world.0 || *role == frame::RuntimeRole::Replay {
+        *sent = None;
         return;
     }
     let (Some(local), Some(inbox)) = (local, inbox.as_deref_mut()) else {
         return;
     };
+    if let Some(link) = link
+        && (link.connection.is_none()
+            || link.assigned_client != Some(local.0)
+            || !link.has_entered_match())
+    {
+        *sent = None;
+        return;
+    }
+    let name = entity_iw4::pack_client_state_name(&settings.player_name);
+    let next = (*generation, local.0, name);
+    if sent.as_ref() == Some(&next) {
+        return;
+    }
     let request_id = seq.allocate();
-    if let Err(error) = inbox.push(
-        local.0,
-        sim::ClientAction::SetName {
-            request_id,
-            name: entity_iw4::pack_client_state_name(&settings.player_name),
-        },
-    ) {
+    if let Err(error) = inbox.push(local.0, sim::ClientAction::SetName { request_id, name }) {
         diag::warn!(
             Console,
             "name: request_id={request_id} not queued — {error}"
         );
+    } else {
+        *sent = Some(next);
     }
 }
 
@@ -221,6 +314,28 @@ fn settings_path(artifacts: &std::path::Path) -> Option<PathBuf> {
         .map(|path| path.join("iw4l/settings.cfg"))
 }
 
+pub(crate) fn apply_pad_layout_setting(
+    settings: Res<frame::GameSettings>,
+    mut binds: ResMut<KeyBinds>,
+    mut seen: Local<Option<u8>>,
+) {
+    let layout = settings.pad_layout;
+    let previous = seen.replace(layout);
+    if previous.is_none()
+        || previous == Some(layout)
+        || layout == frame::GameSettings::PAD_LAYOUT_CUSTOM
+    {
+        return;
+    }
+    binds.apply_pad_layout(usize::from(layout));
+}
+
+fn parse_into<T: std::str::FromStr>(value: &str, slot: &mut T) {
+    if let Ok(value) = value.parse() {
+        *slot = value;
+    }
+}
+
 fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> String {
     let safe_name = settings.player_name.replace(['\n', '\r', '='], " ");
     let mut lines = vec![
@@ -231,11 +346,26 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         ),
         format!("fullscreen={}", settings.fullscreen),
         format!("vsync={}", settings.vsync),
-        format!("fov={:.0}", settings.fov),
         format!("master_volume={:.3}", settings.master_volume),
+        format!("brightness={:.3}", settings.brightness),
+        format!("fov={:.0}", settings.fov),
+        format!("shadows={}", settings.shadows),
+        format!("depth_of_field={}", settings.depth_of_field),
+        format!("bloom={}", settings.bloom),
         format!("sensitivity={:.3}", settings.sensitivity),
         format!("invert_mouse={}", settings.invert_mouse),
         format!("player_name={safe_name}"),
+        format!("pad_layout={}", settings.pad_layout),
+        format!("pad_stick_layout={}", settings.pad_stick_layout),
+        format!("pad_sensitivity={:.2}", settings.pad_sensitivity),
+        format!("pad_ads_sensitivity={:.2}", settings.pad_ads_sensitivity),
+        format!("pad_invert={}", settings.pad_invert),
+        format!("pad_curve={}", settings.pad_curve),
+        format!("pad_aim_assist={}", settings.pad_aim_assist),
+        format!("pad_prompts={}", settings.pad_prompts),
+        format!("pad_vibration={}", settings.pad_vibration),
+        format!("pad_deadzone_left={:.2}", settings.pad_deadzone_left),
+        format!("pad_deadzone_right={:.2}", settings.pad_deadzone_right),
         "unbindall".to_owned(),
     ];
     lines.extend(binds.list_lines());
@@ -277,14 +407,34 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                     settings.vsync = value;
                 }
             }
+            "fov" => {
+                if let Ok(v) = value.parse() {
+                    settings.fov = v;
+                }
+            }
+            "brightness" => {
+                if let Ok(v) = value.parse() {
+                    settings.brightness = v;
+                }
+            }
+            "shadows" => {
+                if let Ok(v) = value.parse() {
+                    settings.shadows = v;
+                }
+            }
+            "depth_of_field" => {
+                if let Ok(v) = value.parse() {
+                    settings.depth_of_field = v;
+                }
+            }
+            "bloom" => {
+                if let Ok(v) = value.parse() {
+                    settings.bloom = v;
+                }
+            }
             "master_volume" => {
                 if let Ok(value) = value.parse() {
                     settings.master_volume = value;
-                }
-            }
-            "fov" => {
-                if let Ok(value) = value.parse() {
-                    settings.fov = value;
                 }
             }
             "sensitivity" => {
@@ -298,6 +448,17 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                 }
             }
             "player_name" => settings.player_name = value.to_owned(),
+            "pad_layout" => parse_into(value, &mut settings.pad_layout),
+            "pad_stick_layout" => parse_into(value, &mut settings.pad_stick_layout),
+            "pad_sensitivity" => parse_into(value, &mut settings.pad_sensitivity),
+            "pad_ads_sensitivity" => parse_into(value, &mut settings.pad_ads_sensitivity),
+            "pad_invert" => parse_into(value, &mut settings.pad_invert),
+            "pad_curve" => parse_into(value, &mut settings.pad_curve),
+            "pad_aim_assist" => parse_into(value, &mut settings.pad_aim_assist),
+            "pad_prompts" => parse_into(value, &mut settings.pad_prompts),
+            "pad_vibration" => parse_into(value, &mut settings.pad_vibration),
+            "pad_deadzone_left" => parse_into(value, &mut settings.pad_deadzone_left),
+            "pad_deadzone_right" => parse_into(value, &mut settings.pad_deadzone_right),
             _ => warn!("ignored unknown setting `{key}`"),
         }
     }
@@ -306,6 +467,9 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
         for warning in warnings {
             warn!("settings bind: {warning}");
         }
+    }
+    if !binds.has_pad_binds() {
+        binds.apply_pad_layout(usize::from(settings.pad_layout.min(4)));
     }
     if source
         .lines()
@@ -316,4 +480,117 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
     {
         binds.set(BindButton::Key(KeyCode::Digit4), 21);
     }
+}
+
+pub(crate) fn native_menu_settings(
+    mut events: MessageReader<crate::ConsoleCommand>,
+    mut settings: ResMut<frame::GameSettings>,
+    mut dvars: ResMut<frame::UiMenuDvars>,
+    mut shadows: ResMut<render_frontend::prepare::scene::view_parms::SmEnableDvar>,
+    mut dof: ResMut<render_frontend::assemble::drawsurf::dof::DofDvars>,
+    mut glow: ResMut<render_frontend::assemble::drawsurf::dof::GlowDvars>,
+    mut test_rumble: MessageWriter<frame::TestControllerRumble>,
+) {
+    for command in events.read() {
+        if !matches!(command.name.as_str(), "set" | "seta") {
+            continue;
+        }
+        let [name, value, ..] = command.args.as_slice() else {
+            continue;
+        };
+        match name.as_str() {
+            "ui_r_mode" => {
+                if let Some((w, h)) = value.split_once('x')
+                    && let (Ok(w), Ok(h)) = (w.parse(), h.parse())
+                {
+                    settings.resolution = frame::DisplayResolution::new(w, h);
+                }
+            }
+            "ui_r_displayMode" => settings.fullscreen = value == "1",
+            "ui_r_vsync" => settings.vsync = value == "1",
+            "ui_volume" => {
+                if let Ok(v) = value.parse::<f32>()
+                    && v.is_finite()
+                {
+                    settings.master_volume = v;
+                }
+            }
+            "ui_player_name" => settings.player_name = value.clone(),
+            "ui_fov" => {
+                if let Ok(v) = value.parse::<f32>() {
+                    settings.fov = v;
+                }
+            }
+            "ui_brightness" => {
+                if let Ok(v) = value.parse::<f32>()
+                    && v.is_finite()
+                {
+                    settings.brightness = v;
+                }
+            }
+            "ui_shadows" => settings.shadows = value == "1",
+            "ui_dof" => settings.depth_of_field = value == "1",
+            "ui_bloom" => settings.bloom = value == "1",
+            "ui_pad_layout" => parse_into(value, &mut settings.pad_layout),
+            "ui_pad_stick_layout" => parse_into(value, &mut settings.pad_stick_layout),
+            "ui_pad_sensitivity" => parse_into(value, &mut settings.pad_sensitivity),
+            "ui_pad_ads_sensitivity" => parse_into(value, &mut settings.pad_ads_sensitivity),
+            "ui_pad_invert" => settings.pad_invert = value == "1",
+            "ui_pad_curve" => parse_into(value, &mut settings.pad_curve),
+            "ui_pad_aim_assist" => parse_into(value, &mut settings.pad_aim_assist),
+            "ui_pad_prompts" => parse_into(value, &mut settings.pad_prompts),
+            "ui_pad_test_rumble" => {
+                if value == "1" {
+                    test_rumble.write(frame::TestControllerRumble);
+                }
+            }
+            "ui_pad_vibration" => settings.pad_vibration = value == "1",
+            "ui_pad_deadzone_left" => parse_into(value, &mut settings.pad_deadzone_left),
+            "ui_pad_deadzone_right" => parse_into(value, &mut settings.pad_deadzone_right),
+            _ => continue,
+        }
+        settings.sanitize();
+        settings.touch();
+    }
+    if settings.is_changed() {
+        shadows.enabled = Some(settings.shadows);
+        dof.enable = settings.depth_of_field;
+        glow.enable = settings.bloom;
+    }
+    dvars.set("ui_volume", settings.master_volume.to_string());
+    dvars.set("ui_brightness", settings.brightness.to_string());
+    dvars.set("ui_fov", settings.fov.to_string());
+    dvars.set("ui_player_name", settings.player_name.clone());
+    dvars.set("ui_shadows", if settings.shadows { "1" } else { "0" });
+    dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
+    dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });
+    dvars.set("ui_r_mode", settings.resolution.to_string());
+    dvars.set(
+        "ui_r_displayMode",
+        if settings.fullscreen { "1" } else { "0" },
+    );
+    dvars.set("ui_r_vsync", if settings.vsync { "1" } else { "0" });
+    dvars.set("ui_pad_layout", settings.pad_layout.to_string());
+    dvars.set("ui_pad_stick_layout", settings.pad_stick_layout.to_string());
+    dvars.set("ui_pad_sensitivity", settings.pad_sensitivity.to_string());
+    dvars.set(
+        "ui_pad_ads_sensitivity",
+        settings.pad_ads_sensitivity.to_string(),
+    );
+    dvars.set("ui_pad_invert", if settings.pad_invert { "1" } else { "0" });
+    dvars.set("ui_pad_curve", settings.pad_curve.to_string());
+    dvars.set("ui_pad_aim_assist", settings.pad_aim_assist.to_string());
+    dvars.set("ui_pad_prompts", settings.pad_prompts.to_string());
+    dvars.set(
+        "ui_pad_vibration",
+        if settings.pad_vibration { "1" } else { "0" },
+    );
+    dvars.set(
+        "ui_pad_deadzone_left",
+        settings.pad_deadzone_left.to_string(),
+    );
+    dvars.set(
+        "ui_pad_deadzone_right",
+        settings.pad_deadzone_right.to_string(),
+    );
 }

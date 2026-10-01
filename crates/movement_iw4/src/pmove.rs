@@ -11,6 +11,6 @@ pub struct Pmove {
     pub xyspeed: f32,
     pub mantle_started: u8,
     pub mantle_end_pos: [f32; 3],
-    pub mantle_duration: i32,
+    pub duration: i32,
     pub handler: u8,
 }

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Write};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,11 +35,47 @@ const CLI_DEADLINE: Duration = Duration::from_secs(8);
 const BOOTSTRAP_FORWARD: Duration = Duration::from_secs(8);
 const HELLO_DEADLINE: Duration = Duration::from_secs(8);
 const MAX_CONNECTIONS: usize = 256;
+/// A household or a LAN party shares one address.
+const MAX_CONNECTIONS_PER_ADDRESS: usize = 32;
 
 const CLOSE_SERVICE_ERROR: u32 = 1;
 const CLOSE_SERVICE_DONE: u32 = 0;
 
 const MAX_CLOSE_REASON_BYTES: usize = 120;
+
+struct AddressSlot {
+    counts: Arc<std::sync::Mutex<HashMap<IpAddr, usize>>>,
+    ip: IpAddr,
+}
+
+impl AddressSlot {
+    fn claim(counts: &Arc<std::sync::Mutex<HashMap<IpAddr, usize>>>, ip: IpAddr) -> Option<Self> {
+        let mut held = counts.lock().expect("address counts poisoned");
+        let count = held.entry(ip).or_insert(0);
+        if *count >= MAX_CONNECTIONS_PER_ADDRESS {
+            return None;
+        }
+        *count += 1;
+        Some(Self {
+            counts: Arc::clone(counts),
+            ip,
+        })
+    }
+}
+
+impl Drop for AddressSlot {
+    fn drop(&mut self) {
+        let Ok(mut held) = self.counts.lock() else {
+            return;
+        };
+        if let Some(count) = held.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                held.remove(&self.ip);
+            }
+        }
+    }
+}
 
 enum ConnTask {
     Writer(Result<()>),
@@ -472,7 +508,23 @@ async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()
         ALPN
     )?;
     let connection_slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let address_counts = Arc::new(std::sync::Mutex::new(HashMap::new()));
     while let Some(incoming) = endpoint.accept().await {
+        // No slot before the address is proven: a forged Initial would hold
+        // one until its handshake timed out.
+        if !incoming.remote_address_validated() && incoming.may_retry() {
+            let _ = incoming.retry();
+            continue;
+        }
+        let remote = incoming.remote_address();
+        let Some(address_slot) = AddressSlot::claim(&address_counts, remote.ip()) else {
+            let _ = writeln!(
+                std::io::stderr(),
+                "connection refused: {remote} at per-address cap {MAX_CONNECTIONS_PER_ADDRESS}"
+            );
+            incoming.refuse();
+            continue;
+        };
         let Ok(permit) = connection_slots.clone().try_acquire_owned() else {
             let _ = writeln!(
                 std::io::stderr(),
@@ -483,7 +535,6 @@ async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()
         };
         let state = Arc::clone(&state);
         let connection_id = next_connection_id.fetch_add(1, Ordering::Relaxed);
-        let remote = incoming.remote_address();
         let started = Instant::now();
         let _ = writeln!(
             std::io::stderr(),
@@ -491,6 +542,7 @@ async fn serve(bind: SocketAddr, cert_path: &Path, key_path: &Path) -> Result<()
         );
         tokio::spawn(async move {
             let _permit = permit;
+            let _address_slot = address_slot;
             match incoming.await {
                 Ok(connection) => {
                     let _ = writeln!(

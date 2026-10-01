@@ -2,9 +2,8 @@ use crate::Tick;
 use crate::frame::FrameWorld;
 use crate::gentity::{EntityRunKind, ThinkEnter, apos_from_entity_state, pos_from_entity_state};
 use entity_iw4::{
-    bg_evaluate_trajectory, g_corpse_info_entnum_matched, g_parent_link_apply_local,
-    g_parent_link_pose, g_parent_link_world_from_tag, sv_link_entity_needs_rotated_radius,
-    sv_link_entity_world_bounds,
+    evaluate_trajectory, link_entity_needs_rotated_radius, link_entity_world_bounds,
+    parent_link_apply_local, parent_link_pose, parent_link_world_from_tag,
 };
 use math_iw4::snap_angles;
 
@@ -113,12 +112,12 @@ fn run_think(world: &mut FrameWorld, number: i32, ctx: &mut WalkCtx<'_>) {
 fn think_player_corpse(world: &mut FrameWorld, entity: crate::EntityRef) {
     let number = entity.number();
     let entnums = world.corpses().entnums();
-    if !g_corpse_info_entnum_matched(&entnums, number) {
+    if !entity_iw4::corpse_info::entnum_matched(&entnums, number) {
         panic!(
-            "ET_PLAYER_CORPSE occupancy s.number not in corpseInfo; retail miss uses slot 0 on a different gentity origin"
+            "ET_PLAYER_CORPSE occupancy number not in the corpse table; a miss falls back to slot 0"
         );
     }
-    let slot = entity_iw4::g_corpse_info_slot_for_entnum(&entnums, number);
+    let slot = entity_iw4::corpse_info::slot_for_entnum(&entnums, number);
     crate::corpse::sync_corpse_info_player_anims(world, slot);
     think_scheduled_or_refuse(world, entity);
 }
@@ -129,7 +128,7 @@ fn think_scheduled_or_refuse(world: &mut FrameWorld, entity: crate::EntityRef) {
         .take_due_think(entity)
         .expect("scheduled think occupancy vanished");
     if due {
-        panic!("generic think uses the think handler table indexed by gentity+0x16d");
+        panic!("generic think has no handler");
     }
 }
 
@@ -167,19 +166,17 @@ fn think_parent_link(world: &mut FrameWorld, time_ms: i32, entity: crate::Entity
     };
     let tag = view.relations.parent_tag;
     let Some((origin, angles)) = parent_world_pose(world, parent, time_ms) else {
-        panic!("parented G_RunThink has no parent currentOrigin/angles");
+        panic!("parented think has no parent currentOrigin/angles");
     };
     let (origin, angles) = if tag >= 0 {
-        let Some(mat) = world.dobj_anim_mat(parent.number(), tag) else {
-            panic!(
-                "tagInfo[3]>=0 needs a post-G_DObjCalcBone DObjAnimMat row; the tag handler table is not ported"
-            );
+        let Some(mat) = world.anim_mat(parent.number(), tag) else {
+            panic!("tag-linked think needs a computed bone matrix for the parent tag");
         };
-        g_parent_link_world_from_tag(origin, angles, mat)
+        parent_link_world_from_tag(origin, angles, mat)
     } else {
         (origin, angles)
     };
-    let (origin, angles) = g_parent_link_apply_local(
+    let (origin, angles) = parent_link_apply_local(
         origin,
         angles,
         view.relations.parent_link_axis,
@@ -198,15 +195,15 @@ fn parent_world_pose(
         EntityRunKind::ScriptMover | EntityRunKind::PrimaryLight => {
             world.script_mover_by_number(parent.number()).map(|mover| {
                 (
-                    bg_evaluate_trajectory(&pos_from_entity_state(&mover.state), time_ms),
-                    bg_evaluate_trajectory(&apos_from_entity_state(&mover.state), time_ms),
+                    evaluate_trajectory(&pos_from_entity_state(&mover.state), time_ms),
+                    evaluate_trajectory(&apos_from_entity_state(&mover.state), time_ms),
                 )
             })
         }
         EntityRunKind::Item => world.dropped_item_by_number(parent.number()).map(|item| {
             (
                 item.origin,
-                bg_evaluate_trajectory(&apos_from_entity_state(&item.state), time_ms),
+                evaluate_trajectory(&apos_from_entity_state(&item.state), time_ms),
             )
         }),
         EntityRunKind::Missile
@@ -227,12 +224,12 @@ fn apply_parent_link_pose(
         EntityRunKind::ScriptMover | EntityRunKind::PrimaryLight => {
             let mut linked_id = None;
             if let Some(mover) = world.script_mover_mut_by_number(number) {
-                g_parent_link_pose(&mut mover.state, origin, angles);
+                parent_link_pose(&mut mover.state, origin, angles);
                 let snapped = snap_angles(angles);
-                if sv_link_entity_needs_rotated_radius(snapped, mover.box_half) {
-                    panic!("SV_LinkEntity yaw/pitch radius Bounds when r.half is non-zero");
+                if link_entity_needs_rotated_radius(snapped, mover.box_half) {
+                    panic!("link yaw/pitch radius Bounds when r.half is non-zero");
                 }
-                let bounds = sv_link_entity_world_bounds(origin, mover.box_mid, mover.box_half);
+                let bounds = link_entity_world_bounds(origin, mover.box_mid, mover.box_half);
                 mover.link_mid = bounds.mid;
                 mover.link_half = bounds.half;
                 linked_id = Some(mover.id);
@@ -252,7 +249,7 @@ fn apply_parent_link_pose(
         EntityRunKind::Item => {
             if let Some(item) = world.dropped_item_mut_by_number(number) {
                 item.origin = origin;
-                g_parent_link_pose(&mut item.state, origin, angles);
+                parent_link_pose(&mut item.state, origin, angles);
             }
         }
         EntityRunKind::Missile

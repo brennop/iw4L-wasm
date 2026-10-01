@@ -31,7 +31,7 @@ pub(crate) fn queue(host: &fx::FxSystemHost, marks: &EntityMarks) {
     marks.lock().pending.push(EntityMarkRequest {
         entity,
         origin,
-        axis: fx_iw4::fx_impact_mark_axis(axis, rotation),
+        axis: fx_iw4::impact_mark_axis(axis, rotation),
         radius,
         material: material.clone(),
         color,
@@ -44,7 +44,7 @@ pub(crate) fn generate(
     marks: &EntityMarks,
     owners: &Query<(&WorldScriptModelInstance, &Transform, &Visibility)>,
     xanims: Option<&assets::PreparedXAnims>,
-    models: &assets::MapXModelSceneCatalog,
+    models: &asset_world::MapXModelSceneCatalog,
 ) {
     let mut state = marks.lock();
     let pending = std::mem::take(&mut state.pending);
@@ -78,18 +78,18 @@ pub(crate) fn generate(
             state.unsupported_receivers += requested;
             continue;
         };
-        let Ok(dobj) = assets::DObj::build(&specs) else {
+        let Ok(dobj) = xmodel_runtime::DObj::build(&specs) else {
             state.unsupported_receivers += requested;
             continue;
         };
         let Ok(request) = owner
             .dobj_state
-            .resolve_request(|name| xanims?.0.clip(assets::AssetNamespace::Iw4, name))
+            .resolve_request(|name| xanims?.0.clip(asset_core::AssetNamespace::Iw4, name))
         else {
             state.unsupported_receivers += requested;
             continue;
         };
-        let Ok(pose) = assets::dobj::pose_dobj(&dobj, &request, transform.to_matrix()) else {
+        let Ok(pose) = xmodel_runtime::pose_dobj(&dobj, &request, transform.to_matrix()) else {
             state.unsupported_receivers += requested;
             continue;
         };
@@ -192,7 +192,7 @@ pub(crate) fn generate(
 
 struct RigidReceiver<'a> {
     owner: &'a WorldScriptModelInstance,
-    skel: &'a assets::ModelSkel,
+    skel: &'a asset_model::ModelSkel,
     skin: &'a [Mat4],
     model_index: usize,
     bone_base: usize,
@@ -206,7 +206,7 @@ fn stage(
     state: &mut render_fx::EntityMarkStore,
     request: &EntityMarkRequest,
     receiver: RigidReceiver<'_>,
-    models: &assets::MapXModelSceneCatalog,
+    models: &asset_world::MapXModelSceneCatalog,
 ) {
     let RigidReceiver {
         owner,
@@ -221,11 +221,10 @@ fn stage(
         state.unsupported_receivers += 1;
         return;
     };
-    let model_key = assets::MapXModelAssetKey(model.to_string());
+    let model_key = asset_world::MapXModelAssetKey(model.to_string());
     let mark_bits = super::world_mark::runtime_material_by_name(scene, &request.material)
         .and_then(|m| m.surface_type_bits);
-    let planes =
-        marks_iw4::fx_mark_fragment_clip_planes(request.origin, request.axis, request.radius);
+    let planes = marks_iw4::mark_fragment_clip_planes(request.origin, request.axis, request.radius);
     let mut by_bone =
         std::collections::BTreeMap::<usize, (Vec<FxMarkStagingTri>, Vec<FxMarkStagingPoint>)>::new(
         );
@@ -236,9 +235,7 @@ fn stage(
         }
         let material = models.surface_material(&model_key, surface);
         let (flags, bits) = super::world_mark::receiver_allow_inputs(scene, surface, material);
-        if !marks_iw4::fx_mark_include_in_world_clip(marks_iw4::fx_mark_allow(
-            flags, bits, mark_bits,
-        )) {
+        if !marks_iw4::mark_include_in_world_clip(marks_iw4::mark_allow(flags, bits, mark_bits)) {
             continue;
         }
         let Some(&(start, count)) = skel.surface_index_ranges.get(surface) else {
@@ -290,15 +287,10 @@ fn stage(
             };
             let world =
                 [p0, p1, p2].map(|p| matrix.transform_point3(Vec3::from_array(p)).to_array());
-            if marks_iw4::fx_mark_is_triangle_rejected(
-                request.axis[0],
-                world[0],
-                world[1],
-                world[2],
-            ) {
+            if marks_iw4::mark_is_triangle_rejected(request.axis[0], world[0], world[1], world[2]) {
                 continue;
             }
-            let n = marks_iw4::fx_mark_chop_world_triangle_points(
+            let n = marks_iw4::mark_chop_world_triangle_points(
                 &planes,
                 world[0],
                 world[1],
@@ -327,11 +319,11 @@ fn stage(
                 FxMarkStagingPoint::ZERO,
             );
 
-            let Some(context) = dobj_mark_context(request.entity, bone, submodel) else {
+            let Some(context) = mark_context(request.entity, bone, submodel) else {
                 state.unsupported_triangles += 1;
                 continue;
             };
-            match marks_iw4::fx_mark_emit_brush_fragment(
+            match marks_iw4::mark_emit_brush_fragment(
                 used_t,
                 used_p,
                 marks_iw4::R_MARK_FRAGMENTS_MAX_TRIS,
@@ -397,7 +389,7 @@ fn stage(
     }
 }
 
-fn dobj_mark_context(entity: u16, local_bone: usize, submodel: u8) -> Option<[u8; 7]> {
+fn mark_context(entity: u16, local_bone: usize, submodel: u8) -> Option<[u8; 7]> {
     let bone = u8::try_from(local_bone).ok()?;
     Some([3, bone, entity as u8, (entity >> 8) as u8, submodel, 0, 0])
 }

@@ -1,11 +1,8 @@
-use crate::flags::{
-    FX_ELEM_RUN_RELATIVE_TO_EFFECT, FX_ELEM_RUN_RELATIVE_TO_SPAWN, fx_elem_run_mode,
-};
+use crate::flags::{FX_ELEM_RUN_RELATIVE_TO_EFFECT, FX_ELEM_RUN_RELATIVE_TO_SPAWN, elem_run_mode};
 use crate::origin::{
-    FX_ELEM_SPAWN_OFFSET_SPHERE, fx_apply_spawn_origin, fx_elem_spawn_relative,
-    fx_offset_spawn_origin,
+    FX_ELEM_SPAWN_OFFSET_SPHERE, apply_spawn_origin, elem_spawn_relative, offset_spawn_origin,
 };
-use crate::vec::{fx_vec3_length_sq, fx_vec3_normalize, fx_vector_vectors};
+use crate::vec::{vec3_length_sq, vec3_normalize, vector_vectors};
 
 pub const FX_ORIENT_UP_DOT_GATE: f64 = 0.999_000_012_874_603_3;
 
@@ -37,13 +34,13 @@ pub struct FxOrientSpawnParams {
 }
 
 #[inline]
-pub fn fx_get_orientation(
+pub fn get_orientation(
     flags: i32,
     effect_now: &FxOrientFrame,
     effect_at_spawn: &FxOrientFrame,
     spawn: Option<FxOrientSpawnParams>,
 ) -> FxOrientation {
-    let mode = fx_elem_run_mode(flags);
+    let mode = elem_run_mode(flags);
     match mode {
         0 => FxOrientation {
             origin: [0.0; 3],
@@ -64,18 +61,18 @@ pub fn fx_get_orientation(
                     axis: effect_at_spawn.axis,
                 };
             };
-            fx_get_orientation_spawn_built(flags, effect_at_spawn, sp)
+            get_orientation_spawn_built(flags, effect_at_spawn, sp)
         }
     }
 }
 
-fn fx_get_orientation_spawn_built(
+fn get_orientation_spawn_built(
     flags: i32,
     effect_at_spawn: &FxOrientFrame,
     sp: FxOrientSpawnParams,
 ) -> FxOrientation {
-    let relative = fx_elem_spawn_relative(flags);
-    let mut origin = fx_apply_spawn_origin(
+    let relative = elem_spawn_relative(flags);
+    let mut origin = apply_spawn_origin(
         effect_at_spawn.origin,
         effect_at_spawn.axis,
         sp.spawn_origin,
@@ -83,7 +80,7 @@ fn fx_get_orientation_spawn_built(
         relative,
     );
     let mut offset = [0.0f32; 3];
-    fx_offset_spawn_origin(
+    offset_spawn_origin(
         &mut offset,
         effect_at_spawn.axis,
         flags,
@@ -98,22 +95,22 @@ fn fx_get_orientation_spawn_built(
     origin[2] += offset[2];
 
     let mut forward = offset;
-    let len_sq = fx_vec3_length_sq(forward);
+    let len_sq = vec3_length_sq(forward);
     if len_sq <= 1e-12 {
         forward = [1.0, 0.0, 0.0];
     } else {
-        forward = fx_vec3_normalize(forward);
+        forward = vec3_normalize(forward);
     }
 
     let axis = if (flags & 0x30) == FX_ELEM_SPAWN_OFFSET_SPHERE {
-        fx_vector_vectors(forward)
+        vector_vectors(forward)
     } else {
         let up_guess = if libm::fabsf(forward[2]) < (FX_ORIENT_UP_DOT_GATE as f32) {
             [0.0, 0.0, 1.0]
         } else {
             [0.0, 1.0, 0.0]
         };
-        let right = fx_vec3_normalize([
+        let right = vec3_normalize([
             up_guess[1] * forward[2] - up_guess[2] * forward[1],
             up_guess[2] * forward[0] - up_guess[0] * forward[2],
             up_guess[0] * forward[1] - up_guess[1] * forward[0],

@@ -5,7 +5,6 @@ mod observe;
 pub mod plugin;
 pub mod policy;
 pub mod reconciliation;
-pub mod role;
 pub mod role_matrix;
 pub mod schedule;
 pub mod session_core;
@@ -28,68 +27,64 @@ pub use authority::runtime::{
     AuthorityInputGate, AuthorityLoadHold, AuthorityPhaseCensus, AuthorityPhaseTrace,
     AuthorityWorld, ClientShotSamples, DumpConfigurationChangeLog, DumpDeathLog, DumpGiveLog,
     FixedUpdateCensus, ListenFanoutCensus, NetDiagnostics, PendingAcks, PendingAuthorityInput,
-    PendingStepResult, ScriptNotifyEmitStats, ServerTick, ServerTickData, authority_bookkeeping,
-    authority_should_tick,
-};
-pub use client::centity_runtime::{
-    CEntityDobjHandle, CEntityFxHandle, CEntityRuntime, CgPlayerDrawGate, CurrentLerpState,
-    EFLAGS_DEAD, EFLAGS_TELEPORT, RemoteBodySubmitKind, RemotePoseSample,
-    corpse_slot_to_entity_state, player_state_to_entity_state, remote_body_submit_kind,
-    remote_body_submits, remote_pose_sample,
-};
-pub use client::cg_frame::{CgFrameClock, CgameActive, CgameJoinCensus};
-pub use client::cls_frame::ClsRealtime;
-pub use client::entities::{
-    CEntity, CEntityBirthCensus, CEntitySlots, CLIENT_ENTITY_SLOT_COUNT, register_client_entities,
-    sync_client_entities,
-};
-pub use client::entity_event_dispatch::{
-    AppliedEntityEventWalk, DispatchedEntityEvent, EntityBulletHit, EntityEjectBrass,
-    EntityEventCursor, EntityEventSound, EntityExplosion, EntityGrenadeContact, EntityMeleeBlood,
-    EntityMovementSound, EntityObituary, EntityPlayFx, EntityResetAds, EntityWeaponFire,
-    KillcamFxTransition, UnsupportedEntityEvents, WeaponFirePing, WeaponFirePingBus,
-    register_entity_event_dispatch,
-};
-pub use client::entity_event_registry::{
-    EV_DISPATCH_REGISTRY, EntityEventDispatch, EntityEventRow, ev_dispatch_row,
+    PendingStepResult, ServerTick, ServerTickData, authority_bookkeeping, authority_should_tick,
 };
 pub use client::frame_census::{ClientPhaseCensus, HUD_STAGE_N, UpdatePhaseCensus};
+pub use client::frame_clock::{FrameClock, GameActive, GameJoinCensus};
 pub use client::input::{
     ClientActionInput, KEY_FRAME_MSEC_MAX, LookState, accumulate_look, build_usercmd,
-    com_frame_time_msec, idle_usercmd, key_frame_msec, look_angles_from_degrees,
+    frame_time_msec, idle_usercmd, key_frame_msec, look_angles_from_degrees,
 };
 pub use client::predict::{
     AckMatch, ClientPrediction, CmdSeq, DEFAULT_HISTORY_CAP, MAX_UNACKED_SNAPSHOTS, MoveHistory,
     MoveRecord, PredictionMetrics, ReconcileOutcome, snapshot_ground_e_type,
 };
 pub use client::predicted_error::PredictedError;
-pub use client::presented::{
-    CgViewweaponAim, FpvEventCues, FpvHandRecord, FpvRawHandSample, LocalPresentClient,
-    PresentLocalCensus, PresentedSnapshot,
+pub use client::presentation::centity_runtime::{
+    CEntityDobjHandle, CEntityFxHandle, CEntityRuntime, CurrentLerpState, EFLAGS_DEAD,
+    EFLAGS_TELEPORT, PlayerDrawGate, RemoteBodySubmitKind, RemotePoseSample,
+    corpse_slot_to_entity_state, player_state_to_entity_state, remote_body_submit_kind,
+    remote_body_submits, remote_pose_sample,
 };
-pub use client::projectiles::{PresentedProjectile, count_throw_rows, merge_presented_projectiles};
+pub use client::presentation::entities::{
+    CEntity, CEntityBirthCensus, CEntitySlots, CLIENT_ENTITY_SLOT_COUNT, register_client_entities,
+    sync_client_entities,
+};
+pub use client::presentation::entity_event_dispatch::{
+    AppliedEntityEventWalk, DispatchedEntityEvent, EntityBulletHit, EntityEjectBrass,
+    EntityEventCursor, EntityEventSound, EntityExplosion, EntityGrenadeContact, EntityMeleeBlood,
+    EntityMovementSound, EntityObituary, EntityPlayFx, EntityResetAds, EntityWeaponFire,
+    KillcamFxTransition, UnsupportedEntityEvents, WeaponFirePing, WeaponFirePingBus,
+    register_entity_event_dispatch,
+};
+pub use client::presentation::entity_event_registry::{
+    EV_DISPATCH_REGISTRY, EntityEventDispatch, EntityEventRow, ev_dispatch_row,
+};
+pub use client::presentation::presented::{
+    FpvEventCues, FpvHandRecord, FpvRawHandSample, LocalPresentClient, PresentLocalCensus,
+    PresentedSnapshot, ViewweaponAim,
+};
+pub use client::presentation::projectiles::{
+    PresentedProjectile, count_throw_rows, merge_presented_projectiles,
+};
 pub use client::proxy::{
     AnimGap, FIXED_DELAY_POLICY_REVISION, PROXY_BUFFER_TICKS, PROXY_DELAY_MS,
     PresentationSampleOutcome, PresentationSampleProvenance, PresentationSampleTime, ProxyMode,
     ProxyPolicyRevision, ProxySample, ProxyStarvationReason, RemoteProxy,
 };
+pub use client::realtime::ClientRealtime;
 pub use client::runtime::{
-    CgWeaponSelect, ClientClock, ClientCmdTemplate, ClientPhaseTrace, ClientPredictionState,
-    ClientReliableAck, ClockTick, LastAdoptedSnapshot, PendingClientSends, PendingPelletFx,
+    ClientClock, ClientCmdTemplate, ClientPhaseTrace, ClientPredictionState, ClientReliableAck,
+    ClockTick, LastAdoptedSnapshot, LocationCursor, PendingClientSends, PendingPelletFx,
     PendingPresentedEntityEvents, ReceivedTicks, ReliableControlEvent, RemoteProxyState,
-    advance_cg_frame_clock, advance_cls_realtime, arm_listen_prediction, cg_cycle_weapon_select,
-    cg_follow_held_weapon_select, listen_prediction_needs_content, predict_local_move,
-    publish_presented, receive_ticks, reconcile_prediction, register_client_runtime,
-    register_listen_prediction_arm, sample_client_input, send_pending_commands,
+    WeaponSelect, advance_cg_frame_clock, advance_cls_realtime, arm_listen_prediction,
+    cycle_weapon_select, follow_held_weapon_select, listen_prediction_needs_content,
+    predict_local_move, publish_presented, receive_ticks, reconcile_prediction,
+    register_client_runtime, register_listen_prediction_arm, sample_client_input,
+    send_pending_commands,
 };
-pub use entity_iw4::EntityEventKind;
 pub use gaps::{NetGap, NetGapCause, NetIdentityGaps, ScriptNotify};
-pub use master_protocol::{AdvertId, ContentFlags, SessionCloseReason};
 pub use plugin::NetPlugin;
-pub use policy::killcam::{
-    ActiveKillcamSkips, PendingDeathTimelines, ScriptKillcamEmitStats, session_from_start_killcam,
-    session_from_window_plan, time_until_spawn_seconds, use_button_pressed,
-};
 pub use policy::seat::{
     ActiveKillcams, KillcamSession, SeatSample, apply_seat_to_snapshot, killcam_seconds_to_ms,
     sample_killcam_seat, snapshot_and_sample_for_viewer, snapshot_for_viewer,
@@ -99,7 +94,6 @@ pub use reconciliation::{
     SIDE_EFFECT_CONTRACT, STATE_CONTRACT, SideEffectContractRow, SideEffectReplayRule,
     SnapshotOrder, StateClass, StateContractRow, classify_snapshot,
 };
-pub use role::RuntimeRole;
 pub use schedule::{
     AUTHORITY_TOC, AuthoritySet, CLIENT_TOC, ClientSet, PresentedPublished,
     configure_authority_sets, configure_client_sets,
@@ -117,14 +111,15 @@ pub use signon::{
     phase_from_udp_link,
 };
 pub use svc_gamenotify::{
-    PendingGameNotify, SVC_DISCONNECT_NOTIFY, SVC_PRINT, SvcGameNotify, client_name_string,
+    PendingGameNotify, SVC_DISCONNECT_NOTIFY, SVC_PRINT, SVC_PRINT_BOLD, SvcGameNotify,
+    client_name_string,
 };
 pub use svc_playercard::{
     PendingPlayerCard, SVC_CARD_SLOT, SVC_OPEN_MENU, SvcCardSlot, SvcCardSlotCmd, SvcHudSplash,
     SvcOpenMenu, SvcOpenMenuCmd,
 };
 pub use svc_scores::{
-    CgScores, PendingScoreboard, SCORES_REQUEST_MS, SVC_SCORES, format_scoreboard_cmd,
+    PendingScoreboard, SCORES_REQUEST_MS, SVC_SCORES, Scoreboard, format_scoreboard_cmd,
     format_scoreboard_from_snapshot, parse_scoreboard_cmd,
 };
 pub use svc_sound::{PendingSvcSounds, SVC_PLAY_LOCAL, SVC_STOP_LOCAL, SvcLocalSound, SvcSound};
@@ -167,7 +162,7 @@ pub use transport::reliable::{
     ReliableRow, decode_reliable_payload, encode_reliable_payload,
 };
 pub use transport::udp_session::{CommittedAdmission, UdpAuthorityHub, UdpClientLink};
-pub use transport::udp_socket::{DEFAULT_RECV_BUDGET_PER_TICK, UdpDatagramSocket, UdpSendError};
+pub use transport::udp_socket::UdpSendError;
 pub use transport::wire::{WireError, WireReader, WireWriter};
 
-pub const PROTOCOL_VERSION: u32 = 78;
+pub const PROTOCOL_VERSION: u32 = 86;

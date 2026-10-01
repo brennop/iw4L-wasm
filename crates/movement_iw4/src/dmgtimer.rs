@@ -17,7 +17,7 @@ const TURN_DEGREES: f32 = 360.0;
 
 const FLINCH_SECTOR_DEGREES: [f32; 4] = [45.0, 135.0, 225.0, 315.0];
 
-pub fn pm_update_damage_timer(ps: &mut PlayerState, damage: i32, dir: Option<[f32; 3]>) {
+pub fn update_damage_timer(ps: &mut PlayerState, damage: i32, dir: Option<[f32; 3]>) {
     let added = (PLAYER_DMGTIMER_TIME_PER_POINT * damage as f32) as i32;
     ps.damage_timer = ps.damage_timer.saturating_add(added);
     if PLAYER_DMGTIMER_MAX_TIME < ps.damage_timer as f32 {
@@ -55,14 +55,14 @@ fn flinch_yaw_anim(view_yaw: f32, dir: [f32; 3]) -> i32 {
 }
 
 #[must_use]
-pub fn pm_damage_scale_walk(damage_timer: i32) -> f32 {
+pub fn damage_scale_walk(damage_timer: i32) -> f32 {
     if damage_timer == 0 || PLAYER_DMGTIMER_MAX_TIME == 0.0 {
         return 1.0;
     }
     (-PLAYER_DMGTIMER_MIN_SCALE / PLAYER_DMGTIMER_MAX_TIME) * damage_timer as f32 + 1.0
 }
 
-pub fn pm_walk_move_drop_damage_timer(ps: &mut PlayerState, frametime_seconds: f32) {
+pub fn walk_move_drop_damage_timer(ps: &mut PlayerState, frametime_seconds: f32) {
     ps.damage_timer -= (frametime_seconds * 1000.0) as i32;
     if ps.damage_timer < 1 {
         ps.damage_timer = 0;
@@ -70,6 +70,6 @@ pub fn pm_walk_move_drop_damage_timer(ps: &mut PlayerState, frametime_seconds: f
 }
 
 #[must_use]
-pub fn pm_damage_window_open(damage_timer: i32, damage_duration: i32, window_ms: i32) -> bool {
+pub fn damage_window_open(damage_timer: i32, damage_duration: i32, window_ms: i32) -> bool {
     damage_duration.saturating_sub(window_ms).max(0) < damage_timer
 }

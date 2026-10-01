@@ -28,7 +28,7 @@ pub enum FxTrailSplit {
 }
 
 #[inline]
-pub fn fx_trail_split_window(
+pub fn trail_split_window(
     leftover: f32,
     inv_split_time: f32,
     dt_msec: f32,
@@ -53,7 +53,7 @@ pub fn fx_trail_split_window(
 }
 
 #[inline]
-pub fn fx_trail_split_skips_update(
+pub fn trail_split_skips_update(
     sequence: u8,
     spawn_range_base: f32,
     spawn_range_amp: f32,
@@ -69,22 +69,22 @@ pub fn fx_trail_split_skips_update(
     }
     let scale = 1.0 + (sequence.trailing_zeros() as f32);
     let r = range * scale;
-    crate::sort::fx_sort_dist_to_cam_sq(camera, origin) > r * r
+    crate::sort::sort_dist_to_cam_sq(camera, origin) > r * r
 }
 
 #[inline]
-pub fn fx_trail_split_interpolant_t(k: f32, leftover: f32, acc: f32) -> f32 {
+pub fn trail_split_interpolant_t(k: f32, leftover: f32, acc: f32) -> f32 {
     (k - leftover) / (acc - leftover)
 }
 
 #[inline]
-pub fn fx_trail_split_interpolant_msec(prev_msec: i32, msec_now: i32, t: f32) -> i32 {
+pub fn trail_split_interpolant_msec(prev_msec: i32, msec_now: i32, t: f32) -> i32 {
     (prev_msec as f32 + t * (msec_now - prev_msec) as f32) as i32
 }
 
 #[inline]
-pub fn fx_trail_split_lerp_quat(begin: [f32; 4], end: [f32; 4], t: f32) -> [f32; 4] {
-    crate::quat::fx_quat_normalize([
+pub fn trail_split_lerp_quat(begin: [f32; 4], end: [f32; 4], t: f32) -> [f32; 4] {
+    crate::quat::quat_normalize([
         begin[0] + t * (end[0] - begin[0]),
         begin[1] + t * (end[1] - begin[1]),
         begin[2] + t * (end[2] - begin[2]),
@@ -93,7 +93,7 @@ pub fn fx_trail_split_lerp_quat(begin: [f32; 4], end: [f32; 4], t: f32) -> [f32;
 }
 
 #[inline]
-pub fn fx_trail_split_lerp_origin(begin: [f32; 3], end: [f32; 3], t: f32) -> [f32; 3] {
+pub fn trail_split_lerp_origin(begin: [f32; 3], end: [f32; 3], t: f32) -> [f32; 3] {
     [
         begin[0] + t * (end[0] - begin[0]),
         begin[1] + t * (end[1] - begin[1]),
@@ -102,10 +102,10 @@ pub fn fx_trail_split_lerp_origin(begin: [f32; 3], end: [f32; 3], t: f32) -> [f3
 }
 
 #[inline]
-pub fn fx_trail_split_lerp_axis(begin: [[f32; 3]; 3], end: [[f32; 3]; 3], t: f32) -> [[f32; 3]; 3] {
-    crate::glass::fx_unit_quat_to_axis(fx_trail_split_lerp_quat(
-        crate::quat::fx_axis_to_quat(begin),
-        crate::quat::fx_axis_to_quat(end),
+pub fn trail_split_lerp_axis(begin: [[f32; 3]; 3], end: [[f32; 3]; 3], t: f32) -> [[f32; 3]; 3] {
+    crate::glass::unit_quat_to_axis(trail_split_lerp_quat(
+        crate::quat::axis_to_quat(begin),
+        crate::quat::axis_to_quat(end),
         t,
     ))
 }

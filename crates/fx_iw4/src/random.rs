@@ -16,12 +16,12 @@ pub const FX_RAND_CH_EMIT_DIST: u32 = 20;
 
 pub const FX_RAND_CH_VISUAL: u32 = 21;
 
-pub fn fx_elem_visual_index(visual_count: u8, random_seed: u32) -> usize {
+pub fn elem_visual_index(visual_count: u8, random_seed: u32) -> usize {
     let count = usize::from(visual_count);
     if count <= 1 {
         return 0;
     }
-    let lo = u32::from(fx_random_table_u16(random_seed, FX_RAND_CH_VISUAL));
+    let lo = u32::from(random_table_u16(random_seed, FX_RAND_CH_VISUAL));
     ((count as u32).wrapping_mul(lo) >> 16) as usize
 }
 
@@ -64,7 +64,7 @@ pub const FX_RAND_CH_ANG_VEL_YAW: u32 = 4;
 pub const FX_RAND_CH_ANG_VEL_ROLL: u32 = 5;
 
 #[inline]
-pub fn fx_effect_random_seed_from_msec(msec_begin: i32) -> u16 {
+pub fn effect_random_seed_from_msec(msec_begin: i32) -> u16 {
     let x = (msec_begin as u32)
         .wrapping_mul(0x343fd)
         .wrapping_add(0x269ec3);
@@ -72,14 +72,14 @@ pub fn fx_effect_random_seed_from_msec(msec_begin: i32) -> u16 {
 }
 
 #[inline]
-pub fn fx_effect_random_seed_from_rand(rand_i32: i32) -> u16 {
+pub fn effect_random_seed_from_rand(rand_i32: i32) -> u16 {
     let prod = rand_i32.wrapping_mul(FX_RAND_TABLE_MOD as i32);
     let adj = prod.wrapping_add((prod >> 31) & 0x7fff);
     (adj >> 15) as u16
 }
 
 #[inline]
-pub fn fx_elem_random_seed(effect_seed: u16, sequence: u8, msec_begin: i32) -> u32 {
+pub fn elem_random_seed(effect_seed: u16, sequence: u8, msec_begin: i32) -> u32 {
     (u32::from(effect_seed)
         .wrapping_add(u32::from(sequence).wrapping_mul(0x128))
         .wrapping_add(msec_begin as u32))
@@ -87,7 +87,7 @@ pub fn fx_elem_random_seed(effect_seed: u16, sequence: u8, msec_begin: i32) -> u
 }
 
 #[inline]
-pub fn fx_trail_random_seed(effect_seed: u16, sequence: i8) -> u32 {
+pub fn trail_random_seed(effect_seed: u16, sequence: i8) -> u32 {
     let seq_term = (sequence as i32).wrapping_mul(0x128) as u32;
     u32::from(effect_seed).wrapping_add(seq_term) % FX_RAND_TABLE_MOD
 }
@@ -99,7 +99,7 @@ fn table_index(seed: u32, channel: u32) -> usize {
 }
 
 #[inline]
-pub fn fx_random_table_f32(seed: u32, channel: u32) -> f32 {
+pub fn random_table_f32(seed: u32, channel: u32) -> f32 {
     let idx = table_index(seed, channel);
     let off = idx * 4;
     debug_assert!(off + 4 <= FX_RANDOM_TABLE_BYTES.len());
@@ -113,7 +113,7 @@ pub fn fx_random_table_f32(seed: u32, channel: u32) -> f32 {
 }
 
 #[inline]
-pub fn fx_random_table_u16(seed: u32, channel: u32) -> u16 {
+pub fn random_table_u16(seed: u32, channel: u32) -> u16 {
     let idx = table_index(seed, channel);
     let off = idx * 4;
     debug_assert!(off + 2 <= FX_RANDOM_TABLE_BYTES.len());

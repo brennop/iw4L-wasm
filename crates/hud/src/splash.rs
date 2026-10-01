@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
-use assets::{CapturedStringTable, MenuCatalog, PreparedLocalizedStrings};
+use asset_game::{CapturedStringTable, MenuCatalog};
+use assets::PreparedLocalizedStrings;
 use bevy::prelude::*;
 use bevy::ui::{Display, FocusPolicy};
 use hud_iw4::{
     ExprError, ExprHost, Operand, SPLASH_COL_DESCRIPTION, SPLASH_COL_DURATION, SPLASH_COL_MATERIAL,
     SPLASH_COL_MENU, SPLASH_COL_TEXT, SPLASH_SLOT_COUNT, SPLASH_TABLE_NAME, SplashSlot,
-    cg_activate_splash, item_run_script_lerp, splash_duration_ms, splash_has_icon,
+    activate_splash, item_run_script_lerp, splash_duration_ms, splash_has_icon,
     splash_replace_optional,
 };
 
@@ -15,7 +16,7 @@ use crate::draw2d::{Draw2dOp, tessellate_fonts};
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps};
 use crate::gpu_list::{HudTessPass, TessJob};
 use crate::images::HudImages;
-use crate::scorebar::sys_milliseconds;
+use crate::scorebar::milliseconds;
 
 #[derive(Resource, Default)]
 pub struct PendingSplash {
@@ -32,11 +33,13 @@ pub(crate) struct SplashSlots {
 pub(crate) struct SplashRaster;
 
 struct SplashExprHost<'a> {
-    menu: &'a assets::MenuDef,
+    menu: &'a asset_game::MenuDef,
     ms: i32,
     slots: &'a [SplashSlot; SPLASH_SLOT_COUNT],
     table: Option<&'a CapturedStringTable>,
-    localize: Option<&'a assets::LocalizeCatalog>,
+    catalog: Option<&'a MenuCatalog>,
+    localize: Option<&'a asset_game::LocalizeCatalog>,
+    input: Option<&'a frame::HudInputView>,
 }
 
 impl SplashExprHost<'_> {
@@ -66,6 +69,33 @@ impl SplashExprHost<'_> {
 
         String::from(key)
     }
+
+    fn key_for(&self, command: &str) -> String {
+        let bound = self.input.and_then(|input| {
+            if matches!(command, "+activate" | "+usereload") {
+                return input.use_key.clone();
+            }
+            let slot = command
+                .strip_prefix("+actionslot ")?
+                .trim()
+                .parse::<usize>()
+                .ok()?
+                .checked_sub(1)?;
+            input.action_slot_keys.get(slot)?.clone()
+        });
+        bound.unwrap_or_else(|| {
+            let unbound = self
+                .localize
+                .and_then(|t| t.text(hud_iw4::KEY_UNBOUND))
+                .unwrap_or(hud_iw4::KEY_UNBOUND);
+            hud_iw4::unbound_directive(unbound, command)
+        })
+    }
+
+    fn cell_text(&self, cell: &str, optional_number: i32) -> String {
+        let translated = hud_iw4::replace_directive(&self.loc(cell), |cmd| self.key_for(cmd));
+        splash_replace_optional(&translated, optional_number)
+    }
 }
 
 impl ExprHost for SplashExprHost<'_> {
@@ -93,8 +123,18 @@ impl ExprHost for SplashExprHost<'_> {
     fn other_team_field(&self, _field: &str) -> Result<Operand, ExprError> {
         Err(ExprError::Host("other team field"))
     }
-    fn local_var_string(&self, _name: &str) -> Result<Operand, ExprError> {
-        Ok(Operand::Str(String::new()))
+    // The menu's onOpen setLocalVar* expressions only read the live slot, so evaluating
+    // them on demand gives the value they would have stored at open.
+    fn local_var_string(&self, name: &str) -> Result<Operand, ExprError> {
+        let Some(var) = self
+            .menu
+            .on_open_local_vars
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case(name))
+        else {
+            return Ok(Operand::Str(String::new()));
+        };
+        hud_iw4::expr::evaluate(&var.expr, self)
     }
     fn time_left(&self) -> Result<i32, ExprError> {
         Err(ExprError::Host("timeleft"))
@@ -119,11 +159,7 @@ impl ExprHost for SplashExprHost<'_> {
             Some(t) => t.cell(s.row, SPLASH_COL_TEXT),
             None => "",
         };
-        let translated = self.loc(cell);
-        Ok(Operand::Str(splash_replace_optional(
-            &translated,
-            s.optional_number,
-        )))
+        Ok(Operand::Str(self.cell_text(cell, s.optional_number)))
     }
     fn splash_description(&self, slot: i32) -> Result<Operand, ExprError> {
         let Some(s) = self.slot(slot) else {
@@ -136,11 +172,7 @@ impl ExprHost for SplashExprHost<'_> {
             Some(t) => t.cell(s.row, SPLASH_COL_DESCRIPTION),
             None => "",
         };
-        let translated = self.loc(cell);
-        Ok(Operand::Str(splash_replace_optional(
-            &translated,
-            s.optional_number,
-        )))
+        Ok(Operand::Str(self.cell_text(cell, s.optional_number)))
     }
     fn splash_material(&self, slot: i32) -> Result<Operand, ExprError> {
         let Some(s) = self.slot(slot) else {
@@ -176,6 +208,22 @@ impl ExprHost for SplashExprHost<'_> {
             return Ok(Operand::Int(0));
         }
         Ok(Operand::Int(s.row))
+    }
+    fn table_lookup(
+        &self,
+        table: &str,
+        col0: i32,
+        key: &str,
+        result_col: i32,
+    ) -> Result<Operand, ExprError> {
+        let Some(t) = self.catalog.and_then(|c| c.string_table(table)) else {
+            return Err(ExprError::Host("string table"));
+        };
+        Ok(Operand::Str(
+            t.lookup_row_in_col(col0, key)
+                .map(|row| t.cell(row, result_col).to_owned())
+                .unwrap_or_default(),
+        ))
     }
     fn table_lookup_by_row(&self, table: &str, row: i32, col: i32) -> Result<Operand, ExprError> {
         match self.table {
@@ -221,7 +269,7 @@ fn activate_pending(
         return Some(key);
     };
     let duration_ms = splash_duration_ms(table.cell(row, SPLASH_COL_DURATION));
-    let (index, slot) = cg_activate_splash(0, row, duration_ms, pending.optional_number, now_ms);
+    let (index, slot) = activate_splash(0, row, duration_ms, pending.optional_number, now_ms);
     slots.slots[index] = slot;
     None
 }
@@ -247,6 +295,9 @@ pub(crate) fn update_splash(
     mut pending: ResMut<PendingSplash>,
     mut slots: ResMut<SplashSlots>,
     mut received: MessageReader<net::SvcHudSplash>,
+    input: Option<Res<frame::HudInputView>>,
+    presented: Res<net::PresentedSnapshot>,
+    local: Res<net::LocalPresentClient>,
 ) {
     if !surface.is_ready() {
         return;
@@ -254,7 +305,7 @@ pub(crate) fn update_splash(
     for cmd in received.read().filter(|cmd| cmd.slot == 0) {
         pending.queued.push_back((cmd.key.clone(), cmd.optional));
     }
-    let now_ms = sys_milliseconds() as i32;
+    let now_ms = milliseconds() as i32;
     expire_slots(&mut slots, now_ms);
     if pending.key.is_none() && !slots.slots.iter().any(|s| s.live()) {
         if let Some((key, optional)) = pending.queued.pop_front() {
@@ -305,13 +356,42 @@ pub(crate) fn update_splash(
         return;
     };
 
+    // Promotion uses this match's authoritative rank. The authored expressions
+    // read a stored profile's experience/prestige, which is not the match state.
+    let mut promotion;
+    let menu = if menu_name.eq_ignore_ascii_case("promotion") {
+        promotion = menu.clone();
+        if let Some(meta) = presented
+            .snapshot()
+            .and_then(|snap| snap.meta.for_client(local.0))
+        {
+            let key = meta.rank.to_string();
+            let icon = catalog
+                .as_ref()
+                .and_then(|c| c.string_table("mp/rankIconTable.csv"))
+                .map(|t| t.lookup_col(&key, meta.prestige.saturating_add(1)))
+                .unwrap_or("");
+            for item in &mut promotion.items {
+                if item.name.starts_with("promotion_rank_icon") {
+                    item.material_exp.clear();
+                    item.background = icon.to_owned();
+                }
+            }
+        }
+        &promotion
+    } else {
+        menu
+    };
+
     let material = table.cell(live.row, SPLASH_COL_MATERIAL);
     let host = SplashExprHost {
         menu,
         ms: now_ms,
         slots: &slots.slots,
         table: Some(table),
+        catalog: catalog.as_deref(),
         localize: strings.as_ref().map(|s| &s.0),
+        input: input.as_deref(),
     };
     let lerp = item_run_script_lerp(&menu.on_open, live.start_ms);
     for command in &lerp.leftover {
@@ -344,7 +424,7 @@ pub(crate) fn update_splash(
         });
     }
 
-    let mut fonts: HashMap<String, &assets::FontDef> = HashMap::new();
+    let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     for cmd in &list.cmds {
         let _ = hud_images.get(
             crate::images::HUD_CHROME_NAMESPACE,

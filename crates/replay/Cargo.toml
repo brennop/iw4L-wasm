@@ -13,7 +13,6 @@ frame.workspace = true
 net.workspace = true
 sim.workspace = true
 playerstate_iw4.workspace = true
-movement_iw4.workspace = true
 perf.workspace = true
 getrandom = "0.3"
 

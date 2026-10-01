@@ -1,7 +1,7 @@
 use trace_iw4::Trace;
 
 use crate::GroundTraceInput;
-use crate::correct_solid::{CorrectSolidOutcome, pm_correct_solid};
+use crate::correct_solid::{CorrectSolidOutcome, correct_solid};
 
 pub trait CollisionBackend {
     fn trace(&self, input: GroundTraceInput) -> Trace;
@@ -13,7 +13,7 @@ pub trait CollisionBackend {
         maxs: [f32; 3],
         tracemask: u32,
     ) -> Option<CorrectSolidOutcome> {
-        pm_correct_solid(origin, mins, maxs, tracemask, self)
+        correct_solid(origin, mins, maxs, tracemask, self)
     }
 
     fn touch_entity(&self, _entity: i32) {}

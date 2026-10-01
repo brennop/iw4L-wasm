@@ -171,15 +171,17 @@ pub struct HudTessPass {
     pub compass: TessJob,
     pub scorebar: TessJob,
     pub splash: TessJob,
-    pub score_popup: TessJob,
     pub killfeed: TessJob,
     pub playercard: TessJob,
     pub weaponbar: TessJob,
     pub scoreboard: TessJob,
     pub killcam_skip: TessJob,
+    pub targetmap: TessJob,
     pub mantle_hint: TessJob,
     pub use_hint: TessJob,
-    pub match_start: TessJob,
+    pub hud_elems: TessJob,
+    pub hud_elems_back: TessJob,
+    pub script_menus: TessJob,
 }
 
 /// What the HUD tess flush systems' own bodies cost this frame.
@@ -348,7 +350,8 @@ pub fn present_list(input: PresentInput<'_>) -> usize {
         let Some(clipped) = clip_aa_quad(quad) else {
             continue;
         };
-        let Some(texture) = hud_images.get(clipped.material_namespace, &clipped.material, images)
+        let Some(texture) =
+            hud_images.get_native(clipped.material_namespace, &clipped.material, images)
         else {
             continue;
         };
@@ -385,9 +388,9 @@ pub fn present_list(input: PresentInput<'_>) -> usize {
 }
 
 fn pack_quad_verts(quad: &Draw2dQuad) -> [HudTessVertex; 4] {
-    let color = u32::from_le_bytes(hud_iw4::r_convert_color_to_bytes(quad.color));
+    let color = u32::from_le_bytes(hud_iw4::convert_color_to_bytes(quad.color));
     core::array::from_fn(|n| {
-        HudTessVertex::from(hud_iw4::rb_set_vertex_2d(
+        HudTessVertex::from(hud_iw4::set_vertex_2d(
             quad.xy[n][0],
             quad.xy[n][1],
             quad.st[n][0],

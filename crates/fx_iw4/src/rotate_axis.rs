@@ -1,4 +1,4 @@
-use crate::random::{FX_RAND_CH_INITIAL_ROTATION, fx_random_table_f32};
+use crate::random::{FX_RAND_CH_INITIAL_ROTATION, random_table_f32};
 
 pub const FX_RAND_ROT_DEGREES: f64 = 360.0;
 
@@ -7,15 +7,13 @@ pub const FX_DEG_TO_RAD: f64 = 0.017_453_292_384_743_69;
 pub const FX_RAD_TO_DEG: f64 = 57.295_776_367_187_5;
 
 #[inline]
-pub fn fx_runner_rand_rot_degrees(random_seed: u32) -> f32 {
-    (f64::from(fx_random_table_f32(
-        random_seed,
-        FX_RAND_CH_INITIAL_ROTATION,
-    )) * FX_RAND_ROT_DEGREES) as f32
+pub fn runner_rand_rot_degrees(random_seed: u32) -> f32 {
+    (f64::from(random_table_f32(random_seed, FX_RAND_CH_INITIAL_ROTATION)) * FX_RAND_ROT_DEGREES)
+        as f32
 }
 
 #[inline]
-pub fn fx_rotate_point_around_vector(dir: [f32; 3], point: [f32; 3], degrees: f32) -> [f32; 3] {
+pub fn rotate_point_around_vector(dir: [f32; 3], point: [f32; 3], degrees: f32) -> [f32; 3] {
     let rad = (f64::from(degrees) * FX_DEG_TO_RAD) as f32;
     let c = libm::cosf(rad);
     let s = libm::sinf(rad);
@@ -40,9 +38,9 @@ pub fn fx_rotate_point_around_vector(dir: [f32; 3], point: [f32; 3], degrees: f3
 }
 
 #[inline]
-pub fn fx_impact_mark_axis(axis_in: [[f32; 3]; 3], orientation_radians: f32) -> [[f32; 3]; 3] {
+pub fn impact_mark_axis(axis_in: [[f32; 3]; 3], orientation_radians: f32) -> [[f32; 3]; 3] {
     let forward = axis_in[0];
-    let rotated = fx_rotate_point_around_vector(
+    let rotated = rotate_point_around_vector(
         forward,
         axis_in[1],
         (f64::from(orientation_radians) * FX_RAD_TO_DEG) as f32,
@@ -56,10 +54,10 @@ pub fn fx_impact_mark_axis(axis_in: [[f32; 3]; 3], orientation_radians: f32) -> 
 }
 
 #[inline]
-pub fn fx_randomly_rotate_axis(axis_in: [[f32; 3]; 3], random_seed: u32) -> [[f32; 3]; 3] {
-    let degrees = fx_runner_rand_rot_degrees(random_seed);
+pub fn randomly_rotate_axis(axis_in: [[f32; 3]; 3], random_seed: u32) -> [[f32; 3]; 3] {
+    let degrees = runner_rand_rot_degrees(random_seed);
     let forward = axis_in[0];
-    let right = fx_rotate_point_around_vector(forward, axis_in[1], degrees);
+    let right = rotate_point_around_vector(forward, axis_in[1], degrees);
     let up = [
         forward[1] * right[2] - forward[2] * right[1],
         forward[2] * right[0] - forward[0] * right[2],

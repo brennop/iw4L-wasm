@@ -169,7 +169,7 @@ impl AreaEntityWorld {
         &self.entity_bounds
     }
 
-    pub fn from_retail_rows(
+    pub fn from_rows(
         world: AreaBounds,
         free_head: u16,
         sectors: Vec<AreaSector>,
@@ -185,11 +185,11 @@ impl AreaEntityWorld {
             entity_contents,
             entity_bounds,
         };
-        state.validate_retail_rows()?;
+        state.validate_rows()?;
         Ok(state)
     }
 
-    fn validate_retail_rows(&self) -> Result<(), AreaEntityWorldError> {
+    fn validate_rows(&self) -> Result<(), AreaEntityWorldError> {
         if self.sectors.len() != AREA_SECTOR_COUNT
             || self.links.len() != AREA_SECTOR_COUNT
             || self.entity_contents.len() != AREA_SECTOR_COUNT

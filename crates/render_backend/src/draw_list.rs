@@ -175,7 +175,7 @@ pub const fn list_args_index(cursor: u16) -> usize {
     (cursor as usize - 8) / 4
 }
 
-pub fn r_init_draw_surf_list_args(
+pub fn init_draw_surf_list_args(
     src: &[u32; FRONTEND_DRAW_LISTS_DWORDS],
     dest: &mut [u32; LIST_ARGS_DWORDS],
 ) {
@@ -215,13 +215,13 @@ pub fn r_init_draw_surf_list_args(
     dest[0x90 / 4] = src[0x6c / 4].wrapping_add(src[0x70 / 4].wrapping_mul(4));
 }
 
-pub fn r_setup_draw_list(
+pub fn setup_draw_list(
     src: &[u32; FRONTEND_DRAW_LISTS_DWORDS],
     draw_list_info_nonzero: bool,
     mode2: bool,
 ) -> GfxDrawList {
     let mut list = GfxDrawList::default();
-    r_init_draw_surf_list_args(src, &mut list.list_args);
+    init_draw_surf_list_args(src, &mut list.list_args);
     list.registered = 0;
     for kind in DRAW_LIST_REGISTRATION_ORDER {
         let allow = match kind.guard() {
@@ -238,7 +238,7 @@ pub fn r_setup_draw_list(
     list
 }
 
-pub fn r_dispatch_draw_surf_list_unsorted(
+pub fn dispatch_draw_surf_list_unsorted(
     entries: &mut [GfxDrawListEntry<'_>],
     ctx: &mut GfxCmdBufContext,
 ) {
@@ -296,7 +296,7 @@ pub fn draw_list_heap_build(heap: &mut [GfxDrawListHeapRecord], n: usize) {
     }
 }
 
-pub fn r_dispatch_draw_list_records(
+pub fn dispatch_draw_list_records(
     recs: &mut [GfxDrawListHeapRecord],
     sorted: bool,
     ctx: &mut GfxCmdBufContext,
@@ -342,7 +342,7 @@ pub fn r_dispatch_draw_list_records(
     }
 }
 
-pub fn r_dispatch_draw_surf_list_sorted(
+pub fn dispatch_draw_surf_list_sorted(
     entries: &mut [GfxDrawListEntry<'_>],
     ctx: &mut GfxCmdBufContext,
 ) {
@@ -384,7 +384,7 @@ pub fn r_dispatch_draw_surf_list_sorted(
     }
 }
 
-pub fn r_bind_draw_list_context(view_info: u32, arg1: u32, tech_type_src: u32) -> GfxCmdBufContext {
+pub fn bind_draw_list_context(view_info: u32, arg1: u32, tech_type_src: u32) -> GfxCmdBufContext {
     GfxCmdBufContext {
         view_info,
         arg1,
@@ -444,7 +444,7 @@ pub fn camera_view_depth_range_type(camera_view: u32) -> i32 {
     }
 }
 
-pub fn r_change_depth_range(state: &mut GfxCmdBufDepthState, depth_range_type: i32) {
+pub fn change_depth_range(state: &mut GfxCmdBufDepthState, depth_range_type: i32) {
     state.depth_range_type = depth_range_type;
     if depth_range_type == GFX_DEPTH_RANGE_SCENE {
         state.depth_min = DEPTH_RANGE_BAND;
@@ -455,13 +455,13 @@ pub fn r_change_depth_range(state: &mut GfxCmdBufDepthState, depth_range_type: i
     }
 }
 
-pub fn r_end_draw_list_shadow() -> GfxEndDrawList {
+pub fn end_draw_list_shadow() -> GfxEndDrawList {
     let mut cmd = GfxCmdBufDepthState::default();
     let mut state = GfxCmdBufDepthState::default();
-    r_end_draw_list(&mut cmd, &mut state, None)
+    end_draw_list(&mut cmd, &mut state, None)
 }
 
-pub fn r_end_draw_list(
+pub fn end_draw_list(
     cmd: &mut GfxCmdBufDepthState,
     state: &mut GfxCmdBufDepthState,
     pre: Option<(&mut GfxCmdBufDepthState, &mut GfxCmdBufDepthState)>,
@@ -474,13 +474,13 @@ pub fn r_end_draw_list(
     let mut restore_n = 0u32;
     let want = camera_view_depth_range_type(cmd.camera_view);
     if want != state.depth_range_type {
-        r_change_depth_range(state, want);
+        change_depth_range(state, want);
         restore_n = restore_n.saturating_add(1);
     }
     if let Some((pre_cmd, pre_state)) = pre {
         let want2 = camera_view_depth_range_type(pre_cmd.camera_view);
         if want2 != pre_state.depth_range_type {
-            r_change_depth_range(pre_state, want2);
+            change_depth_range(pre_state, want2);
             restore_n = restore_n.saturating_add(1);
         }
     }

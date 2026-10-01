@@ -8,24 +8,24 @@ mod flash;
 mod font_overlay;
 mod gaps;
 mod gpu_list;
-mod hitmarker;
+mod hud_elems;
 mod hudelem;
 mod images;
 mod iris;
 mod killcam_skip;
 mod killfeed;
 mod mantle_hint;
-mod match_start;
+mod menus;
 mod overhead_names;
 mod playercard;
 mod plugin;
 mod presentation_scale;
 mod reticle;
-mod score_popup;
 mod scorebar;
 mod scoreboard;
 mod splash;
 mod surface;
+mod targetmap;
 mod ui_write;
 mod weapon_name;
 mod weaponbar;
@@ -36,8 +36,8 @@ pub use draw2d::{
 };
 pub use gaps::{GapCause, HudGap, HudPresentationGaps};
 pub use gpu_list::{HudTessBatch, HudTessGpuFrame, HudTessTechnique, HudTessVertex};
-pub use hitmarker::PendingHitmarker;
 pub use hudelem::HudElemSoundLatch;
+pub use menus::ScriptMenus;
 pub use overhead_names::{
     OverheadPosedHead, OverheadPosedPlayerFrame, OverheadPosedPlayerFramePublished,
 };
@@ -50,5 +50,3 @@ pub use splash::PendingSplash;
 pub use surface::Hud2dSurface;
 
 mod use_hint;
-
-mod objectives;

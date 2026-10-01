@@ -4,7 +4,7 @@ pub const TEAM_ALLIES: i32 = 2;
 pub const TEAM_SPECTATOR: i32 = 3;
 
 #[must_use]
-pub fn cg_get_team_name(team: i32) -> &'static str {
+pub fn get_team_name(team: i32) -> &'static str {
     match team {
         TEAM_FREE => "TEAM_FREE",
         TEAM_AXIS => "TEAM_AXIS",

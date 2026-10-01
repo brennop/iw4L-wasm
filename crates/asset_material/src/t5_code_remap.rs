@@ -736,3 +736,9 @@ pub fn remap_code_texture_index(t5: u32) -> Option<u32> {
         .flatten()
         .map(u32::from)
 }
+
+#[must_use]
+pub fn terrain_scorch_binding_hash(layer: usize) -> u32 {
+    let name = format!("iw4l_t5_terrain_scorch_{layer}");
+    crate::fnv1a64(name.as_bytes()) as u32
+}

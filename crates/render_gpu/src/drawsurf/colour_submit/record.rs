@@ -181,25 +181,25 @@ pub(super) fn draw_exact_colour(
     let mut record_n = sun_submit.record_n;
     record_n.add(spot_submit.record_n);
     if census_on {
-        census.sun_shadow_gpu = Some(sun_submit.gpu);
-        census.sun_shadow_gpu_miss = Some(sun_submit.miss);
-        census.sun_shadow_gpu_cause = sun_submit.cause;
-        census.sun_shadow_gpu_causes = sun_submit.causes;
+        census.frame.sun_shadow_gpu = Some(sun_submit.gpu);
+        census.frame.sun_shadow_gpu_miss = Some(sun_submit.miss);
+        census.frame.sun_shadow_gpu_cause = sun_submit.cause;
+        census.frame.sun_shadow_gpu_causes = sun_submit.causes;
         census.sun_shadow_static_hit = Some(sun_submit.static_hit);
-        census.sun_shadow_world_ib_n = Some(sun_submit.world_ib_n);
-        census.sun_shadow_submit_ms = colour_census_ms(sun_started);
+        census.frame.sun_shadow_world_ib_n = Some(sun_submit.world_ib_n);
+        census.frame.sun_shadow_submit_ms = colour_census_ms(sun_started);
         census.sun_shadow_prepare_ms = Some(sun_submit.prepare_ms);
         census.sun_shadow_patch_ms = Some(sun_submit.patch_ms);
         census.sun_shadow_arena_ms = Some(sun_submit.arena_ms);
         census.sun_shadow_record_ms = Some(sun_submit.record_ms);
-        census.spot_shadow_gpu = Some(spot_submit.gpu);
-        census.spot_shadow_gpu_miss = Some(spot_submit.miss);
-        census.spot_shadow_gpu_cause = spot_submit.cause;
-        census.spot_shadow_slot_n = Some(spot_submit.slots);
-        census.set_bind_group_n = Some(record_n.total());
-        census.set_state_n = Some(record_n.state);
-        census.multi_draw_n = Some(record_n.multi_draws);
-        census.multi_draw_commands_n = Some(record_n.multi_draw_commands);
+        census.frame.spot_shadow_gpu = Some(spot_submit.gpu);
+        census.frame.spot_shadow_gpu_miss = Some(spot_submit.miss);
+        census.frame.spot_shadow_gpu_cause = spot_submit.cause;
+        census.frame.spot_shadow_slot_n = Some(spot_submit.slots);
+        census.frame.set_bind_group_n = Some(record_n.total());
+        census.frame.set_state_n = Some(record_n.state);
+        census.frame.multi_draw_n = Some(record_n.multi_draws);
+        census.frame.multi_draw_commands_n = Some(record_n.multi_draw_commands);
         census.set_bind_group0_n = Some(record_n.group0);
         census.set_bind_group1_n = Some(record_n.group1);
         census.sun_shadow_finish_ms = Some(sun_submit.finish_ms);
@@ -211,6 +211,7 @@ pub(super) fn draw_exact_colour(
             + sun_submit.record_ms
             + sun_submit.finish_ms;
         census.sun_shadow_unnamed_ms = census
+            .frame
             .sun_shadow_submit_ms
             .filter(|envelope| *envelope >= named)
             .map(|envelope| envelope - named);
@@ -313,31 +314,31 @@ pub(super) fn draw_exact_colour(
         });
     }
     if census_on {
-        census.pack_intern_hit_n = Some(prepare_cost.intern_hit_n);
-        census.pack_intern_miss_n = Some(prepare_cost.intern_miss_n);
-        census.gpu_exec_reuse_n = Some(0);
-        census.gpu_exec_unique_n = Some(0);
-        census.pack_overlay_n = Some(0);
-        census.pack_overlay_row_n = Some(0);
-        census.pack_overlay_pixel_share_n = Some(0);
-        census.pack_seed_n = Some(prepare_cost.pack_seed_n);
-        census.pack_walk_n = Some(prepare_cost.pack_walk_n);
-        census.tex_bind_hit_n = Some(prepare_cost.tex_bind_hit_n);
-        census.tex_bind_miss_n = Some(prepare_cost.tex_bind_miss_n);
-        census.markmesh_hits = Some(as_u32(markmesh_hits));
-        census.last_markmesh_refusal =
+        census.frame.pack_intern_hit_n = Some(prepare_cost.intern_hit_n);
+        census.frame.pack_intern_miss_n = Some(prepare_cost.intern_miss_n);
+        census.frame.gpu_exec_reuse_n = Some(0);
+        census.frame.gpu_exec_unique_n = Some(0);
+        census.frame.pack_overlay_n = Some(0);
+        census.frame.pack_overlay_row_n = Some(0);
+        census.frame.pack_overlay_pixel_share_n = Some(0);
+        census.frame.pack_seed_n = Some(prepare_cost.pack_seed_n);
+        census.frame.pack_walk_n = Some(prepare_cost.pack_walk_n);
+        census.frame.tex_bind_hit_n = Some(prepare_cost.tex_bind_hit_n);
+        census.frame.tex_bind_miss_n = Some(prepare_cost.tex_bind_miss_n);
+        census.frame.markmesh_hits = Some(as_u32(markmesh_hits));
+        census.frame.last_markmesh_refusal =
             last_markmesh_refusal.map(|cause| submit_refusal_class(&cause).to_owned());
-        census.last_markmesh_exec_skip = last_markmesh_exec_skip.map(str::to_owned);
-        census.markmesh_missing_58 = Some(markmesh_missing_58);
-        census.glassmesh_hits = Some(as_u32(glassmesh_hits));
-        census.last_glassmesh_exec_skip = last_glassmesh_exec_skip.map(str::to_owned);
-        census.last_glassmesh_refusal =
+        census.frame.last_markmesh_exec_skip = last_markmesh_exec_skip.map(str::to_owned);
+        census.frame.markmesh_missing_58 = Some(markmesh_missing_58);
+        census.frame.glassmesh_hits = Some(as_u32(glassmesh_hits));
+        census.frame.last_glassmesh_exec_skip = last_glassmesh_exec_skip.map(str::to_owned);
+        census.frame.last_glassmesh_refusal =
             last_glassmesh_refusal.map(|cause| submit_refusal_class(&cause).to_owned());
-        census.last_glass_packed_probe = last_glass_packed_probe;
-        census.last_glass_probe_sampler = last_glass_probe_sampler;
-        census.last_mark_packed_custom = last_mark_packed_custom;
-        census.last_mark_packed_scene_light = last_mark_packed_scene_light;
-        census.last_mark_lmap_sampler = last_mark_lmap_sampler;
+        census.frame.last_glass_packed_probe = last_glass_packed_probe;
+        census.frame.last_glass_probe_sampler = last_glass_probe_sampler;
+        census.frame.last_mark_packed_custom = last_mark_packed_custom;
+        census.frame.last_mark_packed_scene_light = last_mark_packed_scene_light;
+        census.frame.last_mark_lmap_sampler = last_mark_lmap_sampler;
     }
 
     let mut gpu_indexed = 0u32;
@@ -353,20 +354,21 @@ pub(super) fn draw_exact_colour(
             {
                 let lane = bsp_kind_index(kind);
                 if census_on {
-                    census.bsp_submitted_surfaces[lane] = census.bsp_submitted_surfaces[lane]
+                    census.frame.bsp_submitted_surfaces[lane] = census.frame.bsp_submitted_surfaces
+                        [lane]
                         .saturating_add(u32::from(draw.bsp_surf_count));
                 }
             }
         }
         if census_on {
-            census.gpu_prepared = Some(prepared_hits);
-            census.gpu_world_ready = Some(as_u32(
+            census.frame.gpu_prepared = Some(prepared_hits);
+            census.frame.gpu_world_ready = Some(as_u32(
                 prepared
                     .iter()
                     .filter(|draw| draw.tess == ExactTessBind::World)
                     .count(),
             ));
-            census.gpu_smodel_ready = Some(as_u32(
+            census.frame.gpu_smodel_ready = Some(as_u32(
                 prepared
                     .iter()
                     .filter(|draw| {
@@ -376,7 +378,7 @@ pub(super) fn draw_exact_colour(
                     })
                     .count(),
             ));
-            census.gpu_xmodel_ready = Some(as_u32(
+            census.frame.gpu_xmodel_ready = Some(as_u32(
                 prepared
                     .iter()
                     .filter(|draw| draw.tess == ExactTessBind::XModel)
@@ -499,10 +501,10 @@ pub(super) fn draw_exact_colour(
         }
         if census_on {
             if pass_end_n > 0 {
-                census.pass_end_ms = Some(pass_end_ms);
+                census.frame.pass_end_ms = Some(pass_end_ms);
             }
-            census.submit_record_ms = colour_census_ms(record_started);
-            census.encoder_finish_ms = Some(0.0);
+            census.frame.submit_record_ms = colour_census_ms(record_started);
+            census.frame.encoder_finish_ms = Some(0.0);
         }
         if encode_not_ready > 0 {
             pipeline_not_ready = pipeline_not_ready.saturating_add(encode_not_ready);
@@ -516,15 +518,15 @@ pub(super) fn draw_exact_colour(
 
     if census_on {
         census.ready_draws = ready_draws;
-        census.bsp_submit_refused_surfaces = bsp_submit_refused_surfaces;
-        census.bsp_drawn_surfaces = bsp_drawn_surfaces;
-        census.bsp_draw_refused_surfaces = bsp_draw_refused_surfaces;
+        census.frame.bsp_submit_refused_surfaces = bsp_submit_refused_surfaces;
+        census.frame.bsp_drawn_surfaces = bsp_drawn_surfaces;
+        census.frame.bsp_draw_refused_surfaces = bsp_draw_refused_surfaces;
         census.refused_draws = refused_draws;
         census.gpu_ready = Some(gpu_indexed);
-        census.set_bind_group_n = Some(record_n.total());
-        census.set_state_n = Some(record_n.state);
-        census.multi_draw_n = Some(record_n.multi_draws);
-        census.multi_draw_commands_n = Some(record_n.multi_draw_commands);
+        census.frame.set_bind_group_n = Some(record_n.total());
+        census.frame.set_state_n = Some(record_n.state);
+        census.frame.multi_draw_n = Some(record_n.multi_draws);
+        census.frame.multi_draw_commands_n = Some(record_n.multi_draw_commands);
         census.set_bind_group0_n = Some(record_n.group0);
         census.set_bind_group1_n = Some(record_n.group1);
         census.material_runs_n = Some(colour_run_census.material_runs);
@@ -534,37 +536,37 @@ pub(super) fn draw_exact_colour(
         census.shell_misses_n = Some(colour_run_census.shell_misses);
         census.overlay_const_writes_n = Some(colour_run_census.overlay_const_writes);
         census.overlay_need_known_n = Some(colour_run_census.overlay_need_known);
-        census.smodel_reuse_n = Some(0);
-        census.xmodel_reuse_n = Some(0);
-        if census.gpu_prepared.is_none() {
-            census.gpu_prepared = Some(prepared_hits);
-            census.gpu_world_ready = Some(0);
-            census.gpu_smodel_ready = Some(0);
-            census.gpu_xmodel_ready = Some(0);
+        census.frame.smodel_reuse_n = Some(0);
+        census.frame.xmodel_reuse_n = Some(0);
+        if census.frame.gpu_prepared.is_none() {
+            census.frame.gpu_prepared = Some(prepared_hits);
+            census.frame.gpu_world_ready = Some(0);
+            census.frame.gpu_smodel_ready = Some(0);
+            census.frame.gpu_xmodel_ready = Some(0);
         }
-        if census.pack_arena_share_n.is_none() {
-            census.pack_arena_share_n = Some(0);
-            census.pack_arena_vertex_n = Some(0);
-            census.pack_arena_pixel_n = Some(0);
+        if census.frame.pack_arena_share_n.is_none() {
+            census.frame.pack_arena_share_n = Some(0);
+            census.frame.pack_arena_vertex_n = Some(0);
+            census.frame.pack_arena_pixel_n = Some(0);
         }
-        if census.encoder_finish_ms.is_none() {
-            census.encoder_finish_ms = Some(0.0);
+        if census.frame.encoder_finish_ms.is_none() {
+            census.frame.encoder_finish_ms = Some(0.0);
         }
-        if census.submit_arena_ms.is_none() {
-            census.submit_arena_ms = Some(0.0);
+        if census.frame.submit_arena_ms.is_none() {
+            census.frame.submit_arena_ms = Some(0.0);
         }
-        if census.submit_record_ms.is_none() {
-            census.submit_record_ms = Some(0.0);
+        if census.frame.submit_record_ms.is_none() {
+            census.frame.submit_record_ms = Some(0.0);
         }
         let mut ranked: Vec<_> = refusals.submit.iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-        census.submit_cause = ranked
+        census.frame.submit_cause = ranked
             .first()
             .map(|((family, cause), n)| format!("{family}:{cause}:{n}"));
-        census.submit_cause2 = ranked
+        census.frame.submit_cause2 = ranked
             .get(1)
             .map(|((family, cause), n)| format!("{family}:{cause}:{n}"));
-        census.gpu_not_ready_n = Some(
+        census.frame.gpu_not_ready_n = Some(
             refusals
                 .submit
                 .iter()
@@ -572,7 +574,7 @@ pub(super) fn draw_exact_colour(
                 .map(|(_, n)| *n)
                 .sum(),
         );
-        census.gpu_no_port_n = Some(
+        census.frame.gpu_no_port_n = Some(
             refusals
                 .submit
                 .iter()
@@ -580,14 +582,14 @@ pub(super) fn draw_exact_colour(
                 .map(|(_, n)| *n)
                 .sum(),
         );
-        census.pnr_smodel_mat = rank_count_map(&pnr_smodel_mats, 8);
-        census.pnr_world_mat = rank_count_map(&pnr_world_mats, 8);
-        census.pnr_smodel_ps = rank_count_map(&pnr_smodel_ps, 8);
-        census.pnr_world_ps = rank_count_map(&pnr_world_ps, 8);
-        census.pnr_smodel_key_n = Some(as_u32(pnr_smodel_keys.len()));
-        census.pnr_world_key_n = Some(as_u32(pnr_world_keys.len()));
-        census.pnr_port_n = Some(as_u32(pnr_ports.len()));
-        census.gpu_smodel_bind_mat = rank_count_map(&bind_smodel_mats, 8);
+        census.frame.pnr_smodel_mat = rank_count_map(&pnr_smodel_mats, 8);
+        census.frame.pnr_world_mat = rank_count_map(&pnr_world_mats, 8);
+        census.frame.pnr_smodel_ps = rank_count_map(&pnr_smodel_ps, 8);
+        census.frame.pnr_world_ps = rank_count_map(&pnr_world_ps, 8);
+        census.frame.pnr_smodel_key_n = Some(as_u32(pnr_smodel_keys.len()));
+        census.frame.pnr_world_key_n = Some(as_u32(pnr_world_keys.len()));
+        census.frame.pnr_port_n = Some(as_u32(pnr_ports.len()));
+        census.frame.gpu_smodel_bind_mat = rank_count_map(&bind_smodel_mats, 8);
     }
     let focused_prepared_surfaces = focused_object_id.map_or(0, |object_id| {
         submitted_keys
@@ -636,8 +638,8 @@ pub(super) fn draw_exact_colour(
         .filter(|d| d.tess == ExactTessBind::Glass)
         .count();
     if census_on {
-        census.markmesh_prepared = Some(as_u32(markmesh_draws));
-        census.glassmesh_prepared = Some(as_u32(glassmesh_draws));
+        census.frame.markmesh_prepared = Some(as_u32(markmesh_draws));
+        census.frame.glassmesh_prepared = Some(as_u32(glassmesh_draws));
         census.log_frame = census.log_frame.wrapping_add(1);
         if census.log_frame == 1 || census.log_frame.is_multiple_of(64) {
             let mut authored_state = AuthoredStateCensus::default();
@@ -657,8 +659,8 @@ pub(super) fn draw_exact_colour(
                 rank_pair_map(&refusals.exec, 2)
                     .as_deref()
                     .unwrap_or("none"),
-                census.submit_cause.as_deref().unwrap_or("none"),
-                census.submit_cause2.as_deref().unwrap_or("none"),
+                census.frame.submit_cause.as_deref().unwrap_or("none"),
+                census.frame.submit_cause2.as_deref().unwrap_or("none"),
                 prepared.len(),
                 texture_table.0.each_ref().map(ExactTextureTable::census),
                 texture_table
@@ -700,18 +702,18 @@ pub(super) fn copy_submit_prepare_ms(
 
     for (counter, value) in [
         (perf::Counter::CounterDipsColour, census.gpu_ready),
-        (perf::Counter::CounterDipsSun, census.sun_shadow_gpu),
+        (perf::Counter::CounterDipsSun, census.frame.sun_shadow_gpu),
         (perf::Counter::CounterBindGroup0, census.set_bind_group0_n),
         (perf::Counter::CounterBindGroup1, census.set_bind_group1_n),
-        (perf::Counter::CounterCmdState, census.set_state_n),
+        (perf::Counter::CounterCmdState, census.frame.set_state_n),
         (
             perf::Counter::CounterOverlayConstWrites,
             census.overlay_const_writes_n,
         ),
-        (perf::Counter::CounterMultiDraws, census.multi_draw_n),
+        (perf::Counter::CounterMultiDraws, census.frame.multi_draw_n),
         (
             perf::Counter::CounterMultiDrawCommands,
-            census.multi_draw_commands_n,
+            census.frame.multi_draw_commands_n,
         ),
     ] {
         if let Some(value) = value {
@@ -721,15 +723,24 @@ pub(super) fn copy_submit_prepare_ms(
     for (counter, value) in [
         (
             perf::Counter::RenderSubmitSunMs,
-            census.sun_shadow_submit_ms,
+            census.frame.sun_shadow_submit_ms,
         ),
-        (perf::Counter::RenderSubmitGatherMs, census.submit_gather_ms),
+        (
+            perf::Counter::RenderSubmitGatherMs,
+            census.frame.submit_gather_ms,
+        ),
         (
             perf::Counter::RenderSubmitPrepareMs,
-            census.submit_prepare_ms,
+            census.frame.submit_prepare_ms,
         ),
-        (perf::Counter::RenderSubmitArenaMs, census.submit_arena_ms),
-        (perf::Counter::RenderSubmitRecordMs, census.submit_record_ms),
+        (
+            perf::Counter::RenderSubmitArenaMs,
+            census.frame.submit_arena_ms,
+        ),
+        (
+            perf::Counter::RenderSubmitRecordMs,
+            census.frame.submit_record_ms,
+        ),
     ] {
         if let Some(value) = value {
             counter.emit(f64::from(value));
@@ -739,64 +750,64 @@ pub(super) fn copy_submit_prepare_ms(
         return;
     };
     if let Ok(mut guard) = slot.0.lock() {
-        guard.submit_prepare_ms = census.submit_prepare_ms;
-        guard.colour_submit_ms = census.colour_submit_ms;
-        guard.submit_encode_ms = census.submit_encode_ms;
-        guard.submit_gather_ms = census.submit_gather_ms;
-        guard.pass_end_ms = census.pass_end_ms;
-        guard.encoder_finish_ms = census.encoder_finish_ms;
-        guard.submit_arena_ms = census.submit_arena_ms;
-        guard.submit_record_ms = census.submit_record_ms;
-        guard.pack_intern_hit_n = census.pack_intern_hit_n;
-        guard.pack_intern_miss_n = census.pack_intern_miss_n;
-        guard.pack_arena_share_n = census.pack_arena_share_n;
-        guard.gpu_exec_reuse_n = census.gpu_exec_reuse_n;
-        guard.gpu_exec_unique_n = census.gpu_exec_unique_n;
-        guard.pack_overlay_n = census.pack_overlay_n;
-        guard.pack_overlay_row_n = census.pack_overlay_row_n;
-        guard.pack_overlay_pixel_share_n = census.pack_overlay_pixel_share_n;
-        guard.pack_arena_vertex_n = census.pack_arena_vertex_n;
-        guard.pack_arena_pixel_n = census.pack_arena_pixel_n;
-        guard.pack_seed_n = census.pack_seed_n;
-        guard.pack_walk_n = census.pack_walk_n;
-        guard.tex_bind_hit_n = census.tex_bind_hit_n;
-        guard.tex_bind_miss_n = census.tex_bind_miss_n;
-        guard.markmesh_hits = census.markmesh_hits;
-        guard.markmesh_prepared = census.markmesh_prepared;
-        guard.last_markmesh_refusal = census.last_markmesh_refusal.clone();
-        guard.last_markmesh_exec_skip = census.last_markmesh_exec_skip.clone();
-        guard.markmesh_missing_58 = census.markmesh_missing_58;
-        guard.last_mark_packed_custom = census.last_mark_packed_custom;
-        guard.last_mark_packed_scene_light = census.last_mark_packed_scene_light;
-        guard.last_mark_lmap_sampler = census.last_mark_lmap_sampler;
-        guard.glassmesh_hits = census.glassmesh_hits;
-        guard.glassmesh_prepared = census.glassmesh_prepared;
-        guard.last_glassmesh_exec_skip = census.last_glassmesh_exec_skip.clone();
-        guard.last_glassmesh_refusal = census.last_glassmesh_refusal.clone();
-        guard.last_glass_packed_probe = census.last_glass_packed_probe;
-        guard.last_glass_probe_sampler = census.last_glass_probe_sampler;
+        guard.submit_prepare_ms = census.frame.submit_prepare_ms;
+        guard.colour_submit_ms = census.frame.colour_submit_ms;
+        guard.submit_encode_ms = census.frame.submit_encode_ms;
+        guard.submit_gather_ms = census.frame.submit_gather_ms;
+        guard.pass_end_ms = census.frame.pass_end_ms;
+        guard.encoder_finish_ms = census.frame.encoder_finish_ms;
+        guard.submit_arena_ms = census.frame.submit_arena_ms;
+        guard.submit_record_ms = census.frame.submit_record_ms;
+        guard.pack_intern_hit_n = census.frame.pack_intern_hit_n;
+        guard.pack_intern_miss_n = census.frame.pack_intern_miss_n;
+        guard.pack_arena_share_n = census.frame.pack_arena_share_n;
+        guard.gpu_exec_reuse_n = census.frame.gpu_exec_reuse_n;
+        guard.gpu_exec_unique_n = census.frame.gpu_exec_unique_n;
+        guard.pack_overlay_n = census.frame.pack_overlay_n;
+        guard.pack_overlay_row_n = census.frame.pack_overlay_row_n;
+        guard.pack_overlay_pixel_share_n = census.frame.pack_overlay_pixel_share_n;
+        guard.pack_arena_vertex_n = census.frame.pack_arena_vertex_n;
+        guard.pack_arena_pixel_n = census.frame.pack_arena_pixel_n;
+        guard.pack_seed_n = census.frame.pack_seed_n;
+        guard.pack_walk_n = census.frame.pack_walk_n;
+        guard.tex_bind_hit_n = census.frame.tex_bind_hit_n;
+        guard.tex_bind_miss_n = census.frame.tex_bind_miss_n;
+        guard.markmesh_hits = census.frame.markmesh_hits;
+        guard.markmesh_prepared = census.frame.markmesh_prepared;
+        guard.last_markmesh_refusal = census.frame.last_markmesh_refusal.clone();
+        guard.last_markmesh_exec_skip = census.frame.last_markmesh_exec_skip.clone();
+        guard.markmesh_missing_58 = census.frame.markmesh_missing_58;
+        guard.last_mark_packed_custom = census.frame.last_mark_packed_custom;
+        guard.last_mark_packed_scene_light = census.frame.last_mark_packed_scene_light;
+        guard.last_mark_lmap_sampler = census.frame.last_mark_lmap_sampler;
+        guard.glassmesh_hits = census.frame.glassmesh_hits;
+        guard.glassmesh_prepared = census.frame.glassmesh_prepared;
+        guard.last_glassmesh_exec_skip = census.frame.last_glassmesh_exec_skip.clone();
+        guard.last_glassmesh_refusal = census.frame.last_glassmesh_refusal.clone();
+        guard.last_glass_packed_probe = census.frame.last_glass_packed_probe;
+        guard.last_glass_probe_sampler = census.frame.last_glass_probe_sampler;
         guard.gpu_ready = census.gpu_ready;
-        guard.set_bind_group_n = census.set_bind_group_n;
-        guard.gpu_prepared = census.gpu_prepared;
-        guard.gpu_world_ready = census.gpu_world_ready;
-        guard.bsp_submitted_surfaces = census.bsp_submitted_surfaces;
-        guard.bsp_submit_refused_surfaces = census.bsp_submit_refused_surfaces;
-        guard.bsp_drawn_surfaces = census.bsp_drawn_surfaces;
-        guard.bsp_draw_refused_surfaces = census.bsp_draw_refused_surfaces;
-        guard.gpu_smodel_ready = census.gpu_smodel_ready;
-        guard.gpu_xmodel_ready = census.gpu_xmodel_ready;
-        guard.end_depth_restore_n = census.end_depth_restore_n;
-        guard.end_depth_range_type = census.end_depth_range_type;
+        guard.set_bind_group_n = census.frame.set_bind_group_n;
+        guard.gpu_prepared = census.frame.gpu_prepared;
+        guard.gpu_world_ready = census.frame.gpu_world_ready;
+        guard.bsp_submitted_surfaces = census.frame.bsp_submitted_surfaces;
+        guard.bsp_submit_refused_surfaces = census.frame.bsp_submit_refused_surfaces;
+        guard.bsp_drawn_surfaces = census.frame.bsp_drawn_surfaces;
+        guard.bsp_draw_refused_surfaces = census.frame.bsp_draw_refused_surfaces;
+        guard.gpu_smodel_ready = census.frame.gpu_smodel_ready;
+        guard.gpu_xmodel_ready = census.frame.gpu_xmodel_ready;
+        guard.end_depth_restore_n = census.frame.end_depth_restore_n;
+        guard.end_depth_range_type = census.frame.end_depth_range_type;
         guard.code_mesh_gpu_kind = census.code_mesh_gpu_kind;
-        guard.sun_shadow_gpu = census.sun_shadow_gpu;
-        guard.sun_shadow_gpu_miss = census.sun_shadow_gpu_miss;
-        guard.sun_shadow_gpu_cause = census.sun_shadow_gpu_cause.clone();
-        guard.sun_shadow_gpu_causes = census.sun_shadow_gpu_causes.clone();
-        guard.spot_shadow_gpu = census.spot_shadow_gpu;
-        guard.spot_shadow_gpu_miss = census.spot_shadow_gpu_miss;
-        guard.spot_shadow_gpu_cause = census.spot_shadow_gpu_cause.clone();
-        guard.spot_shadow_slot_n = census.spot_shadow_slot_n;
-        guard.sun_shadow_submit_ms = census.sun_shadow_submit_ms;
+        guard.sun_shadow_gpu = census.frame.sun_shadow_gpu;
+        guard.sun_shadow_gpu_miss = census.frame.sun_shadow_gpu_miss;
+        guard.sun_shadow_gpu_cause = census.frame.sun_shadow_gpu_cause.clone();
+        guard.sun_shadow_gpu_causes = census.frame.sun_shadow_gpu_causes.clone();
+        guard.spot_shadow_gpu = census.frame.spot_shadow_gpu;
+        guard.spot_shadow_gpu_miss = census.frame.spot_shadow_gpu_miss;
+        guard.spot_shadow_gpu_cause = census.frame.spot_shadow_gpu_cause.clone();
+        guard.spot_shadow_slot_n = census.frame.spot_shadow_slot_n;
+        guard.sun_shadow_submit_ms = census.frame.sun_shadow_submit_ms;
         guard.sun_shadow_prepare_ms = census.sun_shadow_prepare_ms;
         guard.sun_shadow_patch_ms = census.sun_shadow_patch_ms;
         guard.sun_shadow_arena_ms = census.sun_shadow_arena_ms;
@@ -805,7 +816,7 @@ pub(super) fn copy_submit_prepare_ms(
         guard.sun_shadow_queue_ms = census.sun_shadow_queue_ms;
         guard.sun_shadow_unnamed_ms = census.sun_shadow_unnamed_ms;
         guard.sun_shadow_static_hit = census.sun_shadow_static_hit;
-        guard.sun_shadow_world_ib_n = census.sun_shadow_world_ib_n;
+        guard.sun_shadow_world_ib_n = census.frame.sun_shadow_world_ib_n;
         guard.sun_shadow_static_n = census.sun_shadow_static_n;
         guard.sun_shadow_dynamic_n = census.sun_shadow_dynamic_n;
         guard.sun_shadow_wvp_intern_hit = census.sun_shadow_wvp_intern_hit;
@@ -821,51 +832,51 @@ pub(super) fn copy_submit_prepare_ms(
         guard.sun_shadow_state_run_n = census.sun_shadow_state_run_n;
         guard.sun_shadow_state_run_max = census.sun_shadow_state_run_max;
         guard.sun_shadow_state_top10 = census.sun_shadow_state_top10;
-        guard.world_index_gaps = census.world_index_gaps;
-        guard.world_run_indices_n = census.world_run_indices_n;
-        guard.world_material_runs = census.world_material_runs;
-        guard.world_material_runs_seq = census.world_material_runs_seq;
-        guard.world_key_runs = census.world_key_runs;
-        guard.world_key_runs_seq = census.world_key_runs_seq;
-        guard.world_mixed_breaks = census.world_mixed_breaks;
-        guard.world_gathered = census.world_gathered;
-        guard.world_ib_skip = census.world_ib_skip;
-        guard.world_gpu_runs = census.world_gpu_runs;
-        guard.world_gpu_runs_seq = census.world_gpu_runs_seq;
-        guard.world_sampler_runs_seq = census.world_sampler_runs_seq;
-        guard.world_probe_runs_seq = census.world_probe_runs_seq;
-        guard.world_light_runs_seq = census.world_light_runs_seq;
-        guard.smodel_reuse_n = census.smodel_reuse_n;
-        guard.xmodel_reuse_n = census.xmodel_reuse_n;
-        guard.xmodel_material_runs = census.xmodel_material_runs;
-        guard.smodel_index_gaps = census.smodel_index_gaps;
-        guard.smodel_material_runs = census.smodel_material_runs;
-        guard.smodel_material_runs_seq = census.smodel_material_runs_seq;
-        guard.smodel_material_run_max = census.smodel_material_run_max;
-        guard.smodel_same_surface_n = census.smodel_same_surface_n;
-        guard.smodel_unique_surfaces = census.smodel_unique_surfaces;
-        guard.smodel_hits = census.smodel_hits;
-        guard.smodel_lighting_runs = census.smodel_lighting_runs;
-        guard.smodel_lighting_run_max = census.smodel_lighting_run_max;
-        guard.smodel_pretess_runs = census.smodel_pretess_runs;
-        guard.smodel_pretess_hits = census.smodel_pretess_hits;
-        guard.smodel_pretess_verts = census.smodel_pretess_verts;
-        guard.smodel_pretess_indices = census.smodel_pretess_indices;
-        guard.smodel_cached_lighting = census.smodel_cached_lighting;
-        guard.smodel_pretess_local = census.smodel_pretess_local;
-        guard.smodel_pretess_length1 = census.smodel_pretess_length1;
-        guard.smodel_pretess_skip = census.smodel_pretess_skip;
-        guard.submit_cause = census.submit_cause.clone();
-        guard.submit_cause2 = census.submit_cause2.clone();
-        guard.gpu_not_ready_n = census.gpu_not_ready_n;
-        guard.gpu_no_port_n = census.gpu_no_port_n;
-        guard.pnr_smodel_mat = census.pnr_smodel_mat.clone();
-        guard.pnr_world_mat = census.pnr_world_mat.clone();
-        guard.pnr_smodel_ps = census.pnr_smodel_ps.clone();
-        guard.pnr_world_ps = census.pnr_world_ps.clone();
-        guard.pnr_smodel_key_n = census.pnr_smodel_key_n;
-        guard.pnr_world_key_n = census.pnr_world_key_n;
-        guard.pnr_port_n = census.pnr_port_n;
-        guard.gpu_smodel_bind_mat = census.gpu_smodel_bind_mat.clone();
+        guard.world_index_gaps = census.frame.world_index_gaps;
+        guard.world_run_indices_n = census.frame.world_run_indices_n;
+        guard.world_material_runs = census.frame.world_material_runs;
+        guard.world_material_runs_seq = census.frame.world_material_runs_seq;
+        guard.world_key_runs = census.frame.world_key_runs;
+        guard.world_key_runs_seq = census.frame.world_key_runs_seq;
+        guard.world_mixed_breaks = census.frame.world_mixed_breaks;
+        guard.world_gathered = census.frame.world_gathered;
+        guard.world_ib_skip = census.frame.world_ib_skip;
+        guard.world_gpu_runs = census.frame.world_gpu_runs;
+        guard.world_gpu_runs_seq = census.frame.world_gpu_runs_seq;
+        guard.world_sampler_runs_seq = census.frame.world_sampler_runs_seq;
+        guard.world_probe_runs_seq = census.frame.world_probe_runs_seq;
+        guard.world_light_runs_seq = census.frame.world_light_runs_seq;
+        guard.smodel_reuse_n = census.frame.smodel_reuse_n;
+        guard.xmodel_reuse_n = census.frame.xmodel_reuse_n;
+        guard.xmodel_material_runs = census.frame.xmodel_material_runs;
+        guard.smodel_index_gaps = census.frame.smodel_index_gaps;
+        guard.smodel_material_runs = census.frame.smodel_material_runs;
+        guard.smodel_material_runs_seq = census.frame.smodel_material_runs_seq;
+        guard.smodel_material_run_max = census.frame.smodel_material_run_max;
+        guard.smodel_same_surface_n = census.frame.smodel_same_surface_n;
+        guard.smodel_unique_surfaces = census.frame.smodel_unique_surfaces;
+        guard.smodel_hits = census.frame.smodel_hits;
+        guard.smodel_lighting_runs = census.frame.smodel_lighting_runs;
+        guard.smodel_lighting_run_max = census.frame.smodel_lighting_run_max;
+        guard.smodel_pretess_runs = census.frame.smodel_pretess_runs;
+        guard.smodel_pretess_hits = census.frame.smodel_pretess_hits;
+        guard.smodel_pretess_verts = census.frame.smodel_pretess_verts;
+        guard.smodel_pretess_indices = census.frame.smodel_pretess_indices;
+        guard.smodel_cached_lighting = census.frame.smodel_cached_lighting;
+        guard.smodel_pretess_local = census.frame.smodel_pretess_local;
+        guard.smodel_pretess_length1 = census.frame.smodel_pretess_length1;
+        guard.smodel_pretess_skip = census.frame.smodel_pretess_skip;
+        guard.submit_cause = census.frame.submit_cause.clone();
+        guard.submit_cause2 = census.frame.submit_cause2.clone();
+        guard.gpu_not_ready_n = census.frame.gpu_not_ready_n;
+        guard.gpu_no_port_n = census.frame.gpu_no_port_n;
+        guard.pnr_smodel_mat = census.frame.pnr_smodel_mat.clone();
+        guard.pnr_world_mat = census.frame.pnr_world_mat.clone();
+        guard.pnr_smodel_ps = census.frame.pnr_smodel_ps.clone();
+        guard.pnr_world_ps = census.frame.pnr_world_ps.clone();
+        guard.pnr_smodel_key_n = census.frame.pnr_smodel_key_n;
+        guard.pnr_world_key_n = census.frame.pnr_world_key_n;
+        guard.pnr_port_n = census.frame.pnr_port_n;
+        guard.gpu_smodel_bind_mat = census.frame.gpu_smodel_bind_mat.clone();
     }
 }

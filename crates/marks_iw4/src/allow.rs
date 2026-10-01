@@ -23,7 +23,7 @@ pub struct MarkWorldAllowCensus {
 }
 
 #[inline]
-pub fn fx_mark_material_allows_marks(
+pub fn mark_material_allows_marks(
     receiver_game_flags: u8,
     receiver_surface_type_bits: u32,
     mark_surface_type_bits: u32,
@@ -34,7 +34,7 @@ pub fn fx_mark_material_allows_marks(
     (receiver_surface_type_bits & mark_surface_type_bits) == mark_surface_type_bits
 }
 
-pub fn fx_mark_allow(
+pub fn mark_allow(
     receiver_game_flags: Option<u8>,
     receiver_surface_type_bits: Option<u32>,
     mark_surface_type_bits: Option<u32>,
@@ -51,7 +51,7 @@ pub fn fx_mark_allow(
     let Some(mark) = mark_surface_type_bits else {
         return FxMarkAllow::Unknown;
     };
-    if fx_mark_material_allows_marks(flags, recv, mark) {
+    if mark_material_allows_marks(flags, recv, mark) {
         FxMarkAllow::Keep
     } else {
         FxMarkAllow::Reject
@@ -59,6 +59,6 @@ pub fn fx_mark_allow(
 }
 
 #[inline]
-pub fn fx_mark_include_in_world_clip(allow: FxMarkAllow) -> bool {
+pub fn mark_include_in_world_clip(allow: FxMarkAllow) -> bool {
     matches!(allow, FxMarkAllow::Keep)
 }

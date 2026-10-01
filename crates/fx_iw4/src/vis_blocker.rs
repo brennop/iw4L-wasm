@@ -43,12 +43,12 @@ impl Default for FxVisBlockerBuf {
 }
 
 #[inline]
-fn fx_vis_blocker_chop_i16(x: f32) -> i16 {
+fn vis_blocker_chop_i16(x: f32) -> i16 {
     (x as i32) as i16
 }
 
 #[inline]
-pub fn fx_distance_fade_range(dist: f32, base: f32, amp: f32) -> f32 {
+pub fn distance_fade_range(dist: f32, base: f32, amp: f32) -> f32 {
     let d = dist - base;
     if d < 0.0 {
         1.0
@@ -60,7 +60,7 @@ pub fn fx_distance_fade_range(dist: f32, base: f32, amp: f32) -> f32 {
 }
 
 #[inline]
-pub fn fx_evaluate_distance_fade(
+pub fn evaluate_distance_fade(
     dist: f32,
     fade_in_base: f32,
     fade_in_amp: f32,
@@ -73,10 +73,10 @@ pub fn fx_evaluate_distance_fade(
     let mut fade_in = 1.0;
     let mut fade_out = 1.0;
     if fade_in_amp != 0.0 {
-        fade_in = fx_distance_fade_range(dist, fade_in_base, fade_in_amp);
+        fade_in = distance_fade_range(dist, fade_in_base, fade_in_amp);
     }
     if fade_out_amp != 0.0 {
-        fade_out = 1.0 - fx_distance_fade_range(dist, fade_out_base, fade_out_amp);
+        fade_out = 1.0 - distance_fade_range(dist, fade_out_base, fade_out_amp);
     }
     let fade = if fade_in < fade_out {
         fade_in
@@ -87,13 +87,13 @@ pub fn fx_evaluate_distance_fade(
 }
 
 #[inline]
-pub fn fx_vis_blocker_param4(color_alpha: u8, distance_fade: u32) -> f32 {
+pub fn vis_blocker_param4(color_alpha: u8, distance_fade: u32) -> f32 {
     let prod = (u32::from(color_alpha).wrapping_mul(distance_fade)) >> 8;
     (prod as f32) * (FX_VIS_BLOCKER_BYTE_TO_UNIT as f32)
 }
 
 #[inline]
-pub fn fx_vis_blocker_add_prepared(
+pub fn vis_blocker_add_prepared(
     buf: &mut FxVisBlockerBuf,
     flags: i32,
     origin: [f32; 3],
@@ -106,8 +106,8 @@ pub fn fx_vis_blocker_add_prepared(
     if (flags & FX_ELEM_FLAG_VIS_BLOCKER) == 0 {
         return false;
     }
-    let Some(fade) = fx_evaluate_distance_fade(
-        crate::vec::fx_vec3_distance(camera, origin),
+    let Some(fade) = evaluate_distance_fade(
+        crate::vec::vec3_distance(camera, origin),
         fade_in[0],
         fade_in[1],
         fade_out[0],
@@ -115,11 +115,11 @@ pub fn fx_vis_blocker_add_prepared(
     ) else {
         return false;
     };
-    fx_vis_blocker_add(buf, origin, size0, fx_vis_blocker_param4(color_alpha, fade))
+    vis_blocker_add(buf, origin, size0, vis_blocker_param4(color_alpha, fade))
 }
 
 #[inline]
-pub fn fx_vis_blocker_add(
+pub fn vis_blocker_add(
     buf: &mut FxVisBlockerBuf,
     origin: [f32; 3],
     param_3: f32,
@@ -131,8 +131,8 @@ pub fn fx_vis_blocker_add(
     }
     buf.recs[next as usize] = FxVisBlockerRec {
         origin,
-        param3_x16: fx_vis_blocker_chop_i16(param_3 * FX_VIS_BLOCKER_PARAM3_SCALE as f32),
-        one_minus_param4_x16: fx_vis_blocker_chop_i16(
+        param3_x16: vis_blocker_chop_i16(param_3 * FX_VIS_BLOCKER_PARAM3_SCALE as f32),
+        one_minus_param4_x16: vis_blocker_chop_i16(
             (1.0 - param_4) * FX_VIS_BLOCKER_PARAM4_INV_SCALE as f32,
         ),
     };
@@ -141,13 +141,13 @@ pub fn fx_vis_blocker_add(
 }
 
 #[inline]
-pub fn fx_vis_blocker_generate_verts(write: &mut FxVisBlockerBuf, read: &mut FxVisBlockerBuf) {
+pub fn vis_blocker_generate_verts(write: &mut FxVisBlockerBuf, read: &mut FxVisBlockerBuf) {
     core::mem::swap(write, read);
     read.count = 0;
 }
 
 #[inline]
-pub fn fx_get_client_visibility(
+pub fn get_client_visibility(
     buf: &FxVisBlockerBuf,
     start: [f32; 3],
     end: [f32; 3],
@@ -157,11 +157,11 @@ pub fn fx_get_client_visibility(
         return 1.0;
     }
     let delta = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
-    let len = libm::sqrtf(crate::vec::fx_vec3_length_sq(delta));
+    let len = libm::sqrtf(crate::vec::vec3_length_sq(delta));
     if len < min_trace_dist {
         return 1.0;
     }
-    let direction = crate::vec::fx_vec3_normalize(delta);
+    let direction = crate::vec::vec3_normalize(delta);
     let half_len = len * 0.5;
     let mut visibility = 1.0;
     let count = buf.count.min(FX_VIS_BLOCKER_SLOT_CAP - 1) as usize;

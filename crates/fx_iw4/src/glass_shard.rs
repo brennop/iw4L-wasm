@@ -6,7 +6,7 @@
 //! A global-to-local vertex map travels with the shard so a crack can name the
 //! contour vertex it grows out of.
 
-use crate::glass::{FX_GLASS_GEOMETRY_DATA, fx_glass_geo_vert, fx_glass_pack_geo_vert};
+use crate::glass::{FX_GLASS_GEOMETRY_DATA, glass_geo_vert, glass_pack_geo_vert};
 use crate::glass_crack::{
     FX_GLASS_CRACK_EDGE_MAX, FX_GLASS_CRACK_PT_MAX, FX_GLASS_EDGE_NONE, FX_GLASS_EDGE_SUPPORTED,
     FxGlassCrackWork,
@@ -14,8 +14,8 @@ use crate::glass_crack::{
 use crate::glass_geo::{
     FX_GLASS_CRACK_VERT_FREE, FX_GLASS_SHARD_CRACK_MAX, FX_GLASS_SHARD_GEO_MAX,
     FX_GLASS_SHARD_HOLE_MAX, FX_GLASS_SHARD_TRI_MAX, FX_GLASS_SHARD_VERT_MAX, FxGlassGeoSpan,
-    fx_glass_contour_area_x2, fx_glass_encode_fans, fx_glass_fan_word_count,
-    fx_glass_pack_crack_header, fx_glass_pack_geo_count, fx_glass_pack_verts, fx_glass_triangulate,
+    glass_contour_area_x2, glass_encode_fans, glass_fan_word_count, glass_pack_crack_header,
+    glass_pack_geo_count, glass_pack_verts, glass_triangulate,
 };
 
 pub const FX_GLASS_SHARD_MAX: usize = 32;
@@ -96,10 +96,10 @@ impl FxGlassShard {
     }
 
     fn shift_word(&mut self, i: usize, offset: [i16; 2]) {
-        let v = fx_glass_geo_vert(&self.geo_data[i]);
+        let v = glass_geo_vert(&self.geo_data[i]);
         let x = v[0].saturating_sub(offset[0]);
         let y = v[1].saturating_sub(offset[1]);
-        self.geo_data[i] = fx_glass_pack_geo_vert(x, y);
+        self.geo_data[i] = glass_pack_geo_vert(x, y);
     }
 }
 
@@ -281,7 +281,7 @@ fn contour_contains(work: &FxGlassCrackWork, ex: &Extract, comp: &Component, p: 
 }
 
 /// Builds one shard per face of `work`. Returns how many were written.
-pub fn fx_glass_extract_shards(work: &FxGlassCrackWork, out: &mut [FxGlassShard]) -> usize {
+pub fn glass_extract_shards(work: &FxGlassCrackWork, out: &mut [FxGlassShard]) -> usize {
     let ex = split_components(work);
     let mut written = 0usize;
     for ci in 0..usize::from(ex.comp_n) {
@@ -372,8 +372,7 @@ fn build_shard(work: &FxGlassCrackWork, ex: &Extract, ci: u8, shard: &mut FxGlas
     // Triangulate before the cracks add vertices, so triangle indices only ever name
     // border vertices and fit the byte-packed fan words.
     let mut tris = [[0u8; 3]; FX_GLASS_SHARD_TRI_MAX];
-    let Some(tri_n) =
-        fx_glass_triangulate(&b.verts[..border_vert_n], &b.holes[..b.hole_n], &mut tris)
+    let Some(tri_n) = glass_triangulate(&b.verts[..border_vert_n], &b.holes[..b.hole_n], &mut tris)
     else {
         return false;
     };
@@ -457,7 +456,7 @@ fn build_shard(work: &FxGlassCrackWork, ex: &Extract, ci: u8, shard: &mut FxGlas
                     break;
                 }
                 crack_headers[crack_header_n] = (
-                    fx_glass_pack_crack_header(unique, begin_vert, end_vert),
+                    glass_pack_crack_header(unique, begin_vert, end_vert),
                     chain_start as u8,
                     unique as u8,
                 );
@@ -472,7 +471,7 @@ fn build_shard(work: &FxGlassCrackWork, ex: &Extract, ci: u8, shard: &mut FxGlas
         .iter()
         .map(|h| 1 + usize::from(h.count))
         .sum();
-    let fan_words = fx_glass_fan_word_count(tri_n);
+    let fan_words = glass_fan_word_count(tri_n);
     let total = outer_n + hole_words + crack_words + fan_words;
     if total > FX_GLASS_SHARD_GEO_MAX
         || hole_words > 255
@@ -483,16 +482,16 @@ fn build_shard(work: &FxGlassCrackWork, ex: &Extract, ci: u8, shard: &mut FxGlas
         return false;
     }
     let mut w = 0usize;
-    if fx_glass_pack_verts(&b.verts[..outer_n], &mut shard.geo_data[w..]).is_none() {
+    if glass_pack_verts(&b.verts[..outer_n], &mut shard.geo_data[w..]).is_none() {
         return false;
     }
     w += outer_n;
     for hole in &b.holes[..b.hole_n] {
-        shard.geo_data[w] = fx_glass_pack_geo_count(u16::from(hole.count));
+        shard.geo_data[w] = glass_pack_geo_count(u16::from(hole.count));
         w += 1;
         let start = usize::from(hole.start);
         let count = usize::from(hole.count);
-        if fx_glass_pack_verts(&b.verts[start..start + count], &mut shard.geo_data[w..]).is_none() {
+        if glass_pack_verts(&b.verts[start..start + count], &mut shard.geo_data[w..]).is_none() {
             return false;
         }
         w += count;
@@ -502,14 +501,13 @@ fn build_shard(work: &FxGlassCrackWork, ex: &Extract, ci: u8, shard: &mut FxGlas
         w += 1;
         let start = usize::from(*start);
         let count = usize::from(*count);
-        if fx_glass_pack_verts(&crack_verts[start..start + count], &mut shard.geo_data[w..])
-            .is_none()
+        if glass_pack_verts(&crack_verts[start..start + count], &mut shard.geo_data[w..]).is_none()
         {
             return false;
         }
         w += count;
     }
-    if fx_glass_encode_fans(&tris[..tri_n], &mut shard.geo_data[w..]).is_none() {
+    if glass_encode_fans(&tris[..tri_n], &mut shard.geo_data[w..]).is_none() {
         return false;
     }
     w += fan_words;
@@ -540,7 +538,7 @@ fn build_shard(work: &FxGlassCrackWork, ex: &Extract, ci: u8, shard: &mut FxGlas
         let span = b.holes[hi];
         let start = usize::from(span.start);
         let ring = &b.verts[start..start + usize::from(span.count)];
-        area -= fx_glass_contour_area_x2(ring).unsigned_abs() as f32;
+        area -= glass_contour_area_x2(ring).unsigned_abs() as f32;
     }
     shard.area_x2 = area;
     shard.support_mask = support_mask;

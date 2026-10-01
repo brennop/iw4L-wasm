@@ -31,6 +31,7 @@ const REPO_TOOLS: &[&str] = &[
     "publish-check",
     "web-pack [--root GAMES_ROOT] [--cache-record FILE] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
+    "duo",
 ];
 
 /// Everything that leaves this machine. These read `.env` for the host, the
@@ -112,6 +113,7 @@ fn main() -> ExitCode {
 fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
     let root = repo_root();
     match cmd {
+        "duo" => Some(xtask::duo::run(&root)),
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),
         "web-pack" => Some(Env::load(&root).and_then(|env| xtask::web_pack::run(&env, rest))),

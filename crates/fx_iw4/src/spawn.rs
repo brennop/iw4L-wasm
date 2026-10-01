@@ -5,13 +5,13 @@ pub const FX_ELEM_TYPE_SPARK_CLOUD: u8 = 5;
 pub const FX_ELEM_TYPE_SPARK_FOUNTAIN: u8 = 6;
 
 #[inline]
-pub fn fx_sample_oneshot_spawn_count(base: i32, amplitude: i32, rand16: u16) -> i32 {
-    crate::life::fx_sample_life_span_msec(base, amplitude, rand16)
+pub fn sample_oneshot_spawn_count(base: i32, amplitude: i32, rand16: u16) -> i32 {
+    crate::life::sample_life_span_msec(base, amplitude, rand16)
 }
 
 #[inline]
-pub fn fx_spawn_def_from_bytes(bytes: &[u8; 8]) -> (i32, i32) {
-    crate::life::fx_life_span_range_from_bytes(bytes)
+pub fn spawn_def_from_bytes(bytes: &[u8; 8]) -> (i32, i32) {
+    crate::life::life_span_range_from_bytes(bytes)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct FxLoopingSpawn {
 }
 
 #[inline]
-pub fn fx_looping_catchup_begin(
+pub fn looping_catchup_begin(
     msec_update_begin: i32,
     msec_update_end: i32,
     elem_duration_msec: i32,
@@ -43,7 +43,7 @@ pub fn fx_looping_catchup_begin(
 }
 
 #[inline]
-pub fn fx_looping_spawn_schedule(
+pub fn looping_spawn_schedule(
     msec_when_played: i32,
     msec_update_begin: i32,
     msec_update_end: i32,
@@ -95,7 +95,7 @@ impl Iterator for FxLoopingSpawnSchedule {
 }
 
 #[inline]
-pub const fn fx_spawn_effect_status(msec_looping_life: i32) -> u32 {
+pub const fn spawn_effect_status(msec_looping_life: i32) -> u32 {
     let pending = if msec_looping_life != 0 { 0x8001 } else { 0 };
     0x4000_0001u32.wrapping_add(pending)
 }

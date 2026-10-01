@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use anim_iw4::{DOBJ_RADIUS_PARENT_ROOT, dobj_compute_bounds_radius};
+use anim_iw4::{DOBJ_RADIUS_PARENT_ROOT, compute_bounds_radius};
 use assets::PreparedFpvMeshes;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use frame::{LifeFrontPublished, PresentedPublished, ViewSubject, WorkerCmdSet};
 use math_iw4::vec3_length;
-use net::{CgFrameClock, CgViewweaponAim, ClientSet, LocalPresentClient, PresentedSnapshot};
+use net::{ClientSet, FrameClock, LocalPresentClient, PresentedSnapshot, ViewweaponAim};
 use render_scene::{SCENE_VIEWMODEL_ENTNUM, SCENE_VIEWMODEL_FX_FLAGS, SCENE_VIEWMODEL_LEFT_ENTNUM};
 
 use crate::anim::fpv::{
@@ -22,14 +22,14 @@ use crate::gaps::{RenderGap, RenderGapCause, RenderPresentationGaps};
 use crate::occupancy::remote_body::RemotePlayer;
 use crate::occupancy::third_person::presented_is_third_person;
 use crate::occupancy::view_kick::{
-    CgGunOffset, PendingViewHurt, SessionViewKick, apply_cg_gun_offset_view,
+    GunOffset, PendingViewHurt, SessionViewKick, apply_cg_gun_offset_view,
     apply_viewweapon_land_view, iw_view_placement_to_bevy_camera_local,
     reset_view_kick_on_life_started, sync_camera_from_presented, tick_session_view_kick,
 };
 use crate::{fpv_dobj_skel_radii, viewmodel_lighting_origin};
 use hud_iw4::{
-    WeaponAdsOverlayFacts, cg_calc_crosshair_position, cg_get_weap_reticle_zoom, cg_tan_half_fov,
-    cg_viewweapon_drawgun, cg_viewweapon_drawgun_skip,
+    WeaponAdsOverlayFacts, calc_crosshair_position, get_weap_reticle_zoom, tan_half_fov,
+    viewweapon_drawgun, viewweapon_drawgun_skip,
 };
 use math_iw4::angle_vectors;
 use playerstate_iw4::PlayerState;
@@ -41,9 +41,9 @@ use weapon_iw4::{
     GunKickSpring, GunRecoilPlacementState, PLACEMENT_ASSEMBLE_STEP_COUNT,
     StanceTransitionFadeGlobals, WeaponBobInputs, WeaponBobWaveformInputs,
     WeaponMovementKinematics, WeaponPlacementAssembleStep, WeaponPlacementPsInputs,
-    WeaponPlacementState, WeaponStanceStaticOfsInputs, bg_calculate_weapon_movement_bob_waveform,
-    bg_clip_table_key, bg_get_clip_for_hand, bg_get_viewmodel_weapon_index,
-    dual_wield_view_model_origin_add, viewmodel_rocket_should_be_attached,
+    WeaponPlacementState, WeaponStanceStaticOfsInputs, calculate_weapon_movement_bob_waveform,
+    clip_table_key, dual_wield_view_model_origin_add, get_clip_for_hand,
+    get_viewmodel_weapon_index, viewmodel_rocket_should_be_attached,
     viewweapon_iron_ads_saves_composed_axis, viewweapon_save_gun_pitch_yaw,
     viewweapon_view_to_world_delta, weapon_placement_assemble,
 };
@@ -81,8 +81,13 @@ pub struct SessionFpvMeshesHandles {
     pub(crate) material_catalog: Arc<RuntimeMaterialCatalog>,
 }
 
-fn same_compositions(a: &assets::FpvSideAssemblies, b: &assets::FpvSideAssemblies) -> bool {
+fn same_compositions(a: &asset_game::FpvSideAssemblies, b: &asset_game::FpvSideAssemblies) -> bool {
     Arc::ptr_eq(&a.bare, &b.bare)
+        && match (&a.melee, &b.melee) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
         && match (&a.rocket, &b.rocket) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
@@ -151,6 +156,19 @@ impl core::fmt::Display for FpvState {
     }
 }
 
+pub(crate) fn fpv_viewmodel_weapon(ps: &PlayerState, weapons: &FpvWeaponTable) -> u32 {
+    let viewmodel = get_viewmodel_weapon_index(ps);
+    let stabbing = matches!(
+        weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary),
+        Ok(weapon_iw4::WeaponState::MeleeInit | weapon_iw4::WeaponState::MeleeFire)
+    );
+    if stabbing && viewmodel == ps.weapon {
+        weapons.melee_weapon_of(viewmodel)
+    } else {
+        viewmodel
+    }
+}
+
 fn fpv_rocket_should_attach(
     weapons: &FpvWeaponTable,
     weapon_id: u32,
@@ -162,9 +180,9 @@ fn fpv_rocket_should_attach(
     let Some(facts) = weapons.facts_of(weapon_id) else {
         return false;
     };
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
-    let clip_key = bg_clip_table_key(facts.clip_index, viewmodel);
-    let clip = bg_get_clip_for_hand(&ps.ammoclip, clip_key, 0);
+    let viewmodel = fpv_viewmodel_weapon(ps, weapons);
+    let clip_key = clip_table_key(facts.clip_index, viewmodel);
+    let clip = get_clip_for_hand(&ps.ammoclip, clip_key, 0);
     viewmodel_rocket_should_be_attached(
         clip,
         ps.weaponstate_primary,
@@ -232,7 +250,7 @@ pub fn spawn_pending_fpv(
         .and_then(|snap| snap.meta.for_client(local.0));
     let ffa_team = meta.and_then(|m| m.ffa_team);
     let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
-    let axis = assets::kit_assignment_is_axis(client_state_team, ffa_team);
+    let axis = asset_model::kit_assignment_is_axis(client_state_team, ffa_team);
     let view = match table.slot(request.weapon_id, request.parent_weapon, axis) {
         FpvWeaponSlot::Ready(view) => Arc::clone(view),
         FpvWeaponSlot::Refused(cause) => {
@@ -332,7 +350,7 @@ fn viewweapon_drawgun_admit(
     b_position_to_ads: bool,
 ) -> Option<(bool, Option<&'static str>)> {
     let reg = weapons?;
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+    let viewmodel = fpv_viewmodel_weapon(ps, reg);
     let facts = reg.facts_of(viewmodel)?;
 
     let hud_iris = reg.overlay_is_hud_iris(viewmodel);
@@ -345,10 +363,10 @@ fn viewweapon_drawgun_admit(
         ads_overlay_height: facts.ads_overlay_height,
         ..WeaponAdsOverlayFacts::default()
     };
-    let iris = cg_get_weap_reticle_zoom(ps.f_weapon_pos_frac, b_position_to_ads, &weap);
+    let iris = get_weap_reticle_zoom(ps.f_weapon_pos_frac, b_position_to_ads, &weap);
     Some((
-        cg_viewweapon_drawgun(false, true, iris),
-        cg_viewweapon_drawgun_skip(false, true, iris),
+        viewweapon_drawgun(false, true, iris),
+        viewweapon_drawgun_skip(false, true, iris),
     ))
 }
 
@@ -393,7 +411,9 @@ pub fn occupy_fpv_scene(
     tess: Option<Res<render_scene::TessMaterials>>,
     fpv_meshes: Option<Res<PreparedFpvMeshes>>,
 ) {
-    if presented_is_third_person(&presented, local.0, view.in_killcam()) {
+    if presented.viewweapon_player(local.0).is_none()
+        || presented_is_third_person(&presented, local.0, view.in_killcam())
+    {
         return;
     }
     let Some(ps) = presented.viewweapon_player(local.0) else {
@@ -423,7 +443,7 @@ pub fn occupy_fpv_scene(
         let (hands, gun) =
             fpv_dobj_skel_radii(&cat.0, session.fpv.hands_index, session.fpv.gun_index);
         match (hands, gun) {
-            (Some(h), Some(g)) => Some(dobj_compute_bounds_radius(
+            (Some(h), Some(g)) => Some(compute_bounds_radius(
                 &[h, g],
                 &[DOBJ_RADIUS_PARENT_ROOT, 0],
             )),
@@ -537,7 +557,9 @@ pub fn tick_fpv_viewmodel(
     };
 
     if let Some(ps) = presented.viewweapon_player(local.0) {
-        let weapon = bg_get_viewmodel_weapon_index(ps);
+        let weapon = table.map_or(get_viewmodel_weapon_index(ps), |t| {
+            fpv_viewmodel_weapon(ps, t)
+        });
         if weapon != 0
             && (weapon != session.weapon_id || ps.weapon_primary != session.parent_weapon)
         {
@@ -595,18 +617,17 @@ pub fn tick_fpv_viewmodel(
         Some(snap) => {
             let ps = presented.player(local.0);
             let ws = ps.map(|p| p.weaponstate_primary).unwrap_or(0);
-            const PMF_SPRINTING: u32 = 0x4000;
             let sprinting = ps
-                .map(|p| (p.pm_flags & PMF_SPRINTING) != 0)
+                .map(|p| (p.pm_flags & playerstate_iw4::pm_flags::SPRINTING) != 0)
                 .unwrap_or(false);
             let ads_frac = ps.map(|p| p.f_weapon_pos_frac).unwrap_or(0.0);
             let weap_anim = ps.map(|p| p.weap_anim).unwrap_or(0);
             let clip_ammo = |hand| match (ps, table) {
                 (Some(ps), Some(table)) => {
-                    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+                    let viewmodel = fpv_viewmodel_weapon(ps, table);
                     table.facts_of(viewmodel).map(|facts| {
-                        let key = bg_clip_table_key(facts.clip_index, viewmodel);
-                        bg_get_clip_for_hand(&ps.ammoclip, key, hand)
+                        let key = clip_table_key(facts.clip_index, viewmodel);
+                        get_clip_for_hand(&ps.ammoclip, key, hand)
                     })
                 }
                 _ => None,
@@ -657,7 +678,7 @@ pub fn tick_fpv_viewmodel(
     let dual_offset = if dual {
         presented.viewweapon_player(local.0).and_then(|ps| {
             table?
-                .facts_of(bg_get_viewmodel_weapon_index(ps))
+                .facts_of(fpv_viewmodel_weapon(ps, table?))
                 .map(|f| f.dual_wield_view_model_offset)
         })
     } else {
@@ -677,6 +698,12 @@ pub fn tick_fpv_viewmodel(
         active: active_rig,
         cursor: &mut cursor.0,
         rocket: rocket_visible,
+        melee: presented.viewweapon_player(local.0).is_some_and(|ps| {
+            matches!(
+                weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary),
+                Ok(weapon_iw4::WeaponState::MeleeInit | weapon_iw4::WeaponState::MeleeFire)
+            )
+        }),
         sample,
         predicted_fire,
         dual,
@@ -838,13 +865,13 @@ pub fn publish_fpv_dobj_pose(
 
 #[allow(clippy::too_many_arguments)]
 pub fn apply_fpv_placement(
-    clock: Res<CgFrameClock>,
+    clock: Res<FrameClock>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     prepared: Res<PreparedFpv>,
     mut kick: ResMut<SessionViewKick>,
-    cg_gun: Res<CgGunOffset>,
-    mut aim: ResMut<CgViewweaponAim>,
+    cg_gun: Res<GunOffset>,
+    mut aim: ResMut<ViewweaponAim>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut roots: Query<
         &mut Transform,
@@ -857,7 +884,7 @@ pub fn apply_fpv_placement(
     view: Res<ViewSubject>,
     mut gfx_scene: ResMut<HostGfxScene>,
 ) {
-    *aim = CgViewweaponAim::default();
+    *aim = ViewweaponAim::default();
     let Ok(mut transform) = roots.single_mut() else {
         return;
     };
@@ -870,7 +897,7 @@ pub fn apply_fpv_placement(
     let Some(table) = prepared.table() else {
         return;
     };
-    let viewmodel = bg_get_viewmodel_weapon_index(ps);
+    let viewmodel = fpv_viewmodel_weapon(ps, table);
     let Some(facts) = table.facts_of(viewmodel) else {
         return;
     };
@@ -912,13 +939,13 @@ pub fn apply_fpv_placement(
         lean_fraction: 0.0,
     };
     let stance = WeaponStanceStaticOfsInputs {
-        ofs_at_0x168: facts.stance_ofs_at_0x168,
-        ofs_at_0x18c: facts.stance_ofs_at_0x18c,
+        ducked_ofs: facts.ducked_ofs,
+        prone_ofs: facts.prone_ofs,
         ads_aim_pitch: facts.ads_aim_pitch,
         night_vision_wear_time: facts.night_vision_wear_time,
     };
     let bob_inputs = WeaponBobInputs {
-        ads_bob_factor_at_0x330: facts.ads_bob_factor_at_0x330,
+        ads_bob_factor: facts.ads_bob_factor,
     };
     let xyspeed = {
         let vx = ps.velocity[0];
@@ -935,7 +962,7 @@ pub fn apply_fpv_placement(
         pm_flags: ps.pm_flags,
         frametime: clock.frametime_secs(),
     };
-    let waveform = bg_calculate_weapon_movement_bob_waveform(WeaponBobWaveformInputs {
+    let waveform = calculate_weapon_movement_bob_waveform(WeaponBobWaveformInputs {
         bob_cycle: (ps.bob_cycle as u32 & 0xff) as u8,
         xyspeed,
         view_height_target: ps.view_height_target,
@@ -1007,9 +1034,9 @@ pub fn apply_fpv_placement(
         if let Ok(window) = windows.single() {
             let height = window.height().max(1.0);
             let aspect = window.width() / height;
-            let (tan_x, tan_y) = cg_tan_half_fov(kick.horiz_fov_deg, aspect);
+            let (tan_x, tan_y) = tan_half_fov(kick.horiz_fov_deg, aspect);
             let (vf, vr, vu) = angle_vectors(kick.refdef_view_angles);
-            cg_calc_crosshair_position(
+            calc_crosshair_position(
                 gun_pitch,
                 gun_yaw,
                 kick.refdef_view_angles[2],
@@ -1025,7 +1052,7 @@ pub fn apply_fpv_placement(
     } else {
         [0.0, 0.0]
     };
-    *aim = CgViewweaponAim {
+    *aim = ViewweaponAim {
         live: true,
         gun_pitch,
         gun_yaw,
@@ -1093,8 +1120,8 @@ pub fn register_fpv_present_systems(app: &mut App) {
         .init_resource::<PreparedFpv>()
         .init_resource::<crate::anim::model_materials::PreparedModelMaterials>()
         .init_resource::<SessionViewKick>()
-        .init_resource::<CgGunOffset>()
-        .init_resource::<CgViewweaponAim>()
+        .init_resource::<GunOffset>()
+        .init_resource::<ViewweaponAim>()
         .init_resource::<PendingViewHurt>()
         .init_resource::<FpvStatusGap>()
         .init_resource::<RenderPresentationGaps>()

@@ -1,9 +1,9 @@
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate_fonts};
 use crate::gpu_list::{HudTessPass, TessJob};
-use assets::MenuCatalog;
+use asset_game::MenuCatalog;
 use bevy::prelude::*;
 use hud_iw4::*;
-use net::{CEntity, CEntityRuntime, CgFrameClock, LocalPresentClient, PresentedSnapshot};
+use net::{CEntity, CEntityRuntime, FrameClock, LocalPresentClient, PresentedSnapshot};
 
 use std::collections::HashMap;
 
@@ -111,7 +111,7 @@ fn update_overhead_names(
     local: Res<LocalPresentClient>,
     posed: Res<OverheadPosedPlayerFrame>,
     players: Query<(&CEntity, &CEntityRuntime)>,
-    cg_clock: Res<CgFrameClock>,
+    cg_clock: Res<FrameClock>,
     surface: Res<crate::surface::Hud2dSurface>,
     catalog: Option<Res<MenuCatalog>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
@@ -143,11 +143,13 @@ fn update_overhead_names(
     let Some(local_meta) = snapshot.meta.for_client(local.0) else {
         return;
     };
-    if cg_is_flashbanged(
+    if is_flashbanged(
         now,
         ps.shellshock_time,
         ps.shellshock_duration,
-        SCREEN_BLEND_FLASHED,
+        presented
+            .shellshock(local.0)
+            .map_or(SCREEN_BLEND_BLURRED, |shock| shock.screen_type),
     ) != 0
     {
         memory.seen.clear();
@@ -156,6 +158,16 @@ fn update_overhead_names(
     let Some((camera, transform)) = cameras.iter().find(|(c, _)| c.is_active) else {
         return;
     };
+    if ps.other_flags & 0x10 != 0 {
+        memory.seen.clear();
+        let quads = thermal_target_quads(
+            snapshot, local.0, now, &surface, camera, transform, &players,
+        );
+        if !quads.is_empty() {
+            pass.overhead_names = TessJob::Quads(quads);
+        }
+        return;
+    }
     let Some(world) = prediction
         .as_ref()
         .filter(|p| p.0.is_armed() && p.0.world().has_world_clip())
@@ -277,7 +289,7 @@ fn update_overhead_names(
             memory.seen.remove(&ent);
             continue;
         }
-        let alpha = cg_overhead_fade_alpha(
+        let alpha = overhead_fade_alpha(
             now,
             start,
             last,
@@ -287,18 +299,17 @@ fn update_overhead_names(
         if alpha <= 0.0 {
             continue;
         }
-        let distance = cg_overhead_distance_scale(
+        let distance = overhead_distance_scale(
             eye.to_array(),
             anchor.to_array(),
             OVERHEAD_NEAR_DISTANCE_DEFAULT,
             OVERHEAD_FAR_DISTANCE_DEFAULT,
             OVERHEAD_FAR_SCALE_DEFAULT,
         );
-        let scale =
-            r_normalized_text_scale(font.pixel_height, OVERHEAD_NAME_SIZE_DEFAULT * distance);
+        let scale = normalized_text_scale(font.pixel_height, OVERHEAD_NAME_SIZE_DEFAULT * distance);
         let rank_scale =
-            r_normalized_text_scale(font.pixel_height, OVERHEAD_RANK_SIZE_DEFAULT * distance);
-        let x = (pixel.x - crate::chrome::r_text_width(font, &name) as f32 * scale * 0.5).round();
+            normalized_text_scale(font.pixel_height, OVERHEAD_RANK_SIZE_DEFAULT * distance);
+        let x = (pixel.x - crate::chrome::text_width(font, &name) as f32 * scale * 0.5).round();
         let mut color = name_color(local_meta.client_state_team, team);
         color[3] = alpha;
         let mut text_runs = vec![(name, x, pixel.y.round(), scale, color)];
@@ -308,7 +319,7 @@ fn update_overhead_names(
         {
             let text_size = font.pixel_height as f32 * scale;
             let icon_size = OVERHEAD_ICON_SIZE_DEFAULT * text_size;
-            let level_width = crate::chrome::r_text_width(font, level) as f32 * rank_scale;
+            let level_width = crate::chrome::text_width(font, level) as f32 * rank_scale;
             let icon_x = x - level_width - icon_size - 2.0 * distance;
             list.cmds.push(Draw2dCmd {
                 x: icon_x,
@@ -324,7 +335,7 @@ fn update_overhead_names(
                 material_namespace: crate::images::HUD_CHROME_NAMESPACE,
                 op: Draw2dOp::StretchPic,
                 provenance: Draw2dProvenance::CgDraw {
-                    site: "CG_DrawOverheadNames",
+                    site: "overhead_names",
                 },
                 layer: 1,
             });
@@ -349,7 +360,7 @@ fn update_overhead_names(
                 s1: 1.0,
                 t1: 1.0,
                 color,
-                material: assets::AssetRef::bare_name(&font.material).to_owned(),
+                material: asset_core::AssetRef::bare_name(&font.material).to_owned(),
                 material_namespace: crate::images::HUD_CHROME_NAMESPACE,
                 op: Draw2dOp::TextRun {
                     font: font_name.to_owned(),
@@ -361,7 +372,7 @@ fn update_overhead_names(
                     glow: None,
                 },
                 provenance: Draw2dProvenance::CgDraw {
-                    site: "CG_DrawOverheadNames",
+                    site: "overhead_names",
                 },
                 layer: 1,
             });
@@ -390,4 +401,117 @@ pub(crate) fn rank_presentation(
         .string_table("mp/rankTable.csv")?
         .lookup_col(&key, 14);
     (!icon.is_empty() && !level.is_empty()).then_some((icon, level))
+}
+
+fn thermal_target_quads(
+    snapshot: &sim::Snapshot,
+    local: sim::ClientId,
+    now: i32,
+    surface: &crate::surface::Hud2dSurface,
+    camera: &Camera,
+    transform: &GlobalTransform,
+    players: &Query<(&CEntity, &CEntityRuntime)>,
+) -> Vec<crate::draw2d::Draw2dQuad> {
+    let Some(local_meta) = snapshot.meta.for_client(local) else {
+        return Vec::new();
+    };
+    let dvars = snapshot.meta.script_dvars(local);
+    let setting = |name: &str, default: f32| {
+        dvars
+            .string(name)
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(default)
+            .max(0.0)
+    };
+    let scale = setting("FoFIconScale", 1.3);
+    let virtual_scale = surface.scale_virtual_to_real()[1];
+    let min_size = setting("FoFIconMinSize", 30.0) * virtual_scale;
+    let max_size = (setting("FoFIconMaxSize", 640.0) * virtual_scale).max(min_size);
+    let delay = setting("FoFIconSpawnTimeDelay", 1.0) * 1000.0;
+    let fade = setting("FoFIconSpawnTimeFade", 5.0) * 1000.0;
+    let mut quads = Vec::new();
+    for (identity, runtime) in players {
+        if !runtime.in_next_snap() || runtime.next_state.e_type != entity_iw4::ET_PLAYER {
+            continue;
+        }
+        let Some(client) = identity.client() else {
+            continue;
+        };
+        let Some(meta) = snapshot.meta.for_client(client) else {
+            continue;
+        };
+        let Some((_, ps)) = snapshot.players.iter().find(|(id, _)| *id == client) else {
+            continue;
+        };
+        if meta.lifecycle != sim::ClientLifecycle::Alive {
+            continue;
+        }
+        let own = client == local;
+        if own {
+            if ps.other_flags & 0x20 != 0 {
+                continue;
+            }
+        } else if (local_meta.client_state_team != 0
+            && local_meta.client_state_team == meta.client_state_team)
+            || ps.perks[0] & playerstate_iw4::PERK_COLDBLOODED != 0
+        {
+            continue;
+        }
+        let alpha = if own {
+            1.0
+        } else {
+            let age = now.saturating_sub(meta.item_use_spawn_ms) as f32 - delay;
+            if age <= 0.0 {
+                continue;
+            }
+            if fade > 0.0 {
+                (age / fade).min(1.0)
+            } else {
+                1.0
+            }
+        };
+        let origin = Vec3::from_array(runtime.origin);
+        let top = origin + Vec3::Z * (ps.view_height_current + 12.0).max(1.0);
+        let (Ok(base), Ok(head)) = (
+            camera.world_to_viewport(transform, origin),
+            camera.world_to_viewport(transform, top),
+        ) else {
+            continue;
+        };
+        let center = (base + head) * 0.5;
+        if !center.is_finite()
+            || center.x < 0.0
+            || center.y < 0.0
+            || center.x > surface.width()
+            || center.y > surface.height()
+        {
+            continue;
+        }
+        let size = (base.distance(head) * scale).clamp(min_size, max_size);
+        let half = size * 0.5;
+        quads.push(crate::draw2d::Draw2dQuad {
+            xy: [
+                [center.x - half, center.y - half],
+                [center.x + half, center.y - half],
+                [center.x + half, center.y + half],
+                [center.x - half, center.y + half],
+            ],
+            st: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            color: [1.0, 1.0, 1.0, alpha],
+            material: if own {
+                "hud_fofbox_self"
+            } else {
+                "hud_fofbox_hostile"
+            }
+            .into(),
+            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            provenance: Draw2dProvenance::CgDraw {
+                site: "thermal_targets",
+            },
+            layer: 1,
+            clip: None,
+        });
+    }
+    quads
 }

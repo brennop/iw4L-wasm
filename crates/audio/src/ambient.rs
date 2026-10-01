@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use asset_iw4::snd_attenuate;
-use assets::{
-    AssetNamespace, GamesRoot, LoadedSoundBank, NamespaceSoundIwd, NamespaceTrees, SoundCatalog,
-    compose_sound_bank, gather_sound_sources, namespace_for_zone,
+use asset_iw4::attenuate;
+use asset_core::AssetNamespace;
+use asset_audio::{
+    LoadedSoundBank, SoundCatalog, compose_sound_bank, gather_sound_sources, namespace_for_zone,
 };
+use asset_transport::GamesRoot;
+use assets::{NamespaceSoundIwd, NamespaceTrees};
 use bevy::{
     audio::Volume,
     prelude::*,
@@ -122,7 +124,7 @@ pub(crate) fn stop_map_ambient_on_match_end(
     epoch.bump();
     stop_map_ambient(&mut commands, &ambient);
     booted.0 = false;
-    commands.remove_resource::<assets::CreateFxOneshotEmitters>();
+    commands.remove_resource::<asset_audio::CreateFxOneshotEmitters>();
 
     let compose_is_for_the_incoming_map = !left_session
         && compose
@@ -149,7 +151,7 @@ pub(crate) fn stop_map_ambient_on_match_end(
         });
     });
     perf::ambient_hold(i64::from(booted.0));
-    diag::info!(Audio, "audio: map ambient stopped (SND_StopAmbient)");
+    diag::info!(Audio, "audio: map ambient stopped");
 }
 
 pub(crate) fn start_sound_bank_compose(
@@ -194,7 +196,7 @@ pub(crate) fn start_sound_bank_compose(
             let pool = AsyncComputeTaskPool::get_or_init(TaskPool::default);
             IwdOpen::Opening(pool.spawn(async move {
                 let mut trees = NamespaceTrees::discover(&games);
-                if let Ok(zone) = assets::find_zone_file(&games, &opened_zone) {
+                if let Ok(zone) = asset_transport::find_zone_file(&games, &opened_zone) {
                     trees.adopt_zone(&zone.path);
                 }
                 NamespaceSoundIwd::open(&trees)
@@ -297,7 +299,7 @@ pub(crate) fn install_sound_bank(
                         };
                     };
                     let namespace = namespace_for_zone(&games, &zone);
-                    let loaded = assets::find_zone_file(&games, &zone).map(|found| {
+                    let loaded = asset_transport::find_zone_file(&games, &zone).map(|found| {
                         let sources = gather_sound_sources(&games, &found.path);
                         let LoadedSoundBank { catalog, gaps, .. } =
                             compose_sound_bank(sources, &zone, namespace, map);
@@ -416,7 +418,7 @@ pub(crate) fn boot_map_ambient_once(
     loading: Option<Res<assets::LoadingScreen>>,
     bank: Option<Res<SoundBank>>,
     identity: Option<Res<frame::LaunchIdentity>>,
-    script_sound: Option<Res<assets::SessionMapScriptSound>>,
+    script_sound: Option<Res<asset_audio::SessionMapScriptSound>>,
     namespace: Option<Res<SoundBankNamespace>>,
     epoch: Res<MatchEpoch>,
     clips: Option<Res<crate::ClipStore>>,
@@ -588,11 +590,11 @@ fn start_map_ambient_prepared(
 
     let oneshots = bank.createfx_oneshots(map_ns, map_name);
     let oneshot_count = oneshots.len();
-    commands.insert_resource(assets::CreateFxOneshotEmitters(oneshots));
+    commands.insert_resource(asset_audio::CreateFxOneshotEmitters(oneshots));
     if oneshot_count > 0 {
         diag::info!(
             Audio,
-            "audio: createfx oneshots {oneshot_count} parsed for {map_name} (host markers; no FX_Register play)"
+            "audio: createfx oneshots {oneshot_count} parsed for {map_name} (host markers)"
         );
     }
 }
@@ -602,7 +604,7 @@ pub(crate) fn emitter_gain(emitter: &MapEmitter, ear_inches: [f32; 3]) -> f32 {
     if emitter.knots.is_empty() {
         return 0.0;
     }
-    let atten = snd_attenuate(&emitter.knots, dist, emitter.dist_min, emitter.dist_max);
+    let atten = attenuate(&emitter.knots, dist, emitter.dist_min, emitter.dist_max);
     if atten < 0.0 {
         0.0
     } else {
@@ -626,7 +628,7 @@ pub fn update_map_emitter_gain(
         return;
     }
     if n > 1 {
-        panic!("second listener / amp maxRadius gate not ported");
+        panic!("more than one ambient listener");
     }
     let Some(listener) = listeners.iter().next() else {
         return;

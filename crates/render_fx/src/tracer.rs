@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
-use assets::{AssetEdge, OwnedTracerDef, TracerDefinitions, TracerSpace};
+use asset_game::{OwnedTracerDef, TracerDefinitions};
+use assets::{AssetEdge, TracerSpace};
 use bevy::prelude::*;
-use entity_iw4::{Trajectory, bg_evaluate_trajectory};
+use entity_iw4::{Trajectory, evaluate_trajectory};
 use fx::{
     FxMsec, LE_MOVING_TRACER, LE_TR_LINEAR, LocalEntityPool, LocalEntitySlot, tracer_travel_msec,
 };
 use fx_iw4::{
     FX_BEAM_ADD_CAP, FX_TRACER_FIRST_PERSON_MAX_WIDTH, FX_TRACER_MIN_DIST, FxBeamTess,
-    fx_beam_segment_count, fx_vec3_normalize,
+    beam_segment_count, vec3_normalize,
 };
 
 use crate::host::CombatFxDump;
@@ -106,7 +107,7 @@ pub fn try_spawn_tracer(
     combat.last_tracer_material = def.present_name().map(str::to_owned);
     combat.last_tracer_bind = def
         .present_name()
-        .map(|name| assets::fx_material_bind_name(name).to_owned());
+        .map(|name| asset_game::material_bind_name(name).to_owned());
     combat.last_tracer_speed = Some(def.speed);
     combat.last_tracer_beam_length = Some(def.beam_length);
     combat.last_tracer_draw_interval = Some(i64::from(def.draw_interval));
@@ -130,7 +131,7 @@ fn spawn_moving_tracer(
         return Err(());
     }
     let travel = tracer_travel_msec(dist, def.speed).ok_or(())?;
-    let dir = fx_vec3_normalize(delta);
+    let dir = vec3_normalize(delta);
     let mut width = def.beam_width;
     if own_shot {
         width = width.min(FX_TRACER_FIRST_PERSON_MAX_WIDTH);
@@ -159,7 +160,7 @@ pub fn tick_tracer_beams(world: &mut TracerWorld, clock: FxMsec) {
     world.pool.free_expired(clock);
     world.queued.clear();
     for tr in world.pool.live() {
-        let begin = bg_evaluate_trajectory(
+        let begin = evaluate_trajectory(
             &Trajectory {
                 tr_time: tr.pos_tr_time,
                 tr_type: tr.pos_tr_type,
@@ -169,7 +170,7 @@ pub fn tick_tracer_beams(world: &mut TracerWorld, clock: FxMsec) {
             },
             clock.0,
         );
-        let dir = fx_vec3_normalize(tr.pos_tr_delta);
+        let dir = vec3_normalize(tr.pos_tr_delta);
         let start_from_base = [
             begin[0] - tr.pos_tr_base[0],
             begin[1] - tr.pos_tr_base[1],
@@ -197,7 +198,7 @@ pub fn tick_tracer_beams(world: &mut TracerWorld, clock: FxMsec) {
                 begin_radius: tr.beam_width,
                 end_radius: tr.beam_width,
                 colors: tr.colors,
-                segment_count: fx_beam_segment_count(beam_len, tr.screw_dist),
+                segment_count: beam_segment_count(beam_len, tr.screw_dist),
                 wiggle_dist: tr.screw_radius,
             },
             material: tr.material,

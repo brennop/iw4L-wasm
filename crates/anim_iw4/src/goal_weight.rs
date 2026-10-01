@@ -12,7 +12,7 @@ pub const XANIM_CLIENT_ANIM_BLEND_FLOOR_OLD_DURATION_MS: i32 = 0xfa;
 
 pub const XANIM_LEGS_PARENT_WEIGHT_WHEN_TORSO: f32 = 0.01;
 
-pub fn xanim_sanitize_goal_weight(goal_weight: f32, notify_a: i32, notify_b: i32) -> f32 {
+pub fn sanitize_goal_weight(goal_weight: f32, notify_a: i32, notify_b: i32) -> f32 {
     if goal_weight < XANIM_GOAL_WEIGHT_SNAP_EPS {
         if notify_a == 0 && notify_b == 0 {
             0.0
@@ -24,11 +24,11 @@ pub fn xanim_sanitize_goal_weight(goal_weight: f32, notify_a: i32, notify_b: i32
     }
 }
 
-pub fn xanim_goal_time_from_blend_ms(blend_ms: i32) -> f32 {
+pub fn goal_time_from_blend_ms(blend_ms: i32) -> f32 {
     blend_ms as f32 * XANIM_WEIGHT_FLOOR_SCALE
 }
 
-pub fn xanim_client_anim_blend_ms(
+pub fn client_anim_blend_ms(
     new_index: u16,
     authored_blend_ms: i32,
     old_xanim_exists: bool,
@@ -85,14 +85,14 @@ pub const XANIM_CLIENT_ANIM_RATE_LERP_MAX_SPEED: f32 = 150.0;
 
 pub const XANIM_CLIENT_ANIM_RATE_LERP_SPAN: f32 = 130.0;
 
-pub fn xanim_vec3_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub fn vec3_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     let dx = b[0] - a[0];
     let dy = b[1] - a[1];
     let dz = b[2] - a[2];
     libm::sqrtf(dx * dx + dy * dy + dz * dz)
 }
 
-pub fn xanim_client_anim_playback_rate(
+pub fn client_anim_playback_rate(
     origin: [f32; 3],
     last_origin: [f32; 3],
     now_ms: i32,
@@ -110,7 +110,7 @@ pub fn xanim_client_anim_playback_rate(
     let dist = if ladder {
         libm::fabsf(origin[2] - last_origin[2])
     } else {
-        xanim_vec3_distance(origin, last_origin)
+        vec3_distance(origin, last_origin)
     };
     let rate = dist / dt / move_speed;
     if rate < XANIM_CLIENT_ANIM_RATE_MIN {

@@ -9,12 +9,12 @@ pub const CG_CENTERPRINT_FADE_TAIL_MS: i32 = 100;
 pub const CENTERPRINT_STRIDE: usize = 0x408;
 
 #[must_use]
-pub fn cg_priority_center_print_accepts(time: i32, slot_priority: i32, new_priority: i32) -> bool {
+pub fn priority_center_print_accepts(time: i32, slot_priority: i32, new_priority: i32) -> bool {
     time == 0 || new_priority >= slot_priority
 }
 
 #[must_use]
-pub fn cg_fade_color(now: i32, start: i32, duration: i32, fade_tail: i32) -> Option<f32> {
+pub fn fade_color(now: i32, start: i32, duration: i32, fade_tail: i32) -> Option<f32> {
     if start == 0 {
         return None;
     }

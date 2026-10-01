@@ -17,7 +17,7 @@
 use std::time::Duration;
 use web_time::Instant;
 
-use assets::LoadLaneTiming;
+use asset_transport::LoadLaneTiming;
 
 use crate::bench::milestones::Milestones;
 use crate::bench::table::{Align, Table, bytes, items, mib, ms, secs};
@@ -50,11 +50,11 @@ pub(crate) fn render(bench: &Milestones, command_start: Option<Instant>, out: &m
 /// merge had no row for. Only `prepared` is work, so only `prepared` belongs
 /// next to `decode`.
 fn image_plans(out: &mut Vec<String>) {
-    let jobs = assets::load_jobs::snapshot();
+    let jobs = asset_transport::load_jobs::snapshot();
     let plans: Vec<_> = jobs
         .rows
         .iter()
-        .filter(|row| row.kind == assets::load_jobs::JobKind::ImageDecode)
+        .filter(|row| row.kind == asset_transport::load_jobs::JobKind::ImageDecode)
         .collect();
     if plans.is_empty() {
         out.push("  image plans: MISS — no image decode job was recorded".to_owned());
@@ -103,8 +103,8 @@ fn image_plans(out: &mut Vec<String>) {
         "  {held} of {} plans were held by the decode budget before they began; `budget wait` is that hold and `decode` is the work. The ceiling is a threshold on starting, not a cap: a plan that is let through decodes all of itself, so outstanding bytes can end above it.",
         plans.len()
     ));
-    let (shared, shared_bytes) = assets::shared_variant_census();
-    let (copied, moved) = assets::shared_payload_copy_cost();
+    let (shared, shared_bytes) = asset_material::shared_variant_census();
+    let (copied, moved) = asset_material::shared_payload_copy_cost();
     if shared > 0 {
         out.push(format!(
             "  {shared} payloads ({}) were answered out of another asker's decode instead of being read and decoded a second time. Sharing is keyed on the resolved archive entries and the map type, so a different colour space or sampler no longer costs a decode.",
@@ -121,7 +121,7 @@ fn image_plans(out: &mut Vec<String>) {
         mib(moved),
         mib(copied),
     ));
-    let (payload_reads, header_reads) = assets::iwd_entry_reads();
+    let (payload_reads, header_reads) = asset_material::iwd_entry_reads();
     out.push(format!(
         "  {payload_reads} archive entries were inflated whole and {header_reads} only as far as the IWI header, which is where the cubemap question is answered. A 2D image whose mips the prepared cache already holds is a header read and no payload read at all."
     ));
@@ -359,7 +359,7 @@ fn audio(out: &mut Vec<String>) {
 /// took. The artifact cache answers the second run of a zone; the batching is
 /// what the first run gets.
 fn xwma(out: &mut Vec<String>) {
-    let cost = assets::xwma_decode_cost();
+    let cost = asset_audio::xwma_decode_cost();
     if cost.hit + cost.miss + cost.failed == 0 {
         out.push(
             "  t5 xwma: MISS — no clip reached the external decoder, so the cache answered nothing and nothing was stored."
@@ -417,7 +417,7 @@ fn picture(bench: &Milestones, out: &mut Vec<String>) {
     }
     match (
         bench.progress.rss_at_open_bytes(),
-        assets::peak_resident_bytes(),
+        asset_transport::peak_resident_bytes(),
     ) {
         (Some(open), Some(peak)) => lines.push(format!("rss {} → {}", mib(open), mib(peak))),
         (_, Some(peak)) => lines.push(format!("rss peak {}", mib(peak))),

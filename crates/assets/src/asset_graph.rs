@@ -1,18 +1,17 @@
-use crate::{
-    MaterialDefinitions, body_catalog::BodyMeshBuild, fpv_catalog::FpvMeshBuild,
-    fx_catalog::FxCatalog, model_mesh::MapXModelSceneCatalog,
-    projectile_mesh_catalog::ProjectileMeshBuild, sound_catalog::SoundCatalog,
-    tracer_catalog::TracerCatalog, weapon_catalog::WeaponCatalog,
-    world_weapon_catalog::WorldWeaponBuild, xanim_catalog::XAnimCatalog,
-};
+use asset_anim::XAnimCatalog;
+use asset_audio::SoundCatalog;
 pub use asset_core::{
-    AssetEdge, AssetEdgeCensus, AssetEdgeReason, CatalogIndex, FpvMeshIndex, FpvMeshSpace, FxIndex,
-    FxModelIndex, FxModelSpace, FxSpace, IndexSpace, LoadedSoundIndex, LoadedSoundSpace,
-    MapXModelIndex, MapXModelSpace, MaterialIndex, MaterialSpace, ProjectileModelIndex,
-    ProjectileModelSpace, SoundAliasIndex, SoundAliasSpace, TechniqueSetIndex, TechniqueSetSpace,
-    TracerIndex, TracerSpace, WorldWeaponIndex, WorldWeaponSpace, XAnimIndex, XAnimSpace,
-    ZoneOwner,
+    AssetEdge, AssetEdgeCensus, AssetEdgeReason, FpvMeshIndex, FpvMeshSpace, FxIndex, FxModelIndex,
+    FxModelSpace, FxSpace, LoadedSoundIndex, LoadedSoundSpace, MapXModelIndex, MapXModelSpace,
+    MaterialIndex, MaterialSpace, ProjectileModelIndex, ProjectileModelSpace, SoundAliasIndex,
+    SoundAliasSpace, TechniqueSetIndex, TechniqueSetSpace, TracerIndex, TracerSpace,
+    WorldWeaponIndex, WorldWeaponSpace, XAnimIndex, XAnimSpace,
 };
+use asset_core::{CatalogIndex, IndexSpace, ZoneOwner};
+use asset_game::{FxCatalog, TracerCatalog, WeaponCatalog};
+use asset_material::MaterialDefinitions;
+use asset_model::{BodyMeshBuild, FpvMeshBuild, ProjectileMeshBuild, WorldWeaponBuild};
+use asset_world::MapXModelSceneCatalog;
 
 pub type DeathClipEdge = AssetEdge<XAnimSpace>;
 
@@ -270,7 +269,7 @@ pub(crate) fn stamp_destructible_death_edges(
             husk_hint: hint.husk,
             clip: {
                 let index = xanims
-                    .index_by_name(crate::AssetNamespace::Iw4, hint.clip)
+                    .index_by_name(asset_core::AssetNamespace::Iw4, hint.clip)
                     .map(CatalogIndex::<XAnimSpace>::from_order);
                 edge_from_index(
                     hint.clip,

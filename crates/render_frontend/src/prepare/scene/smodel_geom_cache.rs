@@ -9,8 +9,7 @@ use lighting_iw4::{
     CacheStaticModelSurface, SMC_BANK_N, SMC_CACHE_INDEX_LODS, SMC_CLASS_N, SMC_INDEX_U16_N,
     SMC_LEAF_N, SMC_LINK_N, SMC_TREE_N, SmcAllocatorStorage, SmcCachedVertLighting,
     SmcIndexBakeError, SmcLeafStorage, SmcPatchLock, SmcSkinSurface, SmcTree, StaticModelCache,
-    r_cache_static_model_indices, r_skin_cached_static_model_cmd,
-    r_skin_cached_static_model_cmd_matrix, smc_lod_cache_spec,
+    cache_static_model_indices, skin_cached_static_model_cmd_matrix, smc_lod_cache_spec,
 };
 use render_frontend::{
     AddWorkerCmd, SkinCachedStaticModelCmd, WORKER_CMD_SMODELCACHE, WorkerCmdBusyInput,
@@ -44,7 +43,7 @@ pub struct LodRampDvar {
     pub t5_bias: f32,
     pub t5_fov_threshold: f32,
 
-    pub t5: assets::t5_lod::LodParmsAxis,
+    pub t5: asset_model::t5_lod::LodParmsAxis,
 }
 
 impl Default for LodRampDvar {
@@ -54,10 +53,10 @@ impl Default for LodRampDvar {
             bias_mid: None,
             scale_last: None,
             world_unit: None,
-            t5_scale: assets::t5_lod::R_LOD_SCALE_RIGID_DEFAULT,
-            t5_bias: assets::t5_lod::R_LOD_BIAS_RIGID_DEFAULT,
-            t5_fov_threshold: assets::t5_lod::R_FOV_SCALE_THRESHOLD_DEFAULT,
-            t5: assets::t5_lod::LodParmsAxis::default(),
+            t5_scale: asset_model::t5_lod::R_LOD_SCALE_RIGID_DEFAULT,
+            t5_bias: asset_model::t5_lod::R_LOD_BIAS_RIGID_DEFAULT,
+            t5_fov_threshold: asset_model::t5_lod::R_FOV_SCALE_THRESHOLD_DEFAULT,
+            t5: asset_model::t5_lod::LodParmsAxis::default(),
         }
     }
 }
@@ -136,7 +135,7 @@ struct PendingSmcSkin {
     scale: f32,
     packed_light: [u8; 4],
     lighting_handle: Option<u16>,
-    div_0x100_by_height: u32,
+    inv_height_x256: u32,
     cache_index: u16,
     base_vert_index: u32,
     class_verts: u32,
@@ -211,7 +210,7 @@ impl WorldStaticModelCache {
         tri_count: u16,
         src_indices: &[u16],
     ) -> Result<u32, SmcIndexBakeError> {
-        r_cache_static_model_indices(
+        cache_static_model_indices(
             &mut self.indices,
             base_vert_index,
             xsurface_base_index,
@@ -464,7 +463,7 @@ pub(crate) fn cache_visible_smodel_surfaces(
                     scale: placement.scale,
                     packed_light,
                     lighting_handle,
-                    div_0x100_by_height: lighting.div_0x100_by_height,
+                    inv_height_x256: lighting.inv_height_x256,
                     cache_index,
                     base_vert_index,
                     class_verts,
@@ -525,7 +524,7 @@ fn skin_cached_static_model_job(
         Err(_) => return,
     };
     let Some(lock) =
-        lighting_iw4::rb_patch_static_model_cache_lock(job.base_vert_index, job.class_verts)
+        lighting_iw4::patch_static_model_cache_lock(job.base_vert_index, job.class_verts)
     else {
         return;
     };
@@ -538,9 +537,9 @@ fn skin_cached_static_model_job(
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     let mut dest = vec![0u8; lock.byte_count as usize];
-    let m = r_skin_cached_static_model_cmd_matrix(job.origin, job.axis, job.scale);
+    let m = skin_cached_static_model_cmd_matrix(job.origin, job.axis, job.scale);
 
-    let normal_matrix = r_skin_cached_static_model_cmd_matrix([0.0; 3], job.axis, 1.0);
+    let normal_matrix = skin_cached_static_model_cmd_matrix([0.0; 3], job.axis, 1.0);
     let fixed_norm_axis = lighting_iw4::setup_transform_unit_vec(&normal_matrix);
     let mut skin_surfs = Vec::new();
     for surf in smc_surfs {
@@ -563,7 +562,7 @@ fn skin_cached_static_model_job(
             };
             SmcCachedVertLighting::FromHandle {
                 lighting_handle,
-                div_0x100_by_height: job.div_0x100_by_height,
+                inv_height_x256: job.inv_height_x256,
             }
         };
         skin_surfs.push(SmcSkinSurface {
@@ -572,7 +571,8 @@ fn skin_cached_static_model_job(
             lighting,
         });
     }
-    let _ = r_skin_cached_static_model_cmd(&mut dest, &m, &fixed_norm_axis, &skin_surfs);
+    let _ =
+        lighting_iw4::skin_cached_static_model_cmd(&mut dest, &m, &fixed_norm_axis, &skin_surfs);
     let mut baked_any = false;
     for surf in smc_surfs {
         let Some(src_ix) = local_u16_indices(

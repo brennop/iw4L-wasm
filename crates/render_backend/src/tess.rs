@@ -54,7 +54,7 @@ pub struct IndexDataAppend {
 }
 
 impl GfxDynamicIndexBuffer {
-    pub fn r_set_index_data(&mut self, tri_count: u32) -> IndexDataAppend {
+    pub fn set_index_data(&mut self, tri_count: u32) -> IndexDataAppend {
         let index_count = tri_count * 3;
         let discard = self.cur_index_count + index_count > self.capacity;
         if discard {
@@ -85,7 +85,7 @@ pub struct GfxTess {
 }
 
 impl GfxTess {
-    pub fn rb_end_tess_surface(
+    pub fn end_tess_surface(
         &mut self,
         ring: &mut GfxDynamicIndexBuffer,
     ) -> Option<(GfxDrawPrimArgs, IndexDataAppend)> {
@@ -93,7 +93,7 @@ impl GfxTess {
             return None;
         }
         let tri_count = self.index_count / 3;
-        let append = ring.r_set_index_data(tri_count);
+        let append = ring.set_index_data(tri_count);
         let args = GfxDrawPrimArgs {
             vertex_count: self.vertex_count,
             tri_count,
@@ -152,7 +152,7 @@ impl Default for GfxDynamicVertexBuffer {
 }
 
 impl GfxDynamicVertexBuffer {
-    pub fn r_set_vertex_data(&mut self, vertex_count: u32) -> VertexDataAppend {
+    pub fn set_vertex_data(&mut self, vertex_count: u32) -> VertexDataAppend {
         let lock_flags = if self.used_bytes != 0 {
             TESS_VB_LOCK_NOOVERWRITE
         } else {
@@ -186,7 +186,7 @@ pub fn gfx_tess_stream0(buffer: u32, append: VertexDataAppend) -> GfxStreamSourc
 }
 
 #[must_use]
-pub fn r_set_stream_source0(cached: &mut GfxStreamSource0, next: GfxStreamSource0) -> bool {
+pub fn set_stream_source0(cached: &mut GfxStreamSource0, next: GfxStreamSource0) -> bool {
     if *cached == next {
         false
     } else {
@@ -209,13 +209,13 @@ pub struct StreamSourceAction {
 }
 
 #[must_use]
-pub fn r_set_stream_source(
+pub fn set_stream_source(
     state: &mut GfxCmdBufStreams,
     buffer: u32,
     offset: u32,
     stride: u32,
 ) -> StreamSourceAction {
-    let bind_stream0 = r_set_stream_source0(
+    let bind_stream0 = set_stream_source0(
         &mut state.stream0,
         GfxStreamSource0 {
             buffer,
@@ -277,7 +277,7 @@ pub struct TessFlush {
     pub draw: TessTechniqueDraw,
 }
 
-pub fn r_draw_tess_technique(
+pub fn draw_tess_technique(
     args: GfxDrawPrimArgs,
     vb: &mut GfxDynamicVertexBuffer,
     pass_count: u16,
@@ -287,7 +287,7 @@ pub fn r_draw_tess_technique(
     if wrap_to_zero {
         vb.used_bytes = 0;
     }
-    let vertex = vb.r_set_vertex_data(args.vertex_count);
+    let vertex = vb.set_vertex_data(args.vertex_count);
     TessTechniqueDraw {
         wrap_to_zero,
         vertex,
@@ -297,7 +297,7 @@ pub fn r_draw_tess_technique(
     }
 }
 
-pub fn rb_set_tess_technique(
+pub fn set_tess_technique(
     cache: &mut GfxTessTechniqueCache,
     tess: &mut GfxTess,
     ib: &mut GfxDynamicIndexBuffer,
@@ -310,10 +310,10 @@ pub fn rb_set_tess_technique(
         return None;
     }
     let flushed = if tess.vertex_count != 0 {
-        tess.rb_end_tess_surface(ib).map(|(args, index)| TessFlush {
+        tess.end_tess_surface(ib).map(|(args, index)| TessFlush {
             args,
             index,
-            draw: r_draw_tess_technique(args, vb, cache.pass_count),
+            draw: draw_tess_technique(args, vb, cache.pass_count),
         })
     } else {
         None

@@ -63,7 +63,7 @@ impl ShadowmapSpotGpu {
         let slot = usize::try_from(slot_index)
             .ok()
             .filter(|&slot| slot < lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP)
-            .expect("emitted spot-shadow slot is in the retail slot table");
+            .expect("emitted spot-shadow slot is in the slot table");
         upload_shadow_index_epochs(
             &mut self.smodel_index_epochs[slot],
             &mut self.smodel_index_epoch_bytes[slot],
@@ -84,7 +84,7 @@ impl ShadowmapSpotGpu {
         let slot = usize::try_from(slot_index)
             .ok()
             .filter(|&slot| slot < lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP)
-            .expect("emitted spot-shadow slot is in the retail slot table");
+            .expect("emitted spot-shadow slot is in the slot table");
         upload_shadow_index_epochs(
             &mut self.xmodel_index_epochs[slot],
             &mut self.xmodel_index_epoch_bytes[slot],

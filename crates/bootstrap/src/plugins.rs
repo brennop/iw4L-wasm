@@ -10,8 +10,9 @@ use bevy::{
 };
 use bots::BotsPlugin;
 use console::ConsolePlugin;
+use frame::RuntimeRole;
 use hud::HudPlugin;
-use net::{NetPlugin, RuntimeRole};
+use net::NetPlugin;
 use render::RenderPlugin;
 use replay::ReplayPlugin;
 use session::SessionPlugin;

@@ -35,7 +35,9 @@ pub const MAX_QUEUED_COMMANDS_PER_PEER: usize = MAX_REDUNDANT_CMDS;
 
 pub const MAX_QUEUED_COMMAND_MS: i32 = 1000;
 
-pub const MAX_QUEUED_COMMAND_AGE_MS: i32 = 1000;
+pub(crate) const COMMAND_TIME_STEP_MS: i32 = 200;
+
+pub const MAX_COMMAND_STALL_MS: i32 = 1000;
 
 pub const MAX_COMMANDS_PER_PEER_PER_FRAME: usize = 32;
 
@@ -45,7 +47,7 @@ pub enum InputBacklogFault {
 
     QueueDuration { queued_ms: i32 },
 
-    OldestAge { age_ms: i32 },
+    NoProgress { stalled_ms: i32 },
 }
 
 impl core::fmt::Display for InputBacklogFault {
@@ -61,10 +63,10 @@ impl core::fmt::Display for InputBacklogFault {
                 "InputBacklogExceeded: {queued_ms} ms of command time queued (max \
                  {MAX_QUEUED_COMMAND_MS})"
             ),
-            Self::OldestAge { age_ms } => write!(
+            Self::NoProgress { stalled_ms } => write!(
                 f,
-                "InputBacklogExceeded: oldest unexecuted command is {age_ms} ms old (max \
-                 {MAX_QUEUED_COMMAND_AGE_MS})"
+                "InputBacklogExceeded: command queue made no progress for {stalled_ms} ms (max \
+                 {MAX_COMMAND_STALL_MS})"
             ),
         }
     }
@@ -104,6 +106,8 @@ pub struct ClientCommandInbox {
     last_consumed: HashMap<ClientId, UserCmd>,
 
     last_acked_seq: HashMap<ClientId, u32>,
+
+    blocked_head: HashMap<ClientId, (CmdSeq, i32)>,
 }
 
 impl ClientCommandInbox {
@@ -155,12 +159,14 @@ impl ClientCommandInbox {
         self.queued.clear();
         self.last_consumed.clear();
         self.last_acked_seq.clear();
+        self.blocked_head.clear();
     }
 
     pub fn retire_client(&mut self, id: ClientId) {
         self.queued.remove(&id);
         self.last_consumed.remove(&id);
         self.last_acked_seq.remove(&id);
+        self.blocked_head.remove(&id);
     }
 
     pub fn pending(&self, id: ClientId) -> usize {
@@ -171,7 +177,7 @@ impl ClientCommandInbox {
         self.pending(id)
     }
 
-    pub fn backlog_fault(&self, id: ClientId, time_ms: i32) -> Option<InputBacklogFault> {
+    pub fn backlog_fault(&mut self, id: ClientId, time_ms: i32) -> Option<InputBacklogFault> {
         let queue = self.queued.get(&id)?;
         let sequenced = queue.len() - queue.iter().filter(|(seq, _, _)| seq.is_none()).count();
         if sequenced == 0 {
@@ -193,21 +199,25 @@ impl ClientCommandInbox {
             });
         for (_, cmd, _) in queue.iter().filter(|(seq, _, _)| seq.is_some()) {
             if let Some(previous) = previous {
-                queued_ms =
-                    queued_ms.saturating_add(cmd.server_time.saturating_sub(previous).max(0));
+                queued_ms = queued_ms.saturating_add(
+                    cmd.server_time
+                        .saturating_sub(previous)
+                        .clamp(0, COMMAND_TIME_STEP_MS),
+                );
             }
             previous = Some(cmd.server_time);
         }
         if queued_ms > MAX_QUEUED_COMMAND_MS {
             return Some(InputBacklogFault::QueueDuration { queued_ms });
         }
-        let oldest = queue
-            .iter()
-            .find(|(seq, _, _)| seq.is_some())
-            .map(|(_, cmd, _)| cmd.server_time)?;
-        let age_ms = time_ms.saturating_sub(oldest);
-        if age_ms > MAX_QUEUED_COMMAND_AGE_MS {
-            return Some(InputBacklogFault::OldestAge { age_ms });
+        let head = queue.iter().find_map(|(seq, _, _)| *seq)?;
+        let blocked = self.blocked_head.entry(id).or_insert((head, time_ms));
+        if blocked.0 != head {
+            *blocked = (head, time_ms);
+        }
+        let stalled_ms = time_ms.saturating_sub(blocked.1);
+        if stalled_ms > MAX_COMMAND_STALL_MS {
+            return Some(InputBacklogFault::NoProgress { stalled_ms });
         }
         None
     }
@@ -235,7 +245,12 @@ impl ClientCommandInbox {
     pub fn take_for_tick(&mut self, time_ms: i32) -> GatheredCommands {
         let mut out = GatheredCommands::default();
         for id in self.known_clients() {
-            if let Some(fault) = self.backlog_fault(id, time_ms) {
+            // A datagram burst can contain more than one frame of runnable work.
+            // Consume the bounded frame budget before measuring remaining debt.
+            // Count and blocked-head limits still apply before any simulation.
+            if let Some(fault) = self.backlog_fault(id, time_ms)
+                && !matches!(fault, InputBacklogFault::QueueDuration { .. })
+            {
                 out.backlog_faults.push((id, fault));
                 continue;
             }
@@ -275,7 +290,12 @@ impl ClientCommandInbox {
             }
             drained.sort_by_key(|(seq, _, _)| *seq);
             if drained.is_empty() {
-                if self.last_acked_seq.contains_key(&id) {
+                if let Some(fault) = self.backlog_fault(id, time_ms) {
+                    out.backlog_faults.push((id, fault));
+                    continue;
+                }
+                if let Some(&acked) = self.last_acked_seq.get(&id) {
+                    out.acks.push((id, CmdSeq(acked)));
                     continue;
                 }
                 if let Some(mut cmd) = self.last_consumed.get(&id).copied() {
@@ -286,6 +306,7 @@ impl ClientCommandInbox {
                 }
                 continue;
             }
+            self.blocked_head.remove(&id);
             let mut ack = None;
             for (seq, mut cmd, sample) in drained {
                 cmd.server_time = if seq.is_some() {
@@ -304,6 +325,9 @@ impl ClientCommandInbox {
             }
             if let Some(seq) = ack {
                 out.acks.push((id, seq));
+            }
+            if let Some(fault) = self.backlog_fault(id, time_ms) {
+                out.backlog_faults.push((id, fault));
             }
         }
         out

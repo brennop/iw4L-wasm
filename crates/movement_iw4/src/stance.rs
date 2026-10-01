@@ -1,9 +1,7 @@
-use playerstate_iw4::{PlayerState, UserCmd, buttons, eflags};
+use playerstate_iw4::{PlayerState, UserCmd, buttons, eflags, pm_flags};
 
 use crate::check_prone::player_prone_allowed;
 use crate::collision::CollisionBackend;
-use crate::ladder::PMF_LADDER;
-use crate::sprint::PMF_SPRINTING;
 use crate::{GroundTraceInput, MoveBounds, Pml, add_predictable_event};
 
 pub mod view_height {
@@ -15,12 +13,6 @@ pub mod view_height {
 
     pub const STAND: i32 = 0x3c;
 }
-
-const PMF_LAST_STAND: u32 = 0x0040_0000;
-
-pub const PMF_PRONE: u32 = 0x1;
-
-pub const PMF_CROUCH: u32 = 0x2;
 
 pub const STAND_MAXS_Z: f32 = 70.0;
 
@@ -52,7 +44,7 @@ fn stance_hull_allsolid<C: CollisionBackend>(
     trace.allsolid != 0
 }
 
-pub fn pm_update_stance_flags<C: CollisionBackend>(
+pub fn update_stance_flags<C: CollisionBackend>(
     ps: &mut PlayerState,
     cmd: &mut UserCmd,
     collision: &C,
@@ -60,7 +52,7 @@ pub fn pm_update_stance_flags<C: CollisionBackend>(
     weapon_blocks_prone: bool,
 ) {
     if ps.pm_type == 5 {
-        ps.pm_flags &= !(PMF_PRONE | PMF_CROUCH);
+        ps.pm_flags &= !(pm_flags::PRONE | pm_flags::CROUCH);
         if (cmd.buttons & buttons::PRONE) != 0 {
             cmd.buttons &= !buttons::PRONE;
             add_predictable_event(ps, EV_STANCE_FORCE_STAND, 0);
@@ -74,10 +66,12 @@ pub fn pm_update_stance_flags<C: CollisionBackend>(
         return;
     }
 
-    if (ps.pm_flags & PMF_SPRINTING) != 0 {
+    if (ps.pm_flags & pm_flags::SPRINTING) != 0
+        && (ps.pm_flags & (pm_flags::PRONE | pm_flags::CROUCH)) != 0
+    {
         ps.view_height_target = view_height::STAND;
         ps.e_flags &= !(eflags::DUCK | eflags::PRONE);
-        ps.pm_flags &= !(PMF_PRONE | PMF_CROUCH);
+        ps.pm_flags &= !(pm_flags::PRONE | pm_flags::CROUCH);
         add_predictable_event(ps, EV_STANCE_FORCE_STAND, 0);
         return;
     }
@@ -87,11 +81,11 @@ pub fn pm_update_stance_flags<C: CollisionBackend>(
     }
 
     if ps.pm_type == 7 {
-        ps.pm_flags = (ps.pm_flags & !PMF_CROUCH) | PMF_PRONE;
+        ps.pm_flags = (ps.pm_flags & !pm_flags::CROUCH) | pm_flags::PRONE;
         return;
     }
 
-    if (ps.pm_flags & PMF_LADDER) != 0 && (cmd.buttons & 0x300) != 0 {
+    if (ps.pm_flags & pm_flags::LADDER) != 0 && (cmd.buttons & 0x300) != 0 {
         cmd.buttons &= !0x300;
         add_predictable_event(ps, EV_STANCE_FORCE_STAND, 0);
     }
@@ -103,9 +97,9 @@ pub fn pm_update_stance_flags<C: CollisionBackend>(
 
     if prone_btn && (ps.pm_flags & 0x400) == 0 {
         if player_prone_allowed(ps, collision, bounds.maxs[0], weapon_blocks_prone) {
-            ps.pm_flags = (ps.pm_flags & !PMF_CROUCH) | PMF_PRONE;
+            ps.pm_flags = (ps.pm_flags & !pm_flags::CROUCH) | pm_flags::PRONE;
         } else if ps.ground_entity_num != playerstate_iw4::ENTITYNUM_NONE && !stance_held {
-            let event = if (ps.pm_flags & (PMF_PRONE | PMF_CROUCH)) == 0 {
+            let event = if (ps.pm_flags & (pm_flags::PRONE | pm_flags::CROUCH)) == 0 {
                 EV_STANCE_FORCE_STAND
             } else {
                 EV_STANCE_FORCE_CROUCH
@@ -113,50 +107,50 @@ pub fn pm_update_stance_flags<C: CollisionBackend>(
             add_predictable_event(ps, event, 3);
         }
     } else if crouch_btn {
-        if (ps.pm_flags & PMF_PRONE) == 0 {
-            ps.pm_flags |= PMF_CROUCH;
+        if (ps.pm_flags & pm_flags::PRONE) == 0 {
+            ps.pm_flags |= pm_flags::CROUCH;
         } else if !stance_hull_allsolid(collision, origin, bounds, CROUCH_MAXS_Z) {
-            ps.pm_flags = (ps.pm_flags & !PMF_PRONE) | PMF_CROUCH;
+            ps.pm_flags = (ps.pm_flags & !pm_flags::PRONE) | pm_flags::CROUCH;
         } else if !stance_held {
             add_predictable_event(ps, EV_STANCE_FORCE_PRONE, 2);
         }
-    } else if (ps.pm_flags & PMF_PRONE) != 0 {
+    } else if (ps.pm_flags & pm_flags::PRONE) != 0 {
         if !stance_hull_allsolid(collision, origin, bounds, STAND_MAXS_Z) {
-            ps.pm_flags &= !(PMF_PRONE | PMF_CROUCH);
+            ps.pm_flags &= !(pm_flags::PRONE | pm_flags::CROUCH);
         } else if !stance_hull_allsolid(collision, origin, bounds, CROUCH_MAXS_Z) {
-            ps.pm_flags = (ps.pm_flags & !PMF_PRONE) | PMF_CROUCH;
+            ps.pm_flags = (ps.pm_flags & !pm_flags::PRONE) | pm_flags::CROUCH;
         } else if !stance_held {
             add_predictable_event(ps, EV_STANCE_FORCE_PRONE, 1);
         }
-    } else if (ps.pm_flags & PMF_CROUCH) != 0 {
+    } else if (ps.pm_flags & pm_flags::CROUCH) != 0 {
         if !stance_hull_allsolid(collision, origin, bounds, STAND_MAXS_Z) {
-            ps.pm_flags &= !PMF_CROUCH;
+            ps.pm_flags &= !pm_flags::CROUCH;
         } else if !stance_held {
             add_predictable_event(ps, EV_STANCE_FORCE_CROUCH, 1);
         }
     }
 }
 
-pub fn pm_sync_stance_tail(ps: &mut PlayerState) -> f32 {
+pub fn sync_stance_tail(ps: &mut PlayerState) -> f32 {
     match stance_surface_type(ps) {
         StanceSurface::Prone => {
             ps.e_flags = (ps.e_flags & !eflags::DUCK) | eflags::PRONE;
-            ps.pm_flags = (ps.pm_flags & !PMF_CROUCH) | PMF_PRONE;
+            ps.pm_flags = (ps.pm_flags & !pm_flags::CROUCH) | pm_flags::PRONE;
             PRONE_MAXS_Z
         }
         StanceSurface::Crouch => {
             ps.e_flags = (ps.e_flags & !eflags::PRONE) | eflags::DUCK;
-            ps.pm_flags = (ps.pm_flags & !PMF_PRONE) | PMF_CROUCH;
+            ps.pm_flags = (ps.pm_flags & !pm_flags::PRONE) | pm_flags::CROUCH;
             CROUCH_MAXS_Z
         }
         StanceSurface::LastStand => {
             ps.e_flags = (ps.e_flags & !eflags::DUCK) | eflags::PRONE;
-            ps.pm_flags = (ps.pm_flags & !PMF_CROUCH) | PMF_PRONE;
+            ps.pm_flags = (ps.pm_flags & !pm_flags::CROUCH) | pm_flags::PRONE;
             CROUCH_MAXS_Z
         }
         StanceSurface::Stand => {
             ps.e_flags &= !(eflags::DUCK | eflags::PRONE);
-            ps.pm_flags &= !(PMF_PRONE | PMF_CROUCH);
+            ps.pm_flags &= !(pm_flags::PRONE | pm_flags::CROUCH);
             STAND_MAXS_Z
         }
     }
@@ -286,7 +280,7 @@ const LAST_STAND_VIEW_HEIGHT_RATE: f32 = 120.0;
 const REVERSE_REWIND_SCALE: f32 = 0.01;
 
 #[allow(clippy::too_many_lines)]
-pub fn pm_update_view_height(ps: &mut PlayerState, pml: &Pml, cmd: &UserCmd) {
+pub fn update_view_height(ps: &mut PlayerState, pml: &Pml, cmd: &UserCmd) {
     let target = ps.view_height_target;
     if target == 0 || ps.view_height_current == 0.0 {
         ps.view_height_current = if ps.pm_type == 5 { 0.0 } else { target as f32 };
@@ -298,7 +292,7 @@ pub fn pm_update_view_height(ps: &mut PlayerState, pml: &Pml, cmd: &UserCmd) {
         return;
     }
 
-    let last_stand = (ps.pm_flags & PMF_LAST_STAND) != 0;
+    let last_stand = (ps.pm_flags & pm_flags::LAST_STAND) != 0;
     let unknown_token = target != view_height::PRONE
         && target != view_height::CROUCH
         && target != view_height::STAND;
@@ -442,7 +436,7 @@ fn reverse_view_height_lerp(ps: &mut PlayerState, cmd: &UserCmd, progress: i32) 
 }
 
 #[must_use]
-pub fn pm_update_stance_target(ps: &mut PlayerState) -> StanceChange {
+pub fn update_stance_target(ps: &mut PlayerState) -> StanceChange {
     if ps.view_height_lerp_time != 0 {
         return StanceChange::Unchanged;
     }
@@ -452,12 +446,12 @@ pub fn pm_update_stance_target(ps: &mut PlayerState) -> StanceChange {
             return StanceChange::Unchanged;
         }
         ps.view_height_target = view_height::LAST_STAND;
-    } else if (ps.pm_flags & PMF_PRONE) == 0 {
+    } else if (ps.pm_flags & pm_flags::PRONE) == 0 {
         let previous = ps.view_height_target;
         if previous == view_height::PRONE {
             ps.view_height_target = view_height::CROUCH;
         } else {
-            ps.view_height_target = if (ps.pm_flags & PMF_CROUCH) != 0 {
+            ps.view_height_target = if (ps.pm_flags & pm_flags::CROUCH) != 0 {
                 view_height::CROUCH
             } else {
                 view_height::STAND

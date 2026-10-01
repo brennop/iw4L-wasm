@@ -3,7 +3,7 @@ use playerstate_iw4::PlayerState;
 use crate::Pml;
 
 #[allow(clippy::assign_op_pattern)]
-pub fn pm_friction(ps: &mut PlayerState, pml: &Pml) {
+pub fn friction(ps: &mut PlayerState, pml: &Pml) {
     let speed = velocity_speed(&ps.velocity);
     if stop_slow_velocity(&mut ps.velocity, speed) {
         return;

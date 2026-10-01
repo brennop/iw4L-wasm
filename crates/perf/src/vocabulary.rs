@@ -36,151 +36,100 @@ impl Span {
     }
 
     fn track_name(self) -> &'static str {
-        match self {
-            Self::FixedTocAdvance => "span.Advance",
-            Self::FixedTocBookkeeping => "span.Bookkeeping",
-            Self::FixedTocFanout => "span.Fanout",
-            Self::FixedTocGather => "span.Gather",
-            Self::FixedTocIngress => "span.Ingress",
-            Self::FixedTocSnapshot => "span.Snapshot",
-            Self::FixedTocStep => "span.Step",
-            Self::FramesDiagMs => "span.Diag",
-            Self::FramesEffectsMs => "span.Effects",
-            Self::FramesFixedMs => "span.FixedUpdate",
-            Self::FramesPostupdateMs => "span.PostUpdate",
-            Self::FramesPredictMs => "span.Predict",
-            Self::FramesPresentMs => "span.Present",
-            Self::FramesPreupdateMs => "span.PreUpdate",
-            Self::FramesUpdateMs => "span.Update",
-            Self::FramesWallFrameMs => "span.wall",
-            Self::HostFxPresentCpuMs => "span.fx_present",
-            Self::HostFxUpdateCpuMs => "span.fx_update",
-            Self::HostPostExecuteMs => "span.post_execute",
-            Self::HostPostRebuildMs => "span.post_rebuild",
-            Self::HostSkinModelMs => "span.skin_model",
-            Self::HostStaticSunFxMs => "span.static_sun_fx",
-            Self::HostStaticSunMs => "span.static_sun",
-            Self::RenderColourPrepareMs => "span.colour_prepare",
-            Self::RenderColourSubmitMs => "span.colour_submit",
-            Self::RenderCullCpuMs => "span.cull",
-            Self::RenderPrepareCameraMs => "span.prepare_camera",
-            Self::RenderPrepareShadowMs => "span.prepare_shadow",
-            Self::RenderReceiveWorldMs => "span.receive_render_world",
-            Self::RenderExtractBodyMs => "span.extract_body",
-            Self::RenderDispatchWorldMs => "span.dispatch_render_world",
-            Self::RenderRenderRenderMs => "span.render_render",
-            Self::RenderRenderThreadMs => "span.render_thread",
-            Self::TocInput => "span.Input",
-            Self::TocLoad => "span.Load",
-            Self::TocReceive => "span.Receive",
-            Self::TocReconcile => "span.Reconcile",
-            Self::TocSend => "span.Send",
-            Self::TocUi => "span.Ui",
+        macro_rules! span_track {
+            ($(
+                $variant:ident {
+                    ordinal: $ordinal:literal,
+                    name: $name:literal,
+                    track: $track:literal,
+                    category: $category:literal,
+                    coverage_root: $coverage_root:literal,
+                },
+            )*) => {{
+                const _: () = {
+                    $(
+                        let _ = $ordinal;
+                        let _ = $name;
+                        let _ = $category;
+                        let _ = $coverage_root;
+                    )*
+                };
+                match self {
+                    $(Self::$variant => $track,)*
+                }
+            }};
         }
+        crate::vocabulary_catalog::spans!(span_track)
     }
 
     #[inline]
     pub fn begin(self) {
         crate::stats::begin(self);
         macro_rules! begin {
-            ($category:literal, $name:literal) => {
+            ($category:tt, $name:tt) => {
                 perfetto_sdk::track_event_begin!($category, $name, |ctx: &mut EventContext| {
                     ctx.set_track(self.track());
                 })
             };
         }
-        match self {
-            Self::FixedTocAdvance => begin!("iw4l.sim", "Advance"),
-            Self::FixedTocBookkeeping => begin!("iw4l.sim", "Bookkeeping"),
-            Self::FixedTocFanout => begin!("iw4l.sim", "Fanout"),
-            Self::FixedTocGather => begin!("iw4l.sim", "Gather"),
-            Self::FixedTocIngress => begin!("iw4l.sim", "Ingress"),
-            Self::FixedTocSnapshot => begin!("iw4l.sim", "Snapshot"),
-            Self::FixedTocStep => begin!("iw4l.sim", "Step"),
-            Self::FramesDiagMs => begin!("iw4l.sim", "Diag"),
-            Self::FramesEffectsMs => begin!("iw4l.sim", "Effects"),
-            Self::FramesFixedMs => begin!("iw4l.sim", "FixedUpdate"),
-            Self::FramesPostupdateMs => begin!("iw4l.frame", "PostUpdate"),
-            Self::FramesPredictMs => begin!("iw4l.sim", "Predict"),
-            Self::FramesPresentMs => begin!("iw4l.sim", "Present"),
-            Self::FramesPreupdateMs => begin!("iw4l.frame", "PreUpdate"),
-            Self::FramesUpdateMs => begin!("iw4l.sim", "Update"),
-            Self::FramesWallFrameMs => begin!("iw4l.frame", "wall"),
-            Self::HostFxPresentCpuMs => begin!("iw4l.fx", "fx_present"),
-            Self::HostFxUpdateCpuMs => begin!("iw4l.fx", "fx_update"),
-            Self::HostPostExecuteMs => begin!("iw4l.render", "post_execute"),
-            Self::HostPostRebuildMs => begin!("iw4l.render", "post_rebuild"),
-            Self::HostSkinModelMs => begin!("iw4l.render", "skin_model"),
-            Self::HostStaticSunFxMs => begin!("iw4l.render", "static_sun_fx"),
-            Self::HostStaticSunMs => begin!("iw4l.render", "static_sun"),
-            Self::RenderColourPrepareMs => begin!("iw4l.render", "colour_prepare"),
-            Self::RenderColourSubmitMs => begin!("iw4l.render", "colour_submit"),
-            Self::RenderCullCpuMs => begin!("iw4l.render", "cull"),
-            Self::RenderPrepareCameraMs => begin!("iw4l.render", "prepare_camera"),
-            Self::RenderPrepareShadowMs => begin!("iw4l.render", "prepare_shadow"),
-            Self::RenderReceiveWorldMs => begin!("iw4l.render", "receive_render_world"),
-            Self::RenderExtractBodyMs => begin!("iw4l.render", "extract_body"),
-            Self::RenderDispatchWorldMs => begin!("iw4l.render", "dispatch_render_world"),
-            Self::RenderRenderRenderMs => begin!("iw4l.render", "render_render"),
-            Self::RenderRenderThreadMs => begin!("iw4l.render", "render_thread"),
-            Self::TocInput => begin!("iw4l.sim", "Input"),
-            Self::TocLoad => begin!("iw4l.sim", "Load"),
-            Self::TocReceive => begin!("iw4l.sim", "Receive"),
-            Self::TocReconcile => begin!("iw4l.sim", "Reconcile"),
-            Self::TocSend => begin!("iw4l.sim", "Send"),
-            Self::TocUi => begin!("iw4l.sim", "Ui"),
+        macro_rules! span_begin {
+            ($(
+                $variant:ident {
+                    ordinal: $ordinal:literal,
+                    name: $name:tt,
+                    track: $track:tt,
+                    category: $category:tt,
+                    coverage_root: $coverage_root:literal,
+                },
+            )*) => {{
+                const _: () = {
+                    $(
+                        let _ = $ordinal;
+                        let _ = $track;
+                        let _ = $coverage_root;
+                    )*
+                };
+                match self {
+                    $(Self::$variant => begin!($category, $name),)*
+                }
+            }};
         }
+        crate::vocabulary_catalog::spans!(span_begin);
     }
     #[inline]
     pub fn end(self) {
         crate::stats::end(self);
         macro_rules! end {
-            ($category:literal) => {
+            ($category:tt) => {
                 perfetto_sdk::track_event_end!($category, |ctx: &mut EventContext| {
                     ctx.set_track(self.track());
                 })
             };
         }
-        match self {
-            Self::FixedTocAdvance
-            | Self::FixedTocBookkeeping
-            | Self::FixedTocFanout
-            | Self::FixedTocGather
-            | Self::FixedTocIngress
-            | Self::FixedTocSnapshot
-            | Self::FixedTocStep
-            | Self::FramesDiagMs
-            | Self::FramesEffectsMs
-            | Self::FramesFixedMs
-            | Self::FramesPredictMs
-            | Self::FramesPresentMs
-            | Self::FramesUpdateMs
-            | Self::TocInput
-            | Self::TocLoad
-            | Self::TocReceive
-            | Self::TocReconcile
-            | Self::TocSend
-            | Self::TocUi => end!("iw4l.sim"),
-            Self::FramesPostupdateMs | Self::FramesPreupdateMs | Self::FramesWallFrameMs => {
-                end!("iw4l.frame")
-            }
-            Self::HostFxPresentCpuMs | Self::HostFxUpdateCpuMs => end!("iw4l.fx"),
-            Self::HostPostExecuteMs
-            | Self::HostPostRebuildMs
-            | Self::HostSkinModelMs
-            | Self::HostStaticSunFxMs
-            | Self::HostStaticSunMs
-            | Self::RenderColourPrepareMs
-            | Self::RenderColourSubmitMs
-            | Self::RenderCullCpuMs
-            | Self::RenderPrepareCameraMs
-            | Self::RenderPrepareShadowMs
-            | Self::RenderReceiveWorldMs
-            | Self::RenderExtractBodyMs
-            | Self::RenderDispatchWorldMs
-            | Self::RenderRenderRenderMs
-            | Self::RenderRenderThreadMs => end!("iw4l.render"),
+        macro_rules! span_end {
+            ($(
+                $variant:ident {
+                    ordinal: $ordinal:literal,
+                    name: $name:tt,
+                    track: $track:tt,
+                    category: $category:tt,
+                    coverage_root: $coverage_root:literal,
+                },
+            )*) => {{
+                const _: () = {
+                    $(
+                        let _ = $ordinal;
+                        let _ = $name;
+                        let _ = $track;
+                        let _ = $coverage_root;
+                    )*
+                };
+                match self {
+                    $(Self::$variant => end!($category),)*
+                }
+            }};
         }
+        crate::vocabulary_catalog::spans!(span_end);
     }
     #[inline]
     pub fn enter(self) -> SpanGuard {
@@ -207,29 +156,9 @@ const COUNTER_COUNT: usize = Counter::COUNT;
 static COUNTER_TRACKS: [OnceLock<TrackEventTrack>; COUNTER_COUNT] =
     [const { OnceLock::new() }; COUNTER_COUNT];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CounterCategory {
-    Frame,
-    Fx,
-    Render,
-}
-
 impl Counter {
     fn track_name(self) -> &'static str {
         self.name()
-    }
-
-    fn category(self) -> CounterCategory {
-        match self {
-            Self::CounterFxElemAllocFail | Self::CounterFxElemLive => CounterCategory::Fx,
-            Self::CounterProcessAllocations => CounterCategory::Frame,
-            Self::HudSurfacesScheduleMs
-            | Self::HudStageMaxScheduleMs
-            | Self::HudStageMaxScheduleAt
-            | Self::HudTessBodyMs
-            | Self::HudTessJobs => CounterCategory::Frame,
-            _ => CounterCategory::Render,
-        }
     }
 
     fn track(self) -> &'static TrackEventTrack {
@@ -262,7 +191,7 @@ impl Counter {
     #[inline]
     fn emit_track(self, value: f64) {
         macro_rules! emit {
-            ($category:literal) => {{
+            ($category:tt) => {{
                 if !perfetto_sdk::track_event_category_enabled!($category) {
                     return;
                 }
@@ -273,10 +202,39 @@ impl Counter {
                 })
             }};
         }
-        match self.category() {
-            CounterCategory::Frame => emit!("iw4l.frame"),
-            CounterCategory::Fx => emit!("iw4l.fx"),
-            CounterCategory::Render => emit!("iw4l.render"),
+        macro_rules! counter_emit {
+            ($(
+                $(#[$attr:meta])*
+                $variant:ident {
+                    ordinal: $ordinal:literal,
+                    name: $name:tt,
+                    unit: $unit:ident,
+                    unit_class: $unit_class:ident,
+                    origin: $origin:ident,
+                    origin_class: $origin_class:ident,
+                    category: $category:tt,
+                    category_class: $category_class:ident,
+                },
+            )*) => {{
+                const _: () = {
+                    $(
+                        $(
+                            let _ = stringify!($attr);
+                        )*
+                        let _ = $ordinal;
+                        let _ = $name;
+                        let _ = stringify!($unit);
+                        let _ = stringify!($unit_class);
+                        let _ = stringify!($origin);
+                        let _ = stringify!($origin_class);
+                        let _ = stringify!($category_class);
+                    )*
+                };
+                match self {
+                    $(Self::$variant => emit!($category),)*
+                }
+            }};
         }
+        crate::vocabulary_catalog::counters!(counter_emit);
     }
 }

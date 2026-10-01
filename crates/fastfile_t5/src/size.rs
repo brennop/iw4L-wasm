@@ -444,10 +444,15 @@ pub const SND_ALIAS_PITCH_MIN_OFF: usize = 50;
 pub const SND_ALIAS_PITCH_MAX_OFF: usize = 52;
 pub const SND_ALIAS_DIST_MIN_OFF: usize = 56;
 pub const SND_ALIAS_DIST_MAX_OFF: usize = 58;
+pub const SND_ALIAS_PRIORITY_DISTANCE_OFF: usize = 60;
 pub const SND_ALIAS_ENVELOP_MIN_OFF: usize = 62;
 pub const SND_ALIAS_ENVELOP_MAX_OFF: usize = 64;
 pub const SND_ALIAS_ENVELOP_PERCENTAGE_OFF: usize = 66;
+pub const SND_ALIAS_PRIORITY_MIN_THRESHOLD_OFF: usize = 68;
+pub const SND_ALIAS_PRIORITY_MAX_THRESHOLD_OFF: usize = 69;
 pub const SND_ALIAS_PROBABILITY_OFF: usize = 70;
+pub const SND_ALIAS_PRIORITY_MIN_OFF: usize = 73;
+pub const SND_ALIAS_PRIORITY_MAX_OFF: usize = 74;
 
 pub const SND_ALIAS_LIMIT_COUNT_OFF: usize = 80;
 pub const SND_ALIAS_ENTITY_LIMIT_COUNT_OFF: usize = 81;
@@ -555,6 +560,10 @@ pub const WEAPON_DEF_SND_FIRE_OFF: usize = 0x98;
 pub const WEAPON_DEF_SND_FIRE_PLAYER_OFF: usize = 0x9c;
 pub const WEAPON_DEF_SND_EMPTY_FIRE_OFF: usize = 0xc0;
 pub const WEAPON_DEF_SND_EMPTY_FIRE_PLAYER_OFF: usize = 0xc4;
+pub const WEAPON_DEF_SND_MELEE_SWIPE_OFF: usize = 0xd0;
+pub const WEAPON_DEF_SND_MELEE_SWIPE_PLAYER_OFF: usize = 0xd4;
+pub const WEAPON_DEF_SND_MELEE_HIT_OFF: usize = 0xd8;
+pub const WEAPON_DEF_SND_MELEE_MISS_OFF: usize = 0xdc;
 pub const WEAPON_DEF_SND_RECHAMBER_OFF: usize = 0xe0;
 pub const WEAPON_DEF_SND_RECHAMBER_PLAYER_OFF: usize = 0xe4;
 pub const WEAPON_DEF_SND_RELOAD_OFF: usize = 0xe8;
@@ -577,6 +586,14 @@ pub const WEAPON_DEF_SHOT_COUNT_OFF: usize = 0x348;
 pub const WEAPON_DEF_DAMAGE_OFF: usize = 0x35c;
 
 pub const WEAPON_DEF_FIRE_DELAY_OFF: usize = 0x378;
+pub const WEAPON_DEF_MELEE_DAMAGE_OFF: usize = 0x36c;
+pub const WEAPON_DEF_MELEE_DELAY_OFF: usize = 0x37c;
+pub const WEAPON_DEF_MELEE_CHARGE_DELAY_OFF: usize = 0x380;
+pub const WEAPON_DEF_MELEE_TIME_OFF: usize = 0x3c4;
+pub const WEAPON_DEF_MELEE_CHARGE_TIME_OFF: usize = 0x3c8;
+pub const WEAPON_DEF_USE_AS_MELEE_OFF: usize = 0x64c;
+const _: () = assert!(WEAPON_DEF_MELEE_DELAY_OFF + 4 == WEAPON_DEF_MELEE_CHARGE_DELAY_OFF);
+const _: () = assert!(WEAPON_DEF_MELEE_TIME_OFF + 4 == WEAPON_DEF_MELEE_CHARGE_TIME_OFF);
 pub const WEAPON_DEF_RELOAD_ADD_TIME_OFF: usize = 0x3dc;
 
 pub const WEAPON_DEF_RELOAD_EMPTY_ADD_TIME_OFF: usize = 0x3e0;
@@ -616,6 +633,11 @@ pub const WEAPON_DEF_EXPLOSION_OUTER_DAMAGE_OFF: usize = 0x5c0;
 pub const WEAPON_DEF_PROJ_EXPLOSION_TYPE_OFF: usize = 0x5ec;
 
 pub const WEAPON_DEF_PROJ_IMPACT_EXPLODE_OFF: usize = 0x62c;
+
+pub const WEAPON_DEF_STICKINESS_OFF: usize = 0x630;
+pub const WEAPON_DEF_HAS_DETONATOR_OFF: usize = 0x639;
+pub const WEAPON_DEF_TIMED_DETONATION_OFF: usize = 0x63a;
+pub const WEAPON_DEF_ROTATE_OFF: usize = 0x63c;
 
 pub const WEAPON_DEF_HOLD_BUTTON_TO_THROW_OFF: usize = 0x63e;
 

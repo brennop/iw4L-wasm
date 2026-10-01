@@ -57,7 +57,7 @@ impl Default for GfxMeshData {
     }
 }
 
-pub fn r_reserve_code_mesh_verts(mesh: &mut GfxMeshData, count: u32) -> Option<u16> {
+pub fn reserve_code_mesh_verts(mesh: &mut GfxMeshData, count: u32) -> Option<u16> {
     let next = mesh.vert_used.wrapping_add(count);
     if mesh.vert_cap < next {
         return None;
@@ -67,7 +67,7 @@ pub fn r_reserve_code_mesh_verts(mesh: &mut GfxMeshData, count: u32) -> Option<u
     Some(base)
 }
 
-pub fn r_reserve_code_mesh_indices(mesh: &mut GfxMeshData, count: u32) -> Option<u32> {
+pub fn reserve_code_mesh_indices(mesh: &mut GfxMeshData, count: u32) -> Option<u32> {
     let next = mesh.index_used.wrapping_add(count);
     if mesh.index_cap < next {
         return None;
@@ -77,19 +77,19 @@ pub fn r_reserve_code_mesh_indices(mesh: &mut GfxMeshData, count: u32) -> Option
     Some(base)
 }
 
-pub fn r_shrink_code_mesh_verts(mesh: &mut GfxMeshData, count: u32) {
+pub fn shrink_code_mesh_verts(mesh: &mut GfxMeshData, count: u32) {
     mesh.vert_used = mesh.vert_used.wrapping_sub(count);
 }
 
-pub fn r_get_code_mesh_verts(verts_base: usize, base_vertex: u16) -> usize {
+pub fn get_code_mesh_verts(verts_base: usize, base_vertex: u16) -> usize {
     verts_base.wrapping_add(usize::from(base_vertex).wrapping_mul(0x20))
 }
 
-pub fn r_get_code_mesh_args(args_base: usize, slot: u32) -> usize {
+pub fn get_code_mesh_args(args_base: usize, slot: u32) -> usize {
     (slot as usize).wrapping_mul(0x10).wrapping_add(args_base)
 }
 
-pub fn r_reserve_code_mesh(
+pub fn reserve_code_mesh(
     mesh: &mut GfxMeshData,
     verts: u32,
     inds: u32,

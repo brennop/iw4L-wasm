@@ -1,22 +1,33 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use assets::{PreparedWeapons, WeaponSoundSlot};
+use asset_game::WeaponSoundSlot;
+use assets::PreparedWeapons;
 use bevy::prelude::*;
-use net::{CEntity, EntityEventKind, LocalPresentClient, PresentedSnapshot};
+use entity_iw4::{EntityEventKind, LOCAL_SOUND_ENTITY};
+use net::{CEntity, LocalPresentClient, PresentedSnapshot};
 
 use crate::{
-    Footstep, LandSound, PlayAlias, SoundBank, StepGait, WeaponSound, footstep_aliases,
-    gear_rattle_alias, land_aliases, mantle_gear_alias, snd_ent_from_number,
+    Footstep, LandSound, PlayAlias, SoundBank, StepGait, WeaponSound, ent_from_number,
+    footstep_aliases, gear_alias, gear_rattle_alias, land_aliases,
 };
 
 fn selected_alias<'a>(
-    weapons: &assets::WeaponRegistry,
-    bank: &'a assets::SoundCatalog,
+    weapons: &asset_game::WeaponRegistry,
+    bank: &'a asset_audio::SoundCatalog,
     weapon: u32,
     event: EntityEventKind,
     player_view: bool,
-) -> Option<(assets::AssetNamespace, &'a str)> {
+    knife: bool,
+) -> Option<(asset_core::AssetNamespace, &'a str)> {
+    let weapon = if matches!(
+        event,
+        EntityEventKind::MELEE_SWIPE | EntityEventKind::MELEE_HIT | EntityEventKind::MELEE_MISS
+    ) {
+        weapons.melee_weapon_of(weapon)
+    } else {
+        weapon
+    };
     let (world, player) = match event {
         EntityEventKind::ITEM_PICKUP => (WeaponSoundSlot::Pickup, WeaponSoundSlot::PickupPlayer),
         EntityEventKind::AMMO_PICKUP => (
@@ -62,10 +73,10 @@ fn selected_alias<'a>(
             WeaponSoundSlot::MeleeSwipePlayer,
         ),
         EntityEventKind::MELEE_HIT => {
-            return weapons.weapon_sound_key(weapon, WeaponSoundSlot::MeleeHit, bank);
+            return melee_impact_alias(weapons, bank, weapon, knife, WeaponSoundSlot::MeleeHit);
         }
         EntityEventKind::MELEE_MISS => {
-            return weapons.weapon_sound_key(weapon, WeaponSoundSlot::MeleeMiss, bank);
+            return melee_impact_alias(weapons, bank, weapon, knife, WeaponSoundSlot::MeleeMiss);
         }
         _ => return None,
     };
@@ -73,7 +84,42 @@ fn selected_alias<'a>(
     weapons.weapon_sound_key(weapon, if player_view { player } else { world }, bank)
 }
 
-fn cg_entity_event_sound(
+fn melee_impact_alias<'a>(
+    weapons: &asset_game::WeaponRegistry,
+    bank: &'a asset_audio::SoundCatalog,
+    weapon: u32,
+    knife: bool,
+    slot: WeaponSoundSlot,
+) -> Option<(asset_core::AssetNamespace, &'a str)> {
+    let ns = weapons.namespace_of(weapon).unwrap_or_default();
+    let t5 = ns == asset_core::AssetNamespace::T5;
+    let hit = slot == WeaponSoundSlot::MeleeHit;
+    let generic = |knife: bool| {
+        let name = match (knife, hit) {
+            (true, true) => "melee_knife_hit_body",
+            (true, false) => "melee_knife_hit_other",
+            (false, true) => "melee_hit",
+            (false, false) => "melee_hit_other",
+        };
+        let name = if t5 {
+            format!("wpn_{name}")
+        } else {
+            name.to_owned()
+        };
+        let order = bank.index_in(ns, &name)?;
+        Some((bank.namespace_of_alias(order), bank.name_at(order)?))
+    };
+    let own = || weapons.weapon_sound_key(weapon, slot, bank);
+    let knife_alias = || knife.then(|| generic(true)).flatten();
+    if t5 {
+        own().or_else(knife_alias)
+    } else {
+        knife_alias().or_else(own)
+    }
+    .or_else(|| generic(false))
+}
+
+fn entity_event_sound(
     sound: On<net::EntityEventSound>,
     identities: Query<&CEntity>,
     local: Res<LocalPresentClient>,
@@ -89,10 +135,7 @@ fn cg_entity_event_sound(
         return;
     }
     if event == EntityEventKind::SOUND_ALIAS_AS_MASTER {
-        diag::warn!(
-            Audio,
-            "audio: EV_SOUND_ALIAS_AS_MASTER is not ported (typed gap)"
-        );
+        diag::warn!(Audio, "audio: EV_SOUND_ALIAS_AS_MASTER is unsupported");
         return;
     }
     let Ok(identity) = identities.get(sound.entity) else {
@@ -169,6 +212,7 @@ fn cg_entity_event_sound(
             sound.event.payload.weapon,
             event,
             player_view,
+            sound.event.payload.event_parm == 1,
         )
     }) else {
         diag::warn!(
@@ -181,7 +225,12 @@ fn cg_entity_event_sound(
     output.write(WeaponSound {
         namespace,
         alias: alias.to_owned(),
-        origin_inches: (!player_view).then_some(sound.event.payload.origin),
+        origin_inches: (!player_view
+            || matches!(
+                event,
+                EntityEventKind::MELEE_HIT | EntityEventKind::MELEE_MISS
+            ))
+        .then_some(sound.event.payload.origin),
         snd_ent: Some(u32::from(identity.number())),
     });
 }
@@ -200,16 +249,33 @@ fn play_cs_sound_alias(
         );
         return;
     };
+    let local = payload.payload.number == LOCAL_SOUND_ENTITY;
+    diag::event!(
+        Audio,
+        Debug,
+        "cs_sound",
+        "audio: cs sound `{alias}` local={local}"
+    );
+    let (namespace, alias) = alias
+        .split_once(':')
+        .and_then(|(ns, name)| {
+            asset_core::AssetNamespace::parse(ns).map(|ns| (ns, name.to_owned()))
+        })
+        .unwrap_or((asset_core::AssetNamespace::Iw4, alias));
     play.write(crate::AliasCommand::Play(PlayAlias {
-        namespace: assets::AssetNamespace::Iw4,
+        namespace,
         alias,
         fallback: None,
-        origin_inches: Some(payload.payload.origin),
-        snd_ent: snd_ent_from_number(payload.payload.number),
+        origin_inches: (!local).then_some(payload.payload.origin),
+        snd_ent: if local {
+            None
+        } else {
+            ent_from_number(payload.payload.number)
+        },
     }));
 }
 
-fn cg_movement_sound(
+fn movement_sound(
     sound: On<net::EntityMovementSound>,
     identities: Query<&CEntity>,
     local: Res<LocalPresentClient>,
@@ -250,10 +316,10 @@ fn cg_movement_sound(
         | EntityEventKind::FOOTSTEP_PRONE
         | EntityEventKind::JUMP => {}
         EntityEventKind::MANTLE => {
-            let alias = mantle_gear_alias(player_view).to_owned();
-            let fallback = player_view.then(|| mantle_gear_alias(false).to_owned());
+            let alias = gear_alias(player_view).to_owned();
+            let fallback = player_view.then(|| gear_alias(false).to_owned());
             play.write(crate::AliasCommand::Play(PlayAlias {
-                namespace: assets::AssetNamespace::Iw4,
+                namespace: asset_core::AssetNamespace::Iw4,
                 alias,
                 fallback,
                 origin_inches,
@@ -280,7 +346,7 @@ fn cg_movement_sound(
         snd_ent: Some(u32::from(identity.number())),
     });
     gear.write(WeaponSound {
-        namespace: assets::AssetNamespace::Iw4,
+        namespace: asset_core::AssetNamespace::Iw4,
         alias: gear_rattle_alias(gait, player_view).to_owned(),
         origin_inches,
         snd_ent: Some(u32::from(identity.number())),
@@ -288,9 +354,9 @@ fn cg_movement_sound(
 }
 
 pub(crate) fn register_entity_event_audio(app: &mut App) {
-    app.add_observer(cg_entity_event_sound)
-        .add_observer(cg_movement_sound)
-        .add_observer(cg_grenade_contact);
+    app.add_observer(entity_event_sound)
+        .add_observer(movement_sound)
+        .add_observer(grenade_contact);
 }
 
 #[derive(Clone, Debug)]
@@ -307,7 +373,10 @@ struct BoundNotetrack {
 
 #[derive(Resource, Default)]
 pub(crate) struct NotetrackSoundTable {
-    owner: Option<(Arc<assets::SoundCatalog>, Arc<assets::WeaponRegistry>)>,
+    owner: Option<(
+        Arc<asset_audio::SoundCatalog>,
+        Arc<asset_game::WeaponRegistry>,
+    )>,
     actions: HashMap<(u32, String), BoundNotetrack>,
     reported: HashSet<(u32, String)>,
 }
@@ -315,22 +384,25 @@ pub(crate) struct NotetrackSoundTable {
 impl NotetrackSoundTable {
     fn owns(
         &self,
-        bank: &Arc<assets::SoundCatalog>,
-        weapons: &Arc<assets::WeaponRegistry>,
+        bank: &Arc<asset_audio::SoundCatalog>,
+        weapons: &Arc<asset_game::WeaponRegistry>,
     ) -> bool {
         self.owner
             .as_ref()
             .is_some_and(|(b, w)| Arc::ptr_eq(b, bank) && Arc::ptr_eq(w, weapons))
     }
 
-    fn bind(bank: &Arc<assets::SoundCatalog>, weapons: &Arc<assets::WeaponRegistry>) -> Self {
+    fn bind(
+        bank: &Arc<asset_audio::SoundCatalog>,
+        weapons: &Arc<asset_game::WeaponRegistry>,
+    ) -> Self {
         let mut actions = HashMap::new();
         let mut unbound = 0usize;
         let mut rumbles = HashMap::new();
         for weapon in 1..=weapons.len() as u32 {
             let namespace = weapons
                 .namespace_of(weapon)
-                .unwrap_or(assets::AssetNamespace::Iw4);
+                .unwrap_or(asset_core::AssetNamespace::Iw4);
             for (note, action) in weapons.notetrack_actions_of(weapon) {
                 let sound = action.sound_alias.as_deref().map(|alias| {
                     match bank.index_in(namespace, alias) {
@@ -448,7 +520,7 @@ pub(crate) fn play_viewmodel_notetrack_messages(
 fn apply_viewmodel_notetrack(
     weapon: u32,
     note: &str,
-    bank: Option<&assets::SoundCatalog>,
+    bank: Option<&asset_audio::SoundCatalog>,
     table: &mut NotetrackSoundTable,
     output: &mut MessageWriter<crate::BoundWeaponSound>,
     rumbles: &mut MessageWriter<crate::rumble::PlayRumble>,
@@ -513,7 +585,7 @@ fn apply_viewmodel_notetrack(
     }
 }
 
-fn cg_grenade_contact(
+fn grenade_contact(
     contact: On<net::EntityGrenadeContact>,
     weapons: Option<Res<PreparedWeapons>>,
     bank: Option<Res<SoundBank>>,
@@ -529,7 +601,7 @@ fn cg_grenade_contact(
         let namespace = weapons
             .0
             .namespace_of(payload.weapon)
-            .unwrap_or(assets::AssetNamespace::Iw4);
+            .unwrap_or(asset_core::AssetNamespace::Iw4);
         Some((namespace, alias))
     }) else {
         diag::warn!(
@@ -543,6 +615,6 @@ fn cg_grenade_contact(
         namespace,
         alias: alias.to_owned(),
         origin_inches: Some(payload.origin),
-        snd_ent: snd_ent_from_number(payload.number),
+        snd_ent: ent_from_number(payload.number),
     });
 }

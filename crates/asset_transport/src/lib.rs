@@ -9,11 +9,11 @@ pub mod zone;
 pub use artifact_cache::{CacheFlight, cache_flight, cache_get, cache_put, fnv1a64, fnv1a64_more};
 pub use asset_core::ZoneGame;
 pub use discover::{
-    GamesRoot, ZoneFile, ensure_artifacts_dir, find_common_mp_for_envelope,
+    GamesRoot, MapPack, ZoneFile, ensure_artifacts_dir, find_common_mp_for_envelope,
     find_common_mp_for_zone, find_localized_common_mp_for_zone, find_runtime_common_mp,
     find_runtime_zone, find_zone_file, find_zone_file_version, find_zone_for_tree,
     game_root_for_zone, games_content_report, games_root_from_env, games_root_report,
-    group_mp_maps, list_mp_maps, load_dotenv, map_load_title, peek_zone_version,
+    group_mp_maps, list_mp_map_packs, list_mp_maps, load_dotenv, map_load_title, peek_zone_version,
     set_games_root_override, split_zone_key, zone_game_for_path, zone_version,
 };
 pub use iwd::{

@@ -3,7 +3,7 @@ use std::fmt;
 
 use bevy::prelude::*;
 
-use assets::AssetNamespace;
+use asset_core::AssetNamespace;
 
 const START_DECISION_CAP: usize = 32;
 

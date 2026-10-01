@@ -1,4 +1,4 @@
-use crate::trajectory::{Trajectory, bg_evaluate_trajectory};
+use crate::trajectory::{Trajectory, evaluate_trajectory};
 
 pub const ET_GENERAL: i32 = 0;
 
@@ -24,7 +24,7 @@ pub fn adjust_position_for_mover_evaluates(mover_num: i32, e_type: Option<i32>) 
     mover_num_in_adjust_range(mover_num) && matches!(e_type, Some(ET_SCRIPTMOVER) | Some(ET_PLANE))
 }
 
-pub fn cg_adjust_position_for_mover(
+pub fn adjust_position_for_mover(
     input: [f32; 3],
     mover_num: i32,
     e_type: Option<i32>,
@@ -36,10 +36,10 @@ pub fn cg_adjust_position_for_mover(
         return input;
     }
     let Some(pos) = pos else {
-        panic!("CG_AdjustPositionForMover eType 6/0xd needs lerp.pos trajectory");
+        panic!("mover adjustment for eType 6/0xd needs a lerp.pos trajectory");
     };
-    let old = bg_evaluate_trajectory(pos, from_time);
-    let new = bg_evaluate_trajectory(pos, to_time);
+    let old = evaluate_trajectory(pos, from_time);
+    let new = evaluate_trajectory(pos, to_time);
     [
         input[0] + (new[0] - old[0]),
         input[1] + (new[1] - old[1]),

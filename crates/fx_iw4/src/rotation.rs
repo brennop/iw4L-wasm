@@ -7,7 +7,7 @@ pub const FX_ROT_TIME_MAX_LEAD_MS: f64 = 150.0;
 pub const FX_ROT_TIME_EASE_RECIP: f64 = 0.001_666_666_707_023_978_2;
 
 #[inline]
-pub fn fx_clamp_elem_rotation_time(draw_time_ms: f32, sim_time_ms: f32, def_byte: u8) -> f32 {
+pub fn clamp_elem_rotation_time(draw_time_ms: f32, sim_time_ms: f32, def_byte: u8) -> f32 {
     let draw = draw_time_ms as f64;
     let sim = sim_time_ms as f64;
     let reference = (def_byte as f64) * sim * FX_RECIP_255;

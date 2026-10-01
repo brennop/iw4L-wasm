@@ -175,7 +175,7 @@ fn log_catalog_generation(catalog: &RuntimeMaterialCatalog) {
         }
         diag::info!(
             World,
-            "drawsurf tech15 CodeTexture: sets={sets} with_0xD={with_tex_d} hist={hist:?} (type-4 payload; 0xD is attenuationSampler)"
+            "drawsurf tech15 CodeTexture: sets={sets} with_attenuation={with_tex_d} hist={hist:?} (type-4 payload)"
         );
     }
 }
@@ -208,13 +208,13 @@ pub struct MaterialProgramCompile {
     task: Option<Task<Vec<PassOutcome>>>,
     progress: Option<Arc<AtomicU32>>,
     started: Option<web_time::Instant>,
-    load: Option<assets::LoadProgress>,
+    load: Option<asset_transport::LoadProgress>,
     /// What the pool workers have computed. It ends when the last job is
     /// computed, which is not when the result is published.
-    compile_stage: Option<assets::StageHandle>,
+    compile_stage: Option<asset_transport::StageHandle>,
     /// What the main thread has absorbed out of those outcomes. Until a slice
     /// takes an outcome, nothing has been published from it.
-    merge_stage: Option<assets::StageHandle>,
+    merge_stage: Option<asset_transport::StageHandle>,
     done: u32,
     total: u32,
     catalog: Option<Arc<RuntimeMaterialCatalog>>,
@@ -257,7 +257,12 @@ impl MaterialProgramCompile {
 
     /// Hand both stages back, so the caller ends them where the work is really
     /// over instead of leaving them to a drop.
-    pub fn take_stages(&mut self) -> (Option<assets::StageHandle>, Option<assets::StageHandle>) {
+    pub fn take_stages(
+        &mut self,
+    ) -> (
+        Option<asset_transport::StageHandle>,
+        Option<asset_transport::StageHandle>,
+    ) {
         (self.compile_stage.take(), self.merge_stage.take())
     }
 
@@ -360,8 +365,10 @@ impl MaterialProgramCompile {
     fn take_outcomes(&mut self, outcomes: Vec<PassOutcome>) {
         self.finish_compile();
         if let Some(load) = &self.load {
-            self.merge_stage =
-                Some(load.begin(assets::StageId::ProgramMerge, Some(outcomes.len() as u64)));
+            self.merge_stage = Some(load.begin(
+                asset_transport::StageId::ProgramMerge,
+                Some(outcomes.len() as u64),
+            ));
         }
         self.pending = outcomes;
         self.absorb_at = 0;
@@ -401,7 +408,7 @@ impl MaterialProgramCompile {
                 self.done = self.total;
                 self.finish_compile();
                 if let Some(load) = &self.load {
-                    load.record_skipped(assets::StageId::ProgramMerge);
+                    load.record_skipped(asset_transport::StageId::ProgramMerge);
                 }
                 return true;
             }
@@ -471,7 +478,7 @@ impl MaterialProgramCompile {
     pub fn arm(
         &mut self,
         catalog: &Arc<RuntimeMaterialCatalog>,
-        progress: Option<&assets::LoadProgress>,
+        progress: Option<&asset_transport::LoadProgress>,
     ) {
         self.jobs.clear();
         self.catalog = Some(Arc::clone(catalog));
@@ -484,7 +491,7 @@ impl MaterialProgramCompile {
         }
         self.load = progress.cloned();
         if let Some(progress) = progress {
-            self.compile_stage = Some(progress.begin(assets::StageId::Programs, None));
+            self.compile_stage = Some(progress.begin(asset_transport::StageId::Programs, None));
         }
         let mut techs = Vec::new();
         techs.extend(lighting_iw4::LIT_TECH_NO_SHADOW_DIR_SLOTS);

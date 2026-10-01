@@ -2,7 +2,7 @@ use crate::Score;
 
 pub const PARSE_SCORES_CAP: usize = 0x12;
 
-pub const SCORE_TOKENS_PER_CLIENT: usize = 8;
+pub(crate) const SCORE_TOKENS_PER_CLIENT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParsedScores {
@@ -16,7 +16,7 @@ pub struct ParsedScores {
 
     pub scores: [Score; PARSE_SCORES_CAP],
 
-    pub gap_0x20: [i32; PARSE_SCORES_CAP],
+    pub extra_score: [i32; PARSE_SCORES_CAP],
 
     pub status_icon_index: [i32; PARSE_SCORES_CAP],
 }
@@ -29,7 +29,7 @@ impl Default for ParsedScores {
             team_scores_allies: 0,
             score_limit: 0,
             scores: [Score::default(); PARSE_SCORES_CAP],
-            gap_0x20: [0; PARSE_SCORES_CAP],
+            extra_score: [0; PARSE_SCORES_CAP],
             status_icon_index: [0; PARSE_SCORES_CAP],
         }
     }
@@ -99,7 +99,7 @@ pub fn parse_scores(argv_tokens: &[&str]) -> ParsedScores {
         out.status_icon_index[i] = atol(argv(argv_tokens, base + 4));
         row.kills = atol(argv(argv_tokens, base + 5));
         row.assists = atol(argv(argv_tokens, base + 6));
-        out.gap_0x20[i] = atol(argv(argv_tokens, base + 7));
+        out.extra_score[i] = atol(argv(argv_tokens, base + 7));
         out.scores[i] = row;
     }
     out

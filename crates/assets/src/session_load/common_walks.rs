@@ -11,7 +11,7 @@ pub fn load_match_material_seed(
     let root = games_root_from_env()?;
     let runtime = find_zone_file_version(&root, "common_mp", fastfile_iw4::ZONE_VERSION_PC)?;
 
-    let (catalog, mut report, _, _) = bevy::tasks::futures_lite::future::block_on(
+    let (catalog, mut report, _, _, _) = bevy::tasks::futures_lite::future::block_on(
         walk_startup_material_zones(Some(&runtime.path), progress),
     );
     let catalog =
@@ -153,7 +153,7 @@ fn leftover_walk_t5_startup_materials(
     progress: &LoadProgress,
 ) -> (
     MaterialCatalog,
-    Vec<crate::CapturedStringTable>,
+    Vec<asset_game::CapturedStringTable>,
     Vec<String>,
 ) {
     let mut report = Vec::new();
@@ -164,7 +164,7 @@ fn leftover_walk_t5_startup_materials(
             return (MaterialCatalog::default(), Vec::new(), report);
         }
     };
-    const ZONES: [&str; 2] = ["code_post_gfx_mp", "localized_code_post_gfx_mp"];
+    const ZONES: [&str; 3] = ["code_post_gfx_mp", "localized_code_post_gfx_mp", "patch_mp"];
     let mut seed = MaterialCatalog::default();
     let mut stats = Vec::new();
     for zone in ZONES {
@@ -333,9 +333,9 @@ fn capture_common_zone(
 }
 
 pub(super) fn merge_image_batch(
-    global: &mut crate::MaterialDefinitions,
+    global: &mut asset_material::MaterialDefinitions,
     label: &str,
-    batch: crate::material_images::DecodedImageBatch,
+    batch: asset_material::material_images::DecodedImageBatch,
     job: load_jobs::Job,
     report: &mut Vec<String>,
 ) {
@@ -405,11 +405,19 @@ pub(super) fn merge_image_batch(
 /// there. The walk that discovers the demand hands both over itself.
 pub(super) struct PendingImages {
     pub(super) job: load_jobs::Job,
-    pub(super) task: bevy::tasks::Task<(&'static str, crate::material_images::DecodedImageBatch)>,
+    pub(super) task: bevy::tasks::Task<(
+        &'static str,
+        asset_material::material_images::DecodedImageBatch,
+    )>,
 }
 
 impl PendingImages {
-    pub(super) async fn join(self) -> (&'static str, crate::material_images::DecodedImageBatch) {
+    pub(super) async fn join(
+        self,
+    ) -> (
+        &'static str,
+        asset_material::material_images::DecodedImageBatch,
+    ) {
         let done = self.task.await;
         self.job.joined();
         done
@@ -484,7 +492,7 @@ impl HeldImagePlan {
     /// rather than an empty one that does.
     pub(super) fn prune_then_enqueue(
         mut self,
-        catalog: &mut crate::MaterialDefinitions,
+        catalog: &mut asset_material::MaterialDefinitions,
         progress: &LoadProgress,
         report: &mut Vec<String>,
     ) -> Option<PendingImages> {
@@ -539,7 +547,9 @@ pub(super) struct Iw5WeaponBundle {
     pub(super) xanims: XAnimBuild,
 
     pub(super) materials: MaterialCatalog,
-    pub(super) stats_tables: Vec<crate::CapturedStringTable>,
+    pub(super) stats_tables: Vec<asset_game::CapturedStringTable>,
+    pub(super) scene_models: asset_world::MapXModelSceneCatalog,
+    pub(super) shared_surfaces: asset_model::SharedXModelSurfaces,
 }
 
 pub(super) fn resolve_iw5_weapon_donor(
@@ -606,6 +616,8 @@ pub(super) fn walk_iw5_weapon_bundle(
             xanims: census.xanims,
             materials: census.material_population,
             stats_tables: census.cac_tables,
+            scene_models: census.scene_models,
+            shared_surfaces: census.shared_surfaces,
         },
         pending_images,
         report,
@@ -655,6 +667,7 @@ pub(super) fn walk_shared_iw5_common(
         census.world_weapons.len(),
         census.xanims.len(),
     ));
+
     (
         materials,
         Iw5WeaponBundle {
@@ -664,6 +677,8 @@ pub(super) fn walk_shared_iw5_common(
             xanims: census.xanims,
             materials: MaterialCatalog::default(),
             stats_tables: census.cac_tables,
+            scene_models: census.scene_models,
+            shared_surfaces: census.shared_surfaces,
         },
         pending_images,
         report,
@@ -674,9 +689,9 @@ pub(super) enum T5CommonPrep {
     Skip(Vec<String>),
     Ready {
         donor: PathBuf,
-        opened: Result<std::sync::Arc<crate::ZoneImage>, String>,
+        opened: Result<std::sync::Arc<asset_transport::ZoneImage>, String>,
         leftover_startup: MaterialCatalog,
-        leftover_stats: Vec<crate::CapturedStringTable>,
+        leftover_stats: Vec<asset_game::CapturedStringTable>,
         report: Vec<String>,
     },
 }
@@ -729,12 +744,14 @@ pub(super) struct T5WeaponCommon {
     pub(super) material_seed: MaterialCatalog,
     pub(super) xanims: XAnimBuild,
     pub(super) fx: FxCatalog,
-    pub(super) projectiles: crate::ProjectileMeshBuild,
-    pub(super) teamsets: std::collections::HashMap<String, crate::MapTeamSettings>,
+    pub(super) impact_fx: Option<asset_game::OwnedFxImpactTable>,
+    pub(super) projectiles: asset_model::ProjectileMeshBuild,
+    pub(super) teamsets: std::collections::HashMap<String, asset_game::MapTeamSettings>,
+    pub(super) scene_models: asset_world::MapXModelSceneCatalog,
     pub(super) images: Option<PendingImages>,
     pub(super) stats_tables: (
-        Vec<crate::CapturedStringTable>,
-        Vec<crate::CapturedStringTable>,
+        Vec<asset_game::CapturedStringTable>,
+        Vec<asset_game::CapturedStringTable>,
     ),
     pub(super) report: Vec<String>,
 }
@@ -742,14 +759,16 @@ pub(super) struct T5WeaponCommon {
 impl T5WeaponCommon {
     pub(super) fn empty(material_seed: MaterialCatalog, report: Vec<String>) -> Self {
         Self {
-            weapons: crate::WeaponBuild::default(),
+            weapons: asset_game::WeaponBuild::default(),
             fpv: FpvMeshBuild::default(),
             world_guns: WorldWeaponBuild::default(),
             material_seed,
             xanims: XAnimBuild::default(),
             fx: FxCatalog::default(),
-            projectiles: crate::ProjectileMeshBuild::default(),
+            impact_fx: None,
+            projectiles: asset_model::ProjectileMeshBuild::default(),
             teamsets: Default::default(),
+            scene_models: Default::default(),
             images: None,
             stats_tables: (Vec::new(), Vec::new()),
             report,
@@ -813,8 +832,10 @@ pub(super) fn walk_t5_weapon_common(
         material_seed: census.material_population,
         xanims: census.xanims,
         fx: census.fx,
+        impact_fx: census.impact_fx,
         projectiles: census.projectile_meshes,
         teamsets: census.teamsets,
+        scene_models: census.scene_models,
         images,
         stats_tables: (leftover_stats, census.cac_tables),
         report,
@@ -827,8 +848,9 @@ pub(super) async fn walk_startup_material_zones(
 ) -> (
     MaterialCatalog,
     Vec<String>,
-    Vec<crate::CapturedStringTable>,
-    Vec<crate::CapturedLightDef>,
+    Vec<asset_game::CapturedStringTable>,
+    Vec<asset_world::CapturedLightDef>,
+    crate::ScriptSources,
 ) {
     const STARTUP_ZONES: [&str; 3] = ["code_post_gfx_mp", "localized_code_post_gfx_mp", "patch_mp"];
     let Some(map_path) = map_path else {
@@ -837,6 +859,7 @@ pub(super) async fn walk_startup_material_zones(
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            crate::ScriptSources::default(),
         );
     };
     let games = games_root_from_env().ok();
@@ -872,6 +895,7 @@ pub(super) async fn walk_startup_material_zones(
     let mut zones_ok = 0usize;
     let mut stats = Vec::new();
     let mut light_defs = Vec::new();
+    let mut scripts = crate::ScriptSources::default();
     for (zone, task) in STARTUP_ZONES.into_iter().zip(opened) {
         match task.await {
             Ok((path, image)) => {
@@ -891,6 +915,7 @@ pub(super) async fn walk_startup_material_zones(
                 ));
                 seed = pop.materials;
                 light_defs.extend(pop.light_defs);
+                scripts.overlay(pop.scripts);
                 if zone == "code_post_gfx_mp" {
                     stats = pop.cac_tables;
                 }
@@ -911,13 +936,13 @@ pub(super) async fn walk_startup_material_zones(
         seed.materials.len(),
         seed.images.len(),
     ));
-    (seed, report, stats, light_defs)
+    (seed, report, stats, light_defs, scripts)
 }
 
 pub(super) fn load_localized_strings_beside(
     zone_ff: &std::path::Path,
     report: &mut Vec<String>,
-    stage: &crate::progress::StageHandle,
+    stage: &asset_transport::progress::StageHandle,
 ) -> LocalizeCatalog {
     let mut catalog = LocalizeCatalog::default();
     let root = match games_root_from_env() {
@@ -927,19 +952,19 @@ pub(super) fn load_localized_strings_beside(
             return catalog;
         }
     };
-    let lanes: [(crate::AssetNamespace, u32, &[&str]); 3] = [
+    let lanes: [(asset_core::AssetNamespace, u32, &[&str]); 3] = [
         (
-            crate::AssetNamespace::Iw4,
+            asset_core::AssetNamespace::Iw4,
             fastfile_iw4::ZONE_VERSION_PC,
             MP_LOCALIZED_ZONES,
         ),
         (
-            crate::AssetNamespace::T5,
+            asset_core::AssetNamespace::T5,
             fastfile_t5::ZONE_VERSION_PC,
             &["code_post_gfx_mp", "common_mp", "ui_mp"],
         ),
         (
-            crate::AssetNamespace::Iw5,
+            asset_core::AssetNamespace::Iw5,
             fastfile_iw5::ZONE_VERSION_PC,
             MP_LOCALIZED_ZONES,
         ),
@@ -949,7 +974,7 @@ pub(super) fn load_localized_strings_beside(
         .and_then(|zone| zone.path.parent()?.file_name()?.to_str().map(str::to_owned));
     let mut plan = Vec::new();
     for (namespace, version, names) in lanes {
-        let found: Vec<_> = if namespace == crate::AssetNamespace::T5 {
+        let found: Vec<_> = if namespace == asset_core::AssetNamespace::T5 {
             match find_zone_file_version(&root, "common_mp", version).and_then(|zone| {
                 asset_transport::discover::find_t5_localized_zones(
                     &zone.path,
@@ -966,7 +991,7 @@ pub(super) fn load_localized_strings_beside(
             names
                 .iter()
                 .filter_map(|name| {
-                    if namespace == crate::AssetNamespace::Iw4 {
+                    if namespace == asset_core::AssetNamespace::Iw4 {
                         find_runtime_zone(&root, zone_ff, name)
                     } else {
                         find_zone_file_version(&root, name, version)

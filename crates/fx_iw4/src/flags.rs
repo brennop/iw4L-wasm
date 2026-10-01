@@ -20,41 +20,41 @@ pub const FX_ELEM_RUN_RELATIVE_TO_EFFECT: i32 = 0x80;
 pub const FX_ELEM_RUN_RELATIVE_TO_OFFSET: i32 = 0xc0;
 
 #[inline]
-pub const fn fx_elem_run_mode(flags: i32) -> i32 {
+pub const fn elem_run_mode(flags: i32) -> i32 {
     flags & FX_ELEM_RUN_MASK
 }
 
 #[inline]
-pub const fn fx_elem_uses_collision(flags: i32) -> bool {
+pub const fn elem_uses_collision(flags: i32) -> bool {
     (flags & FX_ELEM_USE_COLLISION) != 0
 }
 
 #[inline]
-pub const fn fx_elem_dies_on_touch(flags: i32) -> bool {
+pub const fn elem_dies_on_touch(flags: i32) -> bool {
     (flags & FX_ELEM_DIE_ON_TOUCH) != 0
 }
 
 #[inline]
-pub const fn fx_elem_spawn_frustum_cull(flags: i32) -> bool {
+pub const fn elem_spawn_frustum_cull(flags: i32) -> bool {
     (flags & FX_ELEM_SPAWN_FRUSTUM_CULL) != 0
 }
 
 #[inline]
-pub const fn fx_elem_uses_vel_local(flags: i32) -> bool {
+pub const fn elem_uses_vel_local(flags: i32) -> bool {
     (flags & FX_ELEM_VEL_LOCAL) != 0
 }
 
 #[inline]
-pub const fn fx_elem_uses_vel_world(flags: i32) -> bool {
+pub const fn elem_uses_vel_world(flags: i32) -> bool {
     (flags & FX_ELEM_VEL_WORLD) != 0
 }
 
 #[inline]
-pub const fn fx_elem_update_has_velocity_graph(flags: i32) -> bool {
+pub const fn elem_update_has_velocity_graph(flags: i32) -> bool {
     (flags & FX_ELEM_UPDATE_HAS_VEL_GRAPH) != 0
 }
 
 #[inline]
-pub const fn fx_elem_skips_position_update(elem_type: u8, flags: i32) -> bool {
+pub const fn elem_skips_position_update(elem_type: u8, flags: i32) -> bool {
     elem_type == 7 && (flags & FX_ELEM_USE_MODEL_PHYSICS) != 0
 }

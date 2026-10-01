@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use render_frontend::adapters::anim::view_kick::CgGunOffset;
+use render_frontend::adapters::anim::view_kick::GunOffset;
 
 use crate::{ConsoleCommand, ConsoleLine, ConsoleRegistry, ConsoleSettings, ConsoleState};
 
@@ -23,7 +23,7 @@ pub(crate) fn route_cg_gun_commands(
     mut console: ResMut<ConsoleState>,
     settings: Res<ConsoleSettings>,
     mut line: ResMut<ConsoleLine>,
-    mut gun: ResMut<CgGunOffset>,
+    mut gun: ResMut<GunOffset>,
 ) {
     let capacity = settings.log_capacity;
     let echo = |msg: String, console: &mut ConsoleState, line: &mut ConsoleLine| {

@@ -865,7 +865,7 @@ fn log_uploaded_probe_once(
 }
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RetailSamplerRendererInputs {
+pub struct SamplerRendererInputs {
     pub max_anisotropy: u32,
 
     pub min_anisotropy: u32,
@@ -881,16 +881,15 @@ pub struct RetailSamplerRendererInputs {
     pub mip_mode: u8,
 }
 
-pub const RETAIL_SAMPLER_PROFILE_2026_08_11: RetailSamplerRendererInputs =
-    RetailSamplerRendererInputs {
-        max_anisotropy: 4,
-        min_anisotropy: 1,
-        device_max_anisotropy: 16,
-        supports_min_anisotropic: true,
-        supports_mag_anisotropic: true,
-        disable_filtering: false,
-        mip_mode: 0,
-    };
+pub const RETAIL_SAMPLER_PROFILE_2026_08_11: SamplerRendererInputs = SamplerRendererInputs {
+    max_anisotropy: 4,
+    min_anisotropy: 1,
+    device_max_anisotropy: 16,
+    supports_min_anisotropic: true,
+    supports_mag_anisotropic: true,
+    disable_filtering: false,
+    mip_mode: 0,
+};
 
 pub const RETAIL_SAMPLER_WORDS_2026_08_11: [u32; 24] = [
     0x001101, 0x001101, 0x002201, 0x003302, 0x003304, 0x001101, 0x001101, 0x001101, 0x011101,
@@ -899,14 +898,14 @@ pub const RETAIL_SAMPLER_WORDS_2026_08_11: [u32; 24] = [
 ];
 
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]
-pub struct RetailSamplerTable {
+pub struct SamplerTable {
     words: [u32; 24],
 }
 
 const RETAIL_MIP_FILTERS: [u32; 12] = [0, 1, 2, 0, 2, 2, 0, 1, 1, 0, 0, 0];
 
-impl RetailSamplerTable {
-    pub fn produce(inputs: RetailSamplerRendererInputs) -> Result<Self, SamplerTableBuildRefusal> {
+impl SamplerTable {
+    pub fn produce(inputs: SamplerRendererInputs) -> Result<Self, SamplerTableBuildRefusal> {
         let mip_mode = usize::from(inputs.mip_mode);
         if mip_mode >= 4 {
             return Err(SamplerTableBuildRefusal::MipModeOutOfRange {
@@ -1155,7 +1154,7 @@ pub(crate) trait RuntimeProgramPortGpuExt {
         images: &RuntimeImageHandles,
         expected: MaterialGenerationId,
         uploaded: &RuntimeUploadedImageRegistry,
-        samplers: &RetailSamplerTable,
+        samplers: &SamplerTable,
         spot_shadow_select: Option<u8>,
     ) -> Result<Vec<UploadedTextureBind>, TextureBindRefusal>;
 }
@@ -1168,7 +1167,7 @@ impl RuntimeProgramPortGpuExt for AdmittedExactPort {
         images: &RuntimeImageHandles,
         expected: MaterialGenerationId,
         uploaded: &RuntimeUploadedImageRegistry,
-        samplers: &RetailSamplerTable,
+        samplers: &SamplerTable,
         spot_shadow_select: Option<u8>,
     ) -> Result<Vec<UploadedTextureBind>, TextureBindRefusal> {
         require_image_generation(expected, images.generation_id)?;

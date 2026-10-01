@@ -10,7 +10,7 @@ use web_time::Instant;
 
 use bevy::prelude::Resource;
 
-use crate::progress::{LoadProgress, StageHandle, StageId};
+use asset_transport::progress::{LoadProgress, StageHandle, StageId};
 
 #[derive(Resource)]
 pub struct MapLoadProcess {
@@ -76,7 +76,7 @@ impl MapLoadProcess {
         let installed_ms = self.requested_at.elapsed().as_secs_f32() * 1000.0;
         let trim_ms = diag::release_freed_heap().as_secs_f32() * 1000.0;
         let with_trim_ms = self.requested_at.elapsed().as_secs_f32() * 1000.0;
-        let rss = crate::process_resident_bytes()
+        let rss = asset_transport::process_resident_bytes()
             .map(|bytes| format!(" rss_mib={}", bytes >> 20))
             .unwrap_or_default();
         let heap = diag::process_live_heap_bytes()

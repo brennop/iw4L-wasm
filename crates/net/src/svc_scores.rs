@@ -9,7 +9,7 @@ pub const SVC_SCORES: u8 = b'b';
 pub const SCORES_REQUEST_MS: i32 = 2000;
 
 #[derive(Resource, Clone, Debug, Default)]
-pub struct CgScores {
+pub struct Scoreboard {
     pub cmd: Option<String>,
     pub parsed: ParsedScores,
 }

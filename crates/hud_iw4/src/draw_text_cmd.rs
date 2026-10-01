@@ -1,4 +1,4 @@
-use crate::stretch_pic_cmd::{GFX_RENDER_CMD_TAIL_RESERVE, r_convert_color_to_bytes};
+use crate::stretch_pic_cmd::{GFX_RENDER_CMD_TAIL_RESERVE, convert_color_to_bytes};
 use crate::text_fx::{FX_DECODE_RENDERFLAGS, TextPulseFx};
 
 pub const GFX_CMD_DRAW_TEXT_2D: u16 = 0x10;
@@ -43,7 +43,7 @@ pub fn gfx_cmd_draw_text_size(text_len: usize) -> u32 {
 }
 
 #[must_use]
-pub fn r_draw_text_render_flags(style: i32) -> u32 {
+pub fn draw_text_render_flags(style: i32) -> u32 {
     if style == 3 {
         4
     } else if style == 6 {
@@ -109,7 +109,7 @@ pub enum AddDrawTextCmd {
 }
 
 #[must_use]
-pub fn r_add_cmd_draw_text(
+pub fn add_cmd_draw_text(
     buf: &mut [u8],
     used: u32,
     cap: u32,
@@ -149,12 +149,12 @@ pub fn r_add_cmd_draw_text(
     let packed = if color_ptr_null {
         [0xff, 0xff, 0xff, 0xff]
     } else {
-        r_convert_color_to_bytes(args.color)
+        convert_color_to_bytes(args.color)
     };
     buf[start + GFX_CMD_DRAW_TEXT_COLOR..start + GFX_CMD_DRAW_TEXT_COLOR + 4]
         .copy_from_slice(&packed);
     write_i32(buf, start + GFX_CMD_DRAW_TEXT_MAXCHARS, args.max_chars);
-    let mut flags = r_draw_text_render_flags(args.style);
+    let mut flags = draw_text_render_flags(args.style);
     if let Some(fx) = args.fx.filter(|fx| fx.fx.birth_time != 0) {
         flags |= FX_DECODE_RENDERFLAGS;
         write_i32(

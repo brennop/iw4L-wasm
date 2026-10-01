@@ -17,6 +17,7 @@ mod vocabulary;
 #[cfg(not(all(unix, feature = "native")))]
 #[path = "vocabulary_noop.rs"]
 mod vocabulary;
+mod vocabulary_catalog;
 mod vocabulary_types;
 
 pub use event::{

@@ -132,7 +132,13 @@ impl Plugin for UiLayersPlugin {
                     .after(apply_ui_layers)
                     .before(UiSystems::Prepare),
             )
-            .add_systems(PostUpdate, apply_ui_layers.in_set(ApplyUiLayers));
+            .add_systems(PostUpdate, apply_ui_layers.in_set(ApplyUiLayers))
+            .add_systems(
+                PostUpdate,
+                select_ui_camera
+                    .after(ApplyUiLayers)
+                    .before(UiSystems::Prepare),
+            );
     }
 }
 
@@ -177,6 +183,28 @@ fn apply_ui_layers(
             if camera.is_active != visible {
                 camera.is_active = visible;
             }
+        }
+    }
+}
+
+pub use frame::UiCamera;
+
+fn select_ui_camera(
+    mut commands: Commands,
+    cameras: Query<(Entity, &Camera, Has<IsDefaultUiCamera>), With<UiCamera>>,
+) {
+    let selected = cameras
+        .iter()
+        .filter(|(_, camera, _)| camera.is_active)
+        .max_by_key(|(entity, camera, _)| (camera.order, entity.to_bits()))
+        .map(|(entity, _, _)| entity);
+    for (entity, _, marked) in &cameras {
+        if Some(entity) == selected {
+            if !marked {
+                commands.entity(entity).insert(IsDefaultUiCamera);
+            }
+        } else if marked {
+            commands.entity(entity).remove::<IsDefaultUiCamera>();
         }
     }
 }

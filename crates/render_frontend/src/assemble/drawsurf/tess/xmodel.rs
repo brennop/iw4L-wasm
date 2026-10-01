@@ -1,3 +1,4 @@
+use render_anim::geometry::install_retained_packed;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -5,7 +6,7 @@ use web_time::Instant;
 
 use bevy::prelude::*;
 
-use super::smodel::{RetailPackedVertexRefusal, SmodelPassMaterial, SmodelVertex};
+use super::smodel::{PackedVertexRefusal, SmodelPassMaterial, SmodelVertex};
 
 pub use render_anim::{
     BODY_PACKED_UNAVAILABLE, DynEntAssetDraw, DynEntDrawPlan, DynEntOwnerDraw,
@@ -43,7 +44,7 @@ pub struct XModelDrawPlan {
 
     pub topology_revision: u64,
 
-    pub packed_vertices: assets::RetailPackedVertexPayload,
+    pub packed_vertices: asset_world::PackedVertexPayload,
 
     pub packed_share: Option<Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>>,
 
@@ -98,7 +99,7 @@ impl XModelDrawPlan {
         self.concat_layout = false;
         self.last_admitted = 0;
         self.packed_owner_vertices = [[0; 8]; super::SHARE_BANKS];
-        self.packed_vertices = assets::RetailPackedVertexPayload::Unavailable {
+        self.packed_vertices = asset_world::PackedVertexPayload::Unavailable {
             source_layout: XMODEL_PACKED_UNAVAILABLE,
         };
     }
@@ -108,8 +109,8 @@ impl XModelDrawPlan {
             return Some(share.as_slice());
         }
         match &self.packed_vertices {
-            assets::RetailPackedVertexPayload::Iw4(rows) => Some(rows.as_slice()),
-            assets::RetailPackedVertexPayload::Unavailable { .. } => None,
+            asset_world::PackedVertexPayload::Iw4(rows) => Some(rows.as_slice()),
+            asset_world::PackedVertexPayload::Unavailable { .. } => None,
         }
     }
 
@@ -123,22 +124,22 @@ impl XModelDrawPlan {
 
     pub fn exact_packed_vertices(
         &self,
-    ) -> Result<&[[u8; asset_iw4::size::GFX_PACKED_VERTEX]], RetailPackedVertexRefusal> {
+    ) -> Result<&[[u8; asset_iw4::size::GFX_PACKED_VERTEX]], PackedVertexRefusal> {
         let table_stride =
             asset_iw4::vertex_decl::stream_extent(asset_iw4::vertex_decl::PACKED_VERTEX_TYPE, 0);
         if table_stride != Some(asset_iw4::size::GFX_PACKED_VERTEX as u16) {
-            return Err(RetailPackedVertexRefusal::RetailStrideMismatch { table_stride });
+            return Err(PackedVertexRefusal::StrideMismatch { table_stride });
         }
         let vertices = match self.packed_rows() {
             Some(vertices) => vertices,
             None => {
                 let source_layout = match &self.packed_vertices {
-                    assets::RetailPackedVertexPayload::Unavailable { source_layout } => {
+                    asset_world::PackedVertexPayload::Unavailable { source_layout } => {
                         *source_layout
                     }
-                    assets::RetailPackedVertexPayload::Iw4(_) => XMODEL_PACKED_UNAVAILABLE,
+                    asset_world::PackedVertexPayload::Iw4(_) => XMODEL_PACKED_UNAVAILABLE,
                 };
-                return Err(RetailPackedVertexRefusal::ForeignLayout { source_layout });
+                return Err(PackedVertexRefusal::ForeignLayout { source_layout });
             }
         };
         let decoded = if self.vertices.is_empty() {
@@ -147,8 +148,8 @@ impl XModelDrawPlan {
             self.vertices.len()
         };
         if vertices.len() != decoded {
-            return Err(RetailPackedVertexRefusal::VertexCountMismatch {
-                retail: vertices.len(),
+            return Err(PackedVertexRefusal::VertexCountMismatch {
+                packed: vertices.len(),
                 decoded,
             });
         }
@@ -739,7 +740,7 @@ fn concat_draws_changed(prev: XModelMergeStamp, stamp: &XModelMergeStamp) -> boo
 struct ConcatPackedOwner<'a> {
     admit: u8,
     rev_i: usize,
-    payload: &'a assets::RetailPackedVertexPayload,
+    payload: &'a asset_world::PackedVertexPayload,
     decoded_n: usize,
 }
 
@@ -878,7 +879,7 @@ fn recopy_concat_packed_bank(
         }
         if bank_vertices[owner.rev_i] != stamp_vertices[owner.rev_i] {
             match owner.payload {
-                assets::RetailPackedVertexPayload::Iw4(rows) if rows.len() == n => {
+                asset_world::PackedVertexPayload::Iw4(rows) if rows.len() == n => {
                     packed[off..off + n].copy_from_slice(rows);
                 }
                 _ => {
@@ -1112,11 +1113,11 @@ fn admitted_mask(
 fn publish_packed_payload(
     merged: &mut XModelDrawPlan,
     prev: Option<Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>>,
-    payload: assets::RetailPackedVertexPayload,
+    payload: asset_world::PackedVertexPayload,
     key: Option<PackedContentKey>,
 ) {
     match payload {
-        assets::RetailPackedVertexPayload::Iw4(rows) => {
+        asset_world::PackedVertexPayload::Iw4(rows) => {
             let resident = key.is_some() && merged.published_packed == key;
             merged.packed_banks.put_write(rows);
             match prev.as_ref().filter(|_| resident) {
@@ -1127,7 +1128,7 @@ fn publish_packed_payload(
                     merged.published_packed = key;
                 }
             }
-            merged.packed_vertices = assets::RetailPackedVertexPayload::Unavailable {
+            merged.packed_vertices = asset_world::PackedVertexPayload::Unavailable {
                 source_layout: XMODEL_PACKED_UNAVAILABLE,
             };
         }
@@ -1181,49 +1182,29 @@ fn publish_decoded_share(merged: &mut XModelDrawPlan) {
     merged.decoded_share = Some(Arc::new(std::mem::take(&mut merged.vertices)));
 }
 
-fn packed_row_count(payload: &assets::RetailPackedVertexPayload) -> usize {
+fn packed_row_count(payload: &asset_world::PackedVertexPayload) -> usize {
     match payload {
-        assets::RetailPackedVertexPayload::Iw4(rows) => rows.len(),
-        assets::RetailPackedVertexPayload::Unavailable { .. } => 0,
+        asset_world::PackedVertexPayload::Iw4(rows) => rows.len(),
+        asset_world::PackedVertexPayload::Unavailable { .. } => 0,
     }
 }
 
 fn append_packed_source(
     packed: &mut Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
     packed_ok: &mut bool,
-    payload: &assets::RetailPackedVertexPayload,
+    payload: &asset_world::PackedVertexPayload,
     decoded_count: usize,
 ) {
     if !*packed_ok || decoded_count == 0 {
         return;
     }
     match payload {
-        assets::RetailPackedVertexPayload::Iw4(vertices) if vertices.len() == decoded_count => {
+        asset_world::PackedVertexPayload::Iw4(vertices) if vertices.len() == decoded_count => {
             packed.extend_from_slice(vertices);
         }
         _ => {
             *packed_ok = false;
             packed.clear();
-        }
-    }
-}
-
-fn install_retained_packed(
-    packed_ok: bool,
-    packed: Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
-    decoded_count: usize,
-    empty: &'static str,
-    missing: &'static str,
-) -> assets::RetailPackedVertexPayload {
-    if packed_ok && packed.len() == decoded_count && !packed.is_empty() {
-        assets::RetailPackedVertexPayload::Iw4(packed)
-    } else if decoded_count == 0 {
-        assets::RetailPackedVertexPayload::Unavailable {
-            source_layout: empty,
-        }
-    } else {
-        assets::RetailPackedVertexPayload::Unavailable {
-            source_layout: missing,
         }
     }
 }
@@ -1236,7 +1217,7 @@ fn append_admitted_source(
     indices: &[u32],
     surface_ranges: &[(u32, u32)],
     materials: &[SmodelPassMaterial],
-    packed_payload: &assets::RetailPackedVertexPayload,
+    packed_payload: &asset_world::PackedVertexPayload,
     draws: impl IntoIterator<Item = XModelSurfaceDraw>,
 ) {
     let draws: Vec<XModelSurfaceDraw> = draws.into_iter().collect();
@@ -1284,12 +1265,12 @@ fn compact_admitted_source(
     indices: &[u32],
     surface_ranges: &[(u32, u32)],
     materials: &[SmodelPassMaterial],
-    packed_payload: &assets::RetailPackedVertexPayload,
+    packed_payload: &asset_world::PackedVertexPayload,
     used_surfaces: &[bool],
     draws: Vec<XModelSurfaceDraw>,
 ) {
     let source_rows = match packed_payload {
-        assets::RetailPackedVertexPayload::Iw4(rows) if rows.len() == decoded_n => {
+        asset_world::PackedVertexPayload::Iw4(rows) if rows.len() == decoded_n => {
             Some(rows.as_slice())
         }
         _ => {

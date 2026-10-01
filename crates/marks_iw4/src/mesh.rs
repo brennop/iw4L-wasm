@@ -40,7 +40,7 @@ impl GfxMarkMeshRefuse {
 }
 
 #[inline]
-pub const fn fx_mark_mesh_index_reserve(old_index_n: u32, tri_count: u8) -> u32 {
+pub const fn mark_mesh_index_reserve(old_index_n: u32, tri_count: u8) -> u32 {
     let new_n = old_index_n.wrapping_add((tri_count as u32).wrapping_mul(3));
     let aligned_new = (new_n.wrapping_add(1)) & !1;
     let aligned_old = (old_index_n.wrapping_add(1)) & !1;
@@ -48,11 +48,11 @@ pub const fn fx_mark_mesh_index_reserve(old_index_n: u32, tri_count: u8) -> u32 
 }
 
 #[inline]
-pub const fn fx_mark_context_is_world_list(context0: u8) -> bool {
+pub const fn mark_context_is_world_list(context0: u8) -> bool {
     !matches!(context0, 1 | 2 | 3 | 4)
 }
 
-pub fn r_reserve_mark_mesh_verts(
+pub fn reserve_mark_mesh_verts(
     budget: &mut GfxMarkMeshBudget,
     vert_count: u16,
 ) -> Result<u16, GfxMarkMeshRefuse> {
@@ -66,7 +66,7 @@ pub fn r_reserve_mark_mesh_verts(
     Ok(base)
 }
 
-pub fn r_reserve_mark_mesh_indices(
+pub fn reserve_mark_mesh_indices(
     budget: &mut GfxMarkMeshBudget,
     index_count: u32,
 ) -> Result<u32, GfxMarkMeshRefuse> {
@@ -80,7 +80,7 @@ pub fn r_reserve_mark_mesh_indices(
     Ok(base)
 }
 
-pub fn r_add_mark_mesh_draw_surf(
+pub fn add_mark_mesh_draw_surf(
     budget: &mut GfxMarkMeshBudget,
     _index_count: u32,
 ) -> Result<u32, GfxMarkMeshRefuse> {
@@ -93,7 +93,7 @@ pub fn r_add_mark_mesh_draw_surf(
     Ok(slot)
 }
 
-pub fn fx_pack_mark_world_vertex(
+pub fn pack_mark_world_vertex(
     point: &crate::FxMarkStagingPoint,
     origin: [f32; 3],
     radius: f32,
@@ -124,14 +124,14 @@ pub fn fx_pack_mark_world_vertex(
     row
 }
 
-pub fn fx_pack_mark_model_vertex(
+pub fn pack_mark_model_vertex(
     point: &crate::FxMarkStagingPoint,
     origin: [f32; 3],
     radius: f32,
     tex_coord_axis: [f32; 3],
     native_color: u32,
 ) -> [u8; GFX_MARK_MESH_VERTEX_STRIDE] {
-    let world = fx_pack_mark_world_vertex(point, origin, radius, tex_coord_axis, native_color);
+    let world = pack_mark_world_vertex(point, origin, radius, tex_coord_axis, native_color);
     let mut row = [0; GFX_MARK_MESH_VERTEX_STRIDE];
     row[..0x14].copy_from_slice(&world[..0x14]);
     let pack = |bits: u32| {
@@ -170,7 +170,7 @@ fn pack_unit_vec(n: [f32; 3]) -> u32 {
     u32::from_le_bytes([component(n[0]), component(n[1]), component(n[2]), 63])
 }
 
-pub fn fx_generate_mark_verts_begin(
+pub fn generate_mark_verts_begin(
     budget: &mut GfxMarkMeshBudget,
     point_count: i16,
     tri_count: u8,
@@ -180,8 +180,8 @@ pub fn fx_generate_mark_verts_begin(
     } else {
         point_count as u16
     };
-    let base_vert = r_reserve_mark_mesh_verts(budget, points)?;
-    let reserve = fx_mark_mesh_index_reserve(budget.index_n, tri_count);
-    let base_index = r_reserve_mark_mesh_indices(budget, reserve)?;
+    let base_vert = reserve_mark_mesh_verts(budget, points)?;
+    let reserve = mark_mesh_index_reserve(budget.index_n, tri_count);
+    let base_index = reserve_mark_mesh_indices(budget, reserve)?;
     Ok((base_vert, base_index))
 }

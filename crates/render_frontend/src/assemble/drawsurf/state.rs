@@ -222,14 +222,14 @@ pub struct AuthoredStateFields {
 
 impl GfxPassState {
     pub fn from_state_bits(word0: u32, word1: u32) -> Self {
-        Self::for_material(assets::AssetNamespace::Iw4, [word0, word1])
+        Self::for_material(asset_core::AssetNamespace::Iw4, [word0, word1])
     }
 
-    pub fn for_material(namespace: assets::AssetNamespace, bits: [u32; 2]) -> Self {
+    pub fn for_material(namespace: asset_core::AssetNamespace, bits: [u32; 2]) -> Self {
         Self {
             word0: bits[0],
             word1: bits[1],
-            alpha_test: assets::material_alpha_test(namespace, bits),
+            alpha_test: asset_material::material_alpha_test(namespace, bits),
         }
     }
 
@@ -237,8 +237,8 @@ impl GfxPassState {
         Self::for_material(bits.namespace, [bits.word0, bits.word1])
     }
 
-    pub fn draw_mode(self) -> assets::MaterialDrawMode {
-        assets::MaterialDrawMode::from_state_bits([self.word0, self.word1])
+    pub fn draw_mode(self) -> asset_material::MaterialDrawMode {
+        asset_material::MaterialDrawMode::from_state_bits([self.word0, self.word1])
     }
 
     pub fn to_draw_blend(self, multiply_pass: bool) -> DrawBlend {
@@ -246,11 +246,11 @@ impl GfxPassState {
     }
 
     pub fn srgb_write_enable(self) -> bool {
-        assets::srgb_write_enable_from_state_bits([self.word0, self.word1])
+        asset_material::srgb_write_enable_from_state_bits([self.word0, self.word1])
     }
 
-    pub fn cull_face(self) -> assets::MaterialCullFace {
-        assets::cull_face_from_state_bits([self.word0, self.word1])
+    pub fn cull_face(self) -> asset_material::MaterialCullFace {
+        asset_material::cull_face_from_state_bits([self.word0, self.word1])
     }
 
     pub fn apply_change_state_0_host(
@@ -259,9 +259,9 @@ impl GfxPassState {
         multiply_pass: bool,
     ) -> ChangeState0Host {
         let cull = match self.cull_face() {
-            assets::MaterialCullFace::Back => 1,
-            assets::MaterialCullFace::Front => 2,
-            assets::MaterialCullFace::None => 0,
+            asset_material::MaterialCullFace::Back => 1,
+            asset_material::MaterialCullFace::Front => 2,
+            asset_material::MaterialCullFace::None => 0,
         };
         ChangeState0Host {
             blend: self.to_draw_blend(multiply_pass),
@@ -312,10 +312,10 @@ impl GfxPassState {
     pub fn apply_change_state_1_host(self) -> ChangeState1Host {
         ChangeState1Host {
             stencil: self.word1 & 0xffff_ffc0,
-            depth_write: assets::depth_write_enable(self.word1),
-            depth_test_enable: assets::depth_test_enable(self.word1),
+            depth_write: asset_iw4::depth_write_enable(self.word1),
+            depth_test_enable: asset_iw4::depth_test_enable(self.word1),
             depth_func: ((self.word1 >> 2) & 3) as u8,
-            polyoffset_level: assets::polygon_offset_level(self.word1) as u8,
+            polyoffset_level: asset_iw4::polygon_offset_level(self.word1) as u8,
         }
     }
 }

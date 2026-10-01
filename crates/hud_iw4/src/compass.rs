@@ -184,11 +184,7 @@ pub const COMPASS_PLAYER_HEIGHT_DEFAULT: f32 = 18.75;
 pub const COMPASS_SIZE_DEFAULT: f32 = 1.0;
 
 #[must_use]
-pub fn cg_compass_player_size(
-    player_width: f32,
-    player_height: f32,
-    compass_size: f32,
-) -> [f32; 2] {
+pub fn compass_player_size(player_width: f32, player_height: f32, compass_size: f32) -> [f32; 2] {
     [player_width * compass_size, player_height * compass_size]
 }
 
@@ -196,7 +192,7 @@ pub const COMPASS_FRIENDLY_WIDTH_DEFAULT: f32 = 16.0;
 pub const COMPASS_FRIENDLY_HEIGHT_DEFAULT: f32 = 16.0;
 
 #[must_use]
-pub fn cg_compass_friendly_size(
+pub fn compass_friendly_size(
     friendly_width: f32,
     friendly_height: f32,
     compass_size: f32,
@@ -212,13 +208,13 @@ pub const COMPASS_PLAYER_IMAGE: &str = "compassping_player";
 pub const COMPASS_ENEMY_FIRING_PING_IMAGE: &str = "compassping_enemyfiring";
 
 #[must_use]
-pub fn cg_compass_up_yaw_vector(view_yaw_degrees: f32) -> [f32; 2] {
+pub fn compass_up_yaw_vector(view_yaw_degrees: f32) -> [f32; 2] {
     let rad = view_yaw_degrees * (core::f32::consts::PI / 180.0);
     [libm::cosf(rad), libm::sinf(rad)]
 }
 
 #[must_use]
-pub fn cg_world_pos_to_compass_partial(
+pub fn world_pos_to_compass_partial(
     north: [f32; 2],
     player_xy: [f32; 2],
     world_xy: [f32; 2],
@@ -247,7 +243,7 @@ pub fn compass_clamp_offset(offset: [f32; 2], size: [f32; 2]) -> [f32; 2] {
 }
 
 #[must_use]
-pub fn cg_compass_sound_ping_fade(
+pub fn compass_sound_ping_fade(
     cg_time_ms: i32,
     begin_fade_time_ms: i32,
     fade_seconds: f32,
@@ -265,6 +261,52 @@ pub fn cg_compass_sound_ping_fade(
     Some(1.0 - (cg_time_ms - begin_fade_time_ms) as f32 / duration_ms)
 }
 
+pub const COMPASS_RADAR_LINE_IMAGE: &str = "compass_radarline";
+
+pub const COMPASS_RADAR_UPDATE_TIME_DEFAULT: f32 = 4.0;
+
+pub const COMPASS_RADAR_PING_FADE_TIME_DEFAULT: f32 = 4.0;
+
+pub const COMPASS_RADAR_LINE_THICKNESS_DEFAULT: f32 = 0.4;
+
+pub const CG_HUD_MAP_RADAR_LINE_THICKNESS_DEFAULT: f32 = 0.15;
+
+#[must_use]
+pub fn radar_line_margin(bounds: CompassMapBounds, compass_max_range: f32) -> f32 {
+    let for_radar = compass_max_range * core::f32::consts::SQRT_2
+        + COMPASS_RADAR_LINE_THICKNESS_DEFAULT * compass_max_range;
+    let for_map = CG_HUD_MAP_RADAR_LINE_THICKNESS_DEFAULT * bounds.world_size[0];
+    for_radar.max(for_map) * 0.5
+}
+
+#[must_use]
+pub fn radar_line(bounds: CompassMapBounds, compass_max_range: f32, progress: f32) -> [f32; 3] {
+    let margin = radar_line_margin(bounds, compass_max_range);
+    let dir = [bounds.north[1], -bounds.north[0]];
+    let origin = dir[0] * bounds.upper_left[0] + dir[1] * bounds.upper_left[1];
+    [
+        dir[0],
+        dir[1],
+        (margin * 2.0 + bounds.world_size[0]) * progress + origin - margin,
+    ]
+}
+
+#[must_use]
+pub fn radar_lines_surround_point(a: [f32; 3], b: [f32; 3], pos: [f32; 2]) -> bool {
+    let side = |l: [f32; 3]| pos[0] * l[0] + pos[1] * l[1] - l[2] < 0.0;
+    side(a) != side(b)
+}
+
+#[must_use]
+pub fn radar_line_texture_center_s(
+    line: [f32; 3],
+    view_xy: [f32; 2],
+    compass_max_range: f32,
+) -> f32 {
+    let rel = (view_xy[0] * line[0] + view_xy[1] * line[1] - line[2]) / compass_max_range;
+    rel / COMPASS_RADAR_LINE_THICKNESS_DEFAULT + 0.5
+}
+
 #[must_use]
 pub fn radar_contact_trail_visible(perks0: u32) -> bool {
     (perks0 & 1) == 0 && (perks0 & 0x0800_0000) == 0
@@ -277,7 +319,7 @@ pub const RADARJAM_DIST_MAX: f32 = 800.0;
 pub const RADARJAM_DIST_NONE: f32 = -1.0;
 
 #[must_use]
-pub fn cg_radar_jam_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub fn radar_jam_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     let dx = b[0] - a[0];
     let dy = b[1] - a[1];
     let dz = b[2] - a[2];
@@ -285,13 +327,13 @@ pub fn cg_radar_jam_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 #[must_use]
-pub fn cg_radar_jam_nearest_distance(
+pub fn radar_jam_nearest_distance(
     local_origin: [f32; 3],
     jammer_origins: impl IntoIterator<Item = [f32; 3]>,
 ) -> f32 {
     let mut best = RADARJAM_DIST_NONE;
     for origin in jammer_origins {
-        let dist = cg_radar_jam_distance(local_origin, origin);
+        let dist = radar_jam_distance(local_origin, origin);
         if best < 0.0 || dist < best {
             best = dist;
         }
@@ -300,7 +342,7 @@ pub fn cg_radar_jam_nearest_distance(
 }
 
 #[must_use]
-pub fn cg_radar_jam_intensity(dist: f32, dist_min: f32, dist_max: f32, emp: bool) -> f32 {
+pub fn radar_jam_intensity(dist: f32, dist_min: f32, dist_max: f32, emp: bool) -> f32 {
     if emp {
         return 1.0;
     }
@@ -319,6 +361,6 @@ pub fn cg_radar_jam_intensity(dist: f32, dist_min: f32, dist_max: f32, emp: bool
 }
 
 #[must_use]
-pub fn cg_compass_fade_alpha(fade_compass: f32, jam_intensity: f32) -> f32 {
+pub fn compass_fade_alpha(fade_compass: f32, jam_intensity: f32) -> f32 {
     (1.0 - jam_intensity) * fade_compass
 }

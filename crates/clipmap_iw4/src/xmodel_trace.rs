@@ -92,7 +92,7 @@ pub fn xmodel_trace_line(
         if surf.contents & contentmask == 0 {
             continue;
         }
-        if cm_trace_box_misses(
+        if trace_box_misses(
             local_start,
             local_end,
             surf.midpoint,
@@ -139,7 +139,7 @@ pub fn xmodel_trace_line_animated(
             }
             _ => (local_start, local_end),
         };
-        if cm_trace_box_misses(start, end, surf.midpoint, surf.half_size, results.fraction) {
+        if trace_box_misses(start, end, surf.midpoint, surf.half_size, results.fraction) {
             continue;
         }
         let delta = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
@@ -150,7 +150,7 @@ pub fn xmodel_trace_line_animated(
     part_index
 }
 
-pub fn cm_trace_static_model(
+pub fn trace_static_model(
     sm: &ClipStaticModel,
     results: &mut Trace,
     start: [f32; 3],
@@ -225,12 +225,12 @@ where
             continue;
         }
         stats.considered = stats.considered.saturating_add(1);
-        if cm_trace_box_misses(start, end, sm.bounds_mid, sm.bounds_half, results.fraction) {
+        if trace_box_misses(start, end, sm.bounds_mid, sm.bounds_half, results.fraction) {
             stats.aabb_miss = stats.aabb_miss.saturating_add(1);
             continue;
         }
         stats.traced = stats.traced.saturating_add(1);
-        let bone = cm_trace_static_model(sm, results, start, end, contentmask);
+        let bone = trace_static_model(sm, results, start, end, contentmask);
         if bone >= 0 {
             winner = Some(StaticModelHit {
                 index,
@@ -241,7 +241,7 @@ where
     winner
 }
 
-pub fn cm_trace_box_misses(
+pub fn trace_box_misses(
     start: [f32; 3],
     end: [f32; 3],
     mid: [f32; 3],
@@ -250,10 +250,10 @@ pub fn cm_trace_box_misses(
 ) -> bool {
     let mins = [mid[0] - half[0], mid[1] - half[1], mid[2] - half[2]];
     let maxs = [mid[0] + half[0], mid[1] + half[1], mid[2] + half[2]];
-    cm_trace_box_mins_maxs(start, end, mins, maxs, fraction)
+    trace_box_mins_maxs(start, end, mins, maxs, fraction)
 }
 
-fn cm_trace_box_mins_maxs(
+fn trace_box_mins_maxs(
     start: [f32; 3],
     end: [f32; 3],
     mins: [f32; 3],

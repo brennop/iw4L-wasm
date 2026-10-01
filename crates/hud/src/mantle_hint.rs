@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use assets::{MenuCatalog, PreparedLocalizedStrings};
+use asset_game::MenuCatalog;
+use assets::PreparedLocalizedStrings;
 use bevy::prelude::*;
 use hud_iw4::{
     CG_OWNERDRAW_MANTLE, HINT_MANTLE_MATERIAL, KEY_UNBOUND, PLATFORM_MANTLE,
-    cg_draw_mantle_hint_layout, cg_draw_mantle_hint_visible, default_mp_key_binding,
-    mantle_hint_replace_bind, r_normalized_text_scale, ui_get_font_handle, ui_text_height,
-    unbound_directive,
+    default_mp_key_binding, draw_mantle_hint_layout, draw_mantle_hint_visible, hint_replace_bind,
+    normalized_text_scale, ui_get_font_handle, ui_text_height, unbound_directive,
 };
 use net::{LocalPresentClient, PresentedSnapshot};
 
@@ -56,7 +56,7 @@ pub(crate) fn update_mantle_hint(
         hide(&mut pass);
         return;
     };
-    if !cg_draw_mantle_hint_visible(ps.mantle_flags) {
+    if !draw_mantle_hint_visible(ps.mantle_flags) {
         hide(&mut pass);
         return;
     }
@@ -103,7 +103,7 @@ pub(crate) fn update_mantle_hint(
         hide(&mut pass);
         return;
     };
-    let text = mantle_hint_replace_bind(template, &bind);
+    let text = hint_replace_bind(template, &bind);
 
     let font_name = ui_get_font_handle(
         item.font_enum,
@@ -118,10 +118,10 @@ pub(crate) fn update_mantle_hint(
         return;
     };
 
-    let nscale = r_normalized_text_scale(font.pixel_height, item.text_scale);
+    let nscale = normalized_text_scale(font.pixel_height, item.text_scale);
     let length = ui_text_width(font, &text, item.text_scale);
     let height = ui_text_height(item.text_scale);
-    let layout = cg_draw_mantle_hint_layout(
+    let layout = draw_mantle_hint_layout(
         item.rect.x,
         item.rect.y,
         item.rect.w,
@@ -157,7 +157,7 @@ pub(crate) fn update_mantle_hint(
         return;
     }
 
-    let font_material = assets::AssetRef::bare_name(&font.material).to_owned();
+    let font_material = asset_core::AssetRef::bare_name(&font.material).to_owned();
     let list = Draw2dList {
         cmds: vec![
             Draw2dCmd {

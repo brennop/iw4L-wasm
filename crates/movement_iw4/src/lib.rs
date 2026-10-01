@@ -18,9 +18,9 @@ mod friction;
 mod ground;
 mod integrate;
 mod is_in_air;
-mod jump;
+pub mod jump;
 mod ladder;
-mod mantle;
+pub mod mantle;
 mod melee_charge;
 mod pml;
 mod pmove;
@@ -32,47 +32,37 @@ mod stance;
 mod viewangles;
 mod walk;
 
-pub use accelerate::pm_accelerate;
-pub use ads_frac::{AdsFracContext, pm_update_ads_frac};
-pub use ads_intent::{
-    AdsIntentContext, AdsIntentResult, BUTTON_ADS, PMF_ADS_INTENT, pm_update_ads_intent,
-};
-pub use air::{AirMoveContext, pm_air_move};
-pub use check_prone::{PRONE_CHECK_HEIGHT, PRONE_FEET_DIST, bg_check_prone, player_prone_allowed};
-pub use cmdscale::{CmdScaleWalkContext, pm_cmd_scale_walk};
+pub use accelerate::accelerate;
+pub use ads_frac::{AdsFracContext, update_ads_frac};
+pub use ads_intent::{AdsIntentContext, AdsIntentResult, BUTTON_ADS, update_ads_intent};
+pub use air::{AirMoveContext, air_move};
+pub use check_prone::{PRONE_CHECK_HEIGHT, PRONE_FEET_DIST, check_prone, player_prone_allowed};
+pub use cmdscale::{CmdScaleWalkContext, cmd_scale_walk};
 pub use collision::CollisionBackend;
-pub use correct_solid::{BG_CORRECT_SOLID_DELTAS, CorrectSolidOutcome, pm_correct_solid};
-pub use crash::{crash_land_fall_height, pm_crash_land};
+pub use correct_solid::{BG_CORRECT_SOLID_DELTAS, CorrectSolidOutcome, correct_solid};
+pub use crash::{crash_land, crash_land_fall_height};
 pub use dmgtimer::{
     ANIM_MT_FLINCH_FORWARD, PLAYER_DMGTIMER_FLINCH_TIME_MS, PLAYER_DMGTIMER_MAX_TIME,
     PLAYER_DMGTIMER_MIN_SCALE, PLAYER_DMGTIMER_STUMBLE_TIME_MS, PLAYER_DMGTIMER_TIME_PER_POINT,
-    pm_damage_scale_walk, pm_damage_window_open, pm_update_damage_timer,
-    pm_walk_move_drop_damage_timer,
+    damage_scale_walk, damage_window_open, update_damage_timer, walk_move_drop_damage_timer,
 };
-pub use drop_timers::pm_drop_timers;
-pub use events::{
-    SequencedPlayerEvent, add_predictable_event, consume_player_events, pm_add_event,
-};
+pub use drop_timers::drop_timers;
+pub use events::{SequencedPlayerEvent, add_event, add_predictable_event, consume_player_events};
 pub use footstep::{
     LADDER_SURFACE_FLAGS, LADDER_SURFACE_TYPE, SURFACE_TYPE_NAMES, bob_cycle_wrapped,
-    pm_footstep_event, pm_footstep_event_type, pm_footsteps_anim_move_type, pm_footsteps_bob_cycle,
-    pm_get_bob_max_speed, pm_ladder_footsteps, pm_should_make_footsteps, surface_type_index,
+    footstep_event, footstep_event_type, footsteps_anim_move_type, footsteps_bob_cycle,
+    get_bob_max_speed, ladder_footsteps, should_make_footsteps, surface_type_index,
     surface_type_name, surface_type_to_name,
 };
-pub use friction::pm_friction;
+pub use friction::friction;
 pub use ground::complete_ground_trace;
-pub use integrate::pm_predict_integrate;
-pub use is_in_air::pm_is_in_air;
-pub use jump::{
-    JumpAnimation, JumpCheckContext, JumpCheckResult, JumpLaunchContext, jump_check,
-    jump_check_gate, jump_clear_state, jump_get_step_height, jump_stance_allows,
-    pm_ground_surface_type, pm_jump_event, pm_jump_push_off_ladder, pm_jump_start,
-};
+pub use integrate::predict_integrate;
+pub use is_in_air::is_in_air;
+pub use jump::{JumpAnimation, JumpCheckContext, JumpCheckResult, JumpLaunchContext};
 pub use ladder::{
     CheckLadderContext, LADDER_ATTRACT_SPEED, LADDER_JUMP_BLOCK_MS, LADDER_TRACE_DIST_AIR,
-    LADDER_TRACE_DIST_WALK, LadderAttachBackend, LadderMoveContext, LadderTraceHit, PMF_LADDER,
-    PMF_LADDER_FALL, SURF_LADDER, pm_check_ladder_move, pm_clear_ladder_flag,
-    pm_ladder_attract_velocity, pm_ladder_move, pm_set_ladder_flag,
+    LADDER_TRACE_DIST_WALK, LadderAttachBackend, LadderMoveContext, LadderTraceHit, SURF_LADDER,
+    check_ladder_move, clear_ladder_flag, ladder_attract_velocity, ladder_move, set_ladder_flag,
 };
 pub use mantle::{
     CONTENTS_MANTLE, CreateAnimsMantleRootDelta, FlatMantleAnimLength, MANTLE_CHECK_RADIUS_DEFAULT,
@@ -82,36 +72,29 @@ pub use mantle::{
     MANTLE_XANIM_TREE_SIZE, MantleCapViewContext, MantleCapsuleTrace, MantleCheckContext,
     MantleFindLedgeContext, MantleFrontProbeCast, MantleLedgeBackend, MantleLedgeProbe,
     MantleLedgeProbeLog, MantleMoveContext, MantleResults, MantleRootDelta, MantleXAnimLength,
-    PMF_MANTLE, SURF_MANTLE_ON_OR_OVER, SURF_MANTLE_OVER, ZeroMantleRootDelta, mantle_active_xanim,
-    mantle_calc_end_pos, mantle_calc_path, mantle_cap_view, mantle_check, mantle_clear_hint,
-    mantle_create_anims_end_delta, mantle_duration, mantle_enter, mantle_find_ledge,
-    mantle_find_ledge_recording, mantle_find_transition, mantle_front_probe_accept,
-    mantle_front_probe_along, mantle_front_probe_cast, mantle_height_landing_probe,
-    mantle_is_weapon_inactive, mantle_move, mantle_over_length, mantle_sample_root_track,
-    mantle_start_allowed, mantle_start_clearance, mantle_trans_over_anim, mantle_trans_up_anim,
-    mantle_up_length, vector_angle_multiply,
+    SURF_MANTLE_ON_OR_OVER, SURF_MANTLE_OVER, ZeroMantleRootDelta,
 };
 pub use melee_charge::{
     MeleeChargeWeaponDelays, PLAYER_MELEE_RANGE_DEFAULT as MELEE_CHARGE_PLAYER_MELEE_RANGE_DEFAULT,
-    pm_calc_melee_charge_time, pm_melee_charge_clear, pm_melee_charge_move,
+    calc_melee_charge_time, melee_charge_clear, melee_charge_move,
 };
 pub use pml::Pml;
 pub use pmove::Pmove;
 pub use single::{
-    GroundTraceInput, MoveBounds, PmoveResult, PmoveSingle, PmoveSingleContext, pm_move,
+    GroundTraceInput, MoveBounds, PmoveResult, PmoveSingle, PmoveSingleContext, pmove,
 };
-pub(crate) use slide::pm_project_velocity;
-pub use slide::{pm_slide_move, pm_step_slide_move};
-pub use snap::{pm_end_tick_velocity, snap_vector};
+pub(crate) use slide::project_velocity;
+pub use slide::{slide_move, step_slide_move};
+pub use snap::{end_tick_velocity, snap_vector};
 pub use sprint::{
-    PERK_MARATHON, PMF_SPRINTING, SprintContext, SprintResult, bg_get_max_sprint_time,
-    pm_end_sprint, pm_sprint_ending_buttons, pm_sprint_start_interfering_buttons, pm_update_sprint,
-    sprint_forward_below_minimum, sprint_recharge_penalty_ms, sprint_time_remaining,
+    PERK_MARATHON, SprintContext, SprintResult, end_sprint, get_max_sprint_time,
+    sprint_ending_buttons, sprint_forward_below_minimum, sprint_recharge_penalty_ms,
+    sprint_start_interfering_buttons, sprint_time_remaining, update_sprint,
 };
 pub use stance::{
-    CROUCH_MAXS_Z, PMF_CROUCH, PMF_PRONE, PRONE_MAXS_Z, STAND_MAXS_Z, StanceChange, StanceSurface,
-    pm_sync_stance_tail, pm_update_stance_flags, pm_update_stance_target, pm_update_view_height,
-    stance_speed_scale, stance_surface_type, view_height, view_height_lerp_duration,
+    CROUCH_MAXS_Z, PRONE_MAXS_Z, STAND_MAXS_Z, StanceChange, StanceSurface, stance_speed_scale,
+    stance_surface_type, sync_stance_tail, update_stance_flags, update_stance_target,
+    update_view_height, view_height, view_height_lerp_duration,
 };
-pub use viewangles::{ANGLE2SHORT, SHORT2ANGLE, ViewAngleClamp, pm_update_view_angles};
-pub use walk::{WalkMoveContext, pm_walk_move};
+pub use viewangles::{ANGLE2SHORT, SHORT2ANGLE, ViewAngleClamp, update_view_angles};
+pub use walk::{WalkMoveContext, walk_move};

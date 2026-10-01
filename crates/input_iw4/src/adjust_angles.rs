@@ -27,7 +27,7 @@ pub struct AdjustAnglesInput {
     pub frozen: bool,
 }
 
-pub fn cl_adjust_angles(kb: &mut KbuttonSet, input: AdjustAnglesInput) -> (f32, f32) {
+pub fn adjust_angles(kb: &mut KbuttonSet, input: AdjustAnglesInput) -> (f32, f32) {
     if input.frozen {
         return (0.0, 0.0);
     }

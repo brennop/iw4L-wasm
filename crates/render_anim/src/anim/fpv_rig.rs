@@ -12,8 +12,11 @@ use crate::anim::fpv_pose::{
 };
 use crate::anim::xmodel_pose::{FpvSurfOwner, SkinLayout, build_skin_layout, skin_packed_into};
 use crate::draw::FpvSurfaceDraw;
-use anim_iw4::dobj_surface_hidden;
-use assets::{AnimInstance, FpvAssembly, FpvClipTracks, FpvMeshCatalog, FpvPartRole, PartBits};
+use anim_iw4::PartBits;
+use anim_iw4::surface_hidden;
+use asset_game::{FpvAssembly, FpvClipTracks, FpvPartRole};
+use asset_model::FpvMeshCatalog;
+use xmodel_runtime::AnimInstance;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FpvSurfaceVerdict {
@@ -124,7 +127,7 @@ impl PreparedFpvModel {
             hide.is_some_and(|words| {
                 skel.surface_part_bits
                     .get(surface)
-                    .is_some_and(|bits| dobj_surface_hidden(bits, words, 0))
+                    .is_some_and(|bits| surface_hidden(bits, words, 0))
             })
         };
         let admitted = |surface: usize| match admission.verdict(catalog_entry, surface) {
@@ -214,7 +217,7 @@ pub struct PreparedFpvComposition {
 fn surf_owner(role: FpvPartRole) -> FpvSurfOwner {
     match role {
         FpvPartRole::Hands => FpvSurfOwner::Hands,
-        FpvPartRole::Gun => FpvSurfOwner::Gun,
+        FpvPartRole::Gun | FpvPartRole::Knife => FpvSurfOwner::Gun,
         FpvPartRole::Attachment => FpvSurfOwner::Scope,
         FpvPartRole::Rocket => FpvSurfOwner::Rocket,
     }
@@ -573,8 +576,6 @@ impl PreparedFpvRig {
     }
 }
 
-/// A dual-wield left hand is the right hand's pose moved sideways, the offset
-/// landing on the posed position.
 fn translate_packed_rows(rows: &mut [[u8; asset_iw4::size::GFX_PACKED_VERTEX]], delta: Vec3) {
     for row in rows {
         let x = f32::from_le_bytes([row[0], row[1], row[2], row[3]]) + delta.x;

@@ -587,6 +587,10 @@ fn hashed_lookup<T: Copy>(
     name_hash: u32,
     cmp: &mut u32,
 ) -> Option<T> {
+    // Remapped code samplers can request hashes outside the authored walk order.
+    if table.get(*cursor).is_none_or(|(hash, _)| *hash > name_hash) {
+        *cursor = 0;
+    }
     while *cursor < table.len() {
         *cmp = cmp.saturating_add(1);
         let hash = table[*cursor].0;

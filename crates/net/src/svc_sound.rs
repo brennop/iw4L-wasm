@@ -96,6 +96,21 @@ impl PendingSvcSounds {
         }
     }
 
+    pub fn adopt_from_world(&mut self, world: &mut sim::SimWorld) {
+        for sound in world.take_pending_local_sounds() {
+            if sound.alias_index == 0 {
+                self.dropped_index_zero = self.dropped_index_zero.saturating_add(1);
+                continue;
+            }
+            let svc = if sound.stop {
+                SvcSound::stop(sound.alias_index)
+            } else {
+                SvcSound::play(sound.alias_index)
+            };
+            self.indexed.push((sound.recipient, svc));
+        }
+    }
+
     pub fn take_for(&mut self, client: ClientId) -> Vec<SvcSound> {
         let mut out = Vec::new();
         self.indexed.retain(|(id, cmd)| {

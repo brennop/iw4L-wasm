@@ -10,8 +10,8 @@ use super::material_runtime::{RuntimeCodeSources, RuntimeImageId};
 use crate::prepare::scene::camera::FpvLens;
 use crate::prepare::scene::model_lighting_atlas::WorldModelLightingAtlas;
 use crate::prepare::scene::view_parms::PreparedSceneView;
-use hud_iw4::{GfxCmdBufSource2d, gfx_scene_def_float_time, r_begin_view};
-use net::CgFrameClock;
+use hud_iw4::{GfxCmdBufSource2d, begin_view, gfx_scene_def_float_time};
+use net::FrameClock;
 
 pub use crate::prepare::scene::view_parms::{host_clip_from_view, pack_live_view_parms};
 
@@ -69,116 +69,140 @@ pub const CODE_MESH_ARG_0: u16 = 0x4a;
 
 pub const CODE_MESH_ARG_1: u16 = 0x4b;
 
-pub const CODE_LEFTOVER_IW5_EYEOFFSET: u16 =
-    assets::LEFTOVER_IW5_CODE_BASE + assets::IW5_CODE_EYEOFFSET;
+pub const CODE_LEFTOVER_IW5_EYEOFFSET: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
+    + asset_material::iw5_tech_map::IW5_CODE_EYEOFFSET;
 
-pub const CODE_LEFTOVER_IW5_SAT_R: u16 =
-    assets::LEFTOVER_IW5_CODE_BASE + assets::IW5_CODE_COLOR_SATURATION_R;
+pub const CODE_LEFTOVER_IW5_SAT_R: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
+    + asset_material::iw5_tech_map::IW5_CODE_COLOR_SATURATION_R;
 
-pub const CODE_LEFTOVER_IW5_SAT_G: u16 =
-    assets::LEFTOVER_IW5_CODE_BASE + assets::IW5_CODE_COLOR_SATURATION_G;
+pub const CODE_LEFTOVER_IW5_SAT_G: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
+    + asset_material::iw5_tech_map::IW5_CODE_COLOR_SATURATION_G;
 
-pub const CODE_LEFTOVER_IW5_SAT_B: u16 =
-    assets::LEFTOVER_IW5_CODE_BASE + assets::IW5_CODE_COLOR_SATURATION_B;
+pub const CODE_LEFTOVER_IW5_SAT_B: u16 = asset_material::iw5_tech_map::LEFTOVER_IW5_CODE_BASE
+    + asset_material::iw5_tech_map::IW5_CODE_COLOR_SATURATION_B;
 
-pub const CODE_LEFTOVER_T5_VPOSX: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_VPOSX_TO_WORLD;
+pub const CODE_LEFTOVER_T5_VPOSX: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_VPOSX_TO_WORLD;
 
-pub const CODE_LEFTOVER_T5_VPOSY: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_VPOSY_TO_WORLD;
+pub const CODE_LEFTOVER_T5_VPOSY: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_VPOSY_TO_WORLD;
 
-pub const CODE_LEFTOVER_T5_VPOS1: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_VPOS1_TO_WORLD;
+pub const CODE_LEFTOVER_T5_VPOS1: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_VPOS1_TO_WORLD;
 
-pub const CODE_LEFTOVER_T5_EYEOFFSET: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_EYEOFFSET;
+pub const CODE_LEFTOVER_T5_EYEOFFSET: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_EYEOFFSET;
 
 pub const CODE_LEFTOVER_T5_LIGHT_ATTENUATION: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_ATTENUATION;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_ATTENUATION;
 
 pub const CODE_LEFTOVER_T5_LIGHT_FALLOFF_A: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_FALLOFF_A;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_FALLOFF_A;
 
 pub const CODE_LEFTOVER_T5_LIGHT_FALLOFF_B: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_FALLOFF_B;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_FALLOFF_B;
 
 pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX0: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_SPOT_MATRIX0;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX0;
 
 pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX1: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_SPOT_MATRIX1;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX1;
 
 pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX2: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_SPOT_MATRIX2;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX2;
 
 pub const CODE_LEFTOVER_T5_LIGHT_SPOT_MATRIX3: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_SPOT_MATRIX3;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_MATRIX3;
 
 pub const CODE_LEFTOVER_T5_LIGHT_SPOT_AABB: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_SPOT_AABB;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_AABB;
 
 pub const CODE_LEFTOVER_T5_LIGHT_CONE_CONTROL1: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_CONE_CONTROL1;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_CONE_CONTROL1;
 
 pub const CODE_LEFTOVER_T5_LIGHT_CONE_CONTROL2: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_CONE_CONTROL2;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_CONE_CONTROL2;
 
 pub const CODE_LEFTOVER_T5_LIGHT_SPOT_COOKIE_SLIDE: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_SPOT_COOKIE_SLIDE;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_SPOT_COOKIE_SLIDE;
 
-pub const CODE_LEFTOVER_T5_SUN_POSITION: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_SUN_POSITION;
+pub const CODE_LEFTOVER_T5_SUN_POSITION: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_SUN_POSITION;
 
-pub const CODE_LEFTOVER_T5_SUN_DIFFUSE: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_SUN_DIFFUSE;
+pub const CODE_LEFTOVER_T5_SUN_DIFFUSE: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_SUN_DIFFUSE;
 
-pub const CODE_LEFTOVER_T5_SUN_SPECULAR: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_SUN_SPECULAR;
+pub const CODE_LEFTOVER_T5_SUN_SPECULAR: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_SUN_SPECULAR;
 
-pub const CODE_LEFTOVER_T5_HDRCONTROL_0: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_HDRCONTROL_0;
+pub const CODE_LEFTOVER_T5_HDRCONTROL_0: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_HDRCONTROL_0;
 
-pub const CODE_LEFTOVER_T5_HDRCONTROL_1: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_HDRCONTROL_1;
+pub const CODE_LEFTOVER_T5_HDRCONTROL_1: u16 = asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+    + asset_material::t5_code_remap::T5_CODE_HDRCONTROL_1;
 
 pub const CODE_LEFTOVER_T5_LIGHT_HERO_SCALE: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_LIGHT_HERO_SCALE;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_LIGHT_HERO_SCALE;
 
 pub const CODE_LEFTOVER_T5_HERO_LIGHTING_R: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_HERO_LIGHTING_R;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_HERO_LIGHTING_R;
 
 pub const CODE_LEFTOVER_T5_HERO_LIGHTING_G: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_HERO_LIGHTING_G;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_HERO_LIGHTING_G;
 
 pub const CODE_LEFTOVER_T5_HERO_LIGHTING_B: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_HERO_LIGHTING_B;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_HERO_LIGHTING_B;
 
 pub const CODE_LEFTOVER_T5_GENERIC_PARAM4: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_GENERIC_PARAM4;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM4;
 
 pub const CODE_LEFTOVER_T5_GENERIC_PARAM5: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_GENERIC_PARAM5;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM5;
 
 pub const CODE_LEFTOVER_T5_GENERIC_PARAM6: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_GENERIC_PARAM6;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM6;
 
 pub const CODE_LEFTOVER_T5_WIND_DIRECTION: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_WIND_DIRECTION;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_WIND_DIRECTION;
 
 pub const CODE_LEFTOVER_T5_GRASS_WIND_FORCE0: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_GRASS_WIND_FORCE0;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_GRASS_WIND_FORCE0;
 
 pub const CODE_LEFTOVER_T5_VARIANT_WIND_SPRING_0: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_VARIANT_WIND_SPRING_0;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_VARIANT_WIND_SPRING_0;
 
 pub const CODE_LEFTOVER_T5_TREECANOPY_PARMS: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_TREECANOPY_PARMS;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_TREECANOPY_PARMS;
 
 pub const CODE_LEFTOVER_T5_CUSTOMWIND_CENTER: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_CUSTOMWIND_CENTER;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_CUSTOMWIND_CENTER;
 
 pub const CODE_LEFTOVER_T5_CUSTOMWIND_SPRING: u16 =
-    assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_CUSTOMWIND_SPRING;
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_CUSTOMWIND_SPRING;
 
 pub const T5_HDRCONTROL_EXPOSURE_DIVISOR: f32 = 8.0;
 
@@ -339,7 +363,7 @@ pub fn fog_color_linear_and_gamma(rgb: [f32; 3], alpha: f32) -> ([f32; 4], [f32;
 
 pub fn produce_frame_fog(
     sources: &mut RuntimeCodeSources,
-    fog: &assets::ExpFog,
+    fog: &asset_world::ExpFog,
     r_fog_enabled: bool,
 ) -> Result<(), CommandContextRefusal> {
     let density = fog.density();
@@ -365,7 +389,7 @@ pub fn produce_frame_fog(
     Ok(())
 }
 
-fn produce_iw4_sun_fog(sources: &mut RuntimeCodeSources, density: f32, sun: &assets::SunFog) {
+fn produce_iw4_sun_fog(sources: &mut RuntimeCodeSources, density: f32, sun: &asset_world::SunFog) {
     let begin = (sun.begin_angle_deg.to_radians()).cos();
     let end = (sun.end_angle_deg.to_radians()).cos();
     let mut slope = 100.0;
@@ -522,7 +546,7 @@ pub fn produce_top_pair_command_context(
     view_from_world: Mat4,
     view_origin: Vec3,
     world0: Vec<[u32; 4]>,
-    fog: Option<&assets::ExpFog>,
+    fog: Option<&asset_world::ExpFog>,
     fog_enabled: bool,
 ) -> Result<(), CommandContextRefusal> {
     sources.set_constant_rows(
@@ -626,12 +650,14 @@ fn produce_t5_sky_constants(sources: &mut RuntimeCodeSources, authored: [f32; 4]
         sources.set_constant_rows(index, &[float4_bits(row)]);
     }
     sources.set_constant_rows(
-        assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_SKY_TRANSITION,
+        asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+            + asset_material::t5_code_remap::T5_CODE_SKY_TRANSITION,
         &[float4_bits([0.0; 4])],
     );
     let intensity = t5_sky_intensity(authored, forward_z);
     sources.set_constant_rows(
-        assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_SKY_COLOR_MULTIPLIER,
+        asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+            + asset_material::t5_code_remap::T5_CODE_SKY_COLOR_MULTIPLIER,
         &[float4_bits([intensity; 4])],
     );
 }
@@ -665,7 +691,9 @@ fn produce_leftover_t5_initial_water_waves(sources: &mut RuntimeCodeSources, tim
     ];
     for (row, values) in rows.into_iter().enumerate() {
         sources.set_constant_rows(
-            assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_POSTFX_CONTROL0 + row as u16,
+            asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+                + asset_material::t5_code_remap::T5_CODE_POSTFX_CONTROL0
+                + row as u16,
             &[float4_bits(values)],
         );
     }
@@ -843,7 +871,7 @@ pub(crate) fn update_command_context_code_sources(
     t5_tree_scatter: Option<Res<MapT5TreeScatter>>,
     outdoor: Option<Res<MapOutdoor>>,
     lighting: Option<Res<WorldModelLightingAtlas>>,
-    cg_clock: Option<Res<CgFrameClock>>,
+    cg_clock: Option<Res<FrameClock>>,
     prepared: Res<PreparedSceneView>,
     cameras: Query<&Camera, With<FpvLens>>,
     scene: Option<Res<crate::prepare::scene::world::WorldScene>>,
@@ -891,7 +919,7 @@ pub(crate) fn update_command_context_code_sources(
         } else {
             0
         };
-    let begun = r_begin_view(
+    let begun = begin_view(
         &mut source,
         &gfx_scene_def_float_time(float_time),
         &prepared.parms,
@@ -956,16 +984,18 @@ pub(crate) fn update_command_context_code_sources(
     produce_leftover_t5_hero_lighting_matrix(&mut mat_frame.code_sources);
 
     for index in [
-        assets::T5_CODE_GENERIC_PARAM0,
-        assets::T5_CODE_GENERIC_PARAM1,
+        asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM0,
+        asset_material::t5_code_remap::T5_CODE_GENERIC_PARAM1,
     ] {
-        mat_frame
-            .code_sources
-            .set_constant_rows(assets::LEFTOVER_T5_CODE_BASE + index, &[[0; 4]]);
+        mat_frame.code_sources.set_constant_rows(
+            asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE + index,
+            &[[0; 4]],
+        );
     }
 
     mat_frame.code_sources.set_constant_rows(
-        assets::LEFTOVER_T5_CODE_BASE + assets::T5_CODE_EXTRA_CAM_PARAM,
+        asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+            + asset_material::t5_code_remap::T5_CODE_EXTRA_CAM_PARAM,
         &[[0; 4]],
     );
     produce_leftover_t5_initial_water_waves(&mut mat_frame.code_sources, float_time);

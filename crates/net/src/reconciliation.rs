@@ -71,7 +71,7 @@ pub const IDENTITY_CONTRACT: &[IdentityContractRow] = &[
     IdentityContractRow {
         subject: "dynamic entity and archived entity",
         identity: "EntityRef(number, generation)",
-        lifetime: "G_Spawn allocation through free; reuse keeps number and increments generation",
+        lifetime: "allocation through free; reuse keeps number and increments generation",
     },
     IdentityContractRow {
         subject: "authoritative projectile",

@@ -28,7 +28,7 @@ pub struct SortedMaterialOrdinal(u32);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MaterialGenerationId(pub u64);
 
-pub const fn retail_sort_band(rank: u32) -> u16 {
+pub const fn sort_band(rank: u32) -> u16 {
     if (rank as usize) < SortedMaterialOrdinal::RETAIL_LIMIT {
         rank as u16
     } else {
@@ -55,7 +55,7 @@ impl SortedMaterialOrdinal {
         self.0
     }
 
-    pub const fn retail_sort_band(self) -> u16 {
+    pub const fn sort_band(self) -> u16 {
         if (self.0 as usize) < Self::RETAIL_LIMIT {
             self.0 as u16
         } else {
@@ -240,7 +240,7 @@ pub struct RuntimeShaderProgram {
     pub program: Vec<u8>,
 }
 
-pub fn sort_pass_args_retail(pass: &mut RuntimePass) {
+pub fn sort_pass_args(pass: &mut RuntimePass) {
     let prim = usize::from(pass.per_prim_arg_count);
     let obj = usize::from(pass.per_obj_arg_count);
     let stable = usize::from(pass.stable_arg_count);

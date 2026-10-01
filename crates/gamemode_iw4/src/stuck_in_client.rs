@@ -1,10 +1,10 @@
 pub const G_PLAYER_COLLISION_EJECT_SPEED_DEFAULT: i32 = 25;
 
-pub const STUCK_PM_TIME: i32 = 300;
+pub(crate) const STUCK_PM_TIME: i32 = 300;
 
-pub const STUCK_PM_FLAGS: u32 = 0x80;
+pub(crate) const STUCK_PM_FLAGS: u32 = 0x80;
 
-pub const OTHER_FLAGS_PLAYER: u32 = 0x1000;
+pub(crate) const OTHER_FLAGS_PLAYER: u32 = 0x1000;
 
 const CRANDOM_SCALE: f32 = 1.0 / 32768.0;
 
@@ -61,8 +61,8 @@ pub fn stuck_in_client(
     let other_origin = clients[other_idx].origin;
     let mut dx = other_origin[0] - self_origin[0];
     let mut dy = other_origin[1] - self_origin[1];
-    dx += crandom(holdrand);
-    dy += crandom(holdrand);
+    dx += random_signed(holdrand);
+    dy += random_signed(holdrand);
     vec2_normalize(&mut dx, &mut dy);
 
     let other_xy = vec2_length(clients[other_idx].velocity);
@@ -132,7 +132,7 @@ fn bounds_overlap(a_mid: [f32; 3], a_half: [f32; 3], b_mid: [f32; 3], b_half: [f
     dx <= a_half[0] + b_half[0] && dy <= a_half[1] + b_half[1] && dz <= a_half[2] + b_half[2]
 }
 
-pub fn crandom(holdrand: &mut u32) -> f32 {
+pub(crate) fn random_signed(holdrand: &mut u32) -> f32 {
     *holdrand = holdrand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
     let unit = (*holdrand >> 17) as f32 * CRANDOM_SCALE;
     (unit + unit) - CRANDOM_BIAS

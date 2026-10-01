@@ -4,7 +4,6 @@ use frame::ClientSet;
 use assets::LoadingScreen;
 
 use crate::layers::{GameUiFont, UiLayer, UiLayerVisibility, game_text_font};
-use crate::menu::MenuEnabled;
 use frame::AppScreen;
 
 #[derive(Resource, Clone, Debug)]
@@ -31,12 +30,8 @@ struct GapTitleText;
 #[derive(Component)]
 struct GapBodyText;
 
-fn gap_should_show(
-    loading: Option<Res<LoadingScreen>>,
-    menu: Res<MenuEnabled>,
-    screen: Res<AppScreen>,
-) -> bool {
-    if loading.is_some() || menu.0 {
+fn gap_should_show(loading: Option<Res<LoadingScreen>>, screen: Res<AppScreen>) -> bool {
+    if loading.is_some() || *screen == AppScreen::MainMenu {
         return false;
     }
     !matches!(*screen, AppScreen::ClassSelect | AppScreen::InGame)
@@ -47,14 +42,13 @@ fn spawn_gap_ui(
     hud: Res<GapHud>,
     font: Option<Res<GameUiFont>>,
     loading: Option<Res<LoadingScreen>>,
-    menu: Res<MenuEnabled>,
     screen: Res<AppScreen>,
     existing: Query<Entity, With<GapHudRoot>>,
 ) {
     if !existing.is_empty() {
         return;
     }
-    if !gap_should_show(loading, menu, screen) {
+    if !gap_should_show(loading, screen) {
         return;
     }
     let text_font = font
@@ -122,11 +116,10 @@ fn refresh_gap_ui(
 fn despawn_gap_when_hidden(
     mut commands: Commands,
     loading: Option<Res<LoadingScreen>>,
-    menu: Res<MenuEnabled>,
     screen: Res<AppScreen>,
     roots: Query<Entity, With<GapHudRoot>>,
 ) {
-    if gap_should_show(loading, menu, screen) {
+    if gap_should_show(loading, screen) {
         return;
     }
     for entity in &roots {

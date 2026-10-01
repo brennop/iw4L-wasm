@@ -22,6 +22,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         gun_xmodel_name,
         hand_xmodel_name,
         world_model_name,
+        knife_xmodel_name,
         move_speed_scale,
         ads_move_speed_scale,
     ) = match s.ptr_at(p, weap_def_off)? {
@@ -33,22 +34,25 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
                 None,
                 None,
                 None,
+                None,
                 s.f32_at(body, s.layout(sz::WEAPON_DEF_MOVE_SPEED_OFF, 1332))?,
                 s.f32_at(body, s.layout(sz::WEAPON_DEF_ADS_MOVE_SPEED_OFF, 1336))?,
             )
         }
         _ if s.begin_body(p.at(weap_def_off))? => {
-            let (body, gun0, hand0, world0) = load_weapon_def(s, links, ai_knots, player_knots)?;
+            let (body, gun0, hand0, world0, knife0) =
+                load_weapon_def(s, links, ai_knots, player_knots)?;
             (
                 Some(body),
                 gun0,
                 hand0,
                 world0,
+                knife0,
                 s.f32_at(body, s.layout(sz::WEAPON_DEF_MOVE_SPEED_OFF, 1332))?,
                 s.f32_at(body, s.layout(sz::WEAPON_DEF_ADS_MOVE_SPEED_OFF, 1336))?,
             )
         }
-        _ => (None, None, None, None, 0.0, 0.0),
+        _ => (None, None, None, None, None, 0.0, 0.0),
     };
 
     s.walk_stage = "weapon.complete";
@@ -101,12 +105,12 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         _ => None,
     };
     let fx_overrides_off = s.layout(52, 104);
-    let fx_overrides = s.i32_at(p, s.layout(48, 96))?.max(0) as usize;
+    let overrides = s.i32_at(p, s.layout(48, 96))?.max(0) as usize;
     if s.begin_body(p.at(fx_overrides_off))? {
         let entry = s.layout(sz::FX_OVERRIDE_ENTRY, 32);
-        let arr = s.alloc_load(4, entry * fx_overrides)?;
+        let arr = s.alloc_load(4, entry * overrides)?;
         s.fixup_slot(p.at(fx_overrides_off), arr)?;
-        for i in 0..fx_overrides {
+        for i in 0..overrides {
             load_fx_override(s, links, arr.at(i * entry))?;
         }
     }
@@ -213,6 +217,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         gun_xmodel_name,
         hand_xmodel_name,
         world_model_name,
+        knife_xmodel_name,
         hide_tags,
         sz_xanims,
         ads_view_kick_center_speed: s.f32_at(
@@ -254,8 +259,8 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         anim_overrides: anim_override_arr,
         sound_override_count: sound_overrides as i32,
         sound_overrides: sound_override_arr,
-        fx_override_count: fx_overrides as i32,
-        fx_overrides: array_at(s, fx_overrides_off),
+        fx_override_count: overrides as i32,
+        overrides: array_at(s, fx_overrides_off),
         reload_override_count: reload_overrides as i32,
         reload_overrides: array_at(s, reload_overrides_off),
         note_track_override_count: note_overrides as i32,
@@ -308,7 +313,7 @@ fn load_weapon_def(
     links: &mut dyn AssetLinkSink,
     ai_knots: usize,
     player_knots: usize,
-) -> Result<(Ptr, Option<Ptr>, Option<Ptr>, Option<Ptr>)> {
+) -> Result<(Ptr, Option<Ptr>, Option<Ptr>, Option<Ptr>, Option<Ptr>)> {
     s.walk_stage = "weapon.def";
     let width = s.pointer_bytes();
     let p = s.alloc_load(4, s.layout(sz::WEAPON_DEF, 2496))?;
@@ -347,14 +352,15 @@ fn load_weapon_def(
         asset_ptr_at(s, links, AssetType::Material, p.at(off))?;
     }
     let world0 = follow_xmodel_array(s, links, p, s.layout(sz::WEAPON_DEF_WORLD_MODEL_OFF, 752))?;
-    for off in [
-        s.layout(484, 760),
-        s.layout(488, 768),
-        s.layout(492, 776),
-        s.layout(496, 784),
-    ] {
+    for off in [s.layout(484, 760), s.layout(488, 768)] {
         asset_ptr_at(s, links, AssetType::XModel, p.at(off))?;
     }
+    let knife0 = follow_xmodel_ptr(
+        s,
+        links,
+        p.at(s.layout(sz::WEAPON_DEF_KNIFE_MODEL_OFF, 776)),
+    )?;
+    asset_ptr_at(s, links, AssetType::XModel, p.at(s.layout(496, 784)))?;
     asset_ptr_at(s, links, AssetType::Material, p.at(s.layout(500, 792)))?;
     asset_ptr_at(s, links, AssetType::Material, p.at(s.layout(508, 808)))?;
     asset_ptr_at(s, links, AssetType::Material, p.at(s.layout(516, 824)))?;
@@ -417,7 +423,7 @@ fn load_weapon_def(
     follow_snd_alias_custom(s, p.at(s.layout(1836, 2360)))?;
     follow_snd_alias_custom(s, p.at(s.layout(1840, 2368)))?;
     asset_ptr_at(s, links, AssetType::XModel, p.at(s.layout(1952, 2488)))?;
-    Ok((p, gun0, hand0, world0))
+    Ok((p, gun0, hand0, world0, knife0))
 }
 
 fn load_anim_override(s: &mut ZoneStream<'_>, p: Ptr) -> Result<()> {

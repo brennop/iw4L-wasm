@@ -15,8 +15,8 @@ pub mod texture_bind;
 pub use code_mesh::{
     CODE_MESH_ARGS_CAP, CODE_MESH_ARGS_STRIDE, CODE_MESH_INDEX_CAP, CODE_MESH_VERT_CAP,
     CODE_MESH_VERT_STRIDE, CODE_MESH_WARN_ARGS, CODE_MESH_WARN_INDS, CODE_MESH_WARN_VERTS,
-    GfxMeshData, r_get_code_mesh_args, r_get_code_mesh_verts, r_reserve_code_mesh,
-    r_reserve_code_mesh_indices, r_reserve_code_mesh_verts, r_shrink_code_mesh_verts,
+    GfxMeshData, get_code_mesh_args, get_code_mesh_verts, reserve_code_mesh,
+    reserve_code_mesh_indices, reserve_code_mesh_verts, shrink_code_mesh_verts,
 };
 pub use entries::{
     GfxSmodelRigidEntry, GfxTrianglesListEntry, GfxXModelRigidEntry, SMODEL_RIGID_ENTRY_STRIDE,
@@ -26,8 +26,8 @@ pub use entries::{
 };
 pub use exec::{MaterialExecFrame, OutdoorLookup, SpotShadowReceiver};
 pub use geometry::{
-    DYNAMIC_INDEX_BUFFER_CAPACITY, RetailPackedVertexRefusal, RetailWorldVertexRefusal,
-    SmodelVertex, SurfaceLightmapId, SurfaceReflectionProbeId, SurfaceSamplerInputs, WorldVertex,
+    DYNAMIC_INDEX_BUFFER_CAPACITY, PackedVertexRefusal, SmodelVertex, SurfaceLightmapId,
+    SurfaceReflectionProbeId, SurfaceSamplerInputs, WorldVertex, WorldVertexRefusal,
     xmodel_tess_info_packed_arm, xmodel_tess_info_vert_decl_type,
 };
 pub use gpu_contract::{

@@ -8,7 +8,7 @@ use dpvs_iw4::{
 
 use crate::anim::body_frustum::AdmittedCellVis;
 use crate::anim::xmodel_pose::PosedModelSurface;
-use crate::dobj_lighting_box_half;
+use crate::lighting_box_half;
 use crate::occupancy::dyn_ent_phys;
 use crate::occupancy::script_model::{DObjLodView, pose_script_dobj_with_materials};
 use crate::{
@@ -116,7 +116,7 @@ struct DynEntPoseProduct {
 }
 
 struct DynEntPosedAsset {
-    key: assets::MapXModelAssetKey,
+    key: asset_world::MapXModelAssetKey,
     camera_lod: Option<u8>,
     surfaces: Vec<PosedModelSurface>,
     authored: Vec<Option<assets::MaterialIndex>>,
@@ -135,7 +135,7 @@ struct DynEntPosedOwner {
 impl DynEntPoseProduct {
     fn asset_index(
         &self,
-        key: &assets::MapXModelAssetKey,
+        key: &asset_world::MapXModelAssetKey,
         camera_lod: Option<u8>,
     ) -> Option<usize> {
         self.assets
@@ -222,25 +222,25 @@ pub fn fpv_frustum_planes(
 }
 
 pub fn xmodel_radius(
-    catalog: Option<&assets::MapXModelSceneCatalog>,
-    key: &assets::MapXModelAssetKey,
+    catalog: Option<&asset_world::MapXModelSceneCatalog>,
+    key: &asset_world::MapXModelAssetKey,
 ) -> f32 {
     let Some(catalog) = catalog else {
         return 0.0;
     };
     match catalog.get(key) {
         Some(
-            assets::MapXModelSceneAsset::Iw4(skel)
-            | assets::MapXModelSceneAsset::Iw5(skel)
-            | assets::MapXModelSceneAsset::T5(skel),
+            asset_world::MapXModelSceneAsset::Iw4(skel)
+            | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T5(skel),
         ) => skel.radius.unwrap_or(0.0),
-        Some(assets::MapXModelSceneAsset::Unavailable { .. }) | None => 0.0,
+        Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => 0.0,
     }
 }
 
 pub fn xmodel_phys_hull(
-    catalog: Option<&assets::MapXModelSceneCatalog>,
-    key: &assets::MapXModelAssetKey,
+    catalog: Option<&asset_world::MapXModelSceneCatalog>,
+    key: &asset_world::MapXModelAssetKey,
 ) -> ([f32; 3], [f32; 3]) {
     let radius = xmodel_radius(catalog, key).max(1.0);
     let fallback = ([-radius; 3], [radius; 3]);
@@ -249,11 +249,11 @@ pub fn xmodel_phys_hull(
     };
     match catalog.get(key) {
         Some(
-            assets::MapXModelSceneAsset::Iw4(skel)
-            | assets::MapXModelSceneAsset::Iw5(skel)
-            | assets::MapXModelSceneAsset::T5(skel),
+            asset_world::MapXModelSceneAsset::Iw4(skel)
+            | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T5(skel),
         ) => hull_from_bounds(skel.bounds).unwrap_or(fallback),
-        Some(assets::MapXModelSceneAsset::Unavailable { .. }) | None => fallback,
+        Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => fallback,
     }
 }
 
@@ -271,17 +271,17 @@ pub(crate) fn hull_from_bounds(
 }
 
 fn xmodel_local_bounds(
-    catalog: Option<&assets::MapXModelSceneCatalog>,
-    key: &assets::MapXModelAssetKey,
+    catalog: Option<&asset_world::MapXModelSceneCatalog>,
+    key: &asset_world::MapXModelAssetKey,
 ) -> Option<([f32; 3], [f32; 3])> {
     let catalog = catalog?;
     match catalog.get(key) {
         Some(
-            assets::MapXModelSceneAsset::Iw4(skel)
-            | assets::MapXModelSceneAsset::Iw5(skel)
-            | assets::MapXModelSceneAsset::T5(skel),
+            asset_world::MapXModelSceneAsset::Iw4(skel)
+            | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T5(skel),
         ) => skel.bounds,
-        Some(assets::MapXModelSceneAsset::Unavailable { .. }) | None => None,
+        Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => None,
     }
 }
 
@@ -341,7 +341,7 @@ fn admitted_vis(vis: &PublishedCellVis) -> AdmittedCellVis<'_> {
 fn link_dyn_ent_cells(
     cells: Res<WorldDpvsCells>,
     atpoint: Res<DynAtPointLookup>,
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     mut membership: ResMut<DynEntCellBits>,
     mut vis: ResMut<DynEntPrimaryLightVis>,
     changed: Query<
@@ -441,7 +441,7 @@ fn link_dyn_ent_cells(
 }
 
 fn cull_dyn_ent_cell_models(
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
     cell_vis: Res<PublishedCellVis>,
     membership: Res<DynEntCellBits>,
@@ -474,7 +474,7 @@ fn cull_dyn_ent_cell_models(
 }
 
 fn pose_dyn_ents(
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     instances: Query<(Entity, &WorldDynEntInstance, &Transform, &Visibility)>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
     lod_skinned: Res<render_scene::LodRampSkinnedDvar>,
@@ -502,11 +502,11 @@ fn pose_dyn_ents(
         let camera_hidden = *visibility == Visibility::Hidden;
         let skel = match catalog.get(&inst.current_model) {
             Some(
-                assets::MapXModelSceneAsset::Iw4(skel)
-                | assets::MapXModelSceneAsset::Iw5(skel)
-                | assets::MapXModelSceneAsset::T5(skel),
+                asset_world::MapXModelSceneAsset::Iw4(skel)
+                | asset_world::MapXModelSceneAsset::Iw5(skel)
+                | asset_world::MapXModelSceneAsset::T5(skel),
             ) => skel.as_ref(),
-            Some(assets::MapXModelSceneAsset::Unavailable { .. }) | None => {
+            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
                 continue;
             }
         };
@@ -529,7 +529,7 @@ fn pose_dyn_ents(
                 continue;
             };
             let dobj_state =
-                assets::dobj::DObjSemanticState::bind_pose(inst.current_model.0.clone(), 1, 1);
+                xmodel_runtime::DObjSemanticState::bind_pose(inst.current_model.0.clone(), 1, 1);
             let Ok(request) = dobj_state.resolve_request(|_| None) else {
                 continue;
             };
@@ -569,7 +569,7 @@ fn pose_dyn_ents(
 }
 
 fn append_dynent_draws(
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     atlas: Option<Res<WorldModelLightingAtlas>>,
     atpoint: Res<DynAtPointLookup>,
     tess: Option<Res<TessMaterials>>,
@@ -643,7 +643,7 @@ fn append_dynent_draws(
         }
         let box_half = row
             .radius
-            .and_then(|radius| dobj_lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
+            .and_then(|radius| lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
         let lookup_fallback = atpoint.fallback(row.lighting_origin, box_half);
         let pending_lighting = (!row.camera_hidden).then(|| {
             lighting_requests.request(ModelLightingRequest {

@@ -98,7 +98,7 @@ pub fn perk_weap_spread_multiplier(perks0: u32) -> f32 {
     }
 }
 
-pub fn bg_get_spread_for_weapon(
+pub fn get_spread_for_weapon(
     view_height_current: f32,
     spread_override: i32,
     spread_override_state: SpreadOverrideState,
@@ -140,7 +140,7 @@ pub fn fire_weapon_spread_degrees(
     }
 }
 
-pub fn pm_add_aim_spread_fire(aim_spread_scale: &mut f32, f_weapon_pos_frac: f32, fire_add: f32) {
+pub fn add_aim_spread_fire(aim_spread_scale: &mut f32, f_weapon_pos_frac: f32, fire_add: f32) {
     if f_weapon_pos_frac == 1.0 {
         return;
     }
@@ -151,7 +151,7 @@ pub fn pm_add_aim_spread_fire(aim_spread_scale: &mut f32, f_weapon_pos_frac: f32
     *aim_spread_scale = v;
 }
 
-pub fn pm_adjust_aim_spread_scale(
+pub fn adjust_aim_spread_scale(
     state: &mut AimSpreadState,
     weap: &WeaponSpreadFacts,
     decay: &WeaponAimSpreadDecayFacts,

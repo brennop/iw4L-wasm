@@ -179,7 +179,7 @@ impl DynEntWakeBroadphase {
 }
 
 pub(crate) fn rebuild_dyn_ent_wake_broadphase(
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     instances: Query<(Entity, &WorldDynEntInstance, &Transform), With<DynEntModelEntity>>,
     mut broadphase: ResMut<DynEntWakeBroadphase>,
 ) {
@@ -251,8 +251,8 @@ pub(crate) fn apply_health(health: &mut i32, damage: i32) -> bool {
     }
 }
 
-fn is_destroyable(ty: assets::DynEntType) -> bool {
-    assets::retail_dyn_ent_props(ty).is_some_and(|props| props.destroyable)
+fn is_destroyable(ty: asset_world::DynEntType) -> bool {
+    asset_world::dyn_ent_props(ty).is_some_and(|props| props.destroyable)
 }
 
 pub(crate) fn explosion_impulse(
@@ -323,11 +323,11 @@ fn aabb_sphere_overlap(mins: Vec3, maxs: Vec3, center: Vec3, radius: f32) -> boo
     q.distance_squared(center) <= radius * radius
 }
 
-fn can_wake(inst: &WorldDynEntInstance) -> Option<&assets::OwnedPhysPreset> {
+fn can_wake(inst: &WorldDynEntInstance) -> Option<&asset_world::OwnedPhysPreset> {
     if inst.dead {
         return None;
     }
-    let props = assets::retail_dyn_ent_props(inst.ty)?;
+    let props = asset_world::dyn_ent_props(inst.ty)?;
     if !props.use_physics {
         return None;
     }
@@ -558,7 +558,7 @@ pub(crate) fn on_entity_explosion(
 fn closest_segment_hit(
     start: Vec3,
     end: Vec3,
-    catalog: Option<&assets::MapXModelSceneCatalog>,
+    catalog: Option<&asset_world::MapXModelSceneCatalog>,
     broadphase: &mut DynEntWakeBroadphase,
     instances: &Query<
         (
@@ -660,7 +660,7 @@ fn hit_one_dyn_ent(
 pub(crate) fn on_entity_bullet_hit(
     hit: On<EntityBulletHit>,
     weapons: Option<Res<PreparedWeapons>>,
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     mut broadphase: ResMut<DynEntWakeBroadphase>,
     mut instances: Query<
         (
@@ -772,7 +772,7 @@ pub(crate) fn on_entity_bullet_hit(
 pub(crate) fn on_entity_event_sound(
     sound: On<EntityEventSound>,
     weapons: Option<Res<PreparedWeapons>>,
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     mut broadphase: ResMut<DynEntWakeBroadphase>,
     mut instances: Query<
         (
@@ -826,7 +826,7 @@ pub(crate) fn on_entity_event_sound(
 pub(crate) fn wake_player_overlap(
     prediction: Option<Res<ClientPredictionState>>,
     world: Res<DynEntPhysWorld>,
-    catalog: Option<Res<assets::MapXModelSceneCatalog>>,
+    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     instances: Query<(Entity, &WorldDynEntInstance, &Transform), With<DynEntModelEntity>>,
     mut impulses: MessageWriter<DynEntPhysImpulse>,
 ) {

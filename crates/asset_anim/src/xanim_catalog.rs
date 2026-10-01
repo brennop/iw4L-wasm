@@ -126,6 +126,20 @@ impl XAnimCatalog {
         self.entries.get(self.index_by_name(ns, name)?)
     }
 
+    pub fn hint_edge(
+        &self,
+        hint: Option<&str>,
+        ns: AssetNamespace,
+    ) -> asset_core::AssetEdge<asset_core::XAnimSpace> {
+        match hint.filter(|name| !name.is_empty()) {
+            None => asset_core::AssetEdge::Absent,
+            Some(name) => match self.index_by_name(ns, name) {
+                Some(index) => asset_core::AssetEdge::bind_order(index, self.zone_of(index)),
+                None => asset_core::AssetEdge::Unresolved(asset_core::AssetEdgeReason::CatalogMiss),
+            },
+        }
+    }
+
     fn has_key(&self, key: &XAnimKey) -> bool {
         self.indices.contains_key(key)
     }
@@ -164,6 +178,23 @@ impl XAnimCatalog {
 
     pub fn clip(&self, ns: AssetNamespace, name: &str) -> Option<Arc<AnimClip>> {
         self.clip_at(self.index_by_name(ns, name)?)
+    }
+
+    pub fn body_clip(
+        &self,
+        namespace: AssetNamespace,
+        name: &str,
+        body_bones: &[String],
+    ) -> Option<Arc<AnimClip>> {
+        if let Some(clip) = self.clip(namespace, name) {
+            return Some(clip);
+        }
+        if namespace == AssetNamespace::Iw4 {
+            return None;
+        }
+        let mut clip = (*self.clip(AssetNamespace::Iw4, name)?).clone();
+        clip.tracks.retain(|track| body_bones.contains(&track.name));
+        Some(Arc::new(clip))
     }
 
     pub fn decode(&self, ns: AssetNamespace, name: &str) -> Option<AnimClip> {

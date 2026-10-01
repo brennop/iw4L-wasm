@@ -112,8 +112,8 @@ impl WeaponGeometry {
                 attachment1: s.u16_at(row, 0).ok()?,
                 attachment2: s.u16_at(row, 2).ok()?,
                 sound_type: s.i32_at(row, s.layout(12, 24)).ok()? as u32,
-                override_sound: snd_alias_name_at(s, row, s.layout(4, 8)),
-                altmode_sound: snd_alias_name_at(s, row, s.layout(8, 16)),
+                override_sound: alias_name_at(s, row, s.layout(4, 8)),
+                altmode_sound: alias_name_at(s, row, s.layout(8, 16)),
             })
         })
     }
@@ -136,9 +136,9 @@ impl WeaponGeometry {
         })
     }
 
-    pub fn fx_overrides<'a>(&self, s: &'a ZoneStream<'_>) -> impl Iterator<Item = FxOverride> + 'a {
+    pub fn overrides<'a>(&self, s: &'a ZoneStream<'_>) -> impl Iterator<Item = FxOverride> + 'a {
         rows(
-            self.fx_overrides,
+            self.overrides,
             self.fx_override_count,
             s.layout(sz::FX_OVERRIDE_ENTRY, 32),
         )
@@ -183,7 +183,7 @@ fn offset_at(s: &ZoneStream<'_>, body: Ptr, off: usize) -> Option<Ptr> {
     }
 }
 
-fn snd_alias_name_at(s: &ZoneStream<'_>, body: Ptr, off: usize) -> Option<Ptr> {
+fn alias_name_at(s: &ZoneStream<'_>, body: Ptr, off: usize) -> Option<Ptr> {
     let wrapper = offset_at(s, body, off)?;
     match s.ptr_at(wrapper, 0).ok()? {
         ZonePtr::Offset(name) => Some(s.resolve_alias(name)),

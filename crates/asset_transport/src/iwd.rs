@@ -448,13 +448,22 @@ fn sound_key(relative: &str) -> String {
     relative.replace('\\', "/").to_ascii_lowercase()
 }
 
-fn sound_rel_from_zip_name(name: &str) -> Option<String> {
+fn sound_rel_from_zip_name(name: &str, language: Option<&str>) -> Option<String> {
     let lower = name.replace('\\', "/").to_ascii_lowercase();
+    let lower = language
+        .and_then(|language| lower.strip_prefix(language)?.strip_prefix('/'))
+        .unwrap_or(&lower);
     let rel = lower.strip_prefix("sound/")?;
     if rel.is_empty() {
         return None;
     }
     Some(rel.to_owned())
+}
+
+fn archive_language(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
+    let (language, _) = stem.strip_prefix("localized_")?.rsplit_once('_')?;
+    Some(language.to_owned())
 }
 
 impl IwdSoundIndex {
@@ -476,10 +485,11 @@ impl IwdSoundIndex {
             let file =
                 gamefs::open(&path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
 
-            let archive =
-                zip::ZipArchive::new(file).map_err(|e| format!("zip {}: {e}", path.display()))?;
+            let archive = zip::ZipArchive::new(std::io::BufReader::new(file))
+                .map_err(|e| format!("zip {}: {e}", path.display()))?;
+            let language = archive_language(&path);
             for name in archive.file_names() {
-                let Some(rel) = sound_rel_from_zip_name(name) else {
+                let Some(rel) = sound_rel_from_zip_name(name, language.as_deref()) else {
                     continue;
                 };
                 sounds

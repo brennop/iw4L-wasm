@@ -1,23 +1,21 @@
-use anim_iw4::{
-    DOBJ_COMPUTE_BOUNDS_MODEL_LIMIT, DOBJ_RADIUS_PARENT_ROOT, dobj_compute_bounds_radius,
-};
-use assets::{
-    FpvMeshCatalog, FpvMeshIndex, MapXModelAssetKey, MapXModelSceneAsset, MapXModelSceneCatalog,
-};
+use anim_iw4::{DOBJ_COMPUTE_BOUNDS_MODEL_LIMIT, DOBJ_RADIUS_PARENT_ROOT, compute_bounds_radius};
+use asset_model::FpvMeshCatalog;
+use asset_world::{MapXModelAssetKey, MapXModelSceneAsset, MapXModelSceneCatalog};
+use assets::FpvMeshIndex;
 use lighting_iw4::lighting_query_box_half;
 
-pub fn dobj_lighting_box_half(radii: &[f32], parents: &[u8]) -> Option<[f32; 3]> {
+pub fn lighting_box_half(radii: &[f32], parents: &[u8]) -> Option<[f32; 3]> {
     if radii.is_empty() || radii.len() > DOBJ_COMPUTE_BOUNDS_MODEL_LIMIT {
         return None;
     }
-    Some(lighting_query_box_half(dobj_compute_bounds_radius(
+    Some(lighting_query_box_half(compute_bounds_radius(
         radii, parents,
     )))
 }
 
 pub fn script_model_lighting_box_half(
     catalog: &MapXModelSceneCatalog,
-    models: &[assets::dobj::DObjModelDescriptor],
+    models: &[xmodel_runtime::DObjModelDescriptor],
 ) -> Option<[f32; 3]> {
     if models.is_empty() || models.len() > DOBJ_COMPUTE_BOUNDS_MODEL_LIMIT {
         return None;
@@ -35,7 +33,7 @@ pub fn script_model_lighting_box_half(
             Some(parent) => u8::try_from(parent).ok()?,
         };
     }
-    dobj_lighting_box_half(&radii[..models.len()], &parents[..models.len()])
+    lighting_box_half(&radii[..models.len()], &parents[..models.len()])
 }
 
 pub fn fpv_dobj_lighting_box_half(
@@ -47,7 +45,7 @@ pub fn fpv_dobj_lighting_box_half(
     let gun = catalog.get_at(gun_index.order())?;
     let r_hands = hands.skel.radius?;
     let r_gun = gun.skel.radius?;
-    dobj_lighting_box_half(&[r_hands, r_gun], &[DOBJ_RADIUS_PARENT_ROOT, 0])
+    lighting_box_half(&[r_hands, r_gun], &[DOBJ_RADIUS_PARENT_ROOT, 0])
 }
 
 pub fn fpv_dobj_skel_radii(

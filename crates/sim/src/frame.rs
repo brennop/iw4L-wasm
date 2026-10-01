@@ -74,6 +74,17 @@ impl DerefMut for FrameWorld<'_> {
 }
 
 impl FrameWorld<'_> {
+    pub(crate) fn missile_collision_models(&self, id: crate::ProjectileId) -> Vec<ScriptModelId> {
+        self.ecs
+            .get_resource::<crate::script::Runtime>()
+            .map(|runtime| runtime.missile_collision_models(id))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn ecs(&mut self) -> &mut World {
+        self.ecs
+    }
+
     pub(crate) fn projectile_by_number(&self, entnum: i32) -> Option<ProjectileState> {
         let entity = entity_by_number(self.ecs, entnum)?;
         Some(self.ecs.get::<ProjectileRow>(entity)?.0)
@@ -167,57 +178,6 @@ impl FrameWorld<'_> {
         begin_script_movers_rotate_velocity_supplied(self, speed, level_time_ms)
     }
 
-    pub fn install_use_object_from_ent(
-        &mut self,
-        classname: &str,
-        number: i32,
-        use_time_seconds: f32,
-    ) -> Result<u32, crate::use_object::MapUseBindError> {
-        let mover = self
-            .script_mover_by_number(number)
-            .ok_or(crate::use_object::MapUseBindError::UnknownEnt)?;
-        self.install_map_use_object(
-            classname,
-            mover.state.tr_base,
-            mover.state.apos_tr_base,
-            None,
-            None,
-            Some(mover.box_mid),
-            Some(mover.box_half),
-            Some(number),
-            use_time_seconds,
-            "",
-        )
-    }
-
-    pub fn install_trigger_radius_on_ent(
-        &mut self,
-        number: i32,
-        radius: Option<f32>,
-        height: Option<f32>,
-        use_time_seconds: f32,
-    ) -> Result<u32, crate::use_object::MapUseBindError> {
-        let (box_mid, box_half) = gamemode_iw4::trigger_radius_box(radius, height)?;
-        if !self.set_script_mover_r_box(number, box_mid, box_half) {
-            return Err(crate::use_object::MapUseBindError::UnknownEnt);
-        }
-        let mover = self
-            .script_mover_by_number(number)
-            .ok_or(crate::use_object::MapUseBindError::UnknownEnt)?;
-        self.install_map_use_object(
-            gamemode_iw4::TRIGGER_RADIUS,
-            mover.state.tr_base,
-            mover.state.apos_tr_base,
-            radius,
-            height,
-            None,
-            None,
-            Some(number),
-            use_time_seconds,
-            "",
-        )
-    }
-
     pub fn set_script_mover_r_box(
         &mut self,
         number: i32,
@@ -236,7 +196,56 @@ impl FrameWorld<'_> {
         let Some(mover) = self.script_mover_mut_by_number(number) else {
             return false;
         };
+        mover.state.tr_type = entity_iw4::TR_STATIONARY;
+        mover.state.tr_delta = [0.0; 3];
         mover.state.tr_base = origin;
+        true
+    }
+
+    // Clients evaluate the trajectory between snapshots; a bare base write draws as a 20 Hz step.
+    pub fn set_script_mover_pose(
+        &mut self,
+        number: i32,
+        time_ms: i32,
+        origin: [f32; 3],
+        angles: [f32; 3],
+    ) -> bool {
+        let Some(mover) = self.script_mover_mut_by_number(number) else {
+            return false;
+        };
+        let state = &mut mover.state;
+        let per_sec = 1000.0 / crate::MATCH_TICK_MS as f32;
+        let consecutive = time_ms - crate::MATCH_TICK_MS as i32;
+        let delta: [f32; 3] = if state.tr_time == consecutive {
+            core::array::from_fn(|i| (origin[i] - state.tr_base[i]) * per_sec)
+        } else {
+            [0.0; 3]
+        };
+        let apos_delta: [f32; 3] = if state.apos_tr_time == consecutive {
+            core::array::from_fn(|i| {
+                math_iw4::angle_subtract(angles[i], state.apos_tr_base[i]) * per_sec
+            })
+        } else {
+            [0.0; 3]
+        };
+        state.tr_type = if delta == [0.0; 3] {
+            entity_iw4::TR_STATIONARY
+        } else {
+            entity_iw4::TR_LINEAR
+        };
+        state.tr_time = time_ms;
+        state.tr_duration = 0;
+        state.tr_base = origin;
+        state.tr_delta = delta;
+        state.apos_tr_type = if apos_delta == [0.0; 3] {
+            entity_iw4::TR_STATIONARY
+        } else {
+            entity_iw4::TR_LINEAR
+        };
+        state.apos_tr_time = time_ms;
+        state.apos_tr_duration = 0;
+        state.apos_tr_base = angles;
+        state.apos_tr_delta = apos_delta;
         true
     }
 
@@ -295,6 +304,7 @@ impl FrameWorld<'_> {
     }
 
     pub(crate) fn retire_client(&mut self, id: ClientId) {
+        crate::script::disconnect_player(self.ecs, id.0);
         self.deref_mut().forget_client_membership(id);
         let Some(entity) = player_entity(self.ecs, id) else {
             return;
@@ -428,6 +438,16 @@ impl FrameWorld<'_> {
         &self,
     ) -> Vec<crate::bullet_collision::PlayerCollisionPose> {
         SimState::alive_collision_poses(self, |id| player_ref(self.ecs, id).copied())
+    }
+
+    /// `sensor_trace` as of now: players moved, spawned or killed earlier in
+    /// this tick are traced where they are, not where the last record left them.
+    pub(crate) fn current_sensor_trace(
+        &self,
+        query: crate::bullet_collision::BulletTraceQuery,
+    ) -> crate::bullet_collision::TraceOutcome {
+        let moved = self.player_poses_since_record(|id| player_ref(self.ecs, id).copied());
+        self.bullet_trace(query, moved.as_deref())
     }
 
     pub(crate) fn record_collision_history(
@@ -848,7 +868,7 @@ fn spawn_player_row(world: &mut World, client: ClientId, state: PlayerState) {
 
 fn spawn_projectile(world: &mut World, projectile: ProjectileState) {
     if occupancy(world, projectile.entnum) != Some(EntityRunKind::Missile) {
-        panic!("in-flight projectile has no G_RunThink Missile occupancy");
+        panic!("in-flight projectile has no Missile think occupancy");
     }
     let entnum = projectile.entnum;
     let payload = world.spawn(ProjectileRow(projectile)).id();
@@ -883,12 +903,16 @@ fn script_mover_numbers_sorted(world: &World) -> Vec<i32> {
 }
 
 fn dropped_item_numbers_sorted(world: &World) -> Vec<i32> {
-    kernel(world).occupied_numbers(|kind| kind == EntityRunKind::Item)
+    kernel(world)
+        .occupied_numbers(|kind| kind == EntityRunKind::Item)
+        .into_iter()
+        .filter(|&number| dropped_item_by_number(world, number).is_some())
+        .collect()
 }
 
 fn spawn_dropped_item(world: &mut World, item: DroppedItem) {
     if occupancy(world, item.state.number) != Some(EntityRunKind::Item) {
-        panic!("dropped ET_ITEM has no G_RunThink Item occupancy");
+        panic!("dropped ET_ITEM has no Item think occupancy");
     }
     let number = item.state.number;
     let payload = world.spawn(DroppedItemRow(item)).id();
@@ -897,7 +921,7 @@ fn spawn_dropped_item(world: &mut World, item: DroppedItem) {
 
 fn spawn_script_mover_row(world: &mut World, mover: ScriptMoverGentity) {
     if occupancy(world, mover.state.number) != Some(EntityRunKind::ScriptMover) {
-        panic!("script mover has no G_RunThink ScriptMover occupancy");
+        panic!("script mover has no ScriptMover think occupancy");
     }
     let number = mover.state.number;
     let payload = world.spawn(ScriptMoverRow(mover)).id();
@@ -924,11 +948,6 @@ fn player_entity(world: &World, id: ClientId) -> Option<Entity> {
         .iter()
         .find(|(client, _)| *client == id)
         .map(|(_, entity)| *entity)
-}
-
-#[allow(dead_code)]
-pub(crate) fn player_payload_entity(world: &World, id: ClientId) -> Option<Entity> {
-    player_entity(world, id)
 }
 
 pub(crate) fn player_ref(world: &World, id: ClientId) -> Option<&PlayerState> {
@@ -993,8 +1012,8 @@ fn begin_script_movers_rotate_velocity_supplied(
 ) -> usize {
     let mut jobs = Vec::new();
     world.visit_script_movers(|mover| {
-        let right = crate::fan_blade_right(mover.state.apos_tr_base);
-        let delta = crate::fan_blade_rotate_delta(right, speed);
+        let right = gamemode_iw4::fan_blade_right(mover.state.apos_tr_base);
+        let delta = gamemode_iw4::fan_blade_rotate_delta(right, speed);
         jobs.push((mover.id, delta));
     });
     let mut n = 0;
@@ -1002,7 +1021,7 @@ fn begin_script_movers_rotate_velocity_supplied(
         if world.begin_script_mover_rotate_velocity(
             id,
             delta,
-            crate::FAN_BLADE_ROTATE_TIME,
+            gamemode_iw4::FAN_BLADE_ROTATE_TIME,
             level_time_ms,
         ) {
             n += 1;

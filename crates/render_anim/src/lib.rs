@@ -2,6 +2,7 @@ pub mod anim;
 pub mod draw;
 mod draw_build;
 pub mod gaps;
+pub mod geometry;
 pub mod lighting;
 pub mod occupancy;
 mod plugin;
@@ -26,13 +27,13 @@ pub use anim::*;
 pub use draw::*;
 pub use draw_build::*;
 pub use lighting::{
-    dobj_lighting_box_half, fpv_dobj_lighting_box_half, fpv_dobj_skel_radii,
+    fpv_dobj_lighting_box_half, fpv_dobj_skel_radii, lighting_box_half,
     script_model_lighting_box_half, viewmodel_lighting_origin,
 };
 pub use occupancy::{
-    CgGunOffset, DynEntCellBits, DynEntPhysClip, DynEntPhysWorld, FpvGeometrySet, FpvPlacementRoot,
-    FpvPlacementSet, LocalSpawnArmed, PendingViewHurt, RemoteFxBolts, RemotePlayer, RenderFocus,
-    ScriptModelDrawSet, ScriptModelSkinSet, SessionViewmodel, occupy_fpv_scene, spawn_pending_fpv,
-    stamp_fpv_placement_matrix, sync_camera_from_presented, tick_fpv_viewmodel,
+    DynEntCellBits, DynEntPhysClip, DynEntPhysWorld, FpvGeometrySet, FpvPlacementRoot,
+    FpvPlacementSet, GunOffset, LocalSpawnArmed, PendingViewHurt, RemoteFxBolts, RemotePlayer,
+    RenderFocus, ScriptModelDrawSet, ScriptModelSkinSet, SessionViewmodel, occupy_fpv_scene,
+    spawn_pending_fpv, stamp_fpv_placement_matrix, sync_camera_from_presented, tick_fpv_viewmodel,
 };
 pub use plugin::RenderAnimPlugin;

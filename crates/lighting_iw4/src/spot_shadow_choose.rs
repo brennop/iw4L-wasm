@@ -579,7 +579,7 @@ pub struct SpotShadowFrontend {
 pub fn spot_shadow_emit_frontend(
     choose: &SpotShadowChoose,
     lights: &[SpotShadowableLight],
-    world_plus_0x20: u32,
+    caster_light_count: u32,
     near_bias_dvar: f32,
     rand_zero: bool,
 ) -> SpotShadowFrontend {
@@ -594,11 +594,11 @@ pub fn spot_shadow_emit_frontend(
         };
         let plan = spot_shadow_slot_plan(choose.fast, slot_index, rand_zero);
         let light_index = emit.light_index as u32;
-        let walks_casters = spot_shadow_emit_walks_casters(light_index, world_plus_0x20);
+        let walks_casters = spot_shadow_emit_walks_casters(light_index, caster_light_count);
         let (view_parms, lookup) = lights
             .get(light_index as usize)
             .map_or((None, None), |light| {
-                let near = spot_shadow_near_bias(light_index, world_plus_0x20, near_bias_dvar);
+                let near = spot_shadow_near_bias(light_index, caster_light_count, near_bias_dvar);
                 let parms = spot_shadow_view_parms(
                     light.origin,
                     light.dir,

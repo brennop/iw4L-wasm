@@ -20,18 +20,18 @@ pub struct SndVoiceRequest {
     pub has_subtitle: bool,
 }
 
-pub fn snd_voice_metric_2d(volume: f32) -> f32 {
+pub fn voice_metric_2d(volume: f32) -> f32 {
     -volume
 }
 
-pub fn snd_has_free_voice(voice_count: i32, loading_streams: i32, max_voices: i32) -> bool {
+pub fn has_free_voice(voice_count: i32, loading_streams: i32, max_voices: i32) -> bool {
     if max_voices <= 0 {
         return false;
     }
     voice_count.saturating_add(loading_streams) < max_voices
 }
 
-pub fn snd_entity_channel_matches(
+pub fn entity_channel_matches(
     occupant_snd_ent: u32,
     occupant_channel: u32,
     snd_ent: u32,
@@ -40,10 +40,7 @@ pub fn snd_entity_channel_matches(
     occupant_snd_ent == snd_ent && occupant_channel == channel
 }
 
-pub fn snd_pick_voice_slot(
-    request: &SndVoiceRequest,
-    occupants: &[SndVoiceOccupant],
-) -> Option<usize> {
+pub fn pick_voice_slot(request: &SndVoiceRequest, occupants: &[SndVoiceOccupant]) -> Option<usize> {
     let mut bar_prio = request.priority;
     let mut best_metric = request.metric;
     let mut replaceable = None;

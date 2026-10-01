@@ -371,10 +371,10 @@ impl GfxScene {
                 });
             }
             SceneAddKind::Dobj(_) => {
-                self.scene_dobjs.push(dobj_from_pose(pose, info));
+                self.scene_dobjs.push(from_pose(pose, info));
             }
             SceneAddKind::DobjFlag30(_) => {
-                self.scene_dobj_flag30.push(dobj_from_pose(pose, info));
+                self.scene_dobj_flag30.push(from_pose(pose, info));
             }
         }
     }
@@ -506,7 +506,7 @@ fn write_scene_index_for_kind(
     }
 }
 
-fn dobj_from_pose(pose: AddDObjPose, info: u32) -> GfxSceneDobj {
+fn from_pose(pose: AddDObjPose, info: u32) -> GfxSceneDobj {
     GfxSceneDobj {
         origin: pose.origin,
         lighting_origin: pose.lighting_origin,

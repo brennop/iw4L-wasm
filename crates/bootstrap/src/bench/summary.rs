@@ -63,7 +63,7 @@ fn build(facts: &RuntimeFacts) -> Value {
 /// would invite a consumer to divide them by a frame count.
 fn audio() -> Value {
     let prep = audio::clip_prep_cost();
-    let xwma = assets::xwma_decode_cost();
+    let xwma = asset_audio::xwma_decode_cost();
     json!({
         "workers": prep.workers,
         "requests": prep.requests,

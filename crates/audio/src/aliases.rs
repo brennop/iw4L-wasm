@@ -195,8 +195,8 @@ fn build_bank() -> SurfaceBank {
             names.insert(gear_rattle_alias(gait, local));
         }
     }
-    names.insert(mantle_gear_alias(true));
-    names.insert(mantle_gear_alias(false));
+    names.insert(gear_alias(true));
+    names.insert(gear_alias(false));
     let mut all_names: Vec<&'static str> = names.into_iter().collect();
     all_names.sort_unstable();
     SurfaceBank {
@@ -282,7 +282,7 @@ pub fn gear_rattle_alias(gait: StepGait, local_player: bool) -> &'static str {
     }
 }
 
-pub fn mantle_gear_alias(local_player: bool) -> &'static str {
+pub fn gear_alias(local_player: bool) -> &'static str {
     if local_player {
         "gear_rattle_plr_mantle"
     } else {

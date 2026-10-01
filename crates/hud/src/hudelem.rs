@@ -23,6 +23,19 @@ impl HudElemSoundLatch {
     }
 }
 
+pub(crate) fn resolve_hud_text(
+    strings: &assets::PreparedLocalizedStrings,
+    raw: &str,
+) -> Option<String> {
+    if let Some(plain) = raw.strip_prefix(sim::HUD_STRING_PLAIN) {
+        return Some(plain.to_owned());
+    }
+    if raw.is_empty() {
+        return Some(String::new());
+    }
+    strings.0.text(raw).map(str::to_owned)
+}
+
 pub(crate) fn hudelem_pulse_sound(
     elem: &HudElem,
     text: &str,
@@ -34,7 +47,7 @@ pub(crate) fn hudelem_pulse_sound(
     }
     let birth_time = elem.fx_birth_time.min(cg_time);
     let last_played_time = latch.slot(elem.sound_id)?;
-    hud_iw4::cl_play_text_fx_pulse_sounds(
+    hud_iw4::play_text_fx_pulse_sounds(
         cg_time,
         hud_iw4::seh_print_strlen(text),
         birth_time,

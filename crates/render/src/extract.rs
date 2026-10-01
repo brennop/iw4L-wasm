@@ -13,7 +13,7 @@ use render_frontend::assemble::drawsurf::tess::xmodel::XModelDrawPlan;
 use render_gpu::diag::render_frame_diag::SharedRenderStagesSlot;
 use render_gpu::{
     ExtractedRenderFrameProducts, ExtractedRuntimeImageHandles, InstalledRenderWorld,
-    PublishedRenderFrame, RetailSamplerTable,
+    PublishedRenderFrame, SamplerTable,
 };
 
 fn take_published<T>(share: Option<&Arc<Vec<T>>>) -> (Arc<Vec<T>>, u32) {
@@ -93,7 +93,7 @@ fn insert_empty_colour(commands: &mut Commands) {
 
 fn world_colour_extract_counts(plan: Option<&WorldDrawGpuPlan>) -> (usize, usize, usize) {
     match plan {
-        Some(plan) => match plan.exact_retail_vertices() {
+        Some(plan) => match plan.exact_packed_vertices() {
             Ok(vertices) => (
                 vertices.len(),
                 plan.indices().len(),
@@ -168,7 +168,7 @@ pub fn seal_render_frame(
     particle_cloud: Option<Res<FxParticleCloudPlan>>,
     mark_mesh: Option<Res<GfxMarkMeshPlan>>,
     glass_mesh: Option<Res<GfxGlassMeshPlan>>,
-    samplers: Option<Res<RetailSamplerTable>>,
+    samplers: Option<Res<SamplerTable>>,
     images: Option<Res<render_frontend::assemble::drawsurf::RuntimeImageHandles>>,
     spawn_job: Option<Res<render_gpu::GpuSubmitReady>>,
     sun: (
@@ -275,7 +275,7 @@ pub fn seal_render_frame(
             empty_static()
         } else {
             match world.as_ref() {
-                Some(plan) => match plan.exact_retail_vertices() {
+                Some(plan) => match plan.exact_packed_vertices() {
                     Ok(_) => {
                         let (verts, _) = take_published(plan.vertex_share.as_ref());
                         let (layer, _) = take_published(plan.layer_share.as_ref());
@@ -714,7 +714,7 @@ pub fn extract_image_handles(
 
 pub fn extract_postfx(
     runtime: Extract<Option<Res<render_frontend::assemble::drawsurf::MaterialGeneration>>>,
-    samplers: Extract<Option<Res<RetailSamplerTable>>>,
+    samplers: Extract<Option<Res<SamplerTable>>>,
     frame: Extract<Res<render_frontend::assemble::drawsurf::dof::DofFrame>>,
     film: Extract<Res<render_frontend::assemble::drawsurf::FilmVisionView>>,
     glow_dvars: Extract<Res<render_frontend::assemble::drawsurf::dof::GlowDvars>>,
@@ -780,15 +780,18 @@ pub fn extract_postfx(
             near_blur: frame.dof.near_blur,
             far_blur: frame.dof.far_blur,
         },
+        blur: film.blur,
+        grading: film.grading,
         bias: frame.bias,
         scene_near: frame.scene_near,
         view_model_near: frame.view_model_near,
         glow: render_gpu::GlowFrame {
-            r_glow: glow_dvars.enable,
-            r_fullbright: matches!(
-                **draw_method,
-                render_frontend::assemble::drawsurf::ColourDrawMethod::Fullbright
-            ),
+            r_glow: glow_dvars.enable || film.script_forced,
+            r_fullbright: !film.script_forced
+                && matches!(
+                    **draw_method,
+                    render_frontend::assemble::drawsurf::ColourDrawMethod::Fullbright
+                ),
             ..render_gpu::GlowFrame::from_vision(extracted.vision)
         },
     };

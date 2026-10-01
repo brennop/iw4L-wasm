@@ -232,7 +232,7 @@ impl Default for VisionSetLerpData {
 }
 
 #[must_use]
-fn com_clamp(val: f32, min: f32, max: f32) -> f32 {
+fn clamp(val: f32, min: f32, max: f32) -> f32 {
     let mut out = val;
     if (out - max) > 0.0 {
         out = max;
@@ -241,7 +241,7 @@ fn com_clamp(val: f32, min: f32, max: f32) -> f32 {
 }
 
 #[must_use]
-pub fn cg_vision_lerp_float(from: f32, to: f32, mut fraction: f32, style: i32) -> f32 {
+pub fn vision_lerp_float(from: f32, to: f32, mut fraction: f32, style: i32) -> f32 {
     if style == VISION_SET_LERP_TO_LINEAR {
         return from + fraction * (to - from);
     }
@@ -262,7 +262,7 @@ pub fn cg_vision_lerp_float(from: f32, to: f32, mut fraction: f32, style: i32) -
 }
 
 #[must_use]
-pub fn cg_vision_lerp_bool(from: bool, to: bool, fraction: f32, style: i32) -> bool {
+pub fn vision_lerp_bool(from: bool, to: bool, fraction: f32, style: i32) -> bool {
     if style < VISION_SET_LERP_BACKFORTH_LINEAR || style > VISION_SET_LERP_BACKFORTH_SMOOTH {
         to
     } else if (LERP_HALF_F32 < fraction) == (LERP_HALF_F32 == fraction) {
@@ -273,128 +273,118 @@ pub fn cg_vision_lerp_bool(from: bool, to: bool, fraction: f32, style: i32) -> b
 }
 
 #[must_use]
-pub fn cg_vision_lerp_vec3(from: [f32; 3], to: [f32; 3], fraction: f32, style: i32) -> [f32; 3] {
+pub fn vision_lerp_vec3(from: [f32; 3], to: [f32; 3], fraction: f32, style: i32) -> [f32; 3] {
     [
-        cg_vision_lerp_float(from[0], to[0], fraction, style),
-        cg_vision_lerp_float(from[1], to[1], fraction, style),
-        cg_vision_lerp_float(from[2], to[2], fraction, style),
+        vision_lerp_float(from[0], to[0], fraction, style),
+        vision_lerp_float(from[1], to[1], fraction, style),
+        vision_lerp_float(from[2], to[2], fraction, style),
     ]
 }
 
 #[must_use]
-pub fn cg_vision_lerp_vars(
+pub fn vision_lerp_vars(
     from: VisionSetVars,
     to: VisionSetVars,
     fraction: f32,
     style: i32,
 ) -> VisionSetVars {
     VisionSetVars {
-        r_glow: cg_vision_lerp_bool(from.r_glow, to.r_glow, fraction, style),
-        r_glow_bloom_cutoff: cg_vision_lerp_float(
+        r_glow: vision_lerp_bool(from.r_glow, to.r_glow, fraction, style),
+        r_glow_bloom_cutoff: vision_lerp_float(
             from.r_glow_bloom_cutoff,
             to.r_glow_bloom_cutoff,
             fraction,
             style,
         ),
-        r_glow_bloom_desaturation: cg_vision_lerp_float(
+        r_glow_bloom_desaturation: vision_lerp_float(
             from.r_glow_bloom_desaturation,
             to.r_glow_bloom_desaturation,
             fraction,
             style,
         ),
-        r_glow_bloom_intensity0: cg_vision_lerp_float(
+        r_glow_bloom_intensity0: vision_lerp_float(
             from.r_glow_bloom_intensity0,
             to.r_glow_bloom_intensity0,
             fraction,
             style,
         ),
-        r_glow_bloom_intensity1: cg_vision_lerp_float(
+        r_glow_bloom_intensity1: vision_lerp_float(
             from.r_glow_bloom_intensity1,
             to.r_glow_bloom_intensity1,
             fraction,
             style,
         ),
-        r_glow_radius0: cg_vision_lerp_float(
-            from.r_glow_radius0,
-            to.r_glow_radius0,
-            fraction,
-            style,
-        ),
-        r_glow_radius1: cg_vision_lerp_float(
-            from.r_glow_radius1,
-            to.r_glow_radius1,
-            fraction,
-            style,
-        ),
-        r_glow_sky_bleed_intensity0: cg_vision_lerp_float(
+        r_glow_radius0: vision_lerp_float(from.r_glow_radius0, to.r_glow_radius0, fraction, style),
+        r_glow_radius1: vision_lerp_float(from.r_glow_radius1, to.r_glow_radius1, fraction, style),
+        r_glow_sky_bleed_intensity0: vision_lerp_float(
             from.r_glow_sky_bleed_intensity0,
             to.r_glow_sky_bleed_intensity0,
             fraction,
             style,
         ),
-        r_glow_sky_bleed_intensity1: cg_vision_lerp_float(
+        r_glow_sky_bleed_intensity1: vision_lerp_float(
             from.r_glow_sky_bleed_intensity1,
             to.r_glow_sky_bleed_intensity1,
             fraction,
             style,
         ),
-        r_film_enable: cg_vision_lerp_bool(from.r_film_enable, to.r_film_enable, fraction, style),
-        r_film_brightness: cg_vision_lerp_float(
+        r_film_enable: vision_lerp_bool(from.r_film_enable, to.r_film_enable, fraction, style),
+        r_film_brightness: vision_lerp_float(
             from.r_film_brightness,
             to.r_film_brightness,
             fraction,
             style,
         ),
-        r_film_contrast: cg_vision_lerp_float(
+        r_film_contrast: vision_lerp_float(
             from.r_film_contrast,
             to.r_film_contrast,
             fraction,
             style,
         ),
-        r_film_desaturation: cg_vision_lerp_float(
+        r_film_desaturation: vision_lerp_float(
             from.r_film_desaturation,
             to.r_film_desaturation,
             fraction,
             style,
         ),
-        r_film_desaturation_dark: cg_vision_lerp_float(
+        r_film_desaturation_dark: vision_lerp_float(
             from.r_film_desaturation_dark,
             to.r_film_desaturation_dark,
             fraction,
             style,
         ),
-        r_film_invert: cg_vision_lerp_bool(from.r_film_invert, to.r_film_invert, fraction, style),
-        r_film_light_tint: cg_vision_lerp_vec3(
+        r_film_invert: vision_lerp_bool(from.r_film_invert, to.r_film_invert, fraction, style),
+        r_film_light_tint: vision_lerp_vec3(
             from.r_film_light_tint,
             to.r_film_light_tint,
             fraction,
             style,
         ),
-        r_film_medium_tint: cg_vision_lerp_vec3(
+        r_film_medium_tint: vision_lerp_vec3(
             from.r_film_medium_tint,
             to.r_film_medium_tint,
             fraction,
             style,
         ),
-        r_film_dark_tint: cg_vision_lerp_vec3(
+        r_film_dark_tint: vision_lerp_vec3(
             from.r_film_dark_tint,
             to.r_film_dark_tint,
             fraction,
             style,
         ),
-        r_primary_light_use_tweaks: cg_vision_lerp_bool(
+        r_primary_light_use_tweaks: vision_lerp_bool(
             from.r_primary_light_use_tweaks,
             to.r_primary_light_use_tweaks,
             fraction,
             style,
         ),
-        r_primary_light_tweak_diffuse: cg_vision_lerp_float(
+        r_primary_light_tweak_diffuse: vision_lerp_float(
             from.r_primary_light_tweak_diffuse,
             to.r_primary_light_tweak_diffuse,
             fraction,
             style,
         ),
-        r_primary_light_tweak_specular: cg_vision_lerp_float(
+        r_primary_light_tweak_specular: vision_lerp_float(
             from.r_primary_light_tweak_specular,
             to.r_primary_light_tweak_specular,
             fraction,
@@ -405,7 +395,7 @@ pub fn cg_vision_lerp_vars(
 }
 
 #[must_use]
-pub fn cg_vision_hold_blend_rate(
+pub fn vision_hold_blend_rate(
     allowed: bool,
     script_forced: bool,
     intensity0: f32,
@@ -428,7 +418,7 @@ fn apply_hold_blend(
     rate: f32,
     mut result: VisionSetVars,
 ) -> (VisionSetVars, VisionSetLerpData) {
-    let blend = com_clamp((now - lerp.last_time) as f32 * rate + lerp.blend, 0.0, 1.0);
+    let blend = clamp((now - lerp.last_time) as f32 * rate + lerp.blend, 0.0, 1.0);
     result.blend = blend;
     (
         result,
@@ -442,7 +432,7 @@ fn apply_hold_blend(
 
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn cg_vision_sets_update(
+pub fn vision_sets_update(
     now: i32,
     from: VisionSetVars,
     to: VisionSetVars,
@@ -455,7 +445,7 @@ pub fn cg_vision_sets_update(
         return (result, lerp);
     }
     if lerp.style == VISION_SET_LERP_HOLD {
-        let rate = cg_vision_hold_blend_rate(
+        let rate = vision_hold_blend_rate(
             allowed,
             script_forced,
             result.r_glow_bloom_intensity0,
@@ -479,14 +469,14 @@ pub fn cg_vision_sets_update(
     let frac = if duration == 0.0 {
         1.0
     } else {
-        com_clamp((now - lerp.time_start) as f32 / duration, 0.0, 1.0)
+        clamp((now - lerp.time_start) as f32 / duration, 0.0, 1.0)
     };
-    let result = cg_vision_lerp_vars(from, to, frac, lerp.style);
+    let result = vision_lerp_vars(from, to, frac, lerp.style);
     apply_hold_blend(lerp, now, VISION_HOLD_BLEND_RATE, result)
 }
 
 #[must_use]
-pub fn cg_vision_set_start(
+pub fn vision_set_start(
     now: i32,
     duration_ms: i32,
     requested_style: i32,

@@ -36,7 +36,7 @@ pub(crate) fn compile_multiplayer(
 }
 
 fn harvest_script_anim_names(script: &[u8], names: &mut HashSet<String>) {
-    let mut parser = ComParser::new(script);
+    let mut parser = AtrParser::new(script);
     loop {
         let token = parser.parse(true);
         if token.is_empty() {
@@ -46,7 +46,7 @@ fn harvest_script_anim_names(script: &[u8], names: &mut HashSet<String>) {
             continue;
         }
         let anim = parser.parse(false);
-        if anim.is_empty() || !scr_is_identifier(&anim) {
+        if anim.is_empty() || !is_identifier(&anim) {
             continue;
         }
         names.insert(ascii_lower(&anim));
@@ -65,7 +65,7 @@ fn parse_atr(
     names: &HashSet<String>,
     ignored: &mut usize,
 ) -> Result<Vec<ParsedAnim>, AtrCompileError> {
-    let mut parser = ComParser::new(src);
+    let mut parser = AtrParser::new(src);
     let (children, eof) = parse_internal(&mut parser, names, ignored, true, false, false)?;
     if !eof {
         return Err(parser.bad_token("bad token"));
@@ -81,7 +81,7 @@ struct ParsedAnim {
 
 #[allow(clippy::never_loop)]
 fn parse_internal(
-    parser: &mut ComParser<'_>,
+    parser: &mut AtrParser<'_>,
     names: &HashSet<String>,
     ignored: &mut usize,
     include_parent: bool,
@@ -99,7 +99,7 @@ fn parse_internal(
                     finish_parent(&mut children, include_parent, loop_sync);
                     return Ok((children, true));
                 }
-                if !scr_is_identifier(&token) {
+                if !is_identifier(&token) {
                     break;
                 }
                 if let Some(work) = current.take() {
@@ -124,7 +124,7 @@ fn parse_internal(
                     });
                     continue;
                 }
-                if scr_is_identifier(&on_line) {
+                if is_identifier(&on_line) {
                     return Err(parser.bad_token("FIXME: aliases not yet implemented"));
                 }
                 if on_line != ":" {
@@ -239,7 +239,7 @@ fn finish_parent(children: &mut Vec<ParsedAnim>, include_parent: bool, loop_sync
     }
 }
 
-fn parse_properties(parser: &mut ComParser<'_>) -> Result<u16, AtrCompileError> {
+fn parse_properties(parser: &mut AtrParser<'_>) -> Result<u16, AtrCompileError> {
     let mut flags = 0u16;
     loop {
         let token = parser.parse(false);
@@ -351,7 +351,7 @@ fn ascii_lower(token: &str) -> String {
     token.chars().map(|c| c.to_ascii_lowercase()).collect()
 }
 
-fn scr_is_identifier(token: &str) -> bool {
+fn is_identifier(token: &str) -> bool {
     !token.is_empty() && token.bytes().all(is_c_sym)
 }
 
@@ -359,7 +359,7 @@ fn is_c_sym(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
 
-pub(crate) struct ComParser<'a> {
+pub(crate) struct AtrParser<'a> {
     src: &'a [u8],
     pos: usize,
     hit_eof: bool,
@@ -367,7 +367,7 @@ pub(crate) struct ComParser<'a> {
     last_offset: usize,
 }
 
-impl<'a> ComParser<'a> {
+impl<'a> AtrParser<'a> {
     pub(crate) fn new(src: &'a [u8]) -> Self {
         Self {
             src,

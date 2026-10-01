@@ -98,7 +98,7 @@ impl SmodelSkinnedTess {
             .resize(dest_base.saturating_add(packed_n_us), [0u8; 32]);
         let m = world_from_local.to_cols_array();
         let fixed = lighting_iw4::setup_transform_unit_vec(&m);
-        if lighting_iw4::r_skin_xsurface_unique_verts(&mut self.verts[dest_base..], src, &m, &fixed)
+        if lighting_iw4::skin_xsurface_unique_verts(&mut self.verts[dest_base..], src, &m, &fixed)
             .is_err()
         {
             self.verts.truncate(dest_base);

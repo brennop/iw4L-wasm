@@ -4,7 +4,7 @@ pub struct RenderGpuPlugin;
 
 impl Plugin for RenderGpuPlugin {
     fn build(&self, app: &mut App) {
-        match crate::RetailSamplerTable::captured_2026_08_11() {
+        match crate::SamplerTable::captured_2026_08_11() {
             Ok(table) => {
                 let adapted = table.host_adapted_rows();
                 if !adapted.is_empty() {
@@ -16,10 +16,7 @@ impl Plugin for RenderGpuPlugin {
                 }
                 app.insert_resource(table);
             }
-            Err(cause) => diag::warn!(
-                World,
-                "drawsurf retail sampler profile: RED capture=2026-08-11 cause={cause:?}"
-            ),
+            Err(cause) => diag::warn!(World, "drawsurf sampler profile: cause={cause:?}"),
         }
         crate::drawsurf::register_drawsurf_render(app);
         app.init_resource::<crate::GpuSubmitReady>()

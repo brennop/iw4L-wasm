@@ -110,6 +110,13 @@ pub trait AssetLinkSink {
         Ok(())
     }
 
+    fn remember_xmodel_surfaces(&mut self, _slot: Ptr, _surfaces: Option<Ptr>, _name: Option<Ptr>) {
+    }
+
+    fn xmodel_surfaces(&self, _slot: Ptr) -> (Option<Ptr>, Option<Ptr>) {
+        (None, None)
+    }
+
     fn xmodel_name_ptr(&self, _slot: Ptr) -> Option<Ptr> {
         None
     }
@@ -235,6 +242,16 @@ pub fn load_asset_at_durable_slot(
                     links.remember_xmodel_name(slot, insert_slot, name);
                 }
             }
+            if ty == AssetType::XModelSurfs {
+                let surfaces = s.take_latest_xmodel_surfs_array();
+                let name = s.take_latest_xmodel_surfs_name();
+                links.remember_xmodel_surfaces(slot, surfaces, name);
+                if let Some(insert_slot) = insert_slot {
+                    links.remember_xmodel_surfaces(insert_slot, surfaces, name);
+                }
+                s.record_xmodel_surfs_array(surfaces);
+                s.record_xmodel_surfs_name(name);
+            }
             if ty == AssetType::Attachment {
                 s.commit_attachment_name(slot, insert_slot);
             }
@@ -288,17 +305,4 @@ pub(crate) fn always_array(
     let body = s.alloc_load(align, bytes)?;
     s.fixup_slot(slot, body)?;
     Ok(Some(body))
-}
-
-#[allow(dead_code)]
-pub(crate) fn runtime_array(
-    s: &mut ZoneStream<'_>,
-    slot: Ptr,
-    align: usize,
-    bytes: usize,
-) -> Result<Option<Ptr>> {
-    s.push(crate::zone::XFILE_BLOCK_RUNTIME)?;
-    let body = always_array(s, slot, align, bytes)?;
-    s.pop()?;
-    Ok(body)
 }

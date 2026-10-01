@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 use crate::authority::inbox::{AuthorityClock, ClientActionInbox, ClientCommandInbox};
-use crate::client::presented::{LocalPresentClient, PresentedSnapshot};
-use crate::role::RuntimeRole;
+use crate::client::presentation::presented::{LocalPresentClient, PresentedSnapshot};
 use crate::schedule::{configure_authority_sets, configure_client_sets};
 use crate::transport::loopback_live::ListenLoopback;
+use frame::RuntimeRole;
 
 pub struct NetPlugin {
     pub role: RuntimeRole,
@@ -46,7 +46,7 @@ impl Plugin for NetPlugin {
             .init_resource::<PresentedSnapshot>()
             .init_resource::<LocalPresentClient>()
             .init_resource::<crate::MasterMatchStart>()
-            .init_resource::<crate::client::presented::CgViewweaponAim>();
+            .init_resource::<crate::client::presentation::presented::ViewweaponAim>();
         {
             configure_authority_sets(app);
             app.init_resource::<AuthorityClock>()
@@ -75,8 +75,8 @@ impl Plugin for NetPlugin {
                     .init_resource::<ClientActionInbox>();
             }
             crate::client::runtime::register_client_runtime(app);
-            crate::client::entities::register_client_entities(app);
-            crate::client::entity_event_dispatch::register_entity_event_dispatch(app);
+            crate::client::presentation::entities::register_client_entities(app);
+            crate::client::presentation::entity_event_dispatch::register_entity_event_dispatch(app);
         }
 
         crate::authority::runtime::register_listen_runtime(app);

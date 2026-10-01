@@ -1,15 +1,21 @@
 use std::path::Path;
 
+use super::helpers::{
+    decode_reflection_probes, report_dpvs, report_ffa_spawns, report_intermission,
+    report_map_models, report_world_batches, smodel_lighting_samples,
+};
 use super::{
     CommonCensus, CommonWalkSink, LoadedWorld, MaterialPopulation, MaterialPopulationSink,
     ZoneLane, ZoneWalkSink,
 };
 use crate::lane_capability::{LaneStatus, PreparedCapability};
-use crate::progress::{LoadProgress, StageId};
-use crate::session_load::{PreparedWorld, WorldDrawPolicy};
-use crate::{
-    MASK_PLAYER_SOLID, T5ZoneMemory, ZoneGame, ZoneImage, build_t5_clip_collision,
-    build_t5_world_draw, decode_material_color_maps, decode_reflection_probe_cubemap,
+use crate::session_load::PreparedWorld;
+use asset_core::ZoneGame;
+use asset_material::decode_material_color_maps;
+use asset_transport::progress::{LoadProgress, StageId};
+use asset_transport::{T5ZoneMemory, ZoneImage};
+use asset_world::{
+    MASK_PLAYER_SOLID, WorldDrawPolicy, build_t5_clip_collision, build_t5_world_draw,
     dm_spawn_points_t5, intermission_view_t5, minimap_corners_t5,
 };
 
@@ -57,10 +63,10 @@ impl ZoneLane for T5Lane {
         image: &ZoneImage,
         progress: &LoadProgress,
         _shared_surfaces: asset_model::SharedXModelSurfaces,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
         _common_film_visions: &mut std::collections::BTreeMap<
             String,
-            Result<crate::FilmVision, crate::FilmVisionParseError>,
+            Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
         >,
     ) -> LoadedWorld {
         let mut report = vec![format!("game: T5 ({})", path.display())];
@@ -82,7 +88,7 @@ impl ZoneLane for T5Lane {
         };
 
         let stage = progress.begin_scoped(StageId::MapAssets, "memory", None);
-        report.push(crate::zone::xfile_arena_row(
+        report.push(asset_transport::xfile_arena_row(
             "zone arenas map",
             &header.block_size,
             fastfile_t5::XFILE_BLOCK_TEMP,
@@ -109,18 +115,21 @@ impl ZoneLane for T5Lane {
         let mut sink = ZoneWalkSink::default();
         let seeded_techsets = material_seed.technique_set_facts().to_vec();
         sink.seed_materials(material_seed);
-        sink.set_capture_zone(crate::ZoneOwner::from_zone_path(path));
-        sink.set_capture_ns(crate::AssetNamespace::T5);
+        sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
+        sink.set_capture_ns(asset_core::AssetNamespace::T5);
         sink.sound = Some(asset_audio::ZoneSoundCapture::for_map(
             path,
             asset_audio::ZoneGame::T5,
             "map",
         ));
         let walked = fastfile_t5::load_zone(&mut stream, &mut sink);
-        let map_sound = sink
+        let mut map_sound = sink
             .sound
             .take()
             .map(|sound| sound.finish(walked.as_ref().map(|_| ()).map_err(|e| e.to_string())));
+        if let Some(Ok(catalog)) = map_sound.as_mut() {
+            report.push(absorb_localized_map_sound(path, catalog));
+        }
         match &walked {
             Ok(_) => report.push(format!("zone walk: complete, {} assets", sink.walked)),
             Err(e) => report.push(format!(
@@ -134,9 +143,7 @@ impl ZoneLane for T5Lane {
             stream.unsettled_offsets()
         ));
         let runtime_overrun = stream.block_overrun(fastfile_t5::XFILE_BLOCK_RUNTIME as u8);
-        report.push(format!(
-            "retail block overrun: runtime +{runtime_overrun} bytes"
-        ));
+        report.push(format!("block overrun: runtime +{runtime_overrun} bytes"));
 
         let clip = if let Some(geometry) = stream.clip_map() {
             report.push(format!(
@@ -195,6 +202,10 @@ impl ZoneLane for T5Lane {
         let createart_name = sink.createart_name.clone();
         let t5_teamset = sink.t5_teamset.clone();
         let script_sound = std::mem::take(&mut sink.script_sound).finish();
+        let mut scripts = std::mem::take(&mut sink.scripts);
+        if let Some(entities) = asset_world::map_ents_entity_string_t5(&stream) {
+            scripts.set_entities(entities.to_owned());
+        }
         match (&createart_name, exp_fog) {
             (Some(name), Some(fog)) => report.push(format!(
                 "t5 createart: {name} fog=ready start={:.1} half={:.1}",
@@ -261,6 +272,7 @@ impl ZoneLane for T5Lane {
             report.push("no GfxWorld retained — nothing to draw".into());
             let dm_spawns = dm_spawn_points_t5(&stream);
             let mut loaded = LoadedWorld {
+                scripts,
                 sound: map_sound,
                 world: PreparedWorld {
                     policy: WorldDrawPolicy::t5(),
@@ -309,36 +321,11 @@ impl ZoneLane for T5Lane {
                         draw.sky_model.is_some()
                     ));
                 }
-                let mut map_models =
-                    super::build_t5_static_model_draw(&stream, geometry, map_xmodels);
-                if let Some(clip) = &clip {
-                    asset_world::capture_brush_trigger_hulls(
-                        &mut map_models.map_use_triggers,
-                        clip,
-                    );
-                }
-                if let Some(error) = map_models.static_error.as_ref() {
-                    report.push(format!("static models: {error}"));
-                }
-                let smodels = &map_models.static_draw;
-                report.push(format!(
-                "static models: {}/{} authored slots resolved to {} unique meshes ({} unresolved)",
-                smodels.resolved_count(),
-                geometry.smodel_count,
-                smodels.meshes.len(),
-                smodels.gaps
-            ));
-                report.push(format!(
-                    "script_model: {} placements linked (MapEnts props; separate visibility owner)",
-                    map_models.script_instances.len()
-                ));
-                report.push(format!(
-                    "script_brushmodel: {} *N placements (SP_script_brushmodel, not DrawInst)",
-                    map_models.script_brush_models.len()
-                ));
-                let crate::PreparedMapModels {
+                let map_models = super::build_t5_static_model_draw(&stream, geometry, map_xmodels);
+                report_map_models(&mut report, &map_models, geometry.smodel_count);
+                let asset_world::PreparedMapModels {
                     static_draw:
-                        crate::StaticModelDraw {
+                        asset_world::StaticModelDraw {
                             meshes: static_model_meshes,
                             placements: static_model_instances,
                             ..
@@ -346,27 +333,16 @@ impl ZoneLane for T5Lane {
                     scene_assets: map_xmodel_scene_assets,
                     script_instances: script_model_instances,
                     script_brush_models,
-                    map_use_triggers,
                     flag_descriptors,
                     script_structs,
                     ..
                 } = map_models;
                 let intermission_view = intermission_view_t5(&stream);
                 let minimap_corners = minimap_corners_t5(&stream);
-                let north_yaw = crate::worldspawn_north_yaw_t5(&stream);
+                let north_yaw = asset_world::worldspawn_north_yaw_t5(&stream);
                 let dm_spawns = dm_spawn_points_t5(&stream);
-                report.push(format!(
-                    "ffa spawns: {} mp_dm_spawn* ({} start)",
-                    dm_spawns.len(),
-                    dm_spawns.iter().filter(|p| p.is_initial()).count()
-                ));
-                match intermission_view {
-                    Some(view) => report.push(format!(
-                        "camera: mp_global_intermission origin={:?} angles={:?}",
-                        view.origin, view.angles
-                    )),
-                    None => report.push("camera: mp_global_intermission not found".into()),
-                }
+                report_ffa_spawns(&mut report, &dm_spawns);
+                report_intermission(&mut report, intermission_view.as_ref());
                 report.push(format!(
                     "world mesh: {} vertices, {} triangles, {} surfaces ({} skipped)",
                     draw.stats.vertices,
@@ -374,15 +350,7 @@ impl ZoneLane for T5Lane {
                     draw.stats.surfaces,
                     draw.stats.skipped_surfaces
                 ));
-                let lightmapped_surfaces = draw
-                    .surface_lightmapped
-                    .iter()
-                    .filter(|&&lightmapped| lightmapped)
-                    .count();
-                report.push(format!(
-                    "world batches: {lightmapped_surfaces} lightmapped, {} fallback surfaces",
-                    draw.surface_lightmapped.len() - lightmapped_surfaces
-                ));
+                report_world_batches(&mut report, &draw);
                 let material_surfaces = draw
                     .surface_materials
                     .iter()
@@ -423,133 +391,47 @@ impl ZoneLane for T5Lane {
                     }
                     Err(gap) => report.push(format!("lightmap gap: {gap}")),
                 }
-                let reflection_probe_images = draw
-                    .reflection_probes
-                    .iter()
-                    .map(|probe| {
-                        probe.image.and_then(|image| {
-                            map_materials.images.get(image).and_then(|source| {
-                                match decode_reflection_probe_cubemap(source) {
-                                    Ok(image) => Some(image),
-                                    Err(error) => {
-                                        report.push(format!(
-                                            "reflection probe {} gap: {error}",
-                                            source.name
-                                        ));
-                                        None
-                                    }
-                                }
-                            })
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                report.push(format!(
-                    "reflection probes: {}/{} cubemaps decoded",
-                    reflection_probe_images.iter().flatten().count(),
-                    reflection_probe_images.len()
-                ));
-                report.push(format!(
-                    "dpvs: cells={} planes={} nodes={} sorted={} portal_verts={} cleared_boxes={}",
-                    draw.dpvs.cell_count,
-                    draw.dpvs.planes.len(),
-                    draw.dpvs.nodes.len(),
-                    draw.dpvs.sorted_surf_index.len(),
-                    draw.dpvs.portal_verts.len(),
-                    draw.dpvs.cleared_boxes
-                ));
-                let smodel_lighting_samples = {
-                    use crate::model_lighting::{
-                        OwnedLightGrid, build_smodel_lighting_samples_with_sight,
-                        census_lit_fragment_tiles, collect_t5_smodel_lighting_origins,
-                    };
-                    use lighting_iw4::LIGHT_GRID_SIGHT_CONTENT_MASK;
-                    match OwnedLightGrid::from_t5_stream(&stream, geometry.light_grid) {
-                        Some(owned) => {
-                            report.push(format!(
-                                "t5 light_grid: READY rows={} entries={} colors={} row_axis={} col_axis={} regions={}",
-                                owned.row_data_start.len() / 2,
-                                owned.entries.len() / 4,
-                                owned.color_count,
-                                owned.row_axis,
-                                owned.col_axis,
-                                u8::from(owned.has_light_regions)
-                            ));
-                            let origins: Vec<_> =
-                                collect_t5_smodel_lighting_origins(&stream, geometry)
-                                    .into_iter()
-                                    .filter(|(slot, _)| {
-                                        static_model_instances
-                                            .get(*slot)
-                                            .and_then(|placement| placement.as_ref())
-                                            .is_some()
-                                    })
-                                    .collect();
-                            let (tiles, census) = if let Some(ref clip_map) = clip {
-                                let clear = |start: [f32; 3], end: [f32; 3]| {
-                                    clip_map.box_sight_clear(
-                                        start,
-                                        end,
-                                        LIGHT_GRID_SIGHT_CONTENT_MASK,
-                                    )
-                                };
-                                let (tiles, census) = build_smodel_lighting_samples_with_sight(
-                                    &owned.view(),
-                                    &origins,
-                                    Some(&clear),
-                                );
-                                report.push(format!(
-                                "smodel lighting: lit={} / candidates={} (blocked row={} trunc={} empty={}; CM sight mask=0x{LIGHT_GRID_SIGHT_CONTENT_MASK:x} corners need={} cleared={} suppressed={})",
-                                census.lit,
-                                census.candidates,
-                                census.blocked_unmodelled_row,
-                                census.blocked_truncated,
-                                census.blocked_no_live_corner,
-                                census.corners_needing_sight,
-                                census.corners_needing_sight.saturating_sub(census.corners_sight_suppressed),
-                                census.corners_sight_suppressed,
-                            ));
-                                (tiles, census)
-                            } else {
-                                let (tiles, census) = build_smodel_lighting_samples_with_sight(
-                                    &owned.view(),
-                                    &origins,
-                                    None,
-                                );
-                                report.push(format!(
-                                "smodel lighting: lit={} / candidates={} (no clipmap — needsTrace corners suppressed; blocked row={} trunc={} empty={})",
-                                census.lit,
-                                census.candidates,
-                                census.blocked_unmodelled_row,
-                                census.blocked_truncated,
-                                census.blocked_no_live_corner,
-                            ));
-                                (tiles, census)
-                            };
-                            if let Some(frag) = census_lit_fragment_tiles(&tiles) {
-                                report.push(format!(
-                                "smodel lit_fragment mid-grey: tiles={} lum min={:.4} max={:.4} mean={:.4} (specular=0)",
-                                frag.tiles, frag.lum_min, frag.lum_max, frag.lum_mean
-                            ));
-                            }
-                            let _ = census;
-                            (tiles, Some(owned))
-                        }
-                        None => {
-                            report.push(format!(
-                                "t5 light_grid: none (missing tables or rowAxis/colAxis not 0..2; row={} col={} entries={} colors={})",
-                                geometry.light_grid.row_axis,
-                                geometry.light_grid.col_axis,
-                                geometry.light_grid.entry_count,
-                                geometry.light_grid.color_count
-                            ));
-                            (Vec::new(), None)
-                        }
+                let reflection_probe_images =
+                    decode_reflection_probes(&mut report, &draw, &map_materials);
+                report_dpvs(&mut report, &draw);
+                let light_grid =
+                    asset_model::OwnedLightGrid::from_t5_stream(&stream, geometry.light_grid);
+                let smodel_lighting_samples = match &light_grid {
+                    Some(grid) => {
+                        report.push(format!(
+                            "t5 light_grid: READY rows={} entries={} colors={} row_axis={} col_axis={} regions={}",
+                            grid.row_data_start.len() / 2,
+                            grid.entries.len() / 4,
+                            grid.color_count,
+                            grid.row_axis,
+                            grid.col_axis,
+                            u8::from(grid.has_light_regions)
+                        ));
+                        smodel_lighting_samples(
+                            &mut report,
+                            grid,
+                            asset_model::model_lighting::collect_t5_smodel_lighting_origins(
+                                &stream, geometry,
+                            ),
+                            &static_model_instances,
+                            clip.as_ref(),
+                        )
+                    }
+                    None => {
+                        report.push(format!(
+                            "t5 light_grid: none (missing tables or rowAxis/colAxis not 0..2; row={} col={} entries={} colors={})",
+                            geometry.light_grid.row_axis,
+                            geometry.light_grid.col_axis,
+                            geometry.light_grid.entry_count,
+                            geometry.light_grid.color_count
+                        ));
+                        Vec::new()
                     }
                 };
-                let (smodel_lighting_samples, light_grid) = smodel_lighting_samples;
                 let min = draw.stats.min;
                 let max = draw.stats.max;
                 LoadedWorld {
+                    scripts,
                     sound: map_sound,
                     materials: map_materials,
                     world: PreparedWorld {
@@ -560,10 +442,9 @@ impl ZoneLane for T5Lane {
                         map_xmodel_scene_assets,
                         script_model_instances,
                         script_brush_models,
-                        map_use_triggers,
                         flag_descriptors,
                         script_structs,
-                        dyn_ents: crate::DynEntCatalog::default(),
+                        dyn_ents: asset_world::DynEntCatalog::default(),
                         smodel_lighting_samples,
                         light_grid,
                         fx: sink.fx,
@@ -603,6 +484,7 @@ impl ZoneLane for T5Lane {
                 report.push(format!("T5 world mesh: {e}"));
                 let dm_spawns = dm_spawn_points_t5(&stream);
                 let mut loaded = LoadedWorld {
+                    scripts,
                     sound: map_sound,
                     world: PreparedWorld {
                         policy: WorldDrawPolicy::t5(),
@@ -638,7 +520,7 @@ impl ZoneLane for T5Lane {
         image: &ZoneImage,
         progress: &LoadProgress,
         decode_color_maps: bool,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
     ) -> CommonCensus {
         let header = match image.t5_header() {
             Ok(header) => header,
@@ -661,8 +543,8 @@ impl ZoneLane for T5Lane {
         };
         let mut sink = CommonWalkSink::default();
         sink.seed_materials(material_seed);
-        sink.set_capture_zone(crate::ZoneOwner::from_zone_path(path));
-        sink.set_capture_ns(crate::AssetNamespace::T5);
+        sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
+        sink.set_capture_ns(asset_core::AssetNamespace::T5);
         sink.sound = asset_audio::ZoneSoundCapture::claim_common(
             path,
             asset_audio::ZoneGame::T5,
@@ -694,19 +576,41 @@ impl ZoneLane for T5Lane {
 
         sink.weapons.resolve_reticles(&sink.materials);
         sink.weapons
-            .resolve_combat_fx(&sink.fx, &crate::TracerCatalog::default());
+            .resolve_combat_fx(&sink.fx, &asset_game::TracerCatalog::default());
         let leftover_fx = sink.fx.len();
         let leftover_fx_gaps = sink.fx.capture_gaps;
-        for key in sink.weapons.rocket_model_hints() {
-            if let Some(entry) = sink.projectile_meshes.get(key.namespace, &key.name) {
-                sink.fpv_meshes
-                    .insert_in(key.namespace, entry.skel.clone(), Some(&sink.materials));
+        let projectile_keys = sink.weapons.projectile_model_hints();
+        let mut weapons = sink.weapons.into_build();
+        weapons.stamp_namespace(asset_core::AssetNamespace::T5);
+        let namespace = asset_core::AssetNamespace::T5;
+        for id in 1..=weapons.len() as u32 {
+            for name in [
+                weapons.gun_xmodel_of(id),
+                weapons.hand_xmodel_of(id),
+                weapons.rocket_model_of(id),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if sink.fpv_meshes.get(namespace, name).is_none()
+                    && let Some(entry) = sink.projectile_meshes.get(namespace, name)
+                {
+                    sink.fpv_meshes
+                        .insert_in(namespace, entry.skel.clone(), Some(&sink.materials));
+                }
+            }
+            if let Some(name) = weapons.world_model_of(id)
+                && sink.world_weapons.get(namespace, name).is_none()
+                && let Some(entry) = sink.projectile_meshes.get(namespace, name)
+            {
+                sink.world_weapons.insert_in(
+                    namespace,
+                    (*entry.skel).clone(),
+                    Some(&sink.materials),
+                );
             }
         }
-        let projectile_keys = sink.weapons.projectile_model_hints();
         sink.projectile_meshes.keep_referenced(&projectile_keys);
-        let mut weapons = sink.weapons.into_build();
-        weapons.stamp_namespace(crate::AssetNamespace::T5);
         weapons.apply_stats_tables(sink.stats_tables.values());
         weapons.resolve_sz_xanim_edges(&sink.xanims);
         weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);
@@ -718,7 +622,7 @@ impl ZoneLane for T5Lane {
         ));
         let gun_named = weapons.gun_xmodel_count();
         report.push(format!(
-        "common_mp weapons: {captured} captures → {} unique catalog ids (sorted; not retail bg_weaponIndex); {gun_named} with gunXModel[0]",
+        "common_mp weapons: {captured} captures → {} unique catalog ids (sorted); {gun_named} with gunXModel[0]",
         weapons.len()
     ));
         report.push(format!(
@@ -740,7 +644,7 @@ impl ZoneLane for T5Lane {
         let mut pending_images = None;
         if decode_color_maps {
             let stage = progress.begin_scoped(StageId::Images, "common_mp", None);
-            let (inline, plan) = crate::material_images::plan_material_color_maps(
+            let (inline, plan) = asset_material::material_images::plan_material_color_maps(
                 path,
                 &mut materials,
                 &stage,
@@ -777,6 +681,7 @@ impl ZoneLane for T5Lane {
             fx_models: sink.fx_models,
             report,
             teamsets: sink.teamsets,
+            scene_models: sink.scene_models,
             film_visions: std::collections::BTreeMap::new(),
             ..Default::default()
         }
@@ -787,7 +692,7 @@ impl ZoneLane for T5Lane {
         path: &Path,
         image: &ZoneImage,
         progress: &LoadProgress,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
     ) -> MaterialPopulation {
         let _ = progress;
         let zone_name = path.file_stem().map_or_else(
@@ -817,8 +722,8 @@ impl ZoneLane for T5Lane {
         };
         let mut sink = MaterialPopulationSink::default();
         sink.seed_materials(material_seed);
-        sink.set_capture_zone(crate::ZoneOwner::from_zone_path(path));
-        sink.set_capture_ns(crate::AssetNamespace::T5);
+        sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
+        sink.set_capture_ns(asset_core::AssetNamespace::T5);
         sink.sound = asset_audio::ZoneSoundCapture::claim_common(
             path,
             asset_audio::ZoneGame::T5,
@@ -849,6 +754,44 @@ impl ZoneLane for T5Lane {
             materials: sink.materials,
             report,
             cac_tables: sink.stats_tables.into_values().collect(),
+            scripts: sink.scripts,
         }
+    }
+}
+
+fn absorb_localized_map_sound(path: &Path, catalog: &mut asset_audio::SoundCatalog) -> String {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return "localized map sound gap: map zone has no name".into();
+    };
+    let found = match asset_transport::discover::find_t5_localized_zone(path, None, stem) {
+        Ok(Some(found)) => found,
+        Ok(None) => return format!("localized map sound: no language archive for {stem}"),
+        Err(error) => return format!("localized map sound gap: {error}"),
+    };
+    let walk = || -> Result<(asset_audio::SoundCatalog, usize), String> {
+        let image = asset_transport::open_zone(&found.path).map_err(|e| e.to_string())?;
+        let header = image.t5_header().map_err(|e| e.to_string())?;
+        let mut memory = T5ZoneMemory::for_header(&header);
+        let mut stream = memory.stream(&image.bytes).map_err(|e| e.to_string())?;
+        let mut sink = MaterialPopulationSink::default();
+        sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(&found.path));
+        sink.set_capture_ns(asset_core::AssetNamespace::T5);
+        sink.sound = Some(asset_audio::ZoneSoundCapture::for_map(
+            &found.path,
+            asset_audio::ZoneGame::T5,
+            "localized map",
+        ));
+        let walked = fastfile_t5::load_zone(&mut stream, &mut sink).map(|_| ());
+        let sound = sink.sound.take().ok_or("sound capture dropped")?;
+        let part = sound.finish(walked.map_err(|e| e.to_string()))?;
+        let aliases = part.sounds.len();
+        Ok((part, aliases))
+    };
+    match walk() {
+        Ok((part, aliases)) => {
+            catalog.absorb(part);
+            format!("localized map sound: {} {aliases} aliases", found.zone_name)
+        }
+        Err(error) => format!("localized map sound gap: {}: {error}", found.zone_name),
     }
 }

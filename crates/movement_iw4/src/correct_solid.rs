@@ -41,7 +41,7 @@ pub struct CorrectSolidOutcome {
     pub trace: Trace,
 }
 
-pub fn pm_correct_solid<C: CollisionBackend + ?Sized>(
+pub fn correct_solid<C: CollisionBackend + ?Sized>(
     origin: [f32; 3],
     mins: [f32; 3],
     maxs: [f32; 3],

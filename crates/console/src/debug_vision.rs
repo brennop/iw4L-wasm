@@ -22,7 +22,7 @@ pub(crate) fn route(
     mut commands: MessageReader<ConsoleCommand>,
     scene: Res<WorldScene>,
     view: Res<PreparedSceneView>,
-    clock: Res<net::CgFrameClock>,
+    clock: Res<net::FrameClock>,
     glow: Res<GlowDvars>,
     mut film: ResMut<FilmVisionView>,
     mut console: ResMut<ConsoleState>,

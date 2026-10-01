@@ -1,6 +1,6 @@
 use anim_iw4::{
-    Local, PartBits, QUAT_IDENTITY, VEC3_ZERO, compose_translation, dobj_surface_hidden,
-    hide_part_bit, normalize, quat_add_weighted, quat16, set_hide_part_bit, xmodel_no_scale_bit,
+    Local, PartBits, QUAT_IDENTITY, VEC3_ZERO, compose_translation, hide_part_bit, normalize,
+    quat_add_weighted, quat16, set_hide_part_bit, surface_hidden, xmodel_no_scale_bit,
 };
 use glam::{Mat4, Quat, Vec3};
 
@@ -74,7 +74,7 @@ pub enum DObjBoneOrientationError {
     DegenerateAxis { bone: usize, axis: usize },
 }
 
-pub fn dobj_bone_orientation(
+pub fn bone_orientation(
     bone_world: &[Mat4],
     bone: usize,
 ) -> Result<DObjBoneOrientation, DObjBoneOrientationError> {
@@ -460,7 +460,7 @@ impl DObj {
             return false;
         };
         let base = u32::try_from(slot.base).unwrap_or(u32::MAX);
-        !dobj_surface_hidden(surface_part_bits, hidden.words(), base)
+        !surface_hidden(surface_part_bits, hidden.words(), base)
     }
 
     pub fn skin_matrices(&self, world: &[Mat4]) -> Vec<Mat4> {
@@ -509,7 +509,7 @@ pub fn apply_aim_pitches(dobj: &DObj, locals: &mut [Local], torso_pitch: f32, wa
 
 pub const PLAYER_CONTROLLER_TAGS: [&str; 4] = ["back_low", "back_mid", "back_up", "pelvis"];
 
-pub fn dobj_set_angles(angles_deg: [f32; 3]) -> [f32; 4] {
+pub fn set_angles(angles_deg: [f32; 3]) -> [f32; 4] {
     const HALF: f32 = 0.008_726_646;
     let (yaw_s, yaw_c) = (angles_deg[1] * HALF).sin_cos();
     let (pitch_s, pitch_c) = (angles_deg[0] * HALF).sin_cos();
@@ -526,16 +526,16 @@ pub fn dobj_set_angles(angles_deg: [f32; 3]) -> [f32; 4] {
     ]
 }
 
-pub fn dobj_set_control_tag_angles(locals: &mut [Local], bone_index: usize, angles_deg: [f32; 3]) {
+pub fn set_control_tag_angles(locals: &mut [Local], bone_index: usize, angles_deg: [f32; 3]) {
     let Some(local) = locals.get_mut(bone_index) else {
         return;
     };
-    local.rotation = dobj_set_angles(angles_deg);
+    local.rotation = set_angles(angles_deg);
     local.control = true;
     local.translation = VEC3_ZERO;
 }
 
-pub fn dobj_set_local_tag(
+pub fn set_local_tag(
     locals: &mut [Local],
     bone_index: usize,
     trans: [f32; 3],
@@ -544,7 +544,7 @@ pub fn dobj_set_local_tag(
     let Some(local) = locals.get_mut(bone_index) else {
         return;
     };
-    local.rotation = dobj_set_angles(angles_deg);
+    local.rotation = set_angles(angles_deg);
     local.translation = trans;
     local.control = false;
 }
@@ -588,13 +588,13 @@ pub fn apply_player_controller(
     let mut tags = 0u8;
     for (i, name) in PLAYER_CONTROLLER_TAGS.iter().enumerate() {
         if let Some(bone) = dobj.find(name) {
-            dobj_set_control_tag_angles(locals, bone, plan.angles[i]);
+            set_control_tag_angles(locals, bone, plan.angles[i]);
             tags += 1;
         }
     }
     let tag_origin = !locals.is_empty();
     if tag_origin {
-        dobj_set_local_tag(locals, 0, plan.tag_origin_offset, plan.tag_origin_angles);
+        set_local_tag(locals, 0, plan.tag_origin_offset, plan.tag_origin_angles);
     }
     PlayerControllerResult {
         tags,

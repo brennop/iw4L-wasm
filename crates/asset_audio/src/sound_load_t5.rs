@@ -360,6 +360,23 @@ impl T5SoundCapture {
                 .ok()
                 .zip(s.u8_at(row, 78).ok())
                 .map(|(dry, near)| [dry, near]),
+            near_falloff: None,
+            voice_priority: Some(crate::VoicePriority {
+                thresholds: [
+                    s.u8_at(row, sz::SND_ALIAS_PRIORITY_MIN_THRESHOLD_OFF)
+                        .unwrap_or(0),
+                    s.u8_at(row, sz::SND_ALIAS_PRIORITY_MAX_THRESHOLD_OFF)
+                        .unwrap_or(0),
+                ],
+                values: [
+                    s.u8_at(row, sz::SND_ALIAS_PRIORITY_MIN_OFF).unwrap_or(0),
+                    s.u8_at(row, sz::SND_ALIAS_PRIORITY_MAX_OFF).unwrap_or(0),
+                ],
+                distance_max: s
+                    .u16_at(row, sz::SND_ALIAS_PRIORITY_DISTANCE_OFF)
+                    .map(f32::from)
+                    .unwrap_or(0.0),
+            }),
             envelop_min,
             envelop_max,
             envelop_percentage,

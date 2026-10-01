@@ -1,7 +1,6 @@
 use movement_iw4::{
     CreateAnimsMantleRootDelta, FlatMantleAnimLength, MANTLE_XANIM_NAMES, MANTLE_XANIM_NAMES_FR,
-    MANTLE_XANIM_TREE_SIZE, MantleRootDelta, MantleXAnimLength, mantle_trans_over_anim,
-    mantle_trans_up_anim,
+    MANTLE_XANIM_TREE_SIZE, MantleRootDelta, MantleXAnimLength, mantle,
 };
 use xmodel_runtime::AnimClip;
 
@@ -45,12 +44,12 @@ impl MantleXAnimBind {
 
     #[must_use]
     pub fn up_anim(trans_index: i32) -> i32 {
-        mantle_trans_up_anim(trans_index)
+        mantle::trans_up_anim(trans_index)
     }
 
     #[must_use]
     pub fn over_anim(trans_index: i32) -> i32 {
-        mantle_trans_over_anim(trans_index)
+        mantle::trans_over_anim(trans_index)
     }
 
     pub fn from_clips(mut get: impl FnMut(bool, usize) -> Option<AnimClip>) -> Self {

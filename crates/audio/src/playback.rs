@@ -3,8 +3,10 @@ use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
 use web_time::Instant;
 
-use asset_iw4::{SND_CURVE_MAX_KNOTS, snd_attenuate, snd_has_free_voice};
-use assets::{AssetNamespace, NamespaceSoundIwd, SoundCatalog, lerp_range, snd_unit_random};
+use asset_audio::{SoundCatalog, lerp_range, unit_random};
+use asset_core::AssetNamespace;
+use asset_iw4::{SND_CURVE_MAX_KNOTS, has_free_voice};
+use assets::NamespaceSoundIwd;
 use bevy::{
     audio::Volume,
     prelude::*,
@@ -13,6 +15,7 @@ use frame::{ClientSet, FxSoundPublished, MatchTornDown, SessionSwapApplied};
 use net::{LastAdoptedSnapshot, SvcLocalSound};
 
 use crate::ambient::SoundIwd;
+use crate::attenuation::distance_attenuation;
 use crate::backend::MatchEpoch;
 use crate::{AudioSink, AudioSinkPlayback};
 use crate::clip_store::{
@@ -41,6 +44,8 @@ pub struct Channel3d {
     pub dist_min: f32,
     pub dist_max: f32,
     pub knots: Arc<[[f32; 2]]>,
+    pub near_knots: Option<Arc<[[f32; 2]]>>,
+    pub priority: Option<asset_audio::VoicePriority>,
     pub base_volume: f32,
 
     pub live_pan: crate::pcm::LivePan,
@@ -199,11 +204,10 @@ impl Plugin for PlayerSoundPlugin {
                     play_weapon_sound_messages,
                     play_bound_weapon_sounds.after(drain_pending_oneshots),
                     play_land_sound_messages,
-                    crate::map_doors::update.before(crate::ambient::update_map_emitter_gain),
                     crate::destructible_loops::update
                         .before(crate::ambient::update_map_emitter_gain),
                     crate::ambient::update_map_emitter_gain,
-                    snd_update_all_channels,
+                    update_all_channels,
                 )
                     .in_set(ClientSet::Effects),
             )
@@ -244,7 +248,7 @@ fn reset_clip_prep_on_match_torn_down(
 fn listener_pose(listeners: &Query<&Transform, With<AmbientListener>>) -> Option<(Vec3, Vec3)> {
     let n = listeners.iter().len();
     if n > 1 {
-        panic!("second listener / amp maxRadius gate not ported");
+        panic!("more than one ambient listener");
     }
     listeners
         .iter()
@@ -252,21 +256,31 @@ fn listener_pose(listeners: &Query<&Transform, With<AmbientListener>>) -> Option
         .map(|t| (t.translation, t.rotation * Vec3::X))
 }
 
-fn snd_update_all_channels(
+fn update_all_channels(
     listeners: Query<&Transform, With<AmbientListener>>,
-    mut channels: Query<(&Channel3d, &mut AudioSink)>,
+    mut channels: Query<(Entity, &Channel3d, &mut AudioSink)>,
+    mut occupancy: ResMut<VoiceOccupancy>,
     settings: Res<frame::GameSettings>,
 ) {
     let Some((ear, right)) = listener_pose(&listeners) else {
         return;
     };
     let ear_inches = transform_inches(ear);
-    for (ch, mut sink) in &mut channels {
+    for (entity, ch, mut sink) in &mut channels {
         let dist = distance_inches(ear_inches, ch.origin_inches);
+        if let Some(priority) = &ch.priority {
+            occupancy.update_alias_priority(entity, priority.evaluate(Some(dist)));
+        }
         let atten = if ch.knots.is_empty() {
             0.0
         } else {
-            let value = snd_attenuate(&ch.knots, dist, ch.dist_min, ch.dist_max);
+            let value = distance_attenuation(
+                &ch.knots,
+                ch.near_knots.as_deref(),
+                dist,
+                ch.dist_min,
+                ch.dist_max,
+            );
             if value < 0.0 { 0.0 } else { value }
         };
         let emitter = Vec3::from_array(ch.origin_inches);
@@ -281,10 +295,15 @@ fn snd_update_all_channels(
 fn apply_svc_local_sound(
     mut cmds: MessageReader<SvcLocalSound>,
     adopted: Res<LastAdoptedSnapshot>,
+    announcer: Res<crate::match_voices::AnnouncerRoutes>,
     mut play: MessageWriter<crate::AliasCommand>,
 ) {
     for cmd in cmds.read() {
-        let Some(alias) = adopted.sound_alias_name(cmd.index).map(str::to_owned) else {
+        let Some((namespace, alias)) = adopted
+            .sound_alias_name(cmd.index)
+            .map(|alias| announcer.route(alias))
+            .map(|(namespace, alias)| (namespace, alias.to_owned()))
+        else {
             diag::warn!(
                 Audio,
                 "audio: svc local sound CS index {} is unresolved (typed gap)",
@@ -294,13 +313,13 @@ fn apply_svc_local_sound(
         };
         if cmd.stop {
             play.write(AliasCommand::Stop {
-                namespace: AssetNamespace::Iw4,
+                namespace,
                 alias,
                 snd_ent: Some(SND_ENT_LOCAL),
             });
         } else {
             play.write(crate::AliasCommand::Play(PlayAlias {
-                namespace: AssetNamespace::Iw4,
+                namespace,
                 alias,
                 fallback: None,
                 origin_inches: None,
@@ -998,8 +1017,44 @@ fn prepare_voice(
         }
     }
     let voice_n = occupancy.voice_count(ch);
-    if !snd_has_free_voice(voice_n, 0, info.max_voices) {
+    if !has_free_voice(voice_n, 0, info.max_voices) {
         return Err(SuppressReason::VoiceLimit);
+    }
+    Ok(())
+}
+
+fn prepare_alias_voice(
+    commands: &mut Commands,
+    occupancy: &mut VoiceOccupancy,
+    namespace: AssetNamespace,
+    alias: &str,
+    row: Option<&asset_audio::CapturedAlias>,
+    snd_ent: Option<u32>,
+    priority: f32,
+) -> Result<(), SuppressReason> {
+    if namespace != AssetNamespace::T5 {
+        return Ok(());
+    }
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let flags = row.flags.unwrap_or(0);
+    for (mode, count, per_entity) in [
+        ((flags >> 25) & 3, row.limit_count, false),
+        ((flags >> 27) & 3, row.entity_limit_count, true),
+    ] {
+        if let Some(count) = count
+            && let Some(entity) = occupancy.limit_alias(
+                namespace,
+                alias,
+                snd_ent,
+                (mode, count),
+                per_entity,
+                priority,
+            )?
+        {
+            crate::backend::stop(commands, entity);
+        }
     }
     Ok(())
 }
@@ -1023,10 +1078,14 @@ fn track_voice(occupancy: &mut VoiceOccupancy, entity: Entity, lease: Option<Voi
     }
 }
 
-fn streamed_row_volume_pitch(row: &assets::CapturedAlias, rng: &mut u32) -> (f32, f32) {
-    let t_vol = snd_unit_random(rng);
-    let t_pitch = snd_unit_random(rng);
-    let volume = if row.vol_min == 0.0 && row.vol_max == 0.0 {
+fn streamed_row_volume_pitch(
+    namespace: AssetNamespace,
+    row: &asset_audio::CapturedAlias,
+    rng: &mut u32,
+) -> (f32, f32) {
+    let t_vol = unit_random(rng);
+    let t_pitch = unit_random(rng);
+    let volume = if namespace != AssetNamespace::T5 && row.vol_min == 0.0 && row.vol_max == 0.0 {
         1.0
     } else {
         lerp_range(row.vol_min, row.vol_max, t_vol)
@@ -1072,6 +1131,36 @@ fn play_alias_oneshot_at(
         return OneshotStart::failed(StartFailure::MissingAlias);
     };
     let variant_index = outcome.variant_index;
+    let t5_secondary = if namespace == AssetNamespace::T5 {
+        let layer = match bound {
+            Some(index) => bank.sound_at(index),
+            None => bank.sound_in(namespace, alias),
+        }
+        .and_then(|sound| sound.aliases.get(variant_index))
+        .and_then(|row| row.secondary.as_deref());
+        play_secondary_layer(
+            commands,
+            pcm_assets,
+            shared,
+            bank,
+            iwd,
+            namespace,
+            layer,
+            origin_inches,
+            listener,
+            pick,
+            clips.as_deref_mut(),
+            pending,
+            occupancy,
+            snd_ent,
+            depth,
+            class,
+            epoch,
+        )
+    } else {
+        None
+    };
+
     let loaded_name = outcome.picked.as_ref().map(|p| p.sound.name.as_str());
     let loaded_ns = outcome
         .picked
@@ -1097,7 +1186,7 @@ fn play_alias_oneshot_at(
         }
         .and_then(|s| s.aliases.get(variant_index));
         let (volume, pitch) = row
-            .map(|row| streamed_row_volume_pitch(row, &mut pick.lcg))
+            .map(|row| streamed_row_volume_pitch(namespace, row, &mut pick.lcg))
             .unwrap_or((1.0, 1.0));
         (volume, pitch, row.and_then(|r| r.secondary.clone()))
     };
@@ -1137,7 +1226,7 @@ fn play_alias_oneshot_at(
             return OneshotStart::failed(failure).with_variant(variant_index);
         }
     };
-    submit_prepared_oneshot(
+    let mut started = submit_prepared_oneshot(
         commands,
         pcm_assets,
         shared,
@@ -1162,7 +1251,11 @@ fn play_alias_oneshot_at(
         volume,
         pitch,
         layer.as_deref(),
-    )
+    );
+    if namespace == AssetNamespace::T5 {
+        started.secondary = t5_secondary;
+    }
+    started
 }
 
 enum ClipTake {
@@ -1255,17 +1348,24 @@ fn submit_prepared_oneshot(
         None => bank.sound_in(namespace, alias),
     };
     let row = sound.and_then(|s| s.aliases.get(variant_index));
+    let limit_name = sound.map_or(alias, |sound| sound.name.as_str());
     let channel = sound.and_then(|s| s.ent_channel(variant_index));
     let mut world_detail: Option<String> = None;
-    // Whether a sound is positional is the ent channel's call, not the caller's:
-    // `channels.def` marks channels like `auto2d`, `music` and `announcer` as 2D,
-    // and those play unpanned and unattenuated even when handed an entity to
-    // play on. `ui_mp_suitcasebomb_timer` rides `auto2d`, which is why the
-    // planted bomb ticks across the whole map.
-    let positional = channel
-        .and_then(|ch| bank.ent_channel(ch))
-        .is_none_or(|info| info.is_3d);
-
+    let positional = if namespace == AssetNamespace::T5 {
+        row.and_then(|row| row.flags)
+            .is_some_and(|flags| flags & 2 != 0)
+    } else {
+        channel
+            .and_then(|ch| bank.ent_channel(ch))
+            .is_none_or(|info| info.is_3d)
+    };
+    let distance = origin_inches
+        .filter(|_| positional)
+        .zip(listener)
+        .map(|(origin, (ear, _))| distance_inches(transform_inches(ear), origin));
+    let priority = row
+        .and_then(|row| row.voice_priority.as_ref())
+        .map_or(0.0, |priority| priority.evaluate(distance));
     match origin_inches.filter(|_| positional) {
         Some(pos) => {
             let Some((ear, right)) = listener else {
@@ -1289,7 +1389,17 @@ fn submit_prepared_oneshot(
                     .with_variant(variant_index);
             };
             let knots = shared.intern_curve(&curve.name, &curve.knots);
-            let atten = snd_attenuate(&knots, dist, row.dist_min, row.dist_max);
+            let near_knots = row
+                .near_falloff
+                .as_ref()
+                .map(|curve| shared.intern_curve(&curve.name, &curve.knots));
+            let atten = distance_attenuation(
+                &knots,
+                near_knots.as_deref(),
+                dist,
+                row.dist_min,
+                row.dist_max,
+            );
             let emitter = Vec3::from_array(pos);
             let (pan_l, pan_r) = world_oneshot_channel_gains(ear, right, emitter, 1.0);
             if atten < 0.0 {
@@ -1308,7 +1418,19 @@ fn submit_prepared_oneshot(
                     detail: Some(falloff_detail(dist, row.dist_min, row.dist_max, atten)),
                 };
             }
-            if let Err(reason) = prepare_voice(commands, occupancy, bank, channel, snd_ent) {
+            if let Err(reason) = prepare_voice(commands, occupancy, bank, channel, snd_ent)
+                .and_then(|()| {
+                    prepare_alias_voice(
+                        commands,
+                        occupancy,
+                        namespace,
+                        limit_name,
+                        Some(row),
+                        snd_ent,
+                        priority,
+                    )
+                })
+            {
                 return OneshotStart {
                     outcome: StartOutcome::Suppressed(reason),
                     variant: Some(variant_index),
@@ -1345,6 +1467,8 @@ fn submit_prepared_oneshot(
                     dist_min: row.dist_min,
                     dist_max: row.dist_max,
                     knots,
+                    near_knots,
+                    priority: row.voice_priority.clone(),
                     base_volume: volume.max(0.0),
                     live_pan,
                 });
@@ -1353,9 +1477,19 @@ fn submit_prepared_oneshot(
                 }
             }
             track_voice(occupancy, entity, lease);
+            if namespace == AssetNamespace::T5 {
+                let lease = occupancy.track_alias(entity, namespace, limit_name, snd_ent, priority);
+                commands.entity(entity).insert(lease);
+            }
         }
         None => {
-            if let Err(reason) = prepare_voice(commands, occupancy, bank, channel, snd_ent) {
+            if let Err(reason) = prepare_voice(commands, occupancy, bank, channel, snd_ent)
+                .and_then(|()| {
+                    prepare_alias_voice(
+                        commands, occupancy, namespace, limit_name, row, snd_ent, priority,
+                    )
+                })
+            {
                 return OneshotStart {
                     outcome: StartOutcome::Suppressed(reason),
                     variant: Some(variant_index),
@@ -1387,27 +1521,35 @@ fn submit_prepared_oneshot(
                 }
             }
             track_voice(occupancy, entity, lease);
+            if namespace == AssetNamespace::T5 {
+                let lease = occupancy.track_alias(entity, namespace, limit_name, snd_ent, priority);
+                commands.entity(entity).insert(lease);
+            }
         }
     }
-    let secondary = play_secondary_layer(
-        commands,
-        pcm_assets,
-        shared,
-        bank,
-        iwd,
-        namespace,
-        layer,
-        origin_inches,
-        listener,
-        pick,
-        clips,
-        pending,
-        occupancy,
-        snd_ent,
-        depth,
-        class,
-        epoch,
-    );
+    let secondary = if namespace == AssetNamespace::T5 {
+        None
+    } else {
+        play_secondary_layer(
+            commands,
+            pcm_assets,
+            shared,
+            bank,
+            iwd,
+            namespace,
+            layer,
+            origin_inches,
+            listener,
+            pick,
+            clips,
+            pending,
+            occupancy,
+            snd_ent,
+            depth,
+            class,
+            epoch,
+        )
+    };
     OneshotStart {
         outcome: StartOutcome::Submitted,
         variant: Some(variant_index),

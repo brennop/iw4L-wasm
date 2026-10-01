@@ -588,7 +588,7 @@ pub(crate) fn spawn_world(
                 .collect();
             diag::info!(
                 World,
-                "drawsurf primary lights missing falloff_width: {} (retail always writes const 5 from the def image width; None is a retention gap)",
+                "drawsurf primary lights missing falloff_width: {} (the def image width always yields 5; None is a retention gap)",
                 if width_none.is_empty() {
                     "none".to_owned()
                 } else {
@@ -621,7 +621,7 @@ pub(crate) fn spawn_world(
                 .count();
             diag::info!(
                 World,
-                "sceneLightIndex sources: GfxSurface+22 nz={}/{} DrawInst+0x3d nz={}/{} (engine-lit / authored smodel; FPV is AtPoint lightingInfo.lo)",
+                "scene light index sources: surface nz={}/{} static model nz={}/{}",
                 surf_nz,
                 surf_lights.len(),
                 smodel_nz,
@@ -744,7 +744,7 @@ pub(crate) fn spawn_world_finish(
         job.gpu_wait.arm(progress.as_ref());
         diag::info!(
             World,
-            "world spawn: Camera3d up; overlay holds for GPU images/pipelines (R_EndRegistration/RB_TouchAllImages) last_slice={:.1}ms images={}/{}",
+            "world spawn: Camera3d up; overlay holds for GPU images/pipelines last_slice={:.1}ms images={}/{}",
             job.last_work_ms,
             job.images.done,
             job.images.total
@@ -762,7 +762,7 @@ pub(crate) fn spawn_world_finish(
 }
 
 fn record_first_world_frame(
-    progress: Option<&assets::LoadProgress>,
+    progress: Option<&asset_transport::LoadProgress>,
     job: &WorldSpawnJob,
     present_ack: &WorldPresentAck,
     report: Option<&LaunchReport>,
@@ -933,7 +933,7 @@ pub(crate) fn shutdown_world_on_teardown(
     perf::world_hold(spawned, 0, 0);
     diag::info!(
         World,
-        "world: shutdown (R_ShutdownWorld) — leftover geometry, tess plans, and model lighting dropped"
+        "world: shutdown — leftover geometry, tess plans, and model lighting dropped"
     );
 }
 

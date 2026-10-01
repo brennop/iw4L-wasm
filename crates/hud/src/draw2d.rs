@@ -1,7 +1,7 @@
 use core::fmt::{self, Write as _};
 use std::collections::HashMap;
 
-use assets::FontDef;
+use asset_game::FontDef;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Draw2dOp {
@@ -67,7 +67,7 @@ pub struct Draw2dCmd {
     pub color: [f32; 4],
     pub material: String,
 
-    pub material_namespace: assets::AssetNamespace,
+    pub material_namespace: asset_core::AssetNamespace,
     pub op: Draw2dOp,
     pub provenance: Draw2dProvenance,
 
@@ -167,7 +167,7 @@ fn op_extra(op: &Draw2dOp) -> String {
                 ),
                 None => String::new(),
             };
-            let flags = hud_iw4::r_draw_text_render_flags(*style);
+            let flags = hud_iw4::draw_text_render_flags(*style);
             format!(
                 " font={font:?} scale={scale:.4} text={text:?} loc={loc_key:?} style={style} flags={flags:#x}{fx}{glow}"
             )
@@ -200,7 +200,7 @@ pub struct Draw2dQuad {
     pub color: [f32; 4],
     pub material: String,
 
-    pub material_namespace: assets::AssetNamespace,
+    pub material_namespace: asset_core::AssetNamespace,
     pub provenance: Draw2dProvenance,
     pub layer: u8,
 
@@ -264,7 +264,7 @@ enum CmdSlot {
 }
 
 struct CmdHost {
-    material_namespace: assets::AssetNamespace,
+    material_namespace: asset_core::AssetNamespace,
     clip: Option<[f32; 4]>,
     provenance: Draw2dProvenance,
     layer: u8,
@@ -416,7 +416,7 @@ fn tessellate_fonts_in(
         overflow_n,
         ..Draw2dCmdCensus::default()
     };
-    let mut walk = hud_iw4::r_walk_render_commands(rc.buf, rc.used);
+    let mut walk = hud_iw4::walk_render_commands(rc.buf, rc.used);
     let mut host_i = 0usize;
     let mut out = Vec::new();
     for slot in slots {
@@ -528,11 +528,11 @@ fn quad_from_stretch(
     parsed: hud_iw4::GfxCmdStretchPic,
     clip: Option<[f32; 4]>,
     material: String,
-    material_namespace: assets::AssetNamespace,
+    material_namespace: asset_core::AssetNamespace,
     provenance: Draw2dProvenance,
     layer: u8,
 ) -> Draw2dQuad {
-    let (xy, st) = hud_iw4::rb_draw_stretch_pic_corners(
+    let (xy, st) = hud_iw4::draw_stretch_pic_corners(
         parsed.x, parsed.y, parsed.w, parsed.h, parsed.s0, parsed.t0, parsed.s1, parsed.t1,
     );
     Draw2dQuad {
@@ -558,7 +558,7 @@ fn text_run_quads(
     run_color: [f32; 4],
     clip: Option<[f32; 4]>,
     material: &str,
-    material_namespace: assets::AssetNamespace,
+    material_namespace: asset_core::AssetNamespace,
     provenance: Draw2dProvenance,
     layer: u8,
     render_flags: u32,
@@ -586,8 +586,8 @@ fn text_run_quads(
     let fx_birth_time = fx.map_or(0, |f| f.fx.birth_time);
     let fx_decay_duration = fx.map_or(0, |f| f.fx.decay_duration);
 
-    let decaying = vars.is_some_and(|v| v.decaying)
-        && hud_iw4::fx_decay_tick_count(fx_decay_duration).is_some();
+    let decaying =
+        vars.is_some_and(|v| v.decaying) && hud_iw4::decay_tick_count(fx_decay_duration).is_some();
 
     let shadow_offset = hud_iw4::text_drop_shadow_offset(render_flags);
     let shadow_color = [0.0, 0.0, 0.0, run_color[3]];
@@ -621,7 +621,7 @@ fn text_run_quads(
         let mut extra_fx_char = false;
 
         if draw_rand_char_at_end && max_length_remaining == 1 {
-            letter = hud_iw4::r_font_get_random_letter(seed);
+            letter = hud_iw4::font_get_random_letter(seed);
             fade_alpha = hud_iw4::FX_TYPING_LETTER_ALPHA;
             if hud_iw4::rand_with_seed(&mut seed) % 2 != 0 {
                 letter = hud_iw4::FX_EXTRA_CHAR_LETTER;
@@ -690,7 +690,7 @@ fn text_run_quads(
             };
             if let Some(size) = outline_size {
                 for [dx, dy] in hud_iw4::TEXT_OUTLINE_OFFSETS {
-                    let (xy, st) = hud_iw4::rb_draw_stretch_pic_corners(
+                    let (xy, st) = hud_iw4::draw_stretch_pic_corners(
                         gx + size * dx,
                         gy + size * dy,
                         gw,
@@ -713,16 +713,8 @@ fn text_run_quads(
                 }
             }
             if let Some(off) = shadow_offset {
-                let (xy, st) = hud_iw4::rb_draw_stretch_pic_corners(
-                    gx + off,
-                    gy + off,
-                    gw,
-                    gh,
-                    s0,
-                    t0,
-                    s1,
-                    t1,
-                );
+                let (xy, st) =
+                    hud_iw4::draw_stretch_pic_corners(gx + off, gy + off, gw, gh, s0, t0, s1, t1);
                 out.push(Draw2dQuad {
                     xy,
                     st,
@@ -739,7 +731,7 @@ fn text_run_quads(
                     clip,
                 });
             }
-            let (xy, st) = hud_iw4::rb_draw_stretch_pic_corners(gx, gy, gw, gh, s0, t0, s1, t1);
+            let (xy, st) = hud_iw4::draw_stretch_pic_corners(gx, gy, gw, gh, s0, t0, s1, t1);
             out.push(Draw2dQuad {
                 xy,
                 st,

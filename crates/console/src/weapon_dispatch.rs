@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
-use assets::{FamilySlot, LoadoutRules, PreparedWeapons, WeaponSelection};
+use asset_game::{FamilySlot, LoadoutRules, WeaponSelection};
+use assets::PreparedWeapons;
 use bevy::prelude::*;
 use frame::MatchTornDown;
 use net::{ClientActionInbox, LocalPresentClient, PresentedSnapshot};
@@ -59,7 +60,7 @@ pub(crate) fn register_weapon_commands(
     if registry.resolve("give").is_none() {
         registry.register(
             crate::CommandSpec::new("give")
-                .usage("give <game:weapon> [attachment...] — equip a weapon on the active slot (e.g. give iw5:acr acog)")
+                .usage("give <game:weapon> [attachment...] | give killstreak <name> — equip a weapon on the active slot (e.g. give iw5:acr acog), or grant a killstreak (e.g. give killstreak airdrop)")
                 .arg(LiveListCompleter(Arc::clone(&completions.give))),
         );
     }
@@ -135,6 +136,17 @@ pub(crate) fn route_weapon_commands(
                     );
                     continue;
                 };
+                if arg == "killstreak" {
+                    give_killstreak(
+                        cmd.args.get(1),
+                        &presented,
+                        &local,
+                        &mut inbox,
+                        &mut seq,
+                        |msg| echo(msg, &mut console, &mut line),
+                    );
+                    continue;
+                }
                 let Some(weapons) = weapons.as_ref() else {
                     echo(
                         "give: weapon catalog not loaded".into(),
@@ -248,6 +260,41 @@ pub(crate) fn route_weapon_commands(
     }
 }
 
+fn give_killstreak(
+    name: Option<&String>,
+    presented: &PresentedSnapshot,
+    local: &LocalPresentClient,
+    inbox: &mut ClientActionInbox,
+    seq: &mut net::ActionRequestIds,
+    mut echo: impl FnMut(String),
+) {
+    let Some(name) = name else {
+        echo("usage: give killstreak <name> (e.g. airdrop, uav, predator_missile)".into());
+        return;
+    };
+    if !alive(presented, local.0) {
+        echo("give killstreak: not Alive — spawn a class first".into());
+        return;
+    }
+    let Some(field) = sim::menu_response_field(name) else {
+        echo(format!("give killstreak: `{name}` is too long"));
+        return;
+    };
+    let request_id = seq.allocate();
+    match inbox.push(
+        local.0,
+        ClientAction::GiveKillstreak {
+            request_id,
+            name: field,
+        },
+    ) {
+        Ok(()) => echo(format!(
+            "give killstreak: queued {name} request_id={request_id}"
+        )),
+        Err(error) => echo(format!("give killstreak: {error}")),
+    }
+}
+
 pub(crate) fn echo_give_results(
     give: Option<Res<net::DumpGiveLog>>,
     weapons: Option<Res<PreparedWeapons>>,
@@ -333,7 +380,7 @@ fn alive(presented: &PresentedSnapshot, id: sim::ClientId) -> bool {
 }
 
 pub(crate) fn resolve_give_id(
-    registry: &assets::WeaponRegistry,
+    registry: &asset_game::WeaponRegistry,
     raw: &str,
     attachments: &[String],
 ) -> Result<u32, String> {
@@ -343,7 +390,7 @@ pub(crate) fn resolve_give_id(
             .map(|resolved| resolved.id)
             .map_err(|refusal| format!("`{raw}`: {refusal} ({})", refusal.code()))
     };
-    if let Some(key) = assets::FamilyKey::parse(raw)
+    if let Some(key) = asset_game::FamilyKey::parse(raw)
         && let Some(family) = registry.weapon_families().find(&key)
     {
         return resolve(WeaponSelection::with(family.key.clone(), attachments));
@@ -377,7 +424,7 @@ pub(crate) fn resolve_give_id(
     resolve(selection)
 }
 
-fn family_of(registry: &assets::WeaponRegistry, weapon: u32) -> Result<WeaponSelection, String> {
+fn family_of(registry: &asset_game::WeaponRegistry, weapon: u32) -> Result<WeaponSelection, String> {
     registry
         .describe_configuration(weapon)
         .filter(|selection| selection.family.is_some())
@@ -385,7 +432,7 @@ fn family_of(registry: &assets::WeaponRegistry, weapon: u32) -> Result<WeaponSel
         .ok_or_else(|| format!("`{}` belongs to no weapon family", registry.name_of(weapon)))
 }
 
-fn attachment_hints(registry: &assets::WeaponRegistry, current: u32) -> Result<String, String> {
+fn attachment_hints(registry: &asset_game::WeaponRegistry, current: u32) -> Result<String, String> {
     let selection = family_of(registry, current)?;
     let options = registry
         .list_attachment_choices(&selection, LoadoutRules::default())
@@ -421,7 +468,7 @@ fn attachment_hints(registry: &assets::WeaponRegistry, current: u32) -> Result<S
 }
 
 fn toggle_named_attachment(
-    registry: &assets::WeaponRegistry,
+    registry: &asset_game::WeaponRegistry,
     current: u32,
     name: &str,
 ) -> Result<u32, String> {

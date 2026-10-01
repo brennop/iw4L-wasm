@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use assets::{GamesRoot, NamespaceSoundIwd, NamespaceTrees, SoundCatalog, load_mp_sound_bank};
+use asset_audio::{SoundCatalog, load_mp_sound_bank};
+use asset_transport::GamesRoot;
+use assets::{NamespaceSoundIwd, NamespaceTrees};
 use bevy::{
     audio::Volume,
     prelude::*,
@@ -8,7 +10,7 @@ use bevy::{
 };
 use frame::{
     ClientSet, LaunchIdentity, ReturnedToMenu, UiPlayMusic, UiPlaySound, UiStopMusic,
-    register_ui_sound,
+    register_ui_contracts,
 };
 
 use crate::{
@@ -48,7 +50,7 @@ struct PendingMenuBed {
 }
 
 pub(crate) fn register_frontend_audio(app: &mut App) {
-    register_ui_sound(app);
+    register_ui_contracts(app);
     app.init_resource::<PendingMenuBed>()
         .add_message::<ReturnedToMenu>()
         .add_systems(
@@ -224,7 +226,7 @@ fn play_ui_sound_messages(
             &mut shared,
             &bank.0,
             iwd.map(|a| a.as_ref()),
-            assets::AssetNamespace::Iw4,
+            asset_core::AssetNamespace::Iw4,
             &event.alias,
             None,
             None,
@@ -283,7 +285,7 @@ fn play_ui_music_messages(
     for (entity, _) in playing.iter() {
         crate::backend::stop(&mut commands, entity);
     }
-    let Some(key) = clip_keys_for_alias(&bank.0, assets::AssetNamespace::Iw4, &alias)
+    let Some(key) = clip_keys_for_alias(&bank.0, asset_core::AssetNamespace::Iw4, &alias)
         .into_iter()
         .next()
     else {

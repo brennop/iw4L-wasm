@@ -12,7 +12,7 @@ pub const FX_CODE_MESH_VERTEX_STRIDE: usize = 32;
 pub const FX_CODE_MESH_BINORMAL_SIGN: f32 = -1.0;
 
 #[inline]
-pub fn fx_trail_compute_u(
+pub fn trail_compute_u(
     span: f32,
     repeat_dist: i32,
     scroll_time_msec: i32,
@@ -28,7 +28,7 @@ pub fn fx_trail_compute_u(
 }
 
 #[inline]
-pub fn fx_trail_uncompress_basis(basis_chars: &[i8; 6]) -> [[f32; 3]; 2] {
+pub fn trail_uncompress_basis(basis_chars: &[i8; 6]) -> [[f32; 3]; 2] {
     let s = FX_TRAIL_BASIS_SCALE as f32;
     [
         [
@@ -45,35 +45,35 @@ pub fn fx_trail_uncompress_basis(basis_chars: &[i8; 6]) -> [[f32; 3]; 2] {
 }
 
 #[inline]
-pub fn fx_trail_compress_char(v: f32) -> i8 {
+pub fn trail_compress_char(v: f32) -> i8 {
     let i = (v as f64 * FX_TRAIL_NORMAL_SCALE) as i32;
     i.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8
 }
 
 #[inline]
-pub fn fx_trail_compress_basis(left: [f32; 3], up: [f32; 3]) -> [i8; 6] {
+pub fn trail_compress_basis(left: [f32; 3], up: [f32; 3]) -> [i8; 6] {
     [
-        fx_trail_compress_char(left[0]),
-        fx_trail_compress_char(left[1]),
-        fx_trail_compress_char(left[2]),
-        fx_trail_compress_char(up[0]),
-        fx_trail_compress_char(up[1]),
-        fx_trail_compress_char(up[2]),
+        trail_compress_char(left[0]),
+        trail_compress_char(left[1]),
+        trail_compress_char(left[2]),
+        trail_compress_char(up[0]),
+        trail_compress_char(up[1]),
+        trail_compress_char(up[2]),
     ]
 }
 
 #[inline]
-pub fn fx_compress_basis_from_axis(axis: [[f32; 3]; 3]) -> [i8; 6] {
-    fx_trail_compress_basis(axis[1], axis[2])
+pub fn compress_basis_from_axis(axis: [[f32; 3]; 3]) -> [i8; 6] {
+    trail_compress_basis(axis[1], axis[2])
 }
 
 #[inline]
-pub fn fx_compress_basis_from_quat(quat: [f32; 4]) -> [i8; 6] {
-    fx_compress_basis_from_axis(crate::glass::fx_unit_quat_to_axis(quat))
+pub fn compress_basis_from_quat(quat: [f32; 4]) -> [i8; 6] {
+    compress_basis_from_axis(crate::glass::unit_quat_to_axis(quat))
 }
 
 #[inline]
-pub fn fx_trail_emit_index_quad(a: u16, b: u16, base0: u16, vert_count: u16) -> [[u16; 2]; 3] {
+pub fn trail_emit_index_quad(a: u16, b: u16, base0: u16, vert_count: u16) -> [[u16; 2]; 3] {
     let base1 = base0.wrapping_add(vert_count);
     let a0 = a.wrapping_add(base0);
     let b0 = b.wrapping_add(base0);
@@ -83,7 +83,7 @@ pub fn fx_trail_emit_index_quad(a: u16, b: u16, base0: u16, vert_count: u16) -> 
 }
 
 #[inline]
-pub fn fx_trail_index_quad_tris(pairs: [[u16; 2]; 3]) -> [[u16; 3]; 2] {
+pub fn trail_index_quad_tris(pairs: [[u16; 2]; 3]) -> [[u16; 3]; 2] {
     let [[a0, b0], [a1, b1], _] = pairs;
     [[a0, b0, a1], [b0, b1, a1]]
 }
@@ -113,7 +113,7 @@ pub struct FxTrailEmittedVert {
 }
 
 #[inline]
-pub fn fx_trail_pack_texcoord(u: f32, v: f32) -> u32 {
+pub fn trail_pack_texcoord(u: f32, v: f32) -> u32 {
     let pack_one = |f: f32| -> u32 {
         let bits = f.to_bits() as i32;
         let mut q = (bits.wrapping_mul(2) ^ (0x8000_0000u32 as i32)) >> 14;
@@ -128,7 +128,7 @@ pub fn fx_trail_pack_texcoord(u: f32, v: f32) -> u32 {
 }
 
 #[inline]
-pub fn fx_trail_pack_normal(n: [f32; 3]) -> u32 {
+pub fn trail_pack_normal(n: [f32; 3]) -> u32 {
     let enc = |c: f32| -> u8 {
         let v = (c as f64) * FX_TRAIL_NORMAL_SCALE + FX_TRAIL_NORMAL_BIAS;
         libm::round(v) as i32 as u8
@@ -137,14 +137,14 @@ pub fn fx_trail_pack_normal(n: [f32; 3]) -> u32 {
 }
 
 #[inline]
-pub fn fx_pack_code_mesh_vertex(
+pub fn pack_code_mesh_vertex(
     xyz: [f32; 3],
     color_rgba: [u8; 4],
     texcoord_packed: u32,
     normal_packed: u32,
     tangent_packed: u32,
 ) -> [u8; FX_CODE_MESH_VERTEX_STRIDE] {
-    fx_pack_code_mesh_vertex_signed(
+    pack_code_mesh_vertex_signed(
         xyz,
         color_rgba,
         texcoord_packed,
@@ -155,7 +155,7 @@ pub fn fx_pack_code_mesh_vertex(
 }
 
 #[inline]
-pub fn fx_pack_code_mesh_vertex_signed(
+pub fn pack_code_mesh_vertex_signed(
     xyz: [f32; 3],
     color_rgba: [u8; 4],
     texcoord_packed: u32,
@@ -180,7 +180,7 @@ pub fn fx_pack_code_mesh_vertex_signed(
 }
 
 #[inline]
-pub fn fx_trail_emit_segment_vert(
+pub fn trail_emit_segment_vert(
     trail_vert: &FxTrailVertex,
     state: &FxTrailSegmentDrawState,
 ) -> FxTrailEmittedVert {
@@ -219,21 +219,21 @@ pub fn fx_trail_emit_segment_vert(
         color_rgba: state.color_rgba,
         u: state.u_coord,
         v: trail_vert.tex_coord,
-        texcoord_packed: fx_trail_pack_texcoord(state.u_coord, trail_vert.tex_coord),
-        normal_packed: fx_trail_pack_normal(n_world),
+        texcoord_packed: trail_pack_texcoord(state.u_coord, trail_vert.tex_coord),
+        normal_packed: trail_pack_normal(n_world),
         tangent_packed: FX_TRAIL_TANGENT_PACKED,
     }
 }
 
 #[inline]
-pub fn fx_trail_emit_segment_verts(
+pub fn trail_emit_segment_verts(
     verts: &[FxTrailVertex],
     state: &FxTrailSegmentDrawState,
     out: &mut [FxTrailEmittedVert],
 ) -> usize {
     let n = verts.len().min(out.len());
     for i in 0..n {
-        out[i] = fx_trail_emit_segment_vert(&verts[i], state);
+        out[i] = trail_emit_segment_vert(&verts[i], state);
     }
     n
 }

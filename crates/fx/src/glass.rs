@@ -10,21 +10,18 @@ use fx_iw4::{
     FX_GLASS_SHARD_LIFETIME_MSEC, FX_GLASS_SHARD_MAX, FX_GLASS_SPLIT_OP_CAP,
     FX_GLASS_STATE_AREA_X2, FX_GLASS_STATE_FLAG_CHILD_CLEAR, FX_GLASS_STATE_FLAG_DAMAGED,
     FX_GLASS_STATE_FLAG_SIMPLE, FX_GLASS_VERT_SCALE, FxGlassCrackRand, FxGlassCrackWork,
-    FxGlassPieceGeo, FxGlassShard, fx_glass_alloc_piece, fx_glass_ballistic_origin,
-    fx_glass_clamp_to_piece, fx_glass_cross3, fx_glass_decode_geo, fx_glass_dynamics_avel,
-    fx_glass_dynamics_fall_time, fx_glass_dynamics_init_row, fx_glass_dynamics_phys_obj,
-    fx_glass_dynamics_software_launch, fx_glass_dynamics_vel, fx_glass_extract_shards,
-    fx_glass_free_piece, fx_glass_fringe_cap, fx_glass_is_in_use, fx_glass_launch_avel,
-    fx_glass_launch_dir, fx_glass_lerp_range, fx_glass_life_fade, fx_glass_loop_area_x2,
-    fx_glass_needs_size_split, fx_glass_normalize3, fx_glass_piece_speed_scale,
-    fx_glass_piece_tex_vecs, fx_glass_place_origin, fx_glass_place_quat, fx_glass_place_radius,
-    fx_glass_place_set_origin, fx_glass_place_set_quat, fx_glass_point_in_piece,
-    fx_glass_recenter_offset, fx_glass_reset_copy_geo, fx_glass_reset_copy_piece,
-    fx_glass_reset_free_list, fx_glass_set_in_use, fx_glass_software_rotate_quat,
-    fx_glass_splitmix64, fx_glass_state_area_x2, fx_glass_state_def_index, fx_glass_state_flags,
-    fx_glass_state_geo_span, fx_glass_state_geo_start, fx_glass_state_set_flags,
-    fx_glass_state_set_geo_start, fx_glass_state_set_support_mask, fx_glass_state_support_mask,
-    fx_glass_support_frac, fx_unit_quat_to_axis,
+    FxGlassPieceGeo, FxGlassShard, glass_alloc_piece, glass_ballistic_origin, glass_clamp_to_piece,
+    glass_cross3, glass_decode_geo, glass_dynamics_avel, glass_dynamics_fall_time,
+    glass_dynamics_init_row, glass_dynamics_phys_obj, glass_dynamics_software_launch,
+    glass_dynamics_vel, glass_extract_shards, glass_free_piece, glass_fringe_cap, glass_is_in_use,
+    glass_launch_avel, glass_launch_dir, glass_lerp_range, glass_life_fade, glass_loop_area_x2,
+    glass_needs_size_split, glass_normalize3, glass_piece_speed_scale, glass_piece_tex_vecs,
+    glass_place_origin, glass_place_quat, glass_place_radius, glass_place_set_origin,
+    glass_place_set_quat, glass_point_in_piece, glass_recenter_offset, glass_reset_copy_geo,
+    glass_reset_copy_piece, glass_reset_free_list, glass_set_in_use, glass_software_rotate_quat,
+    glass_splitmix64, glass_state_area_x2, glass_state_def_index, glass_state_flags,
+    glass_state_geo_span, glass_state_geo_start, glass_state_set_flags, glass_state_set_geo_start,
+    glass_state_set_support_mask, glass_state_support_mask, glass_support_frac, unit_quat_to_axis,
 };
 
 /// The shortest crack the graph will cut, as a fraction of the piece's bounding radius.
@@ -121,7 +118,7 @@ fn local_to_world(origin: [f32; 3], axis: [[f32; 3]; 3], vert: [i16; 2]) -> [f32
 
 impl FxGlassSystemHost {
     pub fn is_in_use(&self, piece: u32) -> bool {
-        fx_glass_is_in_use(&self.is_in_use, piece)
+        glass_is_in_use(&self.is_in_use, piece)
     }
 
     pub fn reset(&mut self, init: FxGlassInitTables<'_>) {
@@ -160,7 +157,7 @@ impl FxGlassSystemHost {
         let mut geo_cursor = 0u16;
         for (i, init_row) in init.init_states.iter().enumerate() {
             let piece = u16::try_from(i).unwrap_or(u16::MAX);
-            let out = fx_glass_reset_copy_piece(init_row, piece, geo_cursor, init.defs);
+            let out = glass_reset_copy_piece(init_row, piece, geo_cursor, init.defs);
             geo_cursor = out.next_geo_start;
             if let Some(place) = self.piece_places.get_mut(i) {
                 *place = out.place;
@@ -169,12 +166,12 @@ impl FxGlassSystemHost {
                 *state = out.state;
             }
             if let Some(dyn_row) = self.piece_dynamics.get_mut(i) {
-                fx_glass_dynamics_init_row(dyn_row);
+                glass_dynamics_init_row(dyn_row);
             }
             if let Some(thick) = self.half_thickness.get_mut(i) {
                 *thick = out.half_thickness.unwrap_or(0.0);
             }
-            fx_glass_set_in_use(&mut self.is_in_use, i as u32);
+            glass_set_in_use(&mut self.is_in_use, i as u32);
             if let Some(src) = self.source_pane.get_mut(i) {
                 *src = i as u32;
             }
@@ -182,14 +179,14 @@ impl FxGlassSystemHost {
 
         let src: Vec<u8> = init.init_geo.iter().flatten().copied().collect();
         let mut dst = vec![0u8; src.len()];
-        fx_glass_reset_copy_geo(&mut dst, &src);
+        glass_reset_copy_geo(&mut dst, &src);
         for (i, chunk) in dst.chunks_exact(FX_GLASS_GEOMETRY_DATA).enumerate() {
             if let Some(word) = self.geo_data.get_mut(i) {
                 word.copy_from_slice(chunk);
             }
         }
 
-        self.first_free_piece = fx_glass_reset_free_list(
+        self.first_free_piece = glass_reset_free_list(
             &mut self.piece_places,
             &mut self.link_org,
             self.init_piece_count,
@@ -201,7 +198,7 @@ impl FxGlassSystemHost {
     }
 
     pub fn alloc(&mut self, vert: u8, hole: u8, crack: u8, fan: u8) -> u32 {
-        fx_glass_alloc_piece(
+        glass_alloc_piece(
             &mut self.piece_places,
             &mut self.piece_states,
             &mut self.is_in_use,
@@ -217,7 +214,7 @@ impl FxGlassSystemHost {
     }
 
     pub fn free(&mut self, piece: u32) {
-        if fx_glass_free_piece(
+        if glass_free_piece(
             &mut self.piece_places,
             &mut self.is_in_use,
             &mut self.first_free_piece,
@@ -296,7 +293,7 @@ impl FxGlassSystemHost {
         let Some(row) = self.piece_dynamics.get(piece) else {
             return false;
         };
-        if fx_glass_dynamics_fall_time(row) == FX_GLASS_FALL_TIME_NEVER {
+        if glass_dynamics_fall_time(row) == FX_GLASS_FALL_TIME_NEVER {
             return false;
         }
         let mode = self
@@ -319,9 +316,9 @@ impl FxGlassSystemHost {
         let Some(row) = self.piece_dynamics.get(piece) else {
             return 1.0;
         };
-        let fall = fx_glass_dynamics_fall_time(row);
+        let fall = glass_dynamics_fall_time(row);
         let age = self.time.wrapping_sub(fall);
-        fx_glass_life_fade(
+        glass_life_fade(
             age,
             FX_GLASS_SETTLED_LIFETIME_MSEC,
             FX_GLASS_SETTLED_FADE_MSEC,
@@ -336,7 +333,7 @@ impl FxGlassSystemHost {
     }
 
     fn next_rand(&mut self) -> f32 {
-        fx_glass_splitmix64(&mut self.shatter_seed)
+        glass_splitmix64(&mut self.shatter_seed)
     }
 
     pub fn compact_geo(&mut self) {
@@ -354,8 +351,8 @@ impl FxGlassSystemHost {
             };
             order.push((
                 piece as u32,
-                fx_glass_state_geo_start(state),
-                fx_glass_state_geo_span(state),
+                glass_state_geo_start(state),
+                glass_state_geo_span(state),
             ));
         }
         order.sort_by_key(|row| row.1);
@@ -377,7 +374,7 @@ impl FxGlassSystemHost {
                 }
             }
             if let Some(state) = self.piece_states.get_mut(piece as usize) {
-                fx_glass_state_set_geo_start(state, dst as u16);
+                glass_state_set_geo_start(state, dst as u16);
             }
             dst = dst.saturating_add(span);
         }
@@ -389,7 +386,7 @@ impl FxGlassSystemHost {
     /// the triangulation that spans them.
     fn piece_geo(&self, piece: u32) -> Option<([u8; FX_GLASS_PIECE_STATE], FxGlassPieceGeo)> {
         let state = self.piece_states.get(piece as usize).copied()?;
-        let geo = fx_glass_decode_geo(&state, &self.geo_data)?;
+        let geo = glass_decode_geo(&state, &self.geo_data)?;
         Some((state, geo))
     }
 
@@ -442,7 +439,7 @@ impl FxGlassSystemHost {
         };
         for attempt in 0..attempts {
             work.create_cracks();
-            let n = fx_glass_extract_shards(&work, out);
+            let n = glass_extract_shards(&work, out);
             if n != 1 || attempt + 1 == attempts {
                 return n;
             }
@@ -472,14 +469,14 @@ impl FxGlassSystemHost {
             let Some((state, pgeo)) = self.piece_geo(piece) else {
                 continue;
             };
-            if fx_glass_state_flags(&state) & FX_GLASS_STATE_FLAG_SIMPLE == 0 {
+            if glass_state_flags(&state) & FX_GLASS_STATE_FLAG_SIMPLE == 0 {
                 continue;
             }
             let place = self
                 .draw_place(piece as usize)
                 .unwrap_or(self.piece_places[piece as usize]);
-            let origin = fx_glass_place_origin(&place);
-            let axis = fx_unit_quat_to_axis(fx_glass_place_quat(&place));
+            let origin = glass_place_origin(&place);
+            let axis = unit_quat_to_axis(glass_place_quat(&place));
             let denominator = dot(delta, axis[2]);
             if denominator.abs() < 1e-6 {
                 continue;
@@ -499,7 +496,7 @@ impl FxGlassSystemHost {
                 start[2] + delta[2] * fraction,
             ];
             let local = [hit[0] - origin[0], hit[1] - origin[1], hit[2] - origin[2]];
-            if fx_glass_point_in_piece(
+            if glass_point_in_piece(
                 &pgeo,
                 [
                     dot(local, axis[0]) / FX_GLASS_VERT_SCALE,
@@ -538,9 +535,9 @@ impl FxGlassSystemHost {
             return;
         }
         if let Some(state) = self.piece_states.get_mut(piece as usize) {
-            fx_glass_state_set_flags(
+            glass_state_set_flags(
                 state,
-                fx_glass_state_flags(state) | FX_GLASS_STATE_FLAG_DAMAGED,
+                glass_state_flags(state) | FX_GLASS_STATE_FLAG_DAMAGED,
             );
             self.moved = true;
         }
@@ -548,10 +545,7 @@ impl FxGlassSystemHost {
 
     fn mark_shattered(&mut self, piece: u32) {
         if let Some(state) = self.piece_states.get_mut(piece as usize) {
-            fx_glass_state_set_flags(
-                state,
-                fx_glass_state_flags(state) | FX_GLASS_STATE_FLAG_SIMPLE,
-            );
+            glass_state_set_flags(state, glass_state_flags(state) | FX_GLASS_STATE_FLAG_SIMPLE);
         }
     }
 
@@ -582,9 +576,9 @@ impl FxGlassSystemHost {
         let Some((state, pgeo)) = self.piece_geo(piece) else {
             return false;
         };
-        let simple = fx_glass_state_flags(&state) & FX_GLASS_STATE_FLAG_SIMPLE != 0;
-        let origin = fx_glass_place_origin(&place);
-        let axis = fx_unit_quat_to_axis(fx_glass_place_quat(&place));
+        let simple = glass_state_flags(&state) & FX_GLASS_STATE_FLAG_SIMPLE != 0;
+        let origin = glass_place_origin(&place);
+        let axis = unit_quat_to_axis(glass_place_quat(&place));
         let delta = [hit[0] - origin[0], hit[1] - origin[1], hit[2] - origin[2]];
         let local = [
             (delta[0] * axis[0][0] + delta[1] * axis[0][1] + delta[2] * axis[0][2])
@@ -593,14 +587,14 @@ impl FxGlassSystemHost {
                 / FX_GLASS_VERT_SCALE,
         ];
         let original_area = {
-            let a = fx_glass_state_area_x2(&state);
+            let a = glass_state_area_x2(&state);
             if a > 0.0 {
                 a
             } else {
-                fx_glass_loop_area_x2(pgeo.outer())
+                glass_loop_area_x2(pgeo.outer())
             }
         };
-        let launch_dir = fx_glass_launch_dir(dir, axis[2]);
+        let launch_dir = glass_launch_dir(dir, axis[2]);
         self.shatter_seed = seed.unwrap_or_else(|| {
             self.shatter_seed
                 .wrapping_add(u64::from(piece) << 17)
@@ -623,21 +617,20 @@ impl FxGlassSystemHost {
                 continue;
             };
             let area = {
-                let a = fx_glass_state_area_x2(&cur_state);
+                let a = glass_state_area_x2(&cur_state);
                 if a > 0.0 {
                     a
                 } else {
-                    fx_glass_loop_area_x2(cur_geo.outer())
+                    glass_loop_area_x2(cur_geo.outer())
                 }
             };
-            let supported = fx_glass_state_support_mask(&cur_state) != 0;
+            let supported = glass_state_support_mask(&cur_state) != 0;
             // The graph is seeded from a single contour, so a shard that already
             // encloses a hole is left as it is rather than losing that hole to a
             // re-crack.
             let can_split = first || cur_geo.hole_n == 0;
             let must_split = can_split
-                && (first
-                    || (!simple && fx_glass_needs_size_split(area, original_area, supported)));
+                && (first || (!simple && glass_needs_size_split(area, original_area, supported)));
             let was_first = first;
             first = false;
             if !must_split {
@@ -655,15 +648,15 @@ impl FxGlassSystemHost {
                 let p = outer[vertex.min(outer.len() - 1)];
                 [f32::from(p[0]), f32::from(p[1])]
             };
-            let split_impact = fx_glass_clamp_to_piece(&cur_geo, want);
-            let parent_support = fx_glass_state_support_mask(&cur_state);
+            let split_impact = glass_clamp_to_piece(&cur_geo, want);
+            let parent_support = glass_state_support_mask(&cur_state);
             let mut shards = vec![FxGlassShard::default(); FX_GLASS_SHARD_MAX];
             let shard_n = self.crack_piece(
                 cur_geo.outer(),
                 parent_support,
                 split_impact,
                 &mut shards,
-                !simple && fx_glass_needs_size_split(area, original_area, supported),
+                !simple && glass_needs_size_split(area, original_area, supported),
             );
             let Some(cur_place) = self.piece_places.get(cur as usize).copied() else {
                 continue;
@@ -699,11 +692,11 @@ impl FxGlassSystemHost {
                 let Some(child_state) = self.piece_states.get(id as usize) else {
                     continue;
                 };
-                let child_area = fx_glass_state_area_x2(child_state);
-                let child_support = fx_glass_state_support_mask(child_state) != 0;
+                let child_area = glass_state_area_x2(child_state);
+                let child_support = glass_state_support_mask(child_state) != 0;
                 if !simple
                     && child_area + 1.0 < area
-                    && fx_glass_needs_size_split(child_area, original_area, child_support)
+                    && glass_needs_size_split(child_area, original_area, child_support)
                 {
                     work.push(id);
                 } else {
@@ -725,11 +718,11 @@ impl FxGlassSystemHost {
             if simple {
                 f32::MAX
             } else {
-                fx_glass_fringe_cap(original_area)
+                glass_fringe_cap(original_area)
             },
             launch_dir,
             hit,
-            fx_glass_place_radius(&place),
+            glass_place_radius(&place),
             axis,
             launch_airborne,
             cause,
@@ -795,8 +788,8 @@ impl FxGlassSystemHost {
             let Some(state) = self.piece_states.get(idx) else {
                 continue;
             };
-            areas[i] = fx_glass_state_area_x2(state);
-            supports[i] = fx_glass_state_support_mask(state);
+            areas[i] = glass_state_area_x2(state);
+            supports[i] = glass_state_support_mask(state);
             if supports[i] != 0 {
                 retained += areas[i];
             }
@@ -813,7 +806,7 @@ impl FxGlassSystemHost {
             retained -= areas[i];
             supports[i] = 0;
             if let Some(state) = self.piece_states.get_mut(children[i] as usize) {
-                fx_glass_state_set_support_mask(state, 0);
+                glass_state_set_support_mask(state, 0);
             }
         }
         let mut accents = 0u32;
@@ -824,9 +817,9 @@ impl FxGlassSystemHost {
                 let verts = self
                     .piece_states
                     .get(idx)
-                    .map(fx_iw4::fx_glass_state_vert_count)
+                    .map(fx_iw4::glass_state_vert_count)
                     .unwrap_or(1);
-                let frac = fx_glass_support_frac(*support, verts);
+                let frac = glass_support_frac(*support, verts);
                 if frac < FX_GLASS_PENDING_SUPPORT_FRAC {
                     if !launch_airborne {
                         continue;
@@ -882,20 +875,20 @@ impl FxGlassSystemHost {
             return;
         }
         let collapse = cause == 2;
-        let scale = fx_glass_piece_speed_scale(area_x2);
+        let scale = glass_piece_speed_scale(area_x2);
         let lin_r = self.next_rand();
         let mut speed =
-            fx_glass_lerp_range(FX_GLASS_LINEAR_VEL_MIN, FX_GLASS_LINEAR_VEL_MAX, lin_r) * scale;
+            glass_lerp_range(FX_GLASS_LINEAR_VEL_MIN, FX_GLASS_LINEAR_VEL_MAX, lin_r) * scale;
         if collapse {
             speed *= 0.25;
         }
         let dir = if collapse {
             [0.0, 0.0, -1.0]
         } else {
-            fx_glass_launch_dir(dir, axis[2])
+            glass_launch_dir(dir, axis[2])
         };
         let mut vel = [dir[0] * speed, dir[1] * speed, dir[2] * speed];
-        let origin = fx_glass_place_origin(&self.piece_places[piece as usize]);
+        let origin = glass_place_origin(&self.piece_places[piece as usize]);
         let offset = [origin[0] - hit[0], origin[1] - hit[1], origin[2] - hit[2]];
         if !collapse && radius > 0.0 {
             let spread = speed * 0.5 / radius;
@@ -905,19 +898,19 @@ impl FxGlassSystemHost {
         }
         let ang_r = self.next_rand();
         let ang =
-            fx_glass_lerp_range(FX_GLASS_ANGULAR_VEL_MIN, FX_GLASS_ANGULAR_VEL_MAX, ang_r) * scale;
-        let avel = if !collapse && let Some(radial) = fx_glass_normalize3(offset) {
+            glass_lerp_range(FX_GLASS_ANGULAR_VEL_MIN, FX_GLASS_ANGULAR_VEL_MAX, ang_r) * scale;
+        let avel = if !collapse && let Some(radial) = glass_normalize3(offset) {
             let side = if dir.iter().zip(axis[2]).map(|(a, b)| a * b).sum::<f32>() < 0.0 {
                 -1.0
             } else {
                 1.0
             };
-            fx_glass_cross3(axis[2], radial).map(|v| v * ang * side)
+            glass_cross3(axis[2], radial).map(|v| v * ang * side)
         } else {
-            fx_glass_launch_avel(dir, axis, ang)
+            glass_launch_avel(dir, axis, ang)
         };
         if let Some(row) = self.piece_dynamics.get_mut(piece as usize) {
-            fx_glass_dynamics_software_launch(row, self.time, vel, avel);
+            glass_dynamics_software_launch(row, self.time, vel, avel);
         }
         if let Some(birth) = self.birth_at.get_mut(piece as usize) {
             *birth = self.time;
@@ -936,19 +929,19 @@ impl FxGlassSystemHost {
             return Some(place);
         }
         let dyn_row = self.piece_dynamics.get(piece)?;
-        let fall = fx_glass_dynamics_fall_time(dyn_row);
-        let vel = fx_glass_dynamics_vel(dyn_row);
-        let avel = fx_glass_dynamics_avel(dyn_row);
+        let fall = glass_dynamics_fall_time(dyn_row);
+        let vel = glass_dynamics_vel(dyn_row);
+        let avel = glass_dynamics_avel(dyn_row);
         let t0 = self
             .motion_clock
             .unwrap_or_else(|| self.time.wrapping_sub(leftover));
         let t1 = t0.wrapping_add(leftover);
-        let origin = fx_glass_place_origin(&place);
-        let quat = fx_glass_place_quat(&place);
-        let next = fx_glass_ballistic_origin(origin, vel, fall, t0, t1, FX_GLASS_FALL_GRAVITY);
-        let q = fx_glass_software_rotate_quat(quat, avel, leftover);
-        fx_glass_place_set_origin(&mut place, next);
-        fx_glass_place_set_quat(&mut place, q);
+        let origin = glass_place_origin(&place);
+        let quat = glass_place_quat(&place);
+        let next = glass_ballistic_origin(origin, vel, fall, t0, t1, FX_GLASS_FALL_GRAVITY);
+        let q = glass_software_rotate_quat(quat, avel, leftover);
+        glass_place_set_origin(&mut place, next);
+        glass_place_set_quat(&mut place, q);
         Some(place)
     }
 
@@ -959,10 +952,10 @@ impl FxGlassSystemHost {
         let Some(dyn_row) = self.piece_dynamics.get(piece) else {
             return false;
         };
-        if fx_glass_dynamics_fall_time(dyn_row) == FX_GLASS_FALL_TIME_NEVER {
+        if glass_dynamics_fall_time(dyn_row) == FX_GLASS_FALL_TIME_NEVER {
             return false;
         }
-        if fx_glass_dynamics_phys_obj(dyn_row) != 0 {
+        if glass_dynamics_phys_obj(dyn_row) != 0 {
             return false;
         }
         let mode = self
@@ -1009,7 +1002,7 @@ impl FxGlassSystemHost {
             let Some(state) = self.piece_states.get(piece) else {
                 continue;
             };
-            let mask = fx_glass_state_support_mask(state);
+            let mask = glass_state_support_mask(state);
             if mask.count_ones() != 1 {
                 continue;
             }
@@ -1017,7 +1010,7 @@ impl FxGlassSystemHost {
             let Some(place) = self.piece_places.get(piece).copied() else {
                 continue;
             };
-            let axis = fx_unit_quat_to_axis(fx_glass_place_quat(&place));
+            let axis = unit_quat_to_axis(glass_place_quat(&place));
             let axis_e = self
                 .piece_geo(piece as u32)
                 .and_then(|(_, pgeo)| {
@@ -1027,18 +1020,18 @@ impl FxGlassSystemHost {
                     }
                     let a = pgeo.verts[bit];
                     let b = pgeo.verts[(bit + 1) % vert_n];
-                    let origin = fx_glass_place_origin(&place);
+                    let origin = glass_place_origin(&place);
                     let wa = local_to_world(origin, axis, a);
                     let wb = local_to_world(origin, axis, b);
-                    fx_glass_normalize3([wb[0] - wa[0], wb[1] - wa[1], wb[2] - wa[2]])
+                    glass_normalize3([wb[0] - wa[0], wb[1] - wa[1], wb[2] - wa[2]])
                 })
-                .or_else(|| fx_glass_normalize3(axis[0]))
+                .or_else(|| glass_normalize3(axis[0]))
                 .unwrap_or([1.0, 0.0, 0.0]);
             let avel = [axis_e[0] * 1.2, axis_e[1] * 1.2, axis_e[2] * 1.2];
-            let quat = fx_glass_place_quat(&place);
-            let q = fx_glass_software_rotate_quat(quat, avel, dt);
+            let quat = glass_place_quat(&place);
+            let q = glass_software_rotate_quat(quat, avel, dt);
             if let Some(place) = self.piece_places.get_mut(piece) {
-                fx_glass_place_set_quat(place, q);
+                glass_place_set_quat(place, q);
             }
             self.moved = true;
         }
@@ -1054,7 +1047,7 @@ impl FxGlassSystemHost {
                 continue;
             }
             if let Some(state) = self.piece_states.get_mut(piece) {
-                fx_glass_state_set_support_mask(state, 0);
+                glass_state_set_support_mask(state, 0);
             }
             if let Some(at) = self.release_at.get_mut(piece) {
                 *at = 0;
@@ -1065,12 +1058,12 @@ impl FxGlassSystemHost {
             let area = self
                 .piece_states
                 .get(piece as usize)
-                .map(fx_glass_state_area_x2)
+                .map(glass_state_area_x2)
                 .unwrap_or(0.0);
             let axis = self
                 .piece_places
                 .get(piece as usize)
-                .map(|p| fx_unit_quat_to_axis(fx_glass_place_quat(p)))
+                .map(|p| unit_quat_to_axis(glass_place_quat(p)))
                 .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
             self.launch_software_shard(piece, area, [0.0, 0.0, -1.0], [0.0; 3], 0.0, axis, 2);
             if let Some(mode) = self.contact_mode.get_mut(piece as usize) {
@@ -1098,11 +1091,11 @@ impl FxGlassSystemHost {
             let Some(dyn_row) = self.piece_dynamics.get(piece).copied() else {
                 continue;
             };
-            let mut fall = fx_glass_dynamics_fall_time(&dyn_row);
+            let mut fall = glass_dynamics_fall_time(&dyn_row);
             if fall == FX_GLASS_FALL_TIME_NEVER {
                 continue;
             }
-            if fx_glass_dynamics_phys_obj(&dyn_row) != 0 {
+            if glass_dynamics_phys_obj(&dyn_row) != 0 {
                 continue;
             }
             let mut mode = self
@@ -1126,8 +1119,8 @@ impl FxGlassSystemHost {
                 }
                 continue;
             }
-            let mut vel = fx_glass_dynamics_vel(&dyn_row);
-            let mut avel = fx_glass_dynamics_avel(&dyn_row);
+            let mut vel = glass_dynamics_vel(&dyn_row);
+            let mut avel = glass_dynamics_avel(&dyn_row);
             let mut t0 = start;
             let mut left = remain;
             let mut killed = false;
@@ -1137,11 +1130,10 @@ impl FxGlassSystemHost {
                 let Some(place) = self.piece_places.get(piece).copied() else {
                     break;
                 };
-                let origin = fx_glass_place_origin(&place);
-                let quat = fx_glass_place_quat(&place);
-                let next =
-                    fx_glass_ballistic_origin(origin, vel, fall, t0, t1, FX_GLASS_FALL_GRAVITY);
-                let q = fx_glass_software_rotate_quat(quat, avel, t1.wrapping_sub(t0));
+                let origin = glass_place_origin(&place);
+                let quat = glass_place_quat(&place);
+                let next = glass_ballistic_origin(origin, vel, fall, t0, t1, FX_GLASS_FALL_GRAVITY);
+                let q = glass_software_rotate_quat(quat, avel, t1.wrapping_sub(t0));
                 if let Some(hit) =
                     self.sweep_piece(world, piece as u32, origin, next, mode == CONTACT_BOUNCE)
                 {
@@ -1166,13 +1158,13 @@ impl FxGlassSystemHost {
                                             expired.push(piece as u32);
                                         } else {
                                             if let Some(place) = self.piece_places.get_mut(piece) {
-                                                fx_glass_place_set_origin(place, hit.end);
+                                                glass_place_set_origin(place, hit.end);
                                             }
                                             if let Some(m) = self.contact_mode.get_mut(piece) {
                                                 *m = CONTACT_SETTLED;
                                             }
                                             if let Some(row) = self.piece_dynamics.get_mut(piece) {
-                                                fx_glass_dynamics_software_launch(
+                                                glass_dynamics_software_launch(
                                                     row,
                                                     now,
                                                     [0.0, 0.0, 0.0],
@@ -1203,7 +1195,7 @@ impl FxGlassSystemHost {
                                     (v[2] - 2.0 * vn * hit.normal[2]) * FX_GLASS_RESTITUTION,
                                 ];
                                 if let Some(row) = self.piece_dynamics.get_mut(piece) {
-                                    fx_glass_dynamics_software_launch(
+                                    glass_dynamics_software_launch(
                                         row,
                                         t1,
                                         bounced,
@@ -1211,16 +1203,16 @@ impl FxGlassSystemHost {
                                     );
                                 }
                                 if let Some(place) = self.piece_places.get_mut(piece) {
-                                    fx_glass_place_set_origin(place, hit.end);
-                                    fx_glass_place_set_quat(place, q);
+                                    glass_place_set_origin(place, hit.end);
+                                    glass_place_set_quat(place, q);
                                 }
                                 if let Some(used) = self.bounce_used.get_mut(piece) {
                                     *used = true;
                                 }
                                 if let Some(row) = self.piece_dynamics.get(piece) {
-                                    vel = fx_glass_dynamics_vel(row);
-                                    avel = fx_glass_dynamics_avel(row);
-                                    fall = fx_glass_dynamics_fall_time(row);
+                                    vel = glass_dynamics_vel(row);
+                                    avel = glass_dynamics_avel(row);
+                                    fall = glass_dynamics_fall_time(row);
                                 }
                                 mode = self
                                     .contact_mode
@@ -1242,8 +1234,8 @@ impl FxGlassSystemHost {
                     }
                 }
                 if let Some(place) = self.piece_places.get_mut(piece) {
-                    fx_glass_place_set_origin(place, next);
-                    fx_glass_place_set_quat(place, q);
+                    glass_place_set_origin(place, next);
+                    glass_place_set_quat(place, q);
                 }
                 t0 = t1;
                 left -= step_ms;
@@ -1288,7 +1280,7 @@ impl FxGlassSystemHost {
         let (_, pgeo) = self.piece_geo(piece)?;
         let vert_n = pgeo.vert_n;
         let place = self.piece_places.get(piece as usize)?;
-        let axis = fx_unit_quat_to_axis(fx_glass_place_quat(place));
+        let axis = unit_quat_to_axis(glass_place_quat(place));
         let delta = [
             next[0] - origin[0],
             next[1] - origin[1],
@@ -1360,16 +1352,16 @@ impl FxGlassSystemHost {
         let geo_start = self
             .piece_states
             .get(cidx)
-            .map(fx_glass_state_geo_start)
+            .map(glass_state_geo_start)
             .unwrap_or(0);
         if let Some(state) = self.piece_states.get_mut(cidx) {
             state[..0x0c].copy_from_slice(&parent_state[..0x0c]);
             state[0x0c..0x0e].copy_from_slice(&parent_state[0x0c..0x0e]);
             state[0x10] = parent_state[0x10];
-            fx_glass_state_set_support_mask(state, shard.support_mask);
-            let flags = (fx_glass_state_flags(parent_state) & !FX_GLASS_STATE_FLAG_CHILD_CLEAR)
+            glass_state_set_support_mask(state, shard.support_mask);
+            let flags = (glass_state_flags(parent_state) & !FX_GLASS_STATE_FLAG_CHILD_CLEAR)
                 | FX_GLASS_STATE_FLAG_SIMPLE;
-            fx_glass_state_set_flags(state, flags);
+            glass_state_set_flags(state, flags);
             // The graph works in packed grid units and already netted each shard's
             // holes out of its area; piece state carries it in world units.
             let area = shard.area_x2 * FX_GLASS_VERT_SCALE * FX_GLASS_VERT_SCALE;
@@ -1388,8 +1380,8 @@ impl FxGlassSystemHost {
         let mut shard = *shard;
         let c = [shard.centroid[0].round(), shard.centroid[1].round()];
         shard.recenter([c[0] as i16, c[1] as i16]);
-        let parent_origin = fx_glass_place_origin(parent_place);
-        let axis = fx_unit_quat_to_axis(fx_glass_place_quat(parent_place));
+        let parent_origin = glass_place_origin(parent_place);
+        let axis = unit_quat_to_axis(glass_place_quat(parent_place));
         let uv0 = [
             f32::from_le_bytes([
                 parent_state[0],
@@ -1404,15 +1396,15 @@ impl FxGlassSystemHost {
                 parent_state[7],
             ]),
         ];
-        let def_i = usize::from(fx_glass_state_def_index(parent_state));
+        let def_i = usize::from(glass_state_def_index(parent_state));
         let tex = self
             .defs
             .get(def_i)
-            .map(|def| fx_glass_piece_tex_vecs(def, fx_glass_state_flags(parent_state)))
+            .map(|def| glass_piece_tex_vecs(def, glass_state_flags(parent_state)))
             .unwrap_or([[0.0, 0.0], [0.0, 0.0]]);
-        let (new_origin, new_uv) = fx_glass_recenter_offset(c, parent_origin, axis, uv0, tex);
+        let (new_origin, new_uv) = glass_recenter_offset(c, parent_origin, axis, uv0, tex);
         if let Some(place) = self.piece_places.get_mut(cidx) {
-            fx_glass_place_set_origin(place, new_origin);
+            glass_place_set_origin(place, new_origin);
         }
         if let Some(state) = self.piece_states.get_mut(cidx) {
             state[0..4].copy_from_slice(&new_uv[0].to_le_bytes());

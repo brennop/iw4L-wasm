@@ -2,8 +2,8 @@ use playerstate_iw4::{PlayerState, UserCmd};
 
 use crate::{
     AirMoveContext, CmdScaleWalkContext, CollisionBackend, JumpCheckContext, JumpCheckResult,
-    JumpLaunchContext, MoveBounds, Pml, StanceSurface, jump_check, pm_accelerate, pm_air_move,
-    pm_cmd_scale_walk, pm_friction, pm_step_slide_move, stance_surface_type,
+    JumpLaunchContext, MoveBounds, Pml, StanceSurface, accelerate, air_move, cmd_scale_walk,
+    friction, jump, stance_surface_type, step_slide_move,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -20,7 +20,7 @@ pub struct WalkMoveContext {
 }
 
 #[allow(clippy::assign_op_pattern)]
-pub fn pm_walk_move<C: CollisionBackend>(
+pub fn walk_move<C: CollisionBackend>(
     ps: &mut PlayerState,
     pml: &mut Pml,
     cmd: &mut UserCmd,
@@ -37,16 +37,16 @@ pub fn pm_walk_move<C: CollisionBackend>(
         old_buttons: context.old_buttons,
         stance_surface_type: stance_surface_type(ps) as u8,
     };
-    if let JumpCheckResult::Launched { .. } = jump_check(ps, pml, cmd, gate, context.jump) {
-        pm_air_move(ps, pml, cmd, context.air, bounds, collision);
+    if let JumpCheckResult::Launched { .. } = jump::check(ps, pml, cmd, gate, context.jump) {
+        air_move(ps, pml, cmd, context.air, bounds, collision);
         return;
     }
 
-    pm_friction(ps, pml);
+    friction(ps, pml);
 
-    let command_scale = pm_cmd_scale_walk(ps, cmd, context.cmd_scale)
-        * crate::pm_damage_scale_walk(ps.damage_timer);
-    crate::pm_walk_move_drop_damage_timer(ps, pml.frametime);
+    let command_scale =
+        cmd_scale_walk(ps, cmd, context.cmd_scale) * crate::damage_scale_walk(ps.damage_timer);
+    crate::walk_move_drop_damage_timer(ps, pml.frametime);
     let mut forward = pml.forward;
     let mut right = pml.right;
     forward[2] = 0.0;
@@ -62,7 +62,7 @@ pub fn pm_walk_move<C: CollisionBackend>(
     let wishspeed = normalize(&mut wishdir);
     clip_to_ground_plane(&mut wishdir, &pml.ground_trace[1..4]);
 
-    pm_accelerate(
+    accelerate(
         ps,
         pml,
         &wishdir,
@@ -76,7 +76,7 @@ pub fn pm_walk_move<C: CollisionBackend>(
 
     clip_to_ground_plane(&mut ps.velocity, &pml.ground_trace[1..4]);
     if ps.velocity[0] != 0.0 || ps.velocity[1] != 0.0 {
-        pm_step_slide_move(
+        step_slide_move(
             ps,
             pml,
             collision,
@@ -156,5 +156,5 @@ fn clip_to_ground_plane(vector: &mut [f32; 3], normal: &[u32]) {
         f32::from_bits(normal[1]),
         f32::from_bits(normal[2]),
     ];
-    crate::pm_project_velocity(vector, &normal);
+    crate::project_velocity(vector, &normal);
 }

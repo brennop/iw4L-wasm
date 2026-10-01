@@ -3,10 +3,9 @@ use fx_iw4::{
     FX_ELEM_RUN_RELATIVE_TO_SPAWN, FX_ELEM_RUNNER_USES_RAND_ROT, FX_ELEM_TYPE_SPARK_CLOUD,
     FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_ELEM_TYPE_TRAIL, FX_RAND_CH_DELAY, FX_RAND_CH_LIFE,
     FX_RAND_CH_ONESHOT_COUNT, FX_SPARK_CLOUD_HANDLE_NONE, FX_WARN_ELEM_LIMIT, FxElemType,
-    fx_elem_random_seed, fx_elem_run_mode, fx_looping_catchup_begin, fx_looping_spawn_schedule,
-    fx_random_table_u16, fx_randomly_rotate_axis, fx_runner_rand_rot_degrees,
-    fx_sample_life_span_msec, fx_sample_oneshot_spawn_count, fx_spawn_effect_status,
-    fx_spawn_origin_world, fx_world_delta_to_local,
+    elem_random_seed, elem_run_mode, looping_catchup_begin, looping_spawn_schedule,
+    random_table_u16, randomly_rotate_axis, runner_rand_rot_degrees, sample_life_span_msec,
+    sample_oneshot_spawn_count, spawn_effect_status, world_delta_to_local,
 };
 
 use crate::def::{FxEffectDefInfo, FxElemDefInfo};
@@ -26,7 +25,7 @@ pub fn start_new_effect(host: &mut FxSystemHost, effect_handle: u16, def: FxEffe
     let oneshot = def.one_shot_count.max(0) as usize;
 
     if let Some(effect) = host.effect_at_mut(effect_slot) {
-        effect.status = fx_spawn_effect_status(def.msec_looping_life);
+        effect.status = spawn_effect_status(def.msec_looping_life);
     }
 
     alloc_trails_for_effect(host, effect_slot, def);
@@ -202,9 +201,9 @@ pub fn spawn_looping_partial(
             .wrapping_add(elem_def.delay_amp)
             .wrapping_add(elem_def.life_base)
             .wrapping_add(elem_def.life_amp);
-        let begin = fx_looping_catchup_begin(msec_update_begin, msec_update_end, duration);
+        let begin = looping_catchup_begin(msec_update_begin, msec_update_end, duration);
         for spawn in
-            fx_looping_spawn_schedule(msec_when_played, begin, msec_update_end, interval, count)
+            looping_spawn_schedule(msec_when_played, begin, msec_update_end, interval, count)
         {
             let seq = spawn.sequence.min(u8::MAX as i32) as u8;
             spawn_elem(host, effect_slot, i as u8, elem_def, seq, spawn.msec);
@@ -231,20 +230,20 @@ pub fn stop_pending_loop(host: &mut FxSystemHost, effect_slot: usize) {
 
 pub fn stop_effect_non_recursive(host: &mut FxSystemHost, effect_slot: usize) {
     use fx_iw4::{
-        FX_STATUS_REF_COUNT_MASK_IW4, fx_begin_iterating_over_effects_exclusive,
-        fx_end_iterating_over_effects, fx_end_iterating_runs_gc, fx_stop_effect_has_owned,
-        fx_stop_effect_non_recursive_allows,
+        FX_STATUS_REF_COUNT_MASK_IW4, begin_iterating_over_effects_exclusive,
+        end_iterating_over_effects, end_iterating_runs_gc, stop_effect_has_owned,
+        stop_effect_non_recursive_allows,
     };
     let (self_handle, status) = match host.effect_at(effect_slot) {
         Some(e) => (e.own_handle, e.status),
         None => return,
     };
-    if !fx_stop_effect_non_recursive_allows(status) {
+    if !stop_effect_non_recursive_allows(status) {
         return;
     }
     stop_pending_loop(host, effect_slot);
-    if fx_stop_effect_has_owned(status) {
-        host.iterator_count = fx_begin_iterating_over_effects_exclusive(host.iterator_count);
+    if stop_effect_has_owned(status) {
+        host.iterator_count = begin_iterating_over_effects_exclusive(host.iterator_count);
         let mut cursor = host.first_active_effect;
         let end = host.first_new_effect;
         while cursor != end {
@@ -259,8 +258,8 @@ pub fn stop_effect_non_recursive(host: &mut FxSystemHost, effect_slot: usize) {
             }
             cursor = cursor.wrapping_add(1);
         }
-        host.iterator_count = fx_end_iterating_over_effects(host.iterator_count);
-        if fx_end_iterating_runs_gc(host.iterator_count, host.needs_garbage_collection) {
+        host.iterator_count = end_iterating_over_effects(host.iterator_count);
+        if end_iterating_runs_gc(host.iterator_count, host.needs_garbage_collection) {
             host.run_garbage_collection();
         }
     }
@@ -288,8 +287,8 @@ fn spawn_oneshot_elems(
         .map(|e| e.random_seed)
         .unwrap_or(0);
 
-    let rand16 = fx_random_table_u16(u32::from(effect_seed), FX_RAND_CH_ONESHOT_COUNT);
-    let count = fx_sample_oneshot_spawn_count(elem_def.spawn_a, elem_def.spawn_b, rand16);
+    let rand16 = random_table_u16(u32::from(effect_seed), FX_RAND_CH_ONESHOT_COUNT);
+    let count = sample_oneshot_spawn_count(elem_def.spawn_a, elem_def.spawn_b, rand16);
     if count <= 0 {
         return;
     }
@@ -311,7 +310,7 @@ fn spawn_origin_world(
     effect_axis: [[f32; 3]; 3],
     life_idx: u32,
 ) -> [f32; 3] {
-    fx_spawn_origin_world(
+    fx_iw4::spawn_origin_world(
         effect_origin,
         effect_axis,
         elem_def.spawn_origin,
@@ -330,13 +329,13 @@ fn elem_spawn_origin(
     effect_axis: [[f32; 3]; 3],
     life_idx: u32,
 ) -> [f32; 3] {
-    match fx_elem_run_mode(elem_def.flags) {
+    match elem_run_mode(elem_def.flags) {
         FX_ELEM_RUN_RELATIVE_TO_OFFSET => [0.0; 3],
         _ => {
             let o = spawn_origin_world(elem_def, effect_origin, effect_axis, life_idx);
-            let run = fx_elem_run_mode(elem_def.flags);
+            let run = elem_run_mode(elem_def.flags);
             if run == FX_ELEM_RUN_RELATIVE_TO_SPAWN || run == FX_ELEM_RUN_RELATIVE_TO_EFFECT {
-                fx_world_delta_to_local(o, effect_origin, effect_axis)
+                world_delta_to_local(o, effect_origin, effect_axis)
             } else {
                 o
             }
@@ -370,14 +369,14 @@ fn spawn_elem(
 
     let after_delay_base = spawn_msec.wrapping_add(elem_def.delay_base);
     let delay = if elem_def.delay_amp != 0 {
-        let delay_idx = fx_elem_random_seed(random_seed, sequence, after_delay_base);
-        let delay_rand = fx_random_table_u16(delay_idx, FX_RAND_CH_DELAY);
-        fx_sample_life_span_msec(elem_def.delay_base, elem_def.delay_amp, delay_rand)
+        let delay_idx = elem_random_seed(random_seed, sequence, after_delay_base);
+        let delay_rand = random_table_u16(delay_idx, FX_RAND_CH_DELAY);
+        sample_life_span_msec(elem_def.delay_base, elem_def.delay_amp, delay_rand)
     } else {
         elem_def.delay_base
     };
     let msec_begin = spawn_msec.wrapping_add(delay);
-    let life_idx = fx_elem_random_seed(random_seed, sequence, msec_begin);
+    let life_idx = elem_random_seed(random_seed, sequence, msec_begin);
 
     match FxElemType::from_u8(elem_def.elem_type) {
         Some(FxElemType::Sound) => {
@@ -414,8 +413,8 @@ fn spawn_elem(
             let origin = spawn_origin_world(elem_def, effect_origin, effect_axis, life_idx);
             let (axis, rot_deg) = if (elem_def.flags & FX_ELEM_RUNNER_USES_RAND_ROT) != 0 {
                 (
-                    fx_randomly_rotate_axis(effect_axis, life_idx),
-                    Some(fx_runner_rand_rot_degrees(life_idx)),
+                    randomly_rotate_axis(effect_axis, life_idx),
+                    Some(runner_rand_rot_degrees(life_idx)),
                 )
             } else {
                 (effect_axis, None)
@@ -439,8 +438,8 @@ fn spawn_elem(
         return;
     };
 
-    let life_rand = fx_random_table_u16(life_idx, FX_RAND_CH_LIFE);
-    let life = fx_sample_life_span_msec(elem_def.life_base, elem_def.life_amp, life_rand);
+    let life_rand = random_table_u16(life_idx, FX_RAND_CH_LIFE);
+    let life = sample_life_span_msec(elem_def.life_base, elem_def.life_amp, life_rand);
 
     let life_end = msec_begin.wrapping_add(life);
     if !elem_def.keep_alive_by_child() && host.msec_now >= life_end {
@@ -516,7 +515,7 @@ fn spawn_elem(
                     host,
                     fountain_handle,
                     origin,
-                    fx_iw4::fx_get_elem_angles_axis(
+                    fx_iw4::get_elem_angles_axis(
                         elem_def.spawn_angles,
                         elem_def.angular_velocity,
                         life_idx,

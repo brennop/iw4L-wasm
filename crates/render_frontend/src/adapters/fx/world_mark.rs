@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use fx::FxSystemHost;
-use marks_iw4::{FxAllocMarkRequest, MarkFragmentsAgainst, fx_impact_mark_material};
+use marks_iw4::{FxAllocMarkRequest, MarkFragmentsAgainst, impact_mark_material};
 
 use crate::prepare::scene::world::WorldScene;
 use render_fx::EntityMarks;
@@ -28,7 +28,7 @@ struct MarkBoxScratch {
 impl MarkBoxScratch {
     fn prepare(&mut self, cell_n: usize, list_n: usize, smodel_n: usize) {
         fn words(v: &mut Vec<u32>, n: usize) {
-            let need = marks_iw4::fx_mark_box_surfaces_words(n as u32);
+            let need = marks_iw4::mark_box_surfaces_words(n as u32);
             if v.len() != need {
                 v.resize(need, 0);
             } else {
@@ -108,7 +108,7 @@ thread_local! {
 }
 
 fn pose_material<'a>(host: &'a FxSystemHost, against: MarkFragmentsAgainst) -> Option<&'a str> {
-    fx_impact_mark_material(
+    impact_mark_material(
         [
             host.last_decal_mat0.as_deref(),
             host.last_decal_mat1.as_deref(),
@@ -135,12 +135,12 @@ pub(crate) fn runtime_material_by_name<'a>(
     scene: &'a WorldScene,
     name: &str,
 ) -> Option<&'a crate::assemble::drawsurf::RuntimeMaterial> {
-    let want = assets::AssetRef::bare_name(name);
+    let want = asset_core::AssetRef::bare_name(name);
     scene
         .runtime_material_catalog
         .materials
         .iter()
-        .find(|material| assets::AssetRef::bare_name(&material.name) == want)
+        .find(|material| asset_core::AssetRef::bare_name(&material.name) == want)
 }
 
 fn mark_material_surface_bits(scene: &WorldScene, name: &str) -> Option<u32> {
@@ -225,7 +225,7 @@ fn run_mark_box_surfaces(
             smodel_bit_count: smodel_n as u32,
             cell_bits,
         };
-        Some(marks_iw4::fx_mark_box_surfaces(&mut box_q))
+        Some(marks_iw4::mark_box_surfaces(&mut box_q))
     })
 }
 
@@ -257,14 +257,14 @@ fn fill_world_filter(scene: &WorldScene, pose: &WorldMarkPose<'_>) -> Option<Wor
             };
             let mut unknown_receiver_material = None;
             for bit in dpvs_iw4::msb_iter(&bits.surf_bits, list_n) {
-                let Some(surf) = marks_iw4::fx_mark_sorted_bit_surf(&dpvs.sorted_surf_index, bit)
+                let Some(surf) = marks_iw4::mark_sorted_bit_surf(&dpvs.sorted_surf_index, bit)
                 else {
                     continue;
                 };
                 let Some(bounds) = dpvs.surface_bounds.get(surf) else {
                     continue;
                 };
-                if !marks_iw4::fx_mark_sphere_hits_bounds(
+                if !marks_iw4::mark_sphere_hits_bounds(
                     pose.origin,
                     radius_sq,
                     bounds.mid(),
@@ -275,7 +275,7 @@ fn fill_world_filter(scene: &WorldScene, pose: &WorldMarkPose<'_>) -> Option<Wor
                 allow.sphere_hit = allow.sphere_hit.saturating_add(1);
                 let mat_slot = cull.surface_materials.get(surf).copied().flatten();
                 let (flags, recv_bits) = receiver_allow_inputs(scene, surf, mat_slot);
-                let decision = marks_iw4::fx_mark_allow(flags, recv_bits, mark_bits);
+                let decision = marks_iw4::mark_allow(flags, recv_bits, mark_bits);
                 match decision {
                     marks_iw4::FxMarkAllow::Keep => allow.keep = allow.keep.saturating_add(1),
                     marks_iw4::FxMarkAllow::Reject => allow.reject = allow.reject.saturating_add(1),
@@ -293,7 +293,7 @@ fn fill_world_filter(scene: &WorldScene, pose: &WorldMarkPose<'_>) -> Option<Wor
                             .unwrap_or_else(|| "<missing>".to_owned()),
                     );
                 }
-                if !marks_iw4::fx_mark_include_in_world_clip(decision) {
+                if !marks_iw4::mark_include_in_world_clip(decision) {
                     continue;
                 }
                 let Some(&(start, count)) = cull.surface_index_ranges.get(surf) else {
@@ -304,7 +304,7 @@ fn fill_world_filter(scene: &WorldScene, pose: &WorldMarkPose<'_>) -> Option<Wor
                 clip.ranges.push((start, count));
                 let lookup = lookup_world_surface_mark(scene, surf);
                 clip.contexts
-                    .push(marks_iw4::fx_mark_context_from_world_surface(
+                    .push(marks_iw4::mark_context_from_world_surface(
                         lookup.lmap,
                         lookup.primary,
                         lookup.probe,
@@ -356,7 +356,7 @@ fn first_tri_context(tri: &marks_iw4::FxMarkStagingTri) -> u32 {
 }
 
 fn impact_mark_axis(host: &FxSystemHost) -> Option<[[f32; 3]; 3]> {
-    Some(fx_iw4::fx_impact_mark_axis(
+    Some(fx_iw4::impact_mark_axis(
         host.last_decal_axis?,
         host.last_decal_rotation?,
     ))
@@ -458,7 +458,7 @@ impl render_fx::present::FxScene for FrontendFxScene<'_> {
         self.world
             .light_grid
             .as_ref()
-            .and_then(|grid| assets::sample_light_grid(&grid.view(), origin).ok())
+            .and_then(|grid| asset_model::sample_light_grid(&grid.view(), origin).ok())
             .map(|sample| sample.compressed)
     }
 
@@ -569,7 +569,7 @@ fn complete_world_generate(host: &mut FxSystemHost, scene: &WorldScene, def_inde
 }
 
 fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
-    use fx_iw4::{FX_GLASS_STATE_FLAG_SIMPLE, fx_glass_state_def_index, fx_glass_state_flags};
+    use fx_iw4::{FX_GLASS_STATE_FLAG_SIMPLE, glass_state_def_index, glass_state_flags};
 
     let Some(glass) = scene.fx_glass.as_ref() else {
         return;
@@ -587,7 +587,7 @@ fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
         return;
     };
     let mark_bits = mark_material_surface_bits(scene, &material);
-    let planes = marks_iw4::fx_mark_fragment_clip_planes(origin, axis, radius);
+    let planes = marks_iw4::mark_fragment_clip_planes(origin, axis, radius);
     let mut vertices = [fx_iw4::FxGlassIntactVert {
         xyz: [0.0; 3],
         uv: [0.0; 2],
@@ -608,18 +608,18 @@ fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
         context[1] = marks_iw4::GFX_SURFACE_LIGHTMAP_NONE;
         context[2..4].copy_from_slice(&(piece as u16).to_le_bytes());
         let state = &host.glass.piece_states[piece];
-        if fx_glass_state_flags(state) & FX_GLASS_STATE_FLAG_SIMPLE != 0 {
+        if glass_state_flags(state) & FX_GLASS_STATE_FLAG_SIMPLE != 0 {
             continue;
         }
         let place = &host.glass.piece_places[piece];
-        let pane_axis = fx_iw4::fx_unit_quat_to_axis(fx_iw4::fx_glass_place_quat(place));
-        let pane_origin = fx_iw4::fx_glass_place_origin(place);
+        let pane_axis = fx_iw4::unit_quat_to_axis(fx_iw4::glass_place_quat(place));
+        let pane_origin = fx_iw4::glass_place_origin(place);
         let plane_distance: f32 = (0..3)
             .map(|k| (origin[k] - pane_origin[k]) * pane_axis[2][k])
             .sum();
         let thickness = host.glass.half_thickness.get(piece).copied().unwrap_or(0.0);
         // Exact only while the clip volume is the box `origin ± radius` along
-        // the mark axes (`fx_mark_fragment_clip_planes`).
+        // the mark axes (`mark_fragment_clip_planes`).
         let reach = radius
             * axis
                 .iter()
@@ -628,7 +628,7 @@ fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
         if plane_distance.abs() - thickness.abs() > reach + 0.01 {
             continue;
         }
-        let def_index = fx_glass_state_def_index(state) as usize;
+        let def_index = glass_state_def_index(state) as usize;
         let Some(def) = glass.defs.get(def_index) else {
             continue;
         };
@@ -638,7 +638,7 @@ fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
                 .get(def_index)
                 .and_then(|(name, _)| runtime_material_by_name(scene, name))
                 .is_some_and(|receiver| {
-                    marks_iw4::fx_mark_include_in_world_clip(marks_iw4::fx_mark_allow(
+                    marks_iw4::mark_include_in_world_clip(marks_iw4::mark_allow(
                         Some(receiver.info_game_flags),
                         receiver.surface_type_bits,
                         mark_bits,
@@ -649,7 +649,7 @@ fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
             continue;
         }
         let Some(n) =
-            fx_iw4::fx_glass_intact_verts(place, state, &host.glass.geo_data, def, &mut vertices)
+            fx_iw4::glass_intact_verts(place, state, &host.glass.geo_data, def, &mut vertices)
         else {
             continue;
         };
@@ -686,18 +686,18 @@ fn complete_glass_marks(host: &mut FxSystemHost, scene: &WorldScene) {
             let v0 = vertices[0].xyz;
             let mut v1 = vertices[i].xyz;
             let mut v2 = vertices[i + 1].xyz;
-            if marks_iw4::fx_mark_is_triangle_rejected(normal, v0, v1, v2) {
+            if marks_iw4::mark_is_triangle_rejected(normal, v0, v1, v2) {
                 std::mem::swap(&mut v1, &mut v2);
             }
-            if marks_iw4::fx_mark_is_triangle_rejected(normal, v0, v1, v2) {
+            if marks_iw4::mark_is_triangle_rejected(normal, v0, v1, v2) {
                 continue;
             }
             let count =
-                marks_iw4::fx_mark_chop_world_triangle_points(&planes, v0, v1, v2, &mut fragment);
+                marks_iw4::mark_chop_world_triangle_points(&planes, v0, v1, v2, &mut fragment);
             if count < 3 {
                 continue;
             }
-            match marks_iw4::fx_mark_emit_brush_fragment(
+            match marks_iw4::mark_emit_brush_fragment(
                 used_tri,
                 used_point,
                 marks_iw4::R_MARK_FRAGMENTS_MAX_TRIS,
@@ -782,7 +782,7 @@ fn stage_clip_retained(
             points,
             ..
         } = &mut *clip;
-        Some(marks_iw4::fx_mark_stage_world_surfaces(
+        Some(marks_iw4::mark_stage_world_surfaces(
             origin,
             radius,
             axis,
@@ -949,7 +949,7 @@ fn stage_one_smodel(
 ) -> Option<(marks_iw4::MarkWorldStaging, u32)> {
     use bevy::prelude::Vec3;
 
-    let (mins, maxs) = marks_iw4::fx_mark_model_local_box(
+    let (mins, maxs) = marks_iw4::mark_model_local_box(
         pose.origin,
         pose.radius,
         instance.origin,
@@ -957,7 +957,7 @@ fn stage_one_smodel(
         instance.scale,
     )?;
     clip.ensure_stage_bufs();
-    let planes = marks_iw4::fx_mark_fragment_clip_planes(pose.origin, axis, pose.radius);
+    let planes = marks_iw4::mark_fragment_clip_planes(pose.origin, axis, pose.radius);
     let mark_dir = axis[0];
     let mut fragment = [marks_iw4::FxWorldMarkPoint {
         xyz: [0.0; 3],
@@ -973,8 +973,8 @@ fn stage_one_smodel(
             break;
         }
         let (flags, recv_bits) = receiver_allow_inputs(scene, 0, surface.material);
-        let decision = marks_iw4::fx_mark_allow(flags, recv_bits, mark_bits);
-        if !marks_iw4::fx_mark_include_in_world_clip(decision) {
+        let decision = marks_iw4::mark_allow(flags, recv_bits, mark_bits);
+        if !marks_iw4::mark_include_in_world_clip(decision) {
             continue;
         }
         let start_i = surface.index_start as usize;
@@ -982,14 +982,14 @@ fn stage_one_smodel(
         if surface.index_count < 3 || end_i > cpu.indices.len() {
             continue;
         }
-        let assets::RetailXSurfaceCollisionPayload::Iw4(lists) = &surface.collision else {
+        let asset_world::XSurfaceCollisionPayload::Iw4(lists) = &surface.collision else {
             continue;
         };
         if lists.iter().any(|list| list.tree.is_none()) {
             continue;
         }
         surf_keep = surf_keep.saturating_add(1);
-        let context = marks_iw4::fx_mark_context_from_smodel(
+        let context = marks_iw4::mark_context_from_smodel(
             surf_i as u8,
             smodel_index,
             instance.primary_light_index,
@@ -1021,12 +1021,12 @@ fn stage_one_smodel(
             let v0 = tf.transform_point(Vec3::from(l0)).to_array();
             let v1 = tf.transform_point(Vec3::from(l1)).to_array();
             let v2 = tf.transform_point(Vec3::from(l2)).to_array();
-            if marks_iw4::fx_mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
+            if marks_iw4::mark_is_triangle_rejected(mark_dir, v0, v1, v2) {
                 staging.census.tri_rejected = staging.census.tri_rejected.saturating_add(1);
                 return true;
             }
             let pts =
-                marks_iw4::fx_mark_chop_world_triangle_points(&planes, v0, v1, v2, &mut fragment);
+                marks_iw4::mark_chop_world_triangle_points(&planes, v0, v1, v2, &mut fragment);
             if pts < 3 {
                 staging.census.clip_zero = staging.census.clip_zero.saturating_add(1);
                 return true;
@@ -1035,7 +1035,7 @@ fn stage_one_smodel(
             let n0 = xform_normal(tf, cpu.normals.get(i0).copied());
             let n1 = xform_normal(tf, cpu.normals.get(i1).copied());
             let n2 = xform_normal(tf, cpu.normals.get(i2).copied());
-            match marks_iw4::fx_mark_emit_brush_fragment(
+            match marks_iw4::mark_emit_brush_fragment(
                 staging.used_tri,
                 staging.used_point,
                 marks_iw4::R_MARK_FRAGMENTS_MAX_TRIS,

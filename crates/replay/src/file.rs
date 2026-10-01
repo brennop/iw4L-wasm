@@ -242,7 +242,8 @@ impl RecordReader {
         let mut version = [0u8; 4];
         file.read_exact(&mut version)?;
         let version = u32::from_le_bytes(version);
-        if version != PROTOCOL_VERSION {
+        let compatible_latch_layout = PROTOCOL_VERSION == 86 && version == 85;
+        if version != PROTOCOL_VERSION && !compatible_latch_layout {
             return Err(ReplayError::Version {
                 found: version,
                 expected: PROTOCOL_VERSION,

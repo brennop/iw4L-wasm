@@ -152,8 +152,8 @@ pub enum ScorebarCycleSlot {
 }
 
 #[must_use]
-pub fn scorebar_cycle_slot(sys_milliseconds: u32) -> ScorebarCycleSlot {
-    let t = sys_milliseconds % SCOREBAR_STATUS_CYCLE_MS;
+pub fn scorebar_cycle_slot(milliseconds: u32) -> ScorebarCycleSlot {
+    let t = milliseconds % SCOREBAR_STATUS_CYCLE_MS;
     if t > 0 && t < SCOREBAR_GAMETYPE_WINDOW_MS {
         ScorebarCycleSlot::Gametype
     } else if t >= SCOREBAR_GAMETYPE_WINDOW_MS {
@@ -176,11 +176,11 @@ pub fn scorebar_ffa_standing(local_score: i32, lead_score: i32) -> ScorebarStatu
 
 #[must_use]
 pub fn scorebar_ffa_status(
-    sys_milliseconds: u32,
+    milliseconds: u32,
     local_score: i32,
     lead_score: i32,
 ) -> Option<ScorebarStatus> {
-    match scorebar_cycle_slot(sys_milliseconds) {
+    match scorebar_cycle_slot(milliseconds) {
         ScorebarCycleSlot::Blank => None,
         ScorebarCycleSlot::Gametype => Some(ScorebarStatus::Gametype),
         ScorebarCycleSlot::Standing => Some(scorebar_ffa_standing(local_score, lead_score)),

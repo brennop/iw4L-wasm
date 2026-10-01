@@ -1,22 +1,23 @@
 use std::collections::HashMap;
 
-use assets::{CapturedStringTable, MenuCatalog, PreparedLocalizedStrings};
+use asset_game::{CapturedStringTable, MenuCatalog};
+use assets::PreparedLocalizedStrings;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui::{Display, FocusPolicy};
 use hud_iw4::{
     ExprError, ExprHost, Operand, PLAYER_CARD_SCRIPT_SLOT_COUNT, PLAYERCARD_KILLED_BY_MENU,
-    PLAYERCARD_YOU_KILLED_MENU, PlayerCardData, cg_player_cards_set_script_slot, script_menu_name,
+    PLAYERCARD_YOU_KILLED_MENU, PlayerCardData, player_cards_set_script_slot, script_menu_name,
     ui_run_op_get_player_card_info,
 };
-use net::{CgFrameClock, LocalPresentClient, PresentedSnapshot};
+use net::{FrameClock, LocalPresentClient, PresentedSnapshot};
 
 use crate::chrome::{ChromeAssets, ChromeFrame, ChromeMenuAnim, execute_chrome_menu_with_anim};
 use crate::draw2d::{Draw2dOp, tessellate_fonts};
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps, ImageMiss};
 use crate::gpu_list::{HudTessPass, TessJob};
 use crate::images::HudImages;
-use crate::scorebar::sys_milliseconds;
+use crate::scorebar::milliseconds;
 
 #[derive(Resource, Default)]
 pub(crate) struct UiLocalVars {
@@ -26,11 +27,17 @@ pub(crate) struct UiLocalVars {
 
 impl UiLocalVars {
     pub(crate) fn set_int(&mut self, name: &str, value: i32) {
+        self.strings.remove(name);
         self.ints.insert(name.to_owned(), value);
     }
 
-    fn set_string(&mut self, name: &str, value: String) {
+    pub(crate) fn set_string(&mut self, name: &str, value: String) {
         self.strings.insert(name.to_owned(), value);
+    }
+
+    pub(crate) fn set_float(&mut self, name: &str, value: f32) {
+        self.ints.insert(name.to_owned(), value as i32);
+        self.strings.insert(name.to_owned(), format!("{value}"));
     }
 
     pub(crate) fn int(&self, name: &str) -> i32 {
@@ -80,11 +87,12 @@ pub(crate) struct PlayerCardRaster;
 
 #[derive(Clone, Copy)]
 struct PlayerCardExprHost<'a> {
-    menu: Option<&'a assets::MenuDef>,
+    menu: Option<&'a asset_game::MenuDef>,
     ms: i32,
     in_killcam: bool,
     game_ended: bool,
     own_team: i32,
+    dvars: sim::ScriptDvars<'a>,
     local_vars: &'a UiLocalVars,
     cache: &'a PlayerCardCache,
     catalog: Option<&'a MenuCatalog>,
@@ -112,7 +120,7 @@ impl ExprHost for PlayerCardExprHost<'_> {
     fn team_field(&self, field: &str) -> Result<Operand, ExprError> {
         if field.eq_ignore_ascii_case("name") {
             Ok(Operand::Str(
-                entity_iw4::cg_get_team_name(self.own_team).to_owned(),
+                entity_iw4::get_team_name(self.own_team).to_owned(),
             ))
         } else if field.eq_ignore_ascii_case("team") {
             Ok(Operand::Int(self.own_team))
@@ -147,6 +155,9 @@ impl ExprHost for PlayerCardExprHost<'_> {
         Err(ExprError::Host("weapon lock"))
     }
     fn dvar_int(&self, name: &str) -> Result<i32, ExprError> {
+        if let Some(value) = self.dvars.int(name) {
+            return Ok(value);
+        }
         if name.eq_ignore_ascii_case("hiDef") {
             return Ok(1);
         }
@@ -285,7 +296,7 @@ fn apply_card_slots(
             .snapshot()
             .and_then(|s| s.meta.for_client(sim::ClientId(cmd.client)))
             .map(|meta| {
-                cg_player_cards_set_script_slot(
+                player_cards_set_script_slot(
                     cg_time,
                     &meta.name,
                     meta.client_state_team,
@@ -371,12 +382,12 @@ pub(crate) fn update_playercard(
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
     view: Option<Res<frame::ViewSubject>>,
-    cg_clock: Res<CgFrameClock>,
+    cg_clock: Res<FrameClock>,
 ) {
     if !surface.is_ready() {
         return;
     }
-    let now_ms = sys_milliseconds() as i32;
+    let now_ms = milliseconds() as i32;
     apply_card_slots(
         &mut messages.card_slots,
         &mut cache,
@@ -406,7 +417,7 @@ pub(crate) fn update_playercard(
             continue;
         };
         let duration = hud_iw4::splash_duration_ms(table.cell(row, hud_iw4::SPLASH_COL_DURATION));
-        let (_, slot) = hud_iw4::cg_activate_splash(1, row, duration, cmd.optional, now_ms);
+        let (_, slot) = hud_iw4::activate_splash(1, row, duration, cmd.optional, now_ms);
         let key = table
             .cell(row, hud_iw4::SPLASH_COL_DESCRIPTION)
             .trim_start_matches('@');
@@ -464,6 +475,10 @@ pub(crate) fn update_playercard(
             )
         }),
         own_team,
+        dvars: presented
+            .snapshot()
+            .map(|s| s.meta.script_dvars(local.0))
+            .unwrap_or_default(),
         local_vars: &local_vars,
         cache: &cache,
         catalog: Some(catalog),
@@ -547,7 +562,7 @@ pub(crate) fn update_playercard(
         list.cmds.extend(frame_list.cmds);
     }
 
-    let mut fonts: HashMap<String, &assets::FontDef> = HashMap::new();
+    let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     let mut image_missing = false;
     for cmd in &list.cmds {
         if hud_images

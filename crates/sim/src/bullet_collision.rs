@@ -4,8 +4,7 @@ use trace_iw4::{Trace, surface_type_from_flags};
 use weapon_iw4::{
     ADVANCE_TRACE_FWD, ADVANCE_TRACE_REV, BulletPenFacts, CONTENTS_GLASS, MAX_EXTENDED_STEPS,
     MAX_PENETRATE_STEPS, PEN_THICKNESS_FLOOR, PenetrationDepthTable, REV_END_EPS,
-    RIFLE_COLLATERAL_SCALE, SURF_TYPE_FLESH, SURFACE_TYPE_NAMES, bg_advance_trace,
-    depth_surface_type,
+    RIFLE_COLLATERAL_SCALE, SURF_TYPE_FLESH, SURFACE_TYPE_NAMES, advance_trace, depth_surface_type,
 };
 
 pub const CONTENTS_SOLID: u32 = 0x0000_0001;
@@ -13,6 +12,8 @@ pub const CONTENTS_SOLID: u32 = 0x0000_0001;
 pub const MASK_PLAYER_SOLID: u32 = 0x0281_0011;
 
 pub const MASK_SHOT: u32 = 0x0280_6831;
+
+pub const CONTENTS_BODY: u32 = 0x0200_0000;
 
 pub const MASK_BULLET_WORLD: u32 = MASK_SHOT;
 
@@ -23,7 +24,7 @@ thread_local! {
         std::cell::RefCell::new(crate::smodel_grid::GridScratch::default());
 }
 
-pub fn dobj_contents_match_mask(contents: Option<u32>, mask: u32) -> bool {
+pub fn contents_match_mask(contents: Option<u32>, mask: u32) -> bool {
     match contents {
         Some(0) | None => true,
         Some(c) => c & mask != 0,
@@ -158,7 +159,7 @@ pub struct AuthorityDObjCollTrace {
     pub model: std::sync::Arc<clipmap_iw4::XModelColl>,
     pub world_from_model: glam::Mat4,
     pub bones: Vec<clipmap_iw4::XModelAnimBone>,
-    pub hide_part_bits: [u32; xmodel_runtime::PartBits::WORDS],
+    pub hide_part_bits: [u32; anim_iw4::PartBits::WORDS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -188,7 +189,6 @@ pub struct AuthorityDObjState {
     pub apos: Option<entity_iw4::Trajectory>,
 
     pub(crate) t5_destructible: Option<crate::t5_destructible::State>,
-    pub(crate) pickup_glass: Option<[gamemode_iw4::VehicleBodyState; 6]>,
     /// Capabilities for the models this script model can swap to: husks and
     /// the intermediate stages of a destructible.
     pub swap_capabilities: Vec<(
@@ -328,7 +328,6 @@ impl AuthorityDObjState {
             materialize_error: None,
             play_anim: None,
             apos: None,
-            pickup_glass: None,
             t5_destructible: None,
             swap_capabilities: Vec::new(),
         }
@@ -342,6 +341,60 @@ impl AuthorityDObjState {
             .iter()
             .find(|(name, _)| name == model)
             .and_then(|(_, capability)| capability.clone())
+    }
+
+    pub fn at_pose(
+        model: &str,
+        capability: Option<std::sync::Arc<xmodel_runtime::RetainedModelCapability>>,
+        origin: [f32; 3],
+        angles: [f32; 3],
+    ) -> Self {
+        Self::new_dirty(
+            model.to_owned(),
+            capability,
+            iw_angles_to_mat4(glam::Vec3::from_array(origin), angles),
+        )
+    }
+
+    pub fn replace_model(
+        &mut self,
+        model: &str,
+        capability: Option<std::sync::Arc<xmodel_runtime::RetainedModelCapability>>,
+    ) {
+        self.play_anim = None;
+        self.set_model(model.to_owned(), capability);
+        self.pose_revision = self.pose_revision.wrapping_add(1);
+        self.semantic_state = xmodel_runtime::DObjSemanticState::bind_pose(
+            model.to_owned(),
+            self.model_revision,
+            self.pose_revision,
+        );
+        self.pose_request = xmodel_runtime::DObjPoseRequest::bind_pose();
+    }
+
+    pub fn set_attachments(&mut self, attachments: &[(&str, &str)]) {
+        let mut models = vec![xmodel_runtime::DObjModelDescriptor {
+            model: self.current_model.clone(),
+            parent_model: None,
+            attach_tag: None,
+            ignore_collision: false,
+        }];
+        models.extend(
+            attachments
+                .iter()
+                .map(|(model, tag)| xmodel_runtime::DObjModelDescriptor {
+                    model: (*model).to_owned(),
+                    parent_model: Some(0),
+                    attach_tag: Some((*tag).to_owned()),
+                    ignore_collision: true,
+                }),
+        );
+        if self.semantic_state.composition.models == models {
+            return;
+        }
+        let composition = &mut self.semantic_state.composition;
+        composition.revision = composition.revision.wrapping_add(1);
+        composition.models = models;
     }
 
     /// Put the model a destructible state asks for on this dobj.
@@ -390,6 +443,75 @@ impl AuthorityDObjState {
         self.materialized_pose_revision = None;
     }
 
+    pub fn set_world_pose(&mut self, origin: [f32; 3], angles: [f32; 3]) {
+        let world_from_model = iw_angles_to_mat4(glam::Vec3::from_array(origin), angles);
+        if world_from_model == self.world_from_model {
+            return;
+        }
+        self.world_from_model = world_from_model;
+        self.current_collision = None;
+        self.materialized_pose_revision = None;
+    }
+
+    pub fn bone_name(&self, bone: usize) -> Option<&str> {
+        self.capability
+            .as_ref()?
+            .pose
+            .bone_names
+            .get(bone)
+            .map(String::as_str)
+    }
+
+    pub fn set_tag_hidden(&mut self, tag: &str, hidden: bool) -> bool {
+        let Some(bone) = self.capability.as_ref().and_then(|capability| {
+            capability
+                .pose
+                .bone_names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(tag))
+        }) else {
+            return false;
+        };
+        let mut words = *self.semantic_state.hide_part_bits.words();
+        let bit = 0x8000_0000 >> (bone % 32);
+        if hidden {
+            words[bone / 32] |= bit;
+        } else {
+            words[bone / 32] &= !bit;
+        }
+        let hide = xmodel_runtime::HidePartBits::from_words(words);
+        if hide != self.semantic_state.hide_part_bits {
+            self.semantic_state.hide_part_bits = hide;
+            self.pose_request.hide_part_bits = hide;
+            self.pose_revision = self.pose_revision.wrapping_add(1);
+            self.semantic_state.pose_revision = self.pose_revision;
+            self.current_collision = None;
+            self.materialized_pose_revision = None;
+        }
+        true
+    }
+
+    pub fn clear_script_model_play_anim(&mut self) {
+        if self.play_anim.take().is_none() {
+            return;
+        }
+        self.pose_revision = self.pose_revision.wrapping_add(1);
+        self.semantic_state = xmodel_runtime::DObjSemanticState {
+            hide_part_bits: self.semantic_state.hide_part_bits,
+            ..xmodel_runtime::DObjSemanticState::bind_pose(
+                self.current_model.clone(),
+                self.model_revision,
+                self.pose_revision,
+            )
+        };
+        self.pose_request = xmodel_runtime::DObjPoseRequest {
+            hide_part_bits: self.semantic_state.hide_part_bits,
+            ..xmodel_runtime::DObjPoseRequest::bind_pose()
+        };
+        self.current_collision = None;
+        self.materialized_pose_revision = None;
+    }
+
     pub fn set_model(
         &mut self,
         current_model: String,
@@ -404,51 +526,6 @@ impl AuthorityDObjState {
         self.materialized_model_revision = None;
         self.materialized_pose_revision = None;
         self.materialize_error = None;
-    }
-
-    pub fn begin_destructible_death(&mut self, husk: &str, clip: &str) {
-        self.play_anim = None;
-        self.pickup_glass = None;
-        self.set_model(husk.to_owned(), self.swap_capability(husk));
-        self.pose_revision = self.pose_revision.wrapping_add(1);
-        self.semantic_state = xmodel_runtime::DObjSemanticState::one_leaf(
-            husk.to_owned(),
-            clip.to_owned(),
-            self.model_revision,
-            self.pose_revision,
-            0.0,
-        );
-        self.pose_request = xmodel_runtime::DObjPoseRequest::bind_pose();
-        self.current_collision = None;
-        self.materialized_pose_revision = None;
-        self.materialize_error = None;
-    }
-
-    pub fn advance_destructible_death(&mut self, dt_seconds: f32) -> f32 {
-        let Some(tree) = self.semantic_state.tree.as_mut() else {
-            return 0.0;
-        };
-        let Some(leaf) = tree.nodes.first_mut() else {
-            return 0.0;
-        };
-        leaf.state.old_time = leaf.state.time;
-        leaf.state.old_cycle_count = leaf.state.cycle_count;
-        let (time, cycle) = anim_iw4::xanim_advance_leaf_time(
-            leaf.state.old_time,
-            leaf.state.cycle_count,
-            leaf.state.rate,
-            1.0,
-            dt_seconds,
-            false,
-        );
-        leaf.state.time = time;
-        leaf.state.cycle_count = cycle;
-        tree.state_revision = tree.state_revision.wrapping_add(1);
-        self.pose_revision = self.pose_revision.wrapping_add(1);
-        self.semantic_state.pose_revision = self.pose_revision;
-        self.current_collision = None;
-        self.materialized_pose_revision = None;
-        leaf.state.time
     }
 
     pub fn begin_script_model_play_anim(&mut self, clip: &str, looping: bool, frequency: f32) {
@@ -479,7 +556,7 @@ impl AuthorityDObjState {
         };
         leaf.state.old_time = leaf.state.time;
         leaf.state.old_cycle_count = leaf.state.cycle_count;
-        let (time, cycle) = anim_iw4::xanim_advance_leaf_time(
+        let (time, cycle) = anim_iw4::advance_leaf_time(
             leaf.state.old_time,
             leaf.state.cycle_count,
             leaf.state.rate,
@@ -527,7 +604,7 @@ impl AuthorityDObjState {
         apos: entity_iw4::Trajectory,
         at_time_ms: i32,
     ) -> Option<[f32; 3]> {
-        let angles = entity_iw4::bg_evaluate_trajectory(&apos, at_time_ms);
+        let angles = entity_iw4::evaluate_trajectory(&apos, at_time_ms);
         let origin = self.world_from_model.w_axis.truncate();
         self.world_from_model = iw_angles_to_mat4(origin, angles);
         Some(angles)
@@ -546,7 +623,7 @@ impl AuthorityDObjState {
             ));
             return;
         };
-        if !dobj_contents_match_mask(capability.contents, MASK_BULLET_WORLD) {
+        if !contents_match_mask(capability.contents, MASK_BULLET_WORLD) {
             self.current_collision = None;
             self.materialized_model_revision = Some(self.model_revision);
             self.materialized_pose_revision = Some(self.pose_revision);
@@ -582,7 +659,7 @@ impl AuthorityDObjState {
         }
     }
 
-    pub fn tag_world_pose(&self, tag: &str) -> Option<([f32; 3], [f32; 3])> {
+    pub fn tag_world_matrix(&self, tag: &str) -> Option<glam::Mat4> {
         let capability = self.capability.as_ref()?;
         let bone = capability
             .pose
@@ -592,13 +669,17 @@ impl AuthorityDObjState {
         let posed = capability
             .pose(&self.pose_request, self.world_from_model)
             .ok()?;
-        let matrix = posed.get(bone)?;
+        posed.get(bone).copied()
+    }
+
+    pub fn tag_world_pose(&self, tag: &str) -> Option<([f32; 3], [f32; 3])> {
+        let matrix = self.tag_world_matrix(tag)?;
         let origin = matrix.w_axis.truncate().to_array();
         let forward = matrix.x_axis.truncate();
         let direction = if forward.length_squared() > 1e-8 {
             forward.normalize().to_array()
         } else {
-            gamemode_iw4::VEHICLE_DEATH_FX_FORWARD
+            [0.0, 0.0, 1.0]
         };
         Some((origin, direction))
     }
@@ -671,6 +752,9 @@ pub struct EntityCollisionCapabilities {
     epoch: EntityCollisionEpoch,
     pub dobj: Option<AuthorityDObjState>,
     pub linked_brushes: Vec<LinkedBrushCollisionBrush>,
+    pub hidden: bool,
+    pub solid: bool,
+    pub followed_pose: Option<([f32; 3], [f32; 3])>,
 }
 
 impl EntityCollisionCapabilities {
@@ -684,11 +768,22 @@ impl EntityCollisionCapabilities {
             epoch: EntityCollisionEpoch::CurrentTick,
             dobj,
             linked_brushes,
+            hidden: false,
+            solid: true,
+            followed_pose: None,
         }
     }
 
     pub const fn epoch(&self) -> EntityCollisionEpoch {
         self.epoch
+    }
+
+    pub fn solid_brushes(&self) -> &[LinkedBrushCollisionBrush] {
+        if self.solid {
+            &self.linked_brushes
+        } else {
+            &[]
+        }
     }
 
     /// Must stay the bounds test `bullet_trace_filtered` applies to each geom.
@@ -698,6 +793,9 @@ impl EntityCollisionCapabilities {
         start: [f32; 3],
         end: [f32; 3],
     ) -> bool {
+        if !self.solid {
+            return false;
+        }
         let collision = self
             .dobj
             .as_ref()
@@ -708,6 +806,16 @@ impl EntityCollisionCapabilities {
     }
 
     pub fn trace_geom(&self) -> EntityCollisionTraceGeom {
+        if !self.solid {
+            return EntityCollisionTraceGeom {
+                owner: self.owner,
+                epoch: self.epoch,
+                collision: None,
+                dobj_contents: None,
+                model_key: None,
+                linked_brushes: Vec::new(),
+            };
+        }
         EntityCollisionTraceGeom {
             owner: self.owner,
             epoch: self.epoch,
@@ -813,6 +921,7 @@ pub struct BulletTraceQuery {
     pub ignore: Option<ClientId>,
 
     pub ignore_hit: Option<ClientId>,
+    pub ignore_model: Option<ScriptModelId>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1196,7 +1305,10 @@ fn bullet_trace_filtered(
         query.end
     };
     for pose in players {
-        if query.ignore == Some(pose.client) || query.ignore_hit == Some(pose.client) {
+        if query.ignore == Some(pose.client)
+            || query.ignore_hit == Some(pose.client)
+            || query.mask & CONTENTS_BODY == 0
+        {
             continue;
         }
         if !pose.bones.is_empty() {
@@ -1244,6 +1356,9 @@ fn bullet_trace_filtered(
     }
 
     for geom in script_models {
+        if query.ignore_model.is_some() && geom.owner.script_model() == query.ignore_model {
+            continue;
+        }
         if let Some((mins, maxs)) = geom_abs_aabb(geom, cmodels) {
             if matches!(
                 ray_aabb_box(query.start, query.end, mins, maxs),
@@ -1296,7 +1411,7 @@ fn bullet_trace_filtered(
         let Some(dobj_geom) = geom.collision.as_ref() else {
             continue;
         };
-        if !dobj_contents_match_mask(geom.dobj_contents, query.mask) {
+        if !contents_match_mask(geom.dobj_contents, query.mask) {
             continue;
         }
         match trace_dobj_coll_tris(dobj_geom.coll.as_ref(), geom.owner, query) {
@@ -1492,7 +1607,7 @@ fn fire_extended(
                 if glass_contents {
                     if is_open_pane(world, hit.collider) {
                         let Some(next) =
-                            bg_advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
+                            advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
                         else {
                             break;
                         };
@@ -1513,7 +1628,7 @@ fn fire_extended(
                 terminal = Some(hit.collider);
                 if glass_contents {
                     let Some(next) =
-                        bg_advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
+                        advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
                     else {
                         break;
                     };
@@ -1529,7 +1644,7 @@ fn fire_extended(
                     break;
                 }
                 multiplier *= RIFLE_COLLATERAL_SCALE;
-                let Some(next) = bg_advance_trace(hit.end, hit.normal, dir, false, 0.0) else {
+                let Some(next) = advance_trace(hit.end, hit.normal, dir, false, 0.0) else {
                     break;
                 };
                 start = next;
@@ -1590,8 +1705,7 @@ fn fire_penetrate(
                 break (startsolid_as_hit(collider, query.start, dir), true);
             }
             Decode::Hit(hit) if is_open_pane(world, hit.collider) => {
-                let Some(next) =
-                    bg_advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
+                let Some(next) = advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
                 else {
                     return (segments, None);
                 };
@@ -1625,7 +1739,7 @@ fn fire_penetrate(
             break;
         }
         let hit_world = is_world(last_hit.collider);
-        let Some(next_start) = bg_advance_trace(
+        let Some(next_start) = advance_trace(
             last_hit.end,
             last_hit.normal,
             dir,
@@ -1685,8 +1799,7 @@ fn fire_penetrate(
         };
         if let Some(hit) = &fwd_hit {
             if is_open_pane(world, hit.collider) {
-                let Some(next) =
-                    bg_advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
+                let Some(next) = advance_trace(hit.end, hit.normal, dir, true, ADVANCE_TRACE_FWD)
                 else {
                     break;
                 };
@@ -1702,7 +1815,7 @@ fn fire_penetrate(
         let mut rev_start = fwd_hit.as_ref().map(|h| h.end).unwrap_or(query.end);
         let rev_end = vec3_mad(entry_pos, REV_END_EPS, rev_dir);
         if let Some(hit) = &fwd_hit {
-            if let Some(nudged) = bg_advance_trace(
+            if let Some(nudged) = advance_trace(
                 hit.end,
                 scale3(hit.normal, -1.0),
                 rev_dir,
@@ -1720,6 +1833,7 @@ fn fire_penetrate(
             mask: query.mask,
             ignore: query.ignore,
             ignore_hit: rev_ignore,
+            ignore_model: query.ignore_model,
         };
         let rev = bullet_trace_filtered(
             world.brushes,
@@ -1854,6 +1968,7 @@ fn trace_from(
             mask: query.mask,
             ignore: query.ignore,
             ignore_hit,
+            ignore_model: query.ignore_model,
         },
         world.glass_is_solid,
     )
@@ -1979,7 +2094,7 @@ fn note_glass_hit(world: &TraceWorld<'_>, collider: ColliderId, end: [f32; 3]) {
 fn collider_hit_kind(collider: ColliderId, startsolid: bool) -> (i32, u16) {
     match collider {
         ColliderId::World { glass_encoded, .. } if !startsolid => {
-            trace_iw4::cm_brush_sweep_hit_kind(glass_encoded)
+            trace_iw4::brush_sweep_hit_kind(glass_encoded)
         }
         ColliderId::World { .. } => (trace_iw4::HITTYPE_ENTITY, trace_iw4::ENTITYNUM_WORLD),
         ColliderId::Player { .. }
@@ -2517,7 +2632,7 @@ pub const COLLISION_COVERAGE: &[CollisionCoverageRow] = &[
     CollisionCoverageRow {
         id: "static_model_collision",
         support: CoverageSupport::Supported,
-        note: "CM_PointTraceStaticModels linear walk of captured cStaticModel_s collTris (XModelTraceLine); cm_world.sectors open",
+        note: "linear walk of captured static-model collision triangles; world sectors open",
     },
     CollisionCoverageRow {
         id: "dynamic_entities",
@@ -2532,16 +2647,16 @@ pub const COLLISION_COVERAGE: &[CollisionCoverageRow] = &[
     CollisionCoverageRow {
         id: "glass_destructibles",
         support: CoverageSupport::Supported,
-        note: "MASK_SHOT includes CONTENTS_GLASS; mid-trace on_glass_hit updates solidity before the next hop; CG_Glass/tess apply is presentation",
+        note: "MASK_SHOT includes CONTENTS_GLASS; mid-trace on_glass_hit updates solidity before the next hop; glass tess apply is presentation",
     },
     CollisionCoverageRow {
         id: "mask_shot_material_surface",
         support: CoverageSupport::Locked,
-        note: "MASK_SHOT is 0x02806831 (Bullet_Trace); material surface table unproven",
+        note: "material surface table is not modelled",
     },
     CollisionCoverageRow {
         id: "projectile_sweep",
         support: CoverageSupport::Supported,
-        note: "G_RunMissile world half is the same zero-extent brush∪mesh ray as hitscan; plantable G_TraceCapsule hull and TR_STATIONARY rest stay open",
+        note: "the missile world trace is the same zero-extent brush∪mesh ray as hitscan; plantable capsule hull and TR_STATIONARY rest stay open",
     },
 ];

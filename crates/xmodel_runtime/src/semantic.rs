@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    AnimClip, DObjPoseRequest, HidePartBits, PartBits, XAnimNodeDefinition, XAnimNodeId,
-    XAnimNodeKind, XAnimNodeState, XAnimTreeDefinition, XAnimTreeError, XAnimTreeRuntime,
+    AnimClip, DObjPoseRequest, HidePartBits, XAnimNodeDefinition, XAnimNodeId, XAnimNodeKind,
+    XAnimNodeState, XAnimTreeDefinition, XAnimTreeError, XAnimTreeRuntime,
 };
+use anim_iw4::PartBits;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DObjModelDescriptor {

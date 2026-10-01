@@ -145,7 +145,7 @@ impl SndAliasFlags {
 
 pub const SND_CURVE_EVAL_OUT_OF_RANGE: f32 = -1.0;
 
-pub fn snd_curve_eval(knots: &[[f32; 2]], frac: f32) -> f32 {
+pub fn curve_eval(knots: &[[f32; 2]], frac: f32) -> f32 {
     let n = knots.len();
     if n <= 1 {
         return SND_CURVE_EVAL_OUT_OF_RANGE;
@@ -164,7 +164,7 @@ pub fn snd_curve_eval(knots: &[[f32; 2]], frac: f32) -> f32 {
     (y1 - y0) * ((frac - x0) / (x1 - x0)) + y0
 }
 
-pub fn snd_attenuate(knots: &[[f32; 2]], dist: f32, dist_min: f32, dist_max: f32) -> f32 {
+pub fn attenuate(knots: &[[f32; 2]], dist: f32, dist_min: f32, dist_max: f32) -> f32 {
     let delta = dist - dist_min;
     if delta <= 0.0 {
         return 1.0;
@@ -173,5 +173,5 @@ pub fn snd_attenuate(knots: &[[f32; 2]], dist: f32, dist_min: f32, dist_max: f32
     if frac >= 1.0 {
         return 0.0;
     }
-    snd_curve_eval(knots, frac)
+    curve_eval(knots, frac)
 }

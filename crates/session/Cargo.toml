@@ -10,15 +10,24 @@ web-time = { workspace = true }
 diag.workspace = true
 bevy.workspace = true
 frame.workspace = true
+asset_anim.workspace = true
+asset_audio.workspace = true
+asset_core.workspace = true
+asset_game.workspace = true
+asset_model.workspace = true
+asset_transport.workspace = true
+asset_world.workspace = true
 assets.workspace = true
 audio.workspace = true
 net.workspace = true
-render.workspace = true
 render_frontend.workspace = true
 render_fx.workspace = true
 sim.workspace = true
 gamemode_iw4.workspace = true
-bots.workspace = true
+clipmap_iw4.workspace = true
+weapon_iw4.workspace = true
+xmodel_runtime.workspace = true
+hud_iw4.workspace = true
 perf.workspace = true
 
 [lints]

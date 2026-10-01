@@ -167,7 +167,7 @@ pub struct ModelLightingCapExceeded {
     pub max_client_views: u32,
 }
 
-pub const fn check_smodel_lit_within_retail_cap(
+pub const fn check_smodel_lit_within_cap(
     lit_slots: u32,
     max_client_views: u32,
 ) -> Result<(), ModelLightingCapExceeded> {

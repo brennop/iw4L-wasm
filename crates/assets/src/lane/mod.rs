@@ -12,11 +12,14 @@ pub(crate) use helpers::{
 pub(crate) use sink::{CommonWalkSink, MaterialPopulationSink, ZoneWalkSink};
 
 use crate::{
-    BodyMeshBuild, FpvMeshBuild, WeaponBuild, WorldWeaponBuild, XAnimBuild, ZoneGame, ZoneImage,
     lane_capability::{LaneStatus, PreparedCapability},
-    progress::LoadProgress,
     session_load::{PreparedWorld, WorldDrawPolicy},
 };
+use asset_anim::XAnimBuild;
+use asset_core::ZoneGame;
+use asset_game::WeaponBuild;
+use asset_model::{BodyMeshBuild, FpvMeshBuild, WorldWeaponBuild};
+use asset_transport::{LoadProgress, ZoneImage};
 
 #[derive(Clone, Debug)]
 pub struct LaneGap {
@@ -27,12 +30,13 @@ pub struct LaneGap {
 
 #[derive(Default)]
 pub struct LoadedWorld {
+    pub scripts: crate::ScriptSources,
     pub world: PreparedWorld,
     /// What the map zone itself captured. The local material indices in
     /// `world` are indices into this pool until the match finalizes one.
-    pub materials: crate::MaterialCatalog,
-    pub collision: Option<crate::ClipCollision>,
-    pub spawns: Vec<crate::SpawnPoint>,
+    pub materials: asset_material::MaterialCatalog,
+    pub collision: Option<asset_world::ClipCollision>,
+    pub spawns: Vec<asset_world::SpawnPoint>,
     pub bodies: BodyMeshBuild,
     pub fpv_meshes: FpvMeshBuild,
     pub xanims: XAnimBuild,
@@ -84,26 +88,27 @@ impl LoadedWorld {
 
 #[derive(Default)]
 pub struct CommonCensus {
-    pub scene_models: crate::MapXModelSceneCatalog,
+    pub scripts: crate::ScriptSources,
+    pub scene_models: asset_world::MapXModelSceneCatalog,
     pub shared_surfaces: asset_model::SharedXModelSurfaces,
     pub weapons: WeaponBuild,
 
-    pub cac_tables: Vec<crate::CapturedStringTable>,
+    pub cac_tables: Vec<asset_game::CapturedStringTable>,
     pub fpv: FpvMeshBuild,
     pub world_weapons: WorldWeaponBuild,
 
-    pub projectile_meshes: crate::ProjectileMeshBuild,
+    pub projectile_meshes: asset_model::ProjectileMeshBuild,
     pub xanims: XAnimBuild,
-    pub player_anim_sources: crate::PlayerAnimSources,
-    pub fx: crate::FxCatalog,
-    pub fx_models: crate::FxModelCatalog,
+    pub player_anim_sources: asset_anim::PlayerAnimSources,
+    pub fx: asset_game::FxCatalog,
+    pub fx_models: asset_game::FxModelCatalog,
 
-    pub tracers: crate::TracerCatalog,
-    pub impact_fx: Option<crate::OwnedFxImpactTable>,
+    pub tracers: asset_game::TracerCatalog,
+    pub impact_fx: Option<asset_game::OwnedFxImpactTable>,
 
-    pub material_population: crate::MaterialCatalog,
+    pub material_population: asset_material::MaterialCatalog,
 
-    pub light_defs: Vec<crate::CapturedLightDef>,
+    pub light_defs: Vec<asset_world::CapturedLightDef>,
     pub report: Vec<String>,
 
     pub pen_table: weapon_iw4::PenetrationDepthTable,
@@ -116,29 +121,33 @@ pub struct CommonCensus {
     /// themselves do not outlive it.
     pub s1_common_bytes: usize,
 
-    pub teamsets: std::collections::HashMap<String, crate::MapTeamSettings>,
-    pub film_visions:
-        std::collections::BTreeMap<String, Result<crate::FilmVision, crate::FilmVisionParseError>>,
+    pub teamsets: std::collections::HashMap<String, asset_game::MapTeamSettings>,
+    pub film_visions: std::collections::BTreeMap<
+        String,
+        Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
+    >,
 
-    pub pending_images: Option<crate::material_images::ImageDemandPlan>,
+    pub pending_images: Option<asset_material::material_images::ImageDemandPlan>,
 }
 
 pub struct MaterialPopulation {
-    pub materials: crate::MaterialCatalog,
-    pub light_defs: Vec<crate::CapturedLightDef>,
+    pub materials: asset_material::MaterialCatalog,
+    pub light_defs: Vec<asset_world::CapturedLightDef>,
     pub walked: usize,
     pub report: Vec<String>,
-    pub cac_tables: Vec<crate::CapturedStringTable>,
+    pub cac_tables: Vec<asset_game::CapturedStringTable>,
+    pub scripts: crate::ScriptSources,
 }
 
 impl Default for MaterialPopulation {
     fn default() -> Self {
         Self {
-            materials: crate::MaterialCatalog::default(),
+            materials: asset_material::MaterialCatalog::default(),
             light_defs: Vec::new(),
             walked: 0,
             report: Vec::new(),
             cac_tables: Vec::new(),
+            scripts: crate::ScriptSources::default(),
         }
     }
 }
@@ -155,10 +164,10 @@ pub trait ZoneLane: Send + Sync {
 
         shared_surfaces: asset_model::SharedXModelSurfaces,
 
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
         common_film_visions: &mut std::collections::BTreeMap<
             String,
-            Result<crate::FilmVision, crate::FilmVisionParseError>,
+            Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
         >,
     ) -> LoadedWorld;
 
@@ -168,7 +177,7 @@ pub trait ZoneLane: Send + Sync {
         image: &ZoneImage,
         progress: &LoadProgress,
         decode_color_maps: bool,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
     ) -> CommonCensus;
 
     fn load_material_population(
@@ -176,7 +185,7 @@ pub trait ZoneLane: Send + Sync {
         path: &Path,
         image: &ZoneImage,
         progress: &LoadProgress,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
     ) -> MaterialPopulation;
 }
 

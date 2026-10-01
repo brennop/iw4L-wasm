@@ -16,13 +16,13 @@ pub struct WorldGpuWait {
     started: Option<web_time::Instant>,
     quiet: u32,
     pipelines_at_arm: Option<u32>,
-    stage: Option<assets::StageHandle>,
-    images_stage: Option<assets::StageHandle>,
-    pipelines_stage: Option<assets::StageHandle>,
+    stage: Option<asset_transport::StageHandle>,
+    images_stage: Option<asset_transport::StageHandle>,
+    pipelines_stage: Option<asset_transport::StageHandle>,
 }
 
 impl WorldGpuWait {
-    pub fn arm(&mut self, progress: Option<&assets::LoadProgress>) {
+    pub fn arm(&mut self, progress: Option<&asset_transport::LoadProgress>) {
         self.started = Some(web_time::Instant::now());
         self.quiet = 0;
         self.pipelines_at_arm = None;
@@ -39,10 +39,10 @@ impl WorldGpuWait {
             stage.cancel();
         }
         if let Some(progress) = progress {
-            self.images_stage = Some(progress.begin(assets::StageId::GpuTextures, None));
-            self.pipelines_stage = Some(progress.begin(assets::StageId::Pipelines, None));
+            self.images_stage = Some(progress.begin(asset_transport::StageId::GpuTextures, None));
+            self.pipelines_stage = Some(progress.begin(asset_transport::StageId::Pipelines, None));
             self.stage = Some(progress.begin(
-                assets::StageId::RenderFrames,
+                asset_transport::StageId::RenderFrames,
                 Some(u64::from(GPU_QUIET_FRAMES)),
             ));
         }

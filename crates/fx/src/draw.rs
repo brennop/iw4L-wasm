@@ -1,9 +1,9 @@
 use fx_iw4::{
     FX_RAND_CH_LIFE, FxElemType, FxTrailEmittedVert, FxTrailSegmentDrawState, FxTrailVertex,
-    fx_draw_elem_handler_present, fx_elem_norm_time, fx_elem_random_seed, fx_random_table_u16,
-    fx_sample_life_span_msec, fx_spark_fountain_cluster_draw_allows,
-    fx_spark_fountain_slot_for_handle, fx_trail_compute_u, fx_trail_emit_index_quad,
-    fx_trail_emit_segment_verts, fx_trail_uncompress_basis, fx_vec3_length_sq, fx_vec3_normalize,
+    draw_elem_handler_present, elem_norm_time, elem_random_seed, random_table_u16,
+    sample_life_span_msec, spark_fountain_cluster_draw_allows, spark_fountain_slot_for_handle,
+    trail_compute_u, trail_emit_index_quad, trail_emit_segment_verts, trail_uncompress_basis,
+    vec3_length_sq, vec3_normalize,
 };
 
 use crate::elem::{FX_ELEM_HANDLE_NONE, elem_slot_for_handle};
@@ -373,9 +373,9 @@ fn draw_one_elem(
                 None => return,
             };
             let age = host.msec_now.wrapping_sub(elem.msec_begin);
-            let norm = fx_elem_norm_time(age, elem.life_span_msec);
+            let norm = elem_norm_time(age, elem.life_span_msec);
             let elem_random_seed =
-                fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
             let origin = crate::spark::spark_elem_world_origin(
                 elem.origin,
                 elem.flags,
@@ -412,7 +412,7 @@ fn draw_one_elem(
             }
             return;
         }
-        let _ = fx_draw_elem_handler_present(elem.elem_type);
+        let _ = draw_elem_handler_present(elem.elem_type);
         out.skipped_unsupported_type = out.skipped_unsupported_type.saturating_add(1);
         match elem_ty {
             FxElemType::SparkCloud => {
@@ -421,8 +421,8 @@ fn draw_one_elem(
                     None => return,
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
-                let norm = fx_elem_norm_time(age, elem.life_span_msec);
-                let seed = fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                let norm = elem_norm_time(age, elem.life_span_msec);
+                let seed = elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
                 let Some(size1) = on_spark_size1(FxSparkDrawQuery {
                     def_name: effect.def_name.as_str(),
                     catalog_index: effect.catalog_index,
@@ -454,10 +454,10 @@ fn draw_one_elem(
                 }
             }
             FxElemType::SparkFountain => {
-                let cluster = fx_spark_fountain_slot_for_handle(elem.spark_cloud_handle)
+                let cluster = spark_fountain_slot_for_handle(elem.spark_cloud_handle)
                     .and_then(|s| host.spark_fountains.get(s));
                 let (ready, spark_n) = cluster.map(|c| (c.ready, c.spark_n)).unwrap_or((0, 0));
-                if !fx_spark_fountain_cluster_draw_allows(ready, spark_n, i32::from(spark_n)) {
+                if !spark_fountain_cluster_draw_allows(ready, spark_n, i32::from(spark_n)) {
                     out.skipped_spark_fountain = out.skipped_spark_fountain.saturating_add(1);
                     return;
                 }
@@ -466,9 +466,9 @@ fn draw_one_elem(
                     None => return,
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
-                let norm = fx_elem_norm_time(age, elem.life_span_msec);
+                let norm = elem_norm_time(age, elem.life_span_msec);
                 let elem_random_seed =
-                    fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                    elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
                 let origin = crate::spark::spark_elem_world_origin(
                     elem.origin,
                     elem.flags,
@@ -532,9 +532,9 @@ fn draw_one_elem(
                     None => return,
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
-                let norm = fx_elem_norm_time(age, elem.life_span_msec);
+                let norm = elem_norm_time(age, elem.life_span_msec);
                 let elem_random_seed =
-                    fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                    elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
                 let origin = crate::spark::spark_elem_world_origin(
                     elem.origin,
                     elem.flags,
@@ -572,9 +572,9 @@ fn draw_one_elem(
                     None => return,
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
-                let norm = fx_elem_norm_time(age, elem.life_span_msec);
+                let norm = elem_norm_time(age, elem.life_span_msec);
                 let elem_random_seed =
-                    fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                    elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
                 let origin = crate::spark::spark_elem_world_origin(
                     elem.origin,
                     elem.flags,
@@ -624,8 +624,8 @@ fn draw_one_elem(
         None => return,
     };
     let age = host.msec_now.wrapping_sub(elem.msec_begin);
-    let norm = fx_elem_norm_time(age, elem.life_span_msec);
-    let elem_random_seed = fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+    let norm = elem_norm_time(age, elem.life_span_msec);
+    let elem_random_seed = elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
     let origin = crate::spark::spark_elem_world_origin(
         elem.origin,
         elem.flags,
@@ -770,7 +770,7 @@ fn generate_trail_verts(
         .and_then(|s| host.trail_elems.get(s))
         .map(|e| e.spawn_dist)
         .unwrap_or(0.0);
-    let u_offset = fx_trail_compute_u(
+    let u_offset = trail_compute_u(
         first_spawn_dist,
         trail_def.repeat_dist,
         trail_def.scroll_time_msec,
@@ -808,11 +808,10 @@ fn generate_trail_verts(
         let seed = (u32::from(effect_seed)
             .wrapping_add(u32::from(elem.sequence).wrapping_mul(0x128)))
             % 0x1df;
-        let life_rand = fx_random_table_u16(seed, FX_RAND_CH_LIFE);
-        let life_msec =
-            fx_sample_life_span_msec(trail_def.life_base, trail_def.life_amp, life_rand);
+        let life_rand = random_table_u16(seed, FX_RAND_CH_LIFE);
+        let life_msec = sample_life_span_msec(trail_def.life_base, trail_def.life_amp, life_rand);
         let age = msec_draw.wrapping_sub(elem.msec_begin);
-        let norm_time = fx_elem_norm_time(age, life_msec);
+        let norm_time = elem_norm_time(age, life_msec);
 
         let sample_ctx = FxDrawTrailSampleContext {
             def_name,
@@ -833,7 +832,7 @@ fn generate_trail_verts(
             continue;
         };
 
-        let mut basis = fx_trail_uncompress_basis(&elem.basis);
+        let mut basis = trail_uncompress_basis(&elem.basis);
 
         if (trail_def.flags & FX_ELEM_FLAG_TRAIL_DIR_BASIS) != 0 && sample_handle != first_elem {
             if let Some(prev) = last_state {
@@ -842,16 +841,16 @@ fn generate_trail_verts(
                     elem.origin[1] - prev.pos_world[1],
                     elem.origin[2] - prev.pos_world[2],
                 ];
-                let delta = fx_vec3_normalize(delta);
+                let delta = vec3_normalize(delta);
                 let mut side = [delta[1], -delta[0], 0.0];
-                if fx_vec3_length_sq(side) > 0.0 {
-                    side = fx_vec3_normalize(side);
+                if vec3_length_sq(side) > 0.0 {
+                    side = vec3_normalize(side);
                     let up = [
                         delta[1] * side[2] - delta[2] * side[1],
                         delta[2] * side[0] - delta[0] * side[2],
                         delta[0] * side[1] - delta[1] * side[0],
                     ];
-                    let up = fx_vec3_normalize(up);
+                    let up = vec3_normalize(up);
                     basis = [side, up];
                 }
             }
@@ -900,7 +899,7 @@ fn generate_trail_verts(
         let mut base: u16 = 0;
         for _ in 0..(segment_count - 1) {
             for pair in trail_def.inds.chunks_exact(2) {
-                let quads = fx_trail_emit_index_quad(pair[0], pair[1], base, vert_count);
+                let quads = trail_emit_index_quad(pair[0], pair[1], base, vert_count);
                 mesh.index_pairs.extend_from_slice(&quads);
             }
             base = base.wrapping_add(vert_count);
@@ -955,5 +954,5 @@ fn emit_segment_into(
             tangent_packed: 0.0,
         },
     );
-    fx_trail_emit_segment_verts(verts, state, &mut out[start..]);
+    trail_emit_segment_verts(verts, state, &mut out[start..]);
 }

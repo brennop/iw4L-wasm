@@ -3,7 +3,7 @@ use playerstate_iw4::{PlayerState, pm_flags};
 
 use crate::collision::CollisionBackend;
 use crate::pml::Pml;
-use crate::slide::pm_step_slide_move;
+use crate::slide::step_slide_move;
 
 const MS_TO_SECONDS: f32 = 0.001;
 
@@ -18,20 +18,20 @@ pub struct MeleeChargeWeaponDelays {
     pub melee_charge_delay_ms: i32,
 }
 
-pub fn pm_melee_charge_clear(ps: &mut PlayerState) {
+pub fn melee_charge_clear(ps: &mut PlayerState) {
     ps.pm_flags &= !pm_flags::MELEE_CHARGE;
     ps.melee_charge_yaw = 0.0;
     ps.melee_charge_dist = 0;
     ps.melee_charge_time = 0;
 }
 
-pub fn pm_calc_melee_charge_time(
+pub fn calc_melee_charge_time(
     ps: &mut PlayerState,
     delays: MeleeChargeWeaponDelays,
     player_melee_range: f32,
 ) {
     if (ps.pm_flags & pm_flags::MELEE_CHARGE) == 0 {
-        pm_melee_charge_clear(ps);
+        melee_charge_clear(ps);
         return;
     }
     if ps.melee_charge_time != 0 {
@@ -46,7 +46,7 @@ pub fn pm_calc_melee_charge_time(
     let charge_time_sec = delay_ms as f32 * MS_TO_SECONDS;
 
     if charge_time_sec <= 0.0 {
-        pm_melee_charge_clear(ps);
+        melee_charge_clear(ps);
         return;
     }
 
@@ -64,10 +64,10 @@ fn project_to_ground(velocity: &mut [f32; 3], ground_trace: &[u32; 11]) {
         f32::from_bits(ground_trace[2]),
         f32::from_bits(ground_trace[3]),
     ];
-    crate::pm_project_velocity(velocity, &normal);
+    crate::project_velocity(velocity, &normal);
 }
 
-pub fn pm_melee_charge_move<C: CollisionBackend>(
+pub fn melee_charge_move<C: CollisionBackend>(
     ps: &mut PlayerState,
     pml: &Pml,
     mins: [f32; 3],
@@ -102,7 +102,7 @@ pub fn pm_melee_charge_move<C: CollisionBackend>(
     project_to_ground(&mut ps.velocity, &pml.ground_trace);
 
     if ps.velocity[0] != 0.0 || ps.velocity[1] != 0.0 {
-        pm_step_slide_move(ps, pml, collision, mins, maxs, tracemask, None);
+        step_slide_move(ps, pml, collision, mins, maxs, tracemask, None);
     }
 
     ps.velocity[0] = new_speed * dir[0];
@@ -116,5 +116,5 @@ pub fn pm_melee_charge_move<C: CollisionBackend>(
 
     ps.velocity[0] = 0.0;
     ps.velocity[1] = 0.0;
-    pm_melee_charge_clear(ps);
+    melee_charge_clear(ps);
 }

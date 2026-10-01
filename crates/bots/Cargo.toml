@@ -7,6 +7,7 @@ description = "Host-only bot controllers: sensor observations into UserCmd."
 
 [dependencies]
 web-time = { workspace = true }
+asset_transport.workspace = true
 assets.workspace = true
 diag.workspace = true
 bevy.workspace = true
@@ -18,7 +19,7 @@ entity_iw4.workspace = true
 movement_iw4 = { path = "../movement_iw4" }
 weapon_iw4 = { path = "../weapon_iw4" }
 math_iw4 = { path = "../math_iw4" }
-glam.workspace = true
+trace_iw4.workspace = true
 gamemode_iw4.workspace = true
 
 [lints]

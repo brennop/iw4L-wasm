@@ -1,4 +1,4 @@
--- G_FireMissile spawn.
+-- Missile spawn.
 SELECT
   EXTRACT_ARG(arg_set_id, 'debug.weapon') AS weapon,
   EXTRACT_ARG(arg_set_id, 'debug.weapon_kind') AS weapon_kind

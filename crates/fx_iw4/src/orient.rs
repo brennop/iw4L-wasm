@@ -1,5 +1,5 @@
 #[inline]
-pub fn fx_orientation_pos_to_world(
+pub fn orientation_pos_to_world(
     origin: [f32; 3],
     axis: [[f32; 3]; 3],
     local: [f32; 3],
@@ -12,7 +12,7 @@ pub fn fx_orientation_pos_to_world(
 }
 
 #[inline]
-pub fn fx_orientation_pos_from_world(
+pub fn orientation_pos_from_world(
     origin: [f32; 3],
     axis: [[f32; 3]; 3],
     world: [f32; 3],

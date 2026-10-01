@@ -12,10 +12,9 @@ use bevy::{
 };
 use serde_json::{Map, Value, json};
 
-use crate::{
-    AuthoredMaterial, MaterialCullFace, MaterialDrawMode, PreparedWorld, StaticModelPlacement,
-    TS_COLOR_MAP,
-};
+use crate::PreparedWorld;
+use asset_material::{AuthoredMaterial, MaterialCullFace, MaterialDrawMode, TS_COLOR_MAP};
+use asset_world::StaticModelPlacement;
 
 const INCHES_TO_METERS: f32 = 0.0254;
 type PlacementTrs = ([f32; 3], [f32; 4], [f32; 3]);
@@ -191,7 +190,7 @@ struct GltfBuilder {
 impl GltfBuilder {
     fn add_world(
         &mut self,
-        draw: &crate::WorldDraw,
+        draw: &asset_world::WorldDraw,
         materials: &crate::MatchMaterials,
     ) -> Result<usize, String> {
         let mut primitives = Vec::new();
@@ -228,7 +227,7 @@ impl GltfBuilder {
 
     fn add_model(
         &mut self,
-        model: &crate::ModelMesh,
+        model: &asset_world::ModelMesh,
         materials: &crate::MatchMaterials,
     ) -> Option<usize> {
         let mut primitives = Vec::new();
@@ -352,7 +351,7 @@ impl GltfBuilder {
     fn material(
         &mut self,
         canonical: usize,
-        catalog: &crate::MaterialDefinitions,
+        catalog: &asset_material::MaterialDefinitions,
     ) -> Result<usize, &'static str> {
         if let Some(cached) = self.material_cache.get(&canonical) {
             return *cached;
@@ -365,7 +364,7 @@ impl GltfBuilder {
     fn build_material(
         &mut self,
         canonical: usize,
-        catalog: &crate::MaterialDefinitions,
+        catalog: &asset_material::MaterialDefinitions,
     ) -> Result<usize, &'static str> {
         let material = catalog.materials.get(canonical).ok_or("MaterialUnbound")?;
         let (alpha_mode, alpha_cutoff, coverage_exact) = match catalog.agreed_draw_mode(material) {
@@ -442,7 +441,7 @@ impl GltfBuilder {
         &mut self,
         image_index: usize,
         sampler_state: u8,
-        catalog: &crate::MaterialDefinitions,
+        catalog: &asset_material::MaterialDefinitions,
     ) -> Result<usize, &'static str> {
         if let Some(&texture) = self.texture_cache.get(&(image_index, sampler_state)) {
             return Ok(texture);
@@ -605,7 +604,7 @@ fn canonical_material(local: Option<usize>, remap: &[Option<usize>]) -> Option<u
 
 fn single_color_binding(
     material: &AuthoredMaterial,
-) -> Result<&crate::MaterialTextureBinding, &'static str> {
+) -> Result<&asset_material::MaterialTextureBinding, &'static str> {
     let mut bindings = material
         .textures
         .iter()

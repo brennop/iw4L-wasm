@@ -1,7 +1,7 @@
 use math_iw4::{angle_normalize_360, angle_subtract, pitch_for_yaw_on_normal, vect_to_angles};
 
 use crate::trajectory::{
-    TR_GRAVITY, TR_LINEAR, TR_STATIONARY, Trajectory, bg_evaluate_trajectory, truncated_tr_delta,
+    TR_GRAVITY, TR_LINEAR, TR_STATIONARY, Trajectory, evaluate_trajectory, truncated_tr_delta,
 };
 
 pub const GRENADE_APOS_PITCH_OFS: f32 = 120.0;
@@ -40,13 +40,13 @@ pub const MISSILE_NODRAW_MIN_MS: i32 = 20;
 
 pub const MISSILE_NODRAW_MAX_MS: i32 = 50;
 
-pub fn g_fire_grenade_no_draw_ms(speed: f32) -> i32 {
+pub fn fire_grenade_no_draw_ms(speed: f32) -> i32 {
     let raw = (speed * MISSILE_NODRAW_SPEED_SCALE / MISSILE_NODRAW_SPEED_DIV
         + MISSILE_NODRAW_BASE_MS) as i32;
     raw.clamp(MISSILE_NODRAW_MIN_MS, MISSILE_NODRAW_MAX_MS)
 }
 
-pub fn cg_missile_nodraw(e_flags: u32, launch_time: i32, cg_time: i32) -> Option<&'static str> {
+pub fn missile_nodraw(e_flags: u32, launch_time: i32, cg_time: i32) -> Option<&'static str> {
     if e_flags & 0x20 != 0 {
         Some("eflags_nodraw")
     } else if cg_time < launch_time {
@@ -56,7 +56,7 @@ pub fn cg_missile_nodraw(e_flags: u32, launch_time: i32, cg_time: i32) -> Option
     }
 }
 
-pub fn g_init_grenade_pos(start: [f32; 3], dir: [f32; 3], level_time_ms: i32) -> Trajectory {
+pub fn init_grenade_pos(start: [f32; 3], dir: [f32; 3], level_time_ms: i32) -> Trajectory {
     Trajectory {
         tr_time: level_time_ms,
         tr_type: TR_GRAVITY,
@@ -66,7 +66,7 @@ pub fn g_init_grenade_pos(start: [f32; 3], dir: [f32; 3], level_time_ms: i32) ->
     }
 }
 
-pub fn g_init_grenade_apos(
+pub fn init_grenade_apos(
     dir: [f32; 3],
     level_time_ms: i32,
     pitch_rate: f32,
@@ -83,7 +83,7 @@ pub fn g_init_grenade_apos(
     }
 }
 
-pub fn g_fire_missile_apos(dir: [f32; 3]) -> Trajectory {
+pub fn fire_missile_apos(dir: [f32; 3]) -> Trajectory {
     Trajectory {
         tr_time: 0,
         tr_type: TR_STATIONARY,
@@ -100,7 +100,7 @@ pub struct MissileLandAnglesIn {
     pub hit_time_ms: i32,
     pub force_align: bool,
 
-    pub g_random: f32,
+    pub spin_random: f32,
 
     pub wall_spin_addend: f32,
 }
@@ -113,7 +113,7 @@ pub struct MissileLandAnglesOut {
 
 pub fn missile_land_angles(input: MissileLandAnglesIn) -> MissileLandAnglesOut {
     let mut apos = input.apos;
-    let mut angles = bg_evaluate_trajectory(&apos, input.hit_time_ms);
+    let mut angles = evaluate_trajectory(&apos, input.hit_time_ms);
     if input.normal[2] <= LAND_FLOOR_NORMAL_Z {
         if !input.force_align {
             apos.tr_delta[0] = angle_normalize_360(input.wall_spin_addend + apos.tr_delta[0]);
@@ -131,7 +131,7 @@ pub fn missile_land_angles(input: MissileLandAnglesIn) -> MissileLandAnglesOut {
     if !input.force_align {
         apos.tr_base = angles;
         apos.tr_time = input.hit_time_ms;
-        let keep = input.g_random * LAND_SPIN_RAND_SCALE + LAND_SPIN_RAND_BIAS;
+        let keep = input.spin_random * LAND_SPIN_RAND_SCALE + LAND_SPIN_RAND_BIAS;
         apos.tr_delta[0] = if LAND_PITCH_INVERT_DEG <= abs_delta {
             keep * apos.tr_delta[0]
         } else {

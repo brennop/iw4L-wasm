@@ -6,11 +6,10 @@ use std::{
 use asset_material::MaterialDefinitions;
 use fastfile_iw4::{ScriptStrings, ZoneStream};
 
+use asset_model::link::{capture_xmodel_material_slots, stamp_xmodel_material_edges};
 use crate::{
     AssetEdge, AssetEdgeCensus, MaterialCatalog, MaterialIndex, MaterialSpace, ModelSkel,
-    ZoneOwner,
-    asset_graph::{capture_xmodel_material_slots, stamp_xmodel_material_edges},
-    capture_xmodel_skel,
+    ZoneOwner, capture_xmodel_skel,
 };
 
 #[derive(Clone, Debug)]

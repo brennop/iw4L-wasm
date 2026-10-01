@@ -1,4 +1,4 @@
-use crate::pm_weapon::{WeaponCombatFacts, WeaponHandState};
+use crate::tick::{WeaponCombatFacts, WeaponHandState};
 use crate::weaponstate::WeaponState;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -28,7 +28,7 @@ pub fn reload_segment(
     (ms.max(1), anim)
 }
 
-pub fn pm_weapon_allow_reload(hand: &WeaponHandState, facts: &WeaponCombatFacts) -> bool {
+pub fn weapon_allow_reload(hand: &WeaponHandState, facts: &WeaponCombatFacts) -> bool {
     if hand.stock <= 0 || hand.clip >= facts.clip_size {
         return false;
     }
@@ -43,7 +43,7 @@ pub fn pm_weapon_allow_reload(hand: &WeaponHandState, facts: &WeaponCombatFacts)
     }
 }
 
-pub fn pm_weapon_process_input_wants_reload(
+pub fn weapon_process_input_wants_reload(
     hand: &WeaponHandState,
     facts: &WeaponCombatFacts,
     reload_requested: bool,
@@ -67,7 +67,7 @@ pub fn pm_weapon_process_input_wants_reload(
         ) => return false,
         _ => {}
     }
-    let button = reload_requested && pm_weapon_allow_reload(hand, facts);
+    let button = reload_requested && weapon_allow_reload(hand, facts);
     let empty_auto = hand.clip <= 0
         && hand.stock > 0
         && ws != WeaponState::Firing as i32
@@ -85,7 +85,7 @@ pub fn reload_weaponstate_may_credit(weaponstate: i32) -> bool {
     )
 }
 
-pub fn pm_weapon_arm_reload_add_delay(
+pub fn weapon_arm_reload_add_delay(
     hand: &mut WeaponHandState,
     facts: &WeaponCombatFacts,
     full_ms: i32,
@@ -144,7 +144,7 @@ pub fn pm_weapon_arm_reload_add_delay(
     }
 }
 
-pub fn pm_reload_clip(hand: &mut WeaponHandState, facts: &WeaponCombatFacts) -> i32 {
+pub fn reload_clip(hand: &mut WeaponHandState, facts: &WeaponCombatFacts) -> i32 {
     if facts.clip_size <= 0 || hand.stock <= 0 {
         return 0;
     }
@@ -187,7 +187,7 @@ pub struct ReloadDelayedOutcome {
     pub rechamber_event: bool,
 }
 
-pub fn pm_weapon_reload_delayed_action(
+pub fn weapon_reload_delayed_action(
     hand: &mut WeaponHandState,
     facts: &WeaponCombatFacts,
     delayed_action: bool,
@@ -198,7 +198,7 @@ pub fn pm_weapon_reload_delayed_action(
     if facts.bolt_action && hand.rechamber_pending && hand.weapon != 0 {
         return bolt_reload_delayed_action(hand, facts);
     }
-    let shells = pm_reload_clip(hand, facts);
+    let shells = reload_clip(hand, facts);
     if facts.dual_mag.is_some() {
         hand.quick_reload = !hand.quick_reload;
     }
@@ -226,7 +226,7 @@ fn bolt_reload_delayed_action(
     }
     if hand.weapon_time == 0 {
         return ReloadDelayedOutcome {
-            shells: pm_reload_clip(hand, facts),
+            shells: reload_clip(hand, facts),
             rechamber_event: true,
         };
     }
@@ -244,7 +244,7 @@ fn bolt_reload_delayed_action(
         };
     }
     ReloadDelayedOutcome {
-        shells: pm_reload_clip(hand, facts),
+        shells: reload_clip(hand, facts),
         rechamber_event: true,
     }
 }

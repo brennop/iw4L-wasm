@@ -28,6 +28,7 @@ pub enum MenuScriptKind {
     Accept,
     OnFocus,
     LeaveFocus,
+    ExecKey,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -38,8 +39,15 @@ pub struct MenuDefCapture<'a> {
     pub expr_dvars: &'a str,
     pub fullscreen: i32,
     pub item_count: i32,
+    pub focus_color: [f32; 4],
 
     pub rect: MenuRectCapture,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum MenuChoiceValue<'a> {
+    Str(&'a str),
+    Float(f32),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,6 +99,7 @@ pub struct MenuItemLayout<'a> {
 
     pub on_focus_ptr: u8,
     pub static_flags: i32,
+    pub dvar_flags: i32,
 }
 
 fn name_at<'s>(s: &'s ZoneStream<'_>, p: Ptr) -> Result<Option<&'s str>> {
@@ -278,6 +287,7 @@ pub(super) fn load_menu(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -
         expr_dvars,
         fullscreen,
         item_count: item_count as i32,
+        focus_color: read_vec4(s, p, s.layout(240, 292)).unwrap_or([1.0; 4]),
         rect,
     })?;
     if !vis_dump.is_empty() {
@@ -896,14 +906,21 @@ fn load_event_handler(
         EVENT_IF => {
             if s.begin_body(data.at(0))? {
                 let c = s.alloc_load(4, s.layout(sz::CONDITIONAL_SCRIPT, 16))?;
-                if s.begin_body(c.at(s.layout(4, 8)))? {
-                    load_statement(s, cache)?;
-                }
+                let mut condition_buf = [0u8; ITEM_STATEMENT_DUMP];
+                let mut condition_len = 0;
+                capture_expr_body_or_alias(s, c, s.layout(4, 8), cache, |dump| {
+                    condition_len = copy_into(dump, &mut condition_buf).len();
+                })?;
+                let condition = core::str::from_utf8(&condition_buf[..condition_len]).unwrap_or("");
+                links.begin_menu_event_branch(menu, item, kind, Some(condition))?;
                 follow_handler_set(s, links, c, 0, menu, item, kind, cache)?;
+                links.end_menu_event_branch(menu, item, kind)?;
             }
         }
         EVENT_ELSE => {
+            links.begin_menu_event_branch(menu, item, kind, None)?;
             follow_handler_set(s, links, data, 0, menu, item, kind, cache)?;
+            links.end_menu_event_branch(menu, item, kind)?;
         }
         t if (EVENT_SET_LOCAL_VAR_FIRST..=EVENT_SET_LOCAL_VAR_LAST).contains(&t) => {
             if s.begin_body(data.at(0))? {
@@ -940,7 +957,7 @@ fn load_item_key_handler(
             s.layout(4, 8),
             menu,
             "",
-            MenuScriptKind::Accept,
+            MenuScriptKind::ExecKey,
             cache,
         )?;
         more = s.begin_body(p.at(s.layout(8, 16)))?;
@@ -1067,6 +1084,7 @@ fn load_item_def(
         mouse_enter_ptr,
         on_focus_ptr,
         static_flags,
+        dvar_flags: s.i32_at(p, s.layout(292, 368)).unwrap_or(0),
     })?;
 
     load_item_type_data(
@@ -1173,11 +1191,25 @@ fn load_item_type_data(
     } else if item_type == ITEM_TYPE_MULTI {
         if s.begin_body(p.at(0))? {
             let m = s.alloc_load(4, s.layout(sz::MULTI_DEF, 648))?;
+            let labels = 0;
+            let strings = s.layout(128, 256);
             for i in 0..32 {
-                s.follow_string(m, i * s.pointer_bytes())?;
+                s.follow_string(m, labels + i * s.pointer_bytes())?;
             }
             for i in 0..32 {
-                s.follow_string(m, s.layout(128, 256) + i * s.pointer_bytes())?;
+                s.follow_string(m, strings + i * s.pointer_bytes())?;
+            }
+            let floats = s.layout(256, 512);
+            let count = s.i32_at(m, s.layout(384, 640))?.clamp(0, 32) as usize;
+            let string_values = s.i32_at(m, s.layout(388, 644))? != 0;
+            for i in 0..count {
+                let label = string_at(s, m, labels + i * s.pointer_bytes());
+                let value = if string_values {
+                    MenuChoiceValue::Str(string_at(s, m, strings + i * s.pointer_bytes()))
+                } else {
+                    MenuChoiceValue::Float(s.f32_at(m, floats + i * 4)?)
+                };
+                links.capture_item_choice(menu, item, label, value)?;
             }
         }
     } else if item_type == ITEM_TYPE_DVARENUM {

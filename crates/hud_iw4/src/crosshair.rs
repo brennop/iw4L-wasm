@@ -39,7 +39,7 @@ pub struct WeaponAdsCrosshairFacts {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CgHipCrosshairGate {
+pub struct HipCrosshairGate {
     pub rendering_third_person: bool,
 
     pub e_flags: u32,
@@ -69,7 +69,7 @@ pub struct CgHipCrosshairGate {
     pub mantle_weapon_inactive: bool,
 }
 
-impl Default for CgHipCrosshairGate {
+impl Default for HipCrosshairGate {
     fn default() -> Self {
         Self {
             rendering_third_person: false,
@@ -91,20 +91,20 @@ impl Default for CgHipCrosshairGate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CgAdsTransition {
+pub struct AdsTransition {
     pub trans_scale: f32,
 
     pub trans_shift: f32,
 }
 
 #[must_use]
-pub fn cg_reticle_draw_size(weap: &WeaponReticleFacts, trans_scale: f32) -> [f32; 2] {
+pub fn reticle_draw_size(weap: &WeaponReticleFacts, trans_scale: f32) -> [f32; 2] {
     let s = weap.i_reticle_side_size as f32 * trans_scale;
     [s, s]
 }
 
 #[must_use]
-pub fn cg_hip_crosshair_visible(g: &CgHipCrosshairGate) -> bool {
+pub fn hip_crosshair_visible(g: &HipCrosshairGate) -> bool {
     if g.rendering_third_person {
         return false;
     }
@@ -131,7 +131,7 @@ pub fn cg_hip_crosshair_visible(g: &CgHipCrosshairGate) -> bool {
     if g.f_weapon_pos_frac == 1.0 && g.cg_draw_gun && !g.bob_gate {
         return false;
     }
-    cg_should_draw_crosshair(
+    should_draw_crosshair(
         g.dvars_allow,
         g.weaponstate_primary,
         g.weaponstate_secondary,
@@ -140,7 +140,7 @@ pub fn cg_hip_crosshair_visible(g: &CgHipCrosshairGate) -> bool {
 }
 
 #[must_use]
-pub fn cg_should_draw_crosshair(
+pub fn should_draw_crosshair(
     dvars_allow: bool,
     weaponstate_primary: i32,
     weaponstate_secondary: i32,
@@ -159,12 +159,12 @@ pub fn cg_should_draw_crosshair(
 }
 
 #[must_use]
-pub fn cg_transition_to_ads(
+pub fn transition_to_ads(
     f_weapon_pos_frac: f32,
     b_position_to_ads: bool,
     weap: &WeaponAdsCrosshairFacts,
     tan_half_fov_y: f32,
-) -> Option<CgAdsTransition> {
+) -> Option<AdsTransition> {
     let window = if b_position_to_ads {
         weap.ads_crosshair_in_frac
     } else {
@@ -185,14 +185,14 @@ pub fn cg_transition_to_ads(
     };
     let pitch_tan = libm::tanf(weap.ads_aim_pitch * DEG2RAD);
     let trans_shift = (fa * RETICLE_VIRTUAL_HALF_HEIGHT / tan_half) * pitch_tan;
-    Some(CgAdsTransition {
+    Some(AdsTransition {
         trans_scale,
         trans_shift,
     })
 }
 
 #[must_use]
-pub fn cg_hip_crosshair_trans_scale(
+pub fn hip_crosshair_trans_scale(
     f_weapon_pos_frac: f32,
     b_position_to_ads: bool,
     weap: &WeaponAdsCrosshairFacts,
@@ -201,13 +201,13 @@ pub fn cg_hip_crosshair_trans_scale(
     if f_weapon_pos_frac == 0.0 {
         return 1.0;
     }
-    cg_transition_to_ads(f_weapon_pos_frac, b_position_to_ads, weap, tan_half_fov_y)
+    transition_to_ads(f_weapon_pos_frac, b_position_to_ads, weap, tan_half_fov_y)
         .map(|t| t.trans_scale)
         .unwrap_or(1.0)
 }
 
 #[must_use]
-pub fn cg_calc_reticle_spread(
+pub fn calc_reticle_spread(
     cone_min: f32,
     cone_max: f32,
     aim_spread_scale: f32,
@@ -235,7 +235,7 @@ pub fn cg_calc_reticle_spread(
 }
 
 #[must_use]
-pub fn cg_calc_reticle_alpha(
+pub fn calc_reticle_alpha(
     base_alpha: f32,
     cg_crosshair_alpha: f32,
     cg_crosshair_alpha_min: f32,
@@ -257,11 +257,8 @@ pub const CROSSHAIR_POS_X_SCALE: f32 = -320.0;
 pub const CROSSHAIR_POS_Y_SCALE: f32 = -240.0;
 
 #[must_use]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "preserves CG_CalcCrosshairPosition scalar and view-axis inputs"
-)]
-pub fn cg_calc_crosshair_position(
+#[expect(clippy::too_many_arguments, reason = "scalar and view-axis inputs")]
+pub fn calc_crosshair_position(
     gun_pitch: f32,
     gun_yaw: f32,
     view_roll: f32,

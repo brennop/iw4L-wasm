@@ -3,7 +3,7 @@ use bevy::math::{Mat4, Vec3};
 use bevy::prelude::Mesh;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 
-use anim_iw4::{dobj_surface_hidden, set_hide_part_bit};
+use anim_iw4::{set_hide_part_bit, surface_hidden};
 
 use crate::anim::pose_types::FpvSkel;
 
@@ -273,7 +273,7 @@ pub(crate) fn meshes_from_blended(
     let mut hide_words = [0u32; 6];
     if hide_active {
         for bone in 0..skel.bone_names.len() {
-            if assets::bone_has_hidden_ancestor(
+            if asset_game::bone_has_hidden_ancestor(
                 &skel.bone_names,
                 |b| skel.parent_of(b),
                 bone,
@@ -299,7 +299,7 @@ pub(crate) fn meshes_from_blended(
         }
         let visible = surface_is_visible(surface_index)
             && (!hide_active
-                || !dobj_surface_hidden(&skel.surface_part_bits[surface_index], &hide_words, 0));
+                || !surface_hidden(&skel.surface_part_bits[surface_index], &hide_words, 0));
         let local_indices = if visible {
             skel.indices[index_start..index_end]
                 .iter()

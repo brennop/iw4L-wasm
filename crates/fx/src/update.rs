@@ -1,10 +1,9 @@
 use fx_iw4::{
     FX_ELEM_TYPE_SPARK_CLOUD, FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_STATUS_HAS_PENDING_LOOP_ELEMS,
-    FX_STATUS_REF_COUNT_MASK_IW4, FxOrientFrame, FxUpdateEffectBolt, fx_axis_to_quat,
-    fx_begin_iterating_over_effects_exclusive, fx_bolt_compose_orientation, fx_bolt_mark_lost,
-    fx_elem_norm_time, fx_elem_random_seed, fx_elem_uses_collision, fx_end_iterating_over_effects,
-    fx_end_iterating_runs_gc, fx_get_orientation, fx_unit_quat_to_axis, fx_update_effect_bolt,
-    fx_vector_vectors,
+    FX_STATUS_REF_COUNT_MASK_IW4, FxOrientFrame, FxUpdateEffectBolt, axis_to_quat,
+    begin_iterating_over_effects_exclusive, bolt_compose_orientation, bolt_mark_lost,
+    elem_norm_time, elem_random_seed, elem_uses_collision, end_iterating_over_effects,
+    end_iterating_runs_gc, get_orientation, unit_quat_to_axis, update_effect_bolt, vector_vectors,
 };
 use std::collections::HashMap;
 
@@ -190,7 +189,7 @@ pub fn update(
     collide_parallel: impl FnOnce(&[PendingCollide]) -> HashMap<u16, Option<FxElemMotionResult>>,
     mut on_fountain_trace: impl FnMut([f32; 3], [f32; 3]) -> (f32, [f32; 3]),
 ) {
-    host.iterator_count = fx_begin_iterating_over_effects_exclusive(host.iterator_count);
+    host.iterator_count = begin_iterating_over_effects_exclusive(host.iterator_count);
 
     let start = host.first_active_effect as u32;
     let end = host.first_new_effect as u32;
@@ -235,8 +234,8 @@ pub fn update(
         );
     }
 
-    host.iterator_count = fx_end_iterating_over_effects(host.iterator_count);
-    if fx_end_iterating_runs_gc(host.iterator_count, host.needs_garbage_collection) {
+    host.iterator_count = end_iterating_over_effects(host.iterator_count);
+    if end_iterating_runs_gc(host.iterator_count, host.needs_garbage_collection) {
         host.run_garbage_collection();
     }
 }
@@ -246,7 +245,7 @@ fn apply_fx_update_effect_bolt_to_slot(host: &mut FxSystemHost, slot: usize) {
         let Some(effect) = host.effect_at_mut(slot) else {
             return;
         };
-        match fx_update_effect_bolt(
+        match update_effect_bolt(
             effect.bolt,
             effect.bolt_packed,
             effect.bolt_centity_teleport,
@@ -255,20 +254,20 @@ fn apply_fx_update_effect_bolt_to_slot(host: &mut FxSystemHost, slot: usize) {
             FxUpdateEffectBolt::Skip => None,
             FxUpdateEffectBolt::Refresh => {
                 if let Some((origin, axis)) = effect.bolt_bone_pose {
-                    let bone_q = fx_axis_to_quat(axis);
-                    let (quat, composed) = fx_bolt_compose_orientation(
+                    let bone_q = axis_to_quat(axis);
+                    let (quat, composed) = bolt_compose_orientation(
                         effect.bolt_parent_quat,
                         effect.bolt_parent_origin,
                         bone_q,
                         origin,
                     );
                     effect.origin = composed;
-                    effect.axis = fx_unit_quat_to_axis(quat);
+                    effect.axis = unit_quat_to_axis(quat);
                 }
                 None
             }
             FxUpdateEffectBolt::Lost => {
-                effect.bolt_packed = fx_bolt_mark_lost(effect.bolt_packed);
+                effect.bolt_packed = bolt_mark_lost(effect.bolt_packed);
                 Some(slot)
             }
         }
@@ -380,7 +379,7 @@ fn pending_collide_for_elem(
     if msec_now >= death {
         return None;
     }
-    if !fx_elem_uses_collision(elem.flags) {
+    if !elem_uses_collision(elem.flags) {
         return None;
     }
     let def_index = elem.def_index;
@@ -400,7 +399,7 @@ fn pending_collide_for_elem(
         ),
         None => return None,
     };
-    let elem_seed = fx_elem_random_seed(effect_seed, sequence, msec_begin);
+    let elem_seed = elem_random_seed(effect_seed, sequence, msec_begin);
     let spawn = host
         .elems
         .get(slot)
@@ -454,7 +453,7 @@ pub(crate) fn apply_update_effect_partial_trails(
         return;
     }
     let looping = (e.status & FX_STATUS_HAS_PENDING_LOOP_ELEMS) != 0;
-    let distance = e.distance + fx_iw4::fx_vec3_distance(e.origin_last, e.origin);
+    let distance = e.distance + fx_iw4::vec3_distance(e.origin_last, e.origin);
     crate::trail::apply_partial_last_trail_spawn_dist(
         host,
         slot,
@@ -539,7 +538,7 @@ fn apply_effect_partial(
 
     crate::sort::sort_new_elems_in_effect(host, slot, camera_origin);
     if let Some(effect) = host.effect_at_mut(slot) {
-        let delta = fx_iw4::fx_vec3_distance(effect.origin_last, effect.origin);
+        let delta = fx_iw4::vec3_distance(effect.origin_last, effect.origin);
         effect.distance += delta;
         effect.msec_last_update = msec_now;
         effect.commit_frame_last_from_now();
@@ -630,7 +629,7 @@ fn update_element(
         ),
         None => return true,
     };
-    let elem_seed = fx_elem_random_seed(effect_seed, sequence, msec_begin);
+    let elem_seed = elem_random_seed(effect_seed, sequence, msec_begin);
     let spawn = host
         .elems
         .get(slot)
@@ -667,7 +666,7 @@ fn update_element(
         life_ms,
         dt_sec,
         base_vel,
-        elem_random_seed: fx_elem_random_seed(effect_seed, sequence, msec_begin),
+        elem_random_seed: elem_random_seed(effect_seed, sequence, msec_begin),
         origin,
         prev_msec,
         msec_now,
@@ -695,7 +694,7 @@ fn update_element(
                 }
             }
             let emit_residual = host.elems.get(slot).map(|e| e.emit_residual).unwrap_or(0);
-            let elem_seed = fx_elem_random_seed(effect_seed, sequence, msec_begin);
+            let elem_seed = elem_random_seed(effect_seed, sequence, msec_begin);
             if let Some(sched) = on_emit(FxEmitQuery {
                 def_name: def_name.as_str(),
                 catalog_index,
@@ -721,10 +720,10 @@ fn update_element(
                         .raise(FxGapCause::EmitOrientQuatNotUnpacked { def_index });
                     now.axis
                 } else {
-                    fx_vector_vectors(travel)
+                    vector_vectors(travel)
                 };
                 for spawn in sched.spawns() {
-                    let spawn_origin = fx_iw4::fx_emit_lerp_origin(origin, origin_end, spawn.lerp);
+                    let spawn_origin = fx_iw4::emit_lerp_origin(origin, origin_end, spawn.lerp);
                     let played = on_child(
                         host,
                         FxChildSpawnRequest {
@@ -754,7 +753,7 @@ fn update_element(
                         catalog_index,
                         def_index,
                         origin: impact.origin,
-                        axis: fx_vector_vectors(impact.pre_vel),
+                        axis: vector_vectors(impact.pre_vel),
                         msec: msec_now,
                     },
                 );
@@ -798,12 +797,12 @@ fn update_element(
             def_index,
             age_msec: msec_now.saturating_sub(msec_begin).max(0),
             life_msec,
-            elem_random_seed: fx_elem_random_seed(effect_seed, sequence, msec_begin),
-            norm_time: fx_elem_norm_time(msec_now.saturating_sub(msec_begin).max(0), life_msec),
+            elem_random_seed: elem_random_seed(effect_seed, sequence, msec_begin),
+            norm_time: elem_norm_time(msec_now.saturating_sub(msec_begin).max(0), life_msec),
         }) {
             let (origin_now, at_rest_now, spawn, seed) = match host.elems.get(slot) {
                 Some(e) => {
-                    let seed = fx_elem_random_seed(effect_seed, sequence, msec_begin);
+                    let seed = elem_random_seed(effect_seed, sequence, msec_begin);
                     (
                         e.origin,
                         e.at_rest_fraction,
@@ -815,7 +814,7 @@ fn update_element(
                     origin,
                     at_rest_fraction,
                     None,
-                    fx_elem_random_seed(effect_seed, sequence, msec_begin),
+                    elem_random_seed(effect_seed, sequence, msec_begin),
                 ),
             };
             let world = spark_elem_world_origin(origin_now, flags, &now, &alt, spawn);
@@ -861,7 +860,7 @@ fn drain_pending_trail_impacts(
                 catalog_index: imp.catalog_index,
                 def_index: imp.def_index,
                 origin: imp.origin,
-                axis: fx_vector_vectors(imp.pre_vel),
+                axis: vector_vectors(imp.pre_vel),
                 msec: imp.msec,
             },
         );
@@ -887,8 +886,8 @@ fn spawn_death_child(
     spawn: Option<fx_iw4::FxOrientSpawnParams>,
     msec: i32,
 ) {
-    let orient = fx_get_orientation(flags, effect_now, effect_alt, spawn);
-    let world = fx_iw4::fx_orientation_pos_to_world(orient.origin, orient.axis, elem_origin);
+    let orient = get_orientation(flags, effect_now, effect_alt, spawn);
+    let world = fx_iw4::orientation_pos_to_world(orient.origin, orient.axis, elem_origin);
     let played = on_child(
         host,
         FxChildSpawnRequest {

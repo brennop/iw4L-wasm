@@ -1,8 +1,9 @@
 use super::material_runtime::RuntimeCodeSources;
-use assets::{
-    ExpFog, LEFTOVER_T5_CODE_BASE, T5_CODE_FOG, T5_CODE_FOG_COLOR, T5_CODE_FOG2, T5_CODE_SUN_FOG,
+use asset_material::t5_code_remap::{
+    LEFTOVER_T5_CODE_BASE, T5_CODE_FOG, T5_CODE_FOG_COLOR, T5_CODE_FOG2, T5_CODE_SUN_FOG,
     T5_CODE_SUN_FOG_COLOR, T5_CODE_SUN_FOG_DIR,
 };
+use asset_world::ExpFog;
 
 pub(super) fn produce(sources: &mut RuntimeCodeSources, fog: &ExpFog, eye_z: f32, enabled: bool) {
     let put = |sources: &mut RuntimeCodeSources, index, row: [f32; 4]| {

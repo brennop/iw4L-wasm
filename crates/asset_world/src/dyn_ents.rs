@@ -71,7 +71,7 @@ pub const RETAIL_DYN_ENT_PROPS: [DynEntProps; 3] = [
     },
 ];
 
-pub fn retail_dyn_ent_props(ty: DynEntType) -> Option<DynEntProps> {
+pub fn dyn_ent_props(ty: DynEntType) -> Option<DynEntProps> {
     RETAIL_DYN_ENT_PROPS.get(ty.as_u8() as usize).copied()
 }
 
@@ -250,7 +250,7 @@ pub fn build_dyn_ent_catalog(
     stream: &ZoneStream<'_>,
     geometry: ClipMapGeometry,
     mut xmodel_name: impl FnMut(Ptr) -> Option<String>,
-    mut fx_name: impl FnMut(Ptr) -> Option<String>,
+    mut name: impl FnMut(Ptr) -> Option<String>,
     mut preset_at: impl FnMut(Ptr) -> Option<OwnedPhysPreset>,
 ) -> DynEntCatalog {
     let mut catalog = DynEntCatalog::default();
@@ -260,7 +260,7 @@ pub fn build_dyn_ent_catalog(
         geometry.dyn_ent_defs[DYNENT_DRAW_MODEL],
         DynEntDrawType::Model,
         &mut xmodel_name,
-        &mut fx_name,
+        &mut name,
         &mut preset_at,
     );
     let (brushes, t1, x1, p1) = copy_list(
@@ -269,7 +269,7 @@ pub fn build_dyn_ent_catalog(
         geometry.dyn_ent_defs[DYNENT_DRAW_BRUSH],
         DynEntDrawType::Brush,
         &mut xmodel_name,
-        &mut fx_name,
+        &mut name,
         &mut preset_at,
     );
     catalog.models = models;
@@ -286,7 +286,7 @@ fn copy_list(
     defs: Option<Ptr>,
     draw_type: DynEntDrawType,
     xmodel_name: &mut impl FnMut(Ptr) -> Option<String>,
-    fx_name: &mut impl FnMut(Ptr) -> Option<String>,
+    name: &mut impl FnMut(Ptr) -> Option<String>,
     preset_at: &mut impl FnMut(Ptr) -> Option<OwnedPhysPreset>,
 ) -> (Vec<DynEntDef>, usize, usize, usize) {
     let mut out = Vec::new();
@@ -324,7 +324,7 @@ fn copy_list(
             xmodel,
             brush_model: scalars.brush_model,
             physics_brush_model: scalars.physics_brush_model,
-            destroy_fx: fx_name(def.at(stream.layout(40, 48))),
+            destroy_fx: name(def.at(stream.layout(40, 48))),
             phys_preset,
             health: scalars.health,
             phys_mass: scalars.phys_mass,

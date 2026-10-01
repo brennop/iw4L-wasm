@@ -14,7 +14,7 @@ pub struct ViewAngleClamp {
     pub unclamped_pitch_bit: bool,
 }
 
-pub fn pm_update_view_angles(ps: &mut PlayerState, cmd: &UserCmd, clamp: ViewAngleClamp) {
+pub fn update_view_angles(ps: &mut PlayerState, cmd: &UserCmd, clamp: ViewAngleClamp) {
     let unclamped = (ps.pm_type == 1 || ps.pm_type == 9) && clamp.unclamped_pitch_bit;
 
     for axis in 0..3usize {

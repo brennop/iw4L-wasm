@@ -9,7 +9,7 @@ pub const COM_PRIMARY_LIGHT_DIR: usize = 0x10;
 pub const COM_PRIMARY_LIGHT_RADIUS: usize = 0x28;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ComPrimaryLightCull {
+pub struct PrimaryLightCull {
     pub light_type: u8,
     pub origin: [f32; 3],
     pub direction: [f32; 3],
@@ -127,7 +127,7 @@ pub fn cull_box_from_conic_section_of_sphere(
 }
 
 pub fn cull_box_from_primary_light(
-    light: &ComPrimaryLightCull,
+    light: &PrimaryLightCull,
     box_mid: [f32; 3],
     box_half: [f32; 3],
 ) -> bool {
@@ -322,7 +322,7 @@ pub struct NonSunPrimaryWalkTrace {
 }
 
 pub fn non_sun_primary_light_walk_trace(
-    lights: &[ComPrimaryLightCull],
+    lights: &[PrimaryLightCull],
     sun_primary_index: u32,
     regions: Option<&[LightRegionHulls<'_>]>,
     box_mid: [f32; 3],
@@ -365,7 +365,7 @@ pub struct DynEntPrimaryLightLink {
 
 #[must_use]
 pub fn dyn_ent_links_to_primary_light(
-    light: &ComPrimaryLightCull,
+    light: &PrimaryLightCull,
     region: Option<&[LightRegionHull<'_>]>,
     box_mid: [f32; 3],
     box_half: [f32; 3],
@@ -388,7 +388,7 @@ pub fn dyn_ent_primary_light_link_dist2(origin: [f32; 3], box_mid: [f32; 3]) -> 
 }
 
 pub fn dyn_ent_primary_light_link(
-    lights: &[ComPrimaryLightCull],
+    lights: &[PrimaryLightCull],
     sun_primary: u32,
     regions: Option<&[LightRegionHulls<'_>]>,
     box_mid: [f32; 3],
@@ -418,7 +418,7 @@ pub fn dyn_ent_primary_light_link(
 }
 
 pub fn non_sun_primary_light_for_box(
-    lights: &[ComPrimaryLightCull],
+    lights: &[PrimaryLightCull],
     sun_primary_index: u32,
     regions: Option<&[LightRegionHulls<'_>]>,
     box_mid: [f32; 3],

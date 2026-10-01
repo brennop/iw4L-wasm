@@ -1,4 +1,4 @@
-use crate::ammo::{AMMOCLIP_TABLE_BYTES, bg_get_clip_for_hand};
+use crate::ammo::{AMMOCLIP_TABLE_BYTES, get_clip_for_hand};
 use playerstate_iw4::PlayerState;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub const OTHER_FLAG_PLAYER: u32 = playerstate_iw4::other_flags::PLAYER;
 
 pub const WEAP_FLAG_NO_ADS: u32 = playerstate_iw4::weap_flags::NO_ADS;
 
-pub fn pm_is_ads_allowed(
+pub fn is_ads_allowed(
     ps: &PlayerState,
     weap: &AdsAllowWeaponFacts,
     ammoclip: &[u8; AMMOCLIP_TABLE_BYTES],
@@ -53,7 +53,7 @@ pub fn pm_is_ads_allowed(
     }
 
     if weap.no_ads_when_mag_empty {
-        let clip = bg_get_clip_for_hand(ammoclip, weap.clip_index, clip_hand);
+        let clip = get_clip_for_hand(ammoclip, weap.clip_index, clip_hand);
         if clip == 0 {
             return false;
         }

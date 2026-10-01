@@ -1,4 +1,4 @@
-use crate::client::cg_frame::CgFrameClock;
+use crate::client::frame_clock::FrameClock;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PredictedError {
@@ -60,7 +60,7 @@ impl PredictedError {
         self.new_entity_count
     }
 
-    pub fn sync_frame(&mut self, clock: &CgFrameClock) {
+    pub fn sync_frame(&mut self, clock: &FrameClock) {
         self.time_ms = clock.time();
         self.old_time_ms = clock.old_time();
     }

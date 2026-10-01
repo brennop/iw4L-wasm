@@ -1,7 +1,7 @@
 use crate::at_rest::FX_ON_GROUND_NORMAL_Z;
-use crate::origin::fx_sample_float_range;
-use crate::random::{FX_RAND_CH_REFLECTION, fx_random_table_f32};
-use crate::vec::fx_vec3_length_sq;
+use crate::origin::sample_float_range;
+use crate::random::{FX_RAND_CH_REFLECTION, random_table_f32};
+use crate::vec::vec3_length_sq;
 
 pub const FX_COLLIDE_SUBSTEP_MS: i32 = 0x32;
 
@@ -54,7 +54,7 @@ impl Iterator for FxCollideSubstepIter {
 }
 
 #[inline]
-pub fn fx_collide_substep_schedule(msec_start: i32, msec_end: i32) -> FxCollideSubstepIter {
+pub fn collide_substep_schedule(msec_start: i32, msec_end: i32) -> FxCollideSubstepIter {
     FxCollideSubstepIter {
         cur: msec_start,
         end: msec_end,
@@ -63,7 +63,7 @@ pub fn fx_collide_substep_schedule(msec_start: i32, msec_end: i32) -> FxCollideS
 }
 
 #[inline]
-pub const fn fx_trace_mask(use_item_clip: bool) -> u32 {
+pub const fn trace_mask(use_item_clip: bool) -> u32 {
     if use_item_clip {
         FX_TRACE_MASK_ITEM_CLIP
     } else {
@@ -72,31 +72,31 @@ pub const fn fx_trace_mask(use_item_clip: bool) -> u32 {
 }
 
 #[inline]
-pub fn fx_impact_child_speed_allows(pre_impact_speed_sq: f32) -> bool {
+pub fn impact_child_speed_allows(pre_impact_speed_sq: f32) -> bool {
     pre_impact_speed_sq > FX_IMPACT_CHILD_MIN_SPEED_SQ
 }
 
 #[inline]
-pub fn fx_sample_reflection_factor(base: f32, amplitude: f32, seed: u32) -> f32 {
-    fx_sample_float_range(
+pub fn sample_reflection_factor(base: f32, amplitude: f32, seed: u32) -> f32 {
+    sample_float_range(
         base,
         amplitude,
-        fx_random_table_f32(seed, FX_RAND_CH_REFLECTION),
+        random_table_f32(seed, FX_RAND_CH_REFLECTION),
     )
 }
 
 #[inline]
-pub fn fx_collide_on_ground(normal_z: f32) -> bool {
+pub fn collide_on_ground(normal_z: f32) -> bool {
     normal_z > FX_ON_GROUND_NORMAL_Z
 }
 
 #[inline]
-pub fn fx_collide_marks_at_rest(scaled_vel: [f32; 3], normal_z: f32) -> bool {
-    fx_collide_on_ground(normal_z) && !fx_impact_child_speed_allows(fx_vec3_length_sq(scaled_vel))
+pub fn collide_marks_at_rest(scaled_vel: [f32; 3], normal_z: f32) -> bool {
+    collide_on_ground(normal_z) && !impact_child_speed_allows(vec3_length_sq(scaled_vel))
 }
 
 #[inline]
-pub fn fx_collision_reflect_base_vel_delta(
+pub fn collision_reflect_base_vel_delta(
     pre_impact_vel: [f32; 3],
     normal: [f32; 3],
     reflection_factor: f32,

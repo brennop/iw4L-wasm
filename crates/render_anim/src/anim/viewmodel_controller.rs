@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use assets::{
-    ACTION_GOAL_TIME_SECS, ACTIVE_GOAL_WEIGHT, ActiveAnim, AdsOverlayConvention, ClipScheduler,
-    IDLE_INTERRUPT_GOAL_TIME_SECS, INACTIVE_GOAL_WEIGHT, WEAPON_ANIM_COUNT, WEAPON_ANIM_SLOTS,
-    WeaponAnimSlot, WeaponAnimations, playback_rate, slot_uses_native_rate,
+use asset_anim::{ActiveAnim, ClipScheduler};
+use asset_game::{
+    ACTION_GOAL_TIME_SECS, ACTIVE_GOAL_WEIGHT, AdsOverlayConvention, IDLE_INTERRUPT_GOAL_TIME_SECS,
+    INACTIVE_GOAL_WEIGHT, WEAPON_ANIM_SLOTS, WeaponAnimSlot, WeaponAnimations, playback_rate,
+    slot_uses_native_rate,
 };
+use asset_iw4::size::WEAPON_ANIM_COUNT;
 
 const DISPATCH_SLOT_START: usize = 1;
 const DISPATCH_SLOT_END: usize = 0x22;
@@ -412,6 +414,14 @@ impl ViewmodelController {
     pub fn apply_ads_overlay_frame(&mut self, f_weapon_pos_frac: f32) {
         let scrub = weapon_iw4::ads_overlay_scrub(f_weapon_pos_frac);
         self.last_ads_frac = scrub.ads_up_weight;
+        if matches!(
+            self.action,
+            Some(WeaponAnimSlot::Melee | WeaponAnimSlot::MeleeCharge)
+        ) {
+            self.set_weight(WeaponAnimSlot::AdsUp, INACTIVE_GOAL_WEIGHT, 0.0);
+            self.set_weight(WeaponAnimSlot::AdsDown, INACTIVE_GOAL_WEIGHT, 0.0);
+            return;
+        }
         const OVERLAY_SCRUB_RATE: f32 = 0.0;
         let aiming = f_weapon_pos_frac > 0.0;
         let has_ads_down = self.weapon.clip(WeaponAnimSlot::AdsDown).is_some();

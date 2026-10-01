@@ -2,18 +2,24 @@ use std::path::Path;
 
 use fastfile_iw4::load_zone;
 
+use super::helpers::{
+    decode_reflection_probes, report_dpvs, report_ffa_spawns, report_intermission,
+    report_map_models, report_world_batches, smodel_lighting_samples,
+};
 use super::{
     CommonCensus, CommonWalkSink, LaneGap, LoadedWorld, MaterialPopulation, MaterialPopulationSink,
     ZoneLane, ZoneWalkSink,
 };
 use crate::{
-    ZoneGame, ZoneImage, ZoneMemory, build_clip_collision, build_world_draw,
-    census_entity_string_keys, decode_material_color_maps, decode_reflection_probe_cubemap,
-    dm_spawn_points, intermission_view,
     lane_capability::{LaneStatus, PreparedCapability},
-    map_ents_entity_string, minimap_corners,
-    progress::{LoadProgress, StageId},
-    session_load::{PreparedWorld, WorldDrawPolicy},
+    session_load::PreparedWorld,
+};
+use asset_core::ZoneGame;
+use asset_material::decode_material_color_maps;
+use asset_transport::{LoadProgress, StageId, ZoneImage, ZoneMemory};
+use asset_world::{
+    WorldDrawPolicy, build_clip_collision, build_world_draw, census_entity_string_keys,
+    dm_spawn_points, intermission_view, map_ents_entity_string, minimap_corners,
     worldspawn_north_yaw,
 };
 
@@ -61,10 +67,10 @@ impl ZoneLane for Iw4Lane {
         image: &ZoneImage,
         progress: &LoadProgress,
         shared_surfaces: asset_model::SharedXModelSurfaces,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
         common_film_visions: &mut std::collections::BTreeMap<
             String,
-            Result<crate::FilmVision, crate::FilmVisionParseError>,
+            Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
         >,
     ) -> LoadedWorld {
         let mut report = Vec::new();
@@ -86,7 +92,7 @@ impl ZoneLane for Iw4Lane {
         };
 
         let stage = progress.begin_scoped(StageId::MapAssets, "memory", None);
-        report.push(crate::zone::xfile_arena_row(
+        report.push(asset_transport::xfile_arena_row(
             "zone arenas map",
             &header.block_size,
             fastfile_iw4::XFILE_BLOCK_TEMP,
@@ -114,8 +120,8 @@ impl ZoneLane for Iw4Lane {
         let seeded_techsets = material_seed.technique_set_facts().to_vec();
         sink.seed_materials(material_seed);
         sink.map_xmodels.shared_surfaces = shared_surfaces;
-        sink.set_capture_zone(crate::ZoneOwner::from_zone_path(path));
-        sink.set_capture_ns(crate::AssetNamespace::Iw4);
+        sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
+        sink.set_capture_ns(asset_core::AssetNamespace::Iw4);
         sink.sound = Some(asset_audio::ZoneSoundCapture::for_map(
             path,
             asset_audio::ZoneGame::Iw4,
@@ -154,6 +160,10 @@ impl ZoneLane for Iw4Lane {
         ));
 
         let compass = std::mem::take(&mut sink.compass).resolve(&materials);
+        let mut scripts = std::mem::take(&mut sink.scripts);
+        if let Some(entities) = map_ents_entity_string(&stream) {
+            scripts.set_entities(entities.to_owned());
+        }
         let script_sound = std::mem::take(&mut sink.script_sound).finish();
         let exp_fog = sink.exp_fog.take();
         let createart_name = sink.createart_name.take();
@@ -269,7 +279,7 @@ impl ZoneLane for Iw4Lane {
         let mut clip = None;
         let mut clip_report = Vec::new();
         let mut fx_glass = None;
-        let mut dyn_ents = crate::DynEntCatalog::default();
+        let mut dyn_ents = asset_world::DynEntCatalog::default();
         let materials_side = &mut materials;
 
         let image_report = crate::session_load::load_pool().scope(|scope| {
@@ -286,12 +296,18 @@ impl ZoneLane for Iw4Lane {
             clip = match stream.clip_map() {
                 Some(geometry) => match build_clip_collision(&stream, geometry) {
                     Ok(mut clip) => {
-                        crate::attach_static_models(
+                        asset_world::attach_static_models(
                             &stream,
                             geometry,
                             &sink.xmodel_coll,
                             &mut clip,
                         );
+                        clip.trigger_models = asset_world::trigger_models(&stream);
+                        clip_report.push(format!(
+                            "trigger models: {} ({} with hulls)",
+                            clip.trigger_models.len(),
+                            clip.trigger_models.iter().filter(|h| !h.is_empty()).count()
+                        ));
                         clip_report.push(format!(
                     "clipmap: planes={} brushes={} leaves={} nodes={} cmodels={} verts={} tris={} smodels={}",
                     geometry.plane_count,
@@ -319,7 +335,7 @@ impl ZoneLane for Iw4Lane {
                     None
                 }
             };
-            let mut census = crate::build_glass_census(&stream, clip.as_ref());
+            let mut census = asset_world::build_glass_census(&stream, clip.as_ref());
             if leftover
                 .iter()
                 .any(|(intact, shattered)| !intact.is_empty() || !shattered.is_empty())
@@ -337,19 +353,19 @@ impl ZoneLane for Iw4Lane {
             named
         ));
 
-            fx_glass = crate::build_fx_glass_reset(&stream).map(|mut g| {
+            fx_glass = asset_world::build_fx_glass_reset(&stream).map(|mut g| {
                 g.def_materials = leftover;
                 g
             });
             dyn_ents = match stream.clip_map() {
-                Some(geometry) => crate::build_dyn_ent_catalog(
+                Some(geometry) => asset_world::build_dyn_ent_catalog(
                     &stream,
                     geometry,
                     |slot| map_xmodels.name_at_slot(slot).map(str::to_owned),
                     |slot| fx.name_at_slot(slot).map(str::to_owned),
                     |slot| phys_presets.at_slot(slot).cloned(),
                 ),
-                None => crate::DynEntCatalog::default(),
+                None => asset_world::DynEntCatalog::default(),
             };
             clip_stage.done();
         });
@@ -375,7 +391,7 @@ impl ZoneLane for Iw4Lane {
         }
         map_xmodels.set_dynent_phys_preset_n(dyn_ents.phys_preset_named_n());
         report.push(format!(
-            "xmodel physPreset: slot={} named={} models={} (XModel+0x128 NameHint; DynEnt def+44 named={} is a different graph)",
+            "xmodel physPreset: slot={} named={} models={} (dyn-ent def named={} is a different graph)",
             map_xmodels.phys_preset_slot_n(),
             map_xmodels.phys_preset_name_hint_n(),
             map_xmodels.captured_model_n(),
@@ -401,6 +417,7 @@ impl ZoneLane for Iw4Lane {
                 arena_bytes as f64 / (1024.0 * 1024.0),
             ));
             return LoadedWorld {
+                scripts,
                 sound: map_sound,
                 materials,
                 world: PreparedWorld {
@@ -477,28 +494,10 @@ impl ZoneLane for Iw4Lane {
                         "primary lights: n={n} dir={dir} omni={omni} spot={spot} named_defs={named} falloff_width={falloff_w} (light-def name retained; atten_image filled after global absorb)"
                     ));
                 }
-                if let Some(error) = map_models.static_error.as_ref() {
-                    report.push(format!("static models: {error}"));
-                }
-                let smodels = &map_models.static_draw;
-                report.push(format!(
-                "static models: {}/{} authored slots resolved to {} unique meshes ({} unresolved)",
-                smodels.resolved_count(),
-                geometry.smodel_count,
-                smodels.meshes.len(),
-                smodels.gaps
-            ));
-                report.push(format!(
-                    "script_model: {} placements linked (MapEnts props; separate visibility owner)",
-                    map_models.script_instances.len()
-                ));
-                report.push(format!(
-                    "script_brushmodel: {} *N placements (SP_script_brushmodel, not DrawInst)",
-                    map_models.script_brush_models.len()
-                ));
-                let crate::PreparedMapModels {
+                report_map_models(&mut report, &map_models, geometry.smodel_count);
+                let asset_world::PreparedMapModels {
                     static_draw:
-                        crate::StaticModelDraw {
+                        asset_world::StaticModelDraw {
                             meshes: static_model_meshes,
                             placements: static_model_instances,
                             ..
@@ -506,7 +505,6 @@ impl ZoneLane for Iw4Lane {
                     scene_assets: map_xmodel_scene_assets,
                     script_instances: script_model_instances,
                     script_brush_models,
-                    map_use_triggers,
                     flag_descriptors,
                     script_structs,
                     ..
@@ -514,87 +512,29 @@ impl ZoneLane for Iw4Lane {
 
                 stage.done();
                 let stage = progress.begin_scoped(StageId::MapAssets, "lighting", None);
-                let smodel_lighting_samples = {
-                    use crate::model_lighting::{
-                        OwnedLightGrid, build_smodel_lighting_samples_with_sight,
-                        census_lit_fragment_tiles, collect_smodel_lighting_origins,
-                    };
-                    use lighting_iw4::LIGHT_GRID_SIGHT_CONTENT_MASK;
-                    match OwnedLightGrid::from_stream(&stream, geometry.light_grid) {
-                        Some(owned) => {
-                            let origins: Vec<_> =
-                                collect_smodel_lighting_origins(&stream, geometry)
-                                    .into_iter()
-                                    .filter(|(slot, _)| {
-                                        static_model_instances
-                                            .get(*slot)
-                                            .and_then(|placement| placement.as_ref())
-                                            .is_some()
-                                    })
-                                    .collect();
-                            let (tiles, census) = if let Some(ref clip_map) = clip {
-                                let clear = |start: [f32; 3], end: [f32; 3]| {
-                                    clip_map.box_sight_clear(
-                                        start,
-                                        end,
-                                        LIGHT_GRID_SIGHT_CONTENT_MASK,
-                                    )
-                                };
-                                let (tiles, census) = build_smodel_lighting_samples_with_sight(
-                                    &owned.view(),
-                                    &origins,
-                                    Some(&clear),
-                                );
-                                report.push(format!(
-                                "smodel lighting: lit={} / candidates={} (blocked row={} trunc={} empty={}; CM sight mask=0x{LIGHT_GRID_SIGHT_CONTENT_MASK:x} corners need={} cleared={} suppressed={})",
-                                census.lit,
-                                census.candidates,
-                                census.blocked_unmodelled_row,
-                                census.blocked_truncated,
-                                census.blocked_no_live_corner,
-                                census.corners_needing_sight,
-                                census.corners_needing_sight.saturating_sub(census.corners_sight_suppressed),
-                                census.corners_sight_suppressed,
-                            ));
-                                (tiles, census)
-                            } else {
-                                let (tiles, census) = build_smodel_lighting_samples_with_sight(
-                                    &owned.view(),
-                                    &origins,
-                                    None,
-                                );
-                                report.push(format!(
-                                "smodel lighting: lit={} / candidates={} (no clipmap — needsTrace corners suppressed; blocked row={} trunc={} empty={})",
-                                census.lit,
-                                census.candidates,
-                                census.blocked_unmodelled_row,
-                                census.blocked_truncated,
-                                census.blocked_no_live_corner,
-                            ));
-                                (tiles, census)
-                            };
-                            let _ = census;
-                            if let Some(frag) = census_lit_fragment_tiles(&tiles) {
-                                report.push(format!(
-                                "smodel lit_fragment mid-grey: tiles={} lum min={:.4} max={:.4} mean={:.4} (specular=0)",
-                                frag.tiles, frag.lum_min, frag.lum_max, frag.lum_mean
-                            ));
-                            }
-                            (tiles, Some(owned))
-                        }
-                        None => {
-                            report
-                                .push("smodel lighting: none (no owned light-grid tables)".into());
-                            (Vec::new(), None)
-                        }
+                let light_grid =
+                    asset_model::OwnedLightGrid::from_stream(&stream, geometry.light_grid);
+                let smodel_lighting_samples = match &light_grid {
+                    Some(grid) => smodel_lighting_samples(
+                        &mut report,
+                        grid,
+                        asset_model::model_lighting::collect_smodel_lighting_origins(
+                            &stream, geometry,
+                        ),
+                        &static_model_instances,
+                        clip.as_ref(),
+                    ),
+                    None => {
+                        report.push("smodel lighting: none (no owned light-grid tables)".into());
+                        Vec::new()
                     }
                 };
-                let (smodel_lighting_samples, light_grid) = smodel_lighting_samples;
                 stage.done();
                 let handoff = progress.begin_scoped(StageId::MapAssets, "handoff", None);
                 let intermission_view = intermission_view(&stream);
                 let minimap_corners = minimap_corners(&stream);
                 let north_yaw = worldspawn_north_yaw(&stream);
+                let airstrike_height = asset_world::airstrike_height(&stream);
                 let dm_spawns = dm_spawn_points(&stream);
                 push_mapents_key_census(&mut report, &stream);
                 drop(stream);
@@ -604,11 +544,7 @@ impl ZoneLane for Iw4Lane {
                     "s1 arenas walked: map={arena_bytes} ({:.1}MiB) (ZoneMemory freed after the walk; ZoneImage dropped)",
                     arena_bytes as f64 / (1024.0 * 1024.0),
                 ));
-                report.push(format!(
-                    "ffa spawns: {} mp_dm_spawn* ({} start)",
-                    dm_spawns.len(),
-                    dm_spawns.iter().filter(|p| p.is_initial()).count()
-                ));
+                report_ffa_spawns(&mut report, &dm_spawns);
                 report.push(format!(
                     "world mesh: {} vertices, {} triangles, {} surfaces ({} skipped, {} sky)",
                     draw.stats.vertices,
@@ -632,22 +568,8 @@ impl ZoneLane for Iw4Lane {
                 "draw path: DPVS portal walk + one AABB descent per visible cell into surfaceVisData/smodelVisData"
                     .into(),
             );
-                match intermission_view {
-                    Some(view) => report.push(format!(
-                        "camera: mp_global_intermission origin={:?} angles={:?}",
-                        view.origin, view.angles
-                    )),
-                    None => report.push("camera: mp_global_intermission not found".into()),
-                }
-                let lightmapped_surfaces = draw
-                    .surface_lightmapped
-                    .iter()
-                    .filter(|&&lightmapped| lightmapped)
-                    .count();
-                report.push(format!(
-                    "world batches: {lightmapped_surfaces} lightmapped, {} fallback surfaces",
-                    draw.surface_lightmapped.len() - lightmapped_surfaces
-                ));
+                report_intermission(&mut report, intermission_view.as_ref());
+                report_world_batches(&mut report, &draw);
                 let material_surfaces = draw
                     .surface_materials
                     .iter()
@@ -712,45 +634,15 @@ impl ZoneLane for Iw4Lane {
                     }
                     Err(gap) => report.push(format!("lightmap gap: {gap}")),
                 }
-                let reflection_probe_images = draw
-                    .reflection_probes
-                    .iter()
-                    .map(|probe| {
-                        probe.image.and_then(|image| {
-                            map_materials.images.get(image).and_then(|source| {
-                                match decode_reflection_probe_cubemap(source) {
-                                    Ok(image) => Some(image),
-                                    Err(error) => {
-                                        report.push(format!(
-                                            "reflection probe {} gap: {error}",
-                                            source.name
-                                        ));
-                                        None
-                                    }
-                                }
-                            })
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                report.push(format!(
-                    "reflection probes: {}/{} cubemaps decoded",
-                    reflection_probe_images.iter().flatten().count(),
-                    reflection_probe_images.len()
-                ));
-                report.push(format!(
-                    "dpvs: cells={} planes={} nodes={} sorted={} portal_verts={} cleared_boxes={}",
-                    draw.dpvs.cell_count,
-                    draw.dpvs.planes.len(),
-                    draw.dpvs.nodes.len(),
-                    draw.dpvs.sorted_surf_index.len(),
-                    draw.dpvs.portal_verts.len(),
-                    draw.dpvs.cleared_boxes
-                ));
+                let reflection_probe_images =
+                    decode_reflection_probes(&mut report, &draw, &map_materials);
+                report_dpvs(&mut report, &draw);
                 let min = draw.stats.min;
                 let max = draw.stats.max;
                 let world_bounds = draw.stats.bounds;
                 handoff.done();
                 LoadedWorld {
+                    scripts,
                     sound: map_sound,
                     materials: map_materials,
                     world: PreparedWorld {
@@ -761,7 +653,6 @@ impl ZoneLane for Iw4Lane {
                         map_xmodel_scene_assets,
                         script_model_instances,
                         script_brush_models,
-                        map_use_triggers,
                         flag_descriptors,
                         script_structs,
                         dyn_ents,
@@ -790,6 +681,7 @@ impl ZoneLane for Iw4Lane {
                     facts: crate::MapFacts {
                         minimap_corners,
                         north_yaw,
+                        airstrike_height,
                         compass,
                         script_sound,
                         ..Default::default()
@@ -807,8 +699,9 @@ impl ZoneLane for Iw4Lane {
                 let arena_bytes = memory.total_bytes();
                 drop(memory);
                 LoadedWorld {
+                    scripts,
                     sound: map_sound,
-                    materials: crate::MaterialCatalog::default(),
+                    materials: asset_material::MaterialCatalog::default(),
                     world: PreparedWorld {
                         fx,
                         fx_models,
@@ -850,7 +743,7 @@ impl ZoneLane for Iw4Lane {
         image: &ZoneImage,
         progress: &LoadProgress,
         decode_color_maps: bool,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
     ) -> CommonCensus {
         let zone_name = path.file_stem().map_or_else(
             || "common_mp".to_owned(),
@@ -875,7 +768,7 @@ impl ZoneLane for Iw4Lane {
                 };
             }
         };
-        let mut report_arenas = vec![crate::zone::xfile_arena_row(
+        let mut report_arenas = vec![asset_transport::xfile_arena_row(
             "zone arenas common_mp",
             &header.block_size,
             fastfile_iw4::XFILE_BLOCK_TEMP,
@@ -887,8 +780,8 @@ impl ZoneLane for Iw4Lane {
             None,
         ));
         sink.seed_materials(material_seed);
-        sink.set_capture_zone(crate::ZoneOwner::intern(&zone_name));
-        sink.set_capture_ns(crate::AssetNamespace::Iw4);
+        sink.set_capture_zone(asset_core::ZoneOwner::intern(&zone_name));
+        sink.set_capture_ns(asset_core::AssetNamespace::Iw4);
         sink.sound = asset_audio::ZoneSoundCapture::claim_common(
             path,
             asset_audio::ZoneGame::Iw4,
@@ -954,14 +847,14 @@ impl ZoneLane for Iw4Lane {
         ));
         weapons.stamp_projectile_model_edges(
             &sink.projectile_meshes,
-            crate::ZoneOwner::intern(&zone_name),
+            asset_core::ZoneOwner::intern(&zone_name),
         );
         weapons.resolve_sz_xanim_edges(&sink.xanims);
         weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);
         weapons.resolve_world_model_edges(&sink.world_weapons);
         let gun_named = weapons.gun_xmodel_count();
         report.push(format!(
-        "common_mp weapons: {captured} captures → {} unique catalog ids (sorted; not retail bg_weaponIndex); {gun_named} with gunXModel[0]; {} with szXAnims[IDLE]; {} with any szXAnims slot",
+        "common_mp weapons: {captured} captures → {} unique catalog ids (sorted); {gun_named} with gunXModel[0]; {} with szXAnims[IDLE]; {} with any szXAnims slot",
         weapons.len(),
         weapons.idle_anim_count(),
         weapons.sz_xanims_count()
@@ -976,7 +869,7 @@ impl ZoneLane for Iw4Lane {
             weapons.world_model_count(),
         ));
         report.push(format!(
-            "common_mp projectileModel @+0x420: slot={} bound={} unresolved_hint={} (pending unclassified XModels {}, retained {})",
+            "common_mp projectileModel: slot={} bound={} unresolved_hint={} (pending unclassified XModels {}, retained {})",
             weapons.projectile_model_count(),
             weapons.projectile_model_bound_n(),
             weapons.projectile_model_name_hint_n(),
@@ -1064,7 +957,7 @@ impl ZoneLane for Iw4Lane {
             sink.fx.len(),
             sink.fx.capture_gaps
         ));
-        let light_defs = crate::capture_light_defs(&stream, &sink.materials);
+        let light_defs = asset_world::capture_light_defs(&stream, &sink.materials);
         report.push(format!(
             "GfxLightDef common_mp: table={} bodies={} recorded={}",
             sink.light_def_table,
@@ -1095,7 +988,7 @@ impl ZoneLane for Iw4Lane {
             let mut material_population = sink.materials;
 
             let stage = progress.begin_scoped(StageId::Images, "common_mp", None);
-            let (inline, mut plan) = crate::material_images::plan_material_color_maps(
+            let (inline, mut plan) = asset_material::material_images::plan_material_color_maps(
                 path,
                 &mut material_population,
                 &stage,
@@ -1108,7 +1001,7 @@ impl ZoneLane for Iw4Lane {
                 inline.missing,
                 inline.unsupported
             ));
-            let tracer_inline = crate::material_images::plan_color_or_2d_for_keys(
+            let tracer_inline = asset_material::material_images::plan_color_or_2d_for_keys(
                 &mut plan,
                 &mut material_population,
                 sink.tracers.material_keys(),
@@ -1118,7 +1011,7 @@ impl ZoneLane for Iw4Lane {
             report.push(format!(
                 "common_mp tracer beam images: {tracer_inline} in-zone TS_COLOR_MAP/TS_2D decoded, rest claimed"
             ));
-            let fx_inline = crate::material_images::plan_color_or_2d_for_keys(
+            let fx_inline = asset_material::material_images::plan_color_or_2d_for_keys(
                 &mut plan,
                 &mut material_population,
                 sink.fx.unique_material_keys(),
@@ -1138,7 +1031,7 @@ impl ZoneLane for Iw4Lane {
                 let unique: std::collections::BTreeSet<String> =
                     sink.tracers.named_materials().map(str::to_owned).collect();
                 for name in unique {
-                    let bind = crate::fx_material_bind_name(&name);
+                    let bind = asset_game::material_bind_name(&name);
                     let twins: Vec<&str> = material_population
                         .materials
                         .iter()
@@ -1211,6 +1104,7 @@ impl ZoneLane for Iw4Lane {
                 xmodel_walk: sink.models.walk_census(),
                 s1_common_bytes,
                 teamsets: std::collections::HashMap::new(),
+                scripts: sink.scripts,
                 film_visions: sink.film_visions,
             }
         } else {
@@ -1246,6 +1140,7 @@ impl ZoneLane for Iw4Lane {
                 xmodel_walk: sink.models.walk_census(),
                 s1_common_bytes,
                 teamsets: std::collections::HashMap::new(),
+                scripts: sink.scripts,
                 film_visions: sink.film_visions,
             }
         }
@@ -1256,7 +1151,7 @@ impl ZoneLane for Iw4Lane {
         path: &Path,
         image: &ZoneImage,
         progress: &LoadProgress,
-        material_seed: crate::MaterialCatalog,
+        material_seed: asset_material::MaterialCatalog,
     ) -> MaterialPopulation {
         let zone_name = path.file_stem().map_or_else(
             || "startup".to_owned(),
@@ -1289,8 +1184,8 @@ impl ZoneLane for Iw4Lane {
             None,
         ));
         sink.seed_materials(material_seed);
-        sink.set_capture_zone(crate::ZoneOwner::intern(&zone_name));
-        sink.set_capture_ns(crate::AssetNamespace::Iw4);
+        sink.set_capture_zone(asset_core::ZoneOwner::intern(&zone_name));
+        sink.set_capture_ns(asset_core::AssetNamespace::Iw4);
         sink.sound = asset_audio::ZoneSoundCapture::claim_common(
             path,
             asset_audio::ZoneGame::Iw4,
@@ -1320,10 +1215,11 @@ impl ZoneLane for Iw4Lane {
         ));
         MaterialPopulation {
             walked: sink.walked,
-            light_defs: crate::capture_light_defs(&stream, &sink.materials),
+            light_defs: asset_world::capture_light_defs(&stream, &sink.materials),
             materials: sink.materials,
             report,
             cac_tables: sink.stats_tables.into_values().collect(),
+            scripts: sink.scripts,
         }
     }
 }
@@ -1337,9 +1233,9 @@ fn push_mapents_key_census(report: &mut Vec<String>, stream: &fastfile_iw4::Zone
 
 fn decode_map_material_images(
     path: &Path,
-    catalog: &mut crate::MaterialCatalog,
-    stage: crate::progress::StageHandle,
-    fx_material_keys: Vec<crate::MaterialKey>,
+    catalog: &mut asset_material::MaterialCatalog,
+    stage: asset_transport::progress::StageHandle,
+    fx_material_keys: Vec<asset_core::MaterialKey>,
     glass_names: Vec<String>,
 ) -> Vec<String> {
     let mut report = Vec::new();
@@ -1359,11 +1255,11 @@ fn decode_map_material_images(
         Err(error) => report.push(format!("IWD material-map gap: {error}")),
     }
     let mut keys = fx_material_keys;
-    keys.extend(glass_names.iter().map(|name| crate::MaterialKey {
-        namespace: crate::AssetNamespace::Iw4,
+    keys.extend(glass_names.iter().map(|name| asset_core::MaterialKey {
+        namespace: asset_core::AssetNamespace::Iw4,
         name: name.clone(),
     }));
-    match crate::material_images::decode_color_or_2d_for_keys(
+    match asset_material::material_images::decode_color_or_2d_for_keys(
         path,
         catalog,
         keys,

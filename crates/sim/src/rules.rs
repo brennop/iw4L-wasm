@@ -9,7 +9,7 @@ pub struct FreeForAllRules {
 }
 
 impl FreeForAllRules {
-    pub const fn retail_defaults() -> Self {
+    pub const fn format_defaults() -> Self {
         Self {
             gametype_token: ffa::GAMETYPE_TOKEN,
             display_name: ffa::DISPLAY_NAME,
@@ -19,4 +19,4 @@ impl FreeForAllRules {
     }
 }
 
-pub const FFA: FreeForAllRules = FreeForAllRules::retail_defaults();
+pub const FFA: FreeForAllRules = FreeForAllRules::format_defaults();

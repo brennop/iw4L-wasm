@@ -1,4 +1,4 @@
-//! The workspace Rust footprint: per-crate files/lines/bytes, the retail-facts
+//! The workspace Rust footprint: per-crate files/lines/bytes, the format-facts
 //! vs host split, and the heaviest files. Behind `make loc`.
 //!
 //! Counts `crates/` and `xtask` only — never `target/`, and never the game's
@@ -10,8 +10,7 @@ use crate::shell::Res;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
-    /// A crate transcribing retail facts: `*_iw4`, `*_iw5`, `*_t5`.
-    Retail,
+    Format,
     Host,
     Xtask,
 }
@@ -19,7 +18,7 @@ enum Kind {
 impl Kind {
     fn label(self) -> &'static str {
         match self {
-            Self::Retail => "re",
+            Self::Format => "re",
             Self::Host => "host",
             Self::Xtask => "xtask",
         }
@@ -80,7 +79,7 @@ fn collect(dir: &Path, out: &mut Vec<Source>) -> Res<()> {
 
 fn kind_of(name: &str) -> Kind {
     if name.ends_with("_iw4") || name.ends_with("_iw5") || name.ends_with("_t5") {
-        Kind::Retail
+        Kind::Format
     } else {
         Kind::Host
     }
@@ -152,7 +151,7 @@ pub fn run_cli(root: &Path) -> Res<()> {
     );
     println!("{rule}");
     for (label, kind) in [
-        ("retail facts", Kind::Retail),
+        ("format facts", Kind::Format),
         ("host", Kind::Host),
         ("xtask", Kind::Xtask),
     ] {

@@ -1,6 +1,6 @@
-use crate::integrate::fx_sparkcloud_history_lookback_ms;
-use crate::quat::{fx_axis_to_quat, fx_quat_nlerp};
-use crate::vec::fx_vec3_normalize;
+use crate::integrate::sparkcloud_history_lookback_ms;
+use crate::quat::{axis_to_quat, quat_nlerp};
+use crate::vec::vec3_normalize;
 
 pub const GFX_POS_TEX_VERTEX_STRIDE: usize = 0x14;
 
@@ -105,28 +105,28 @@ pub struct FxSparkCloudHistory {
 }
 
 #[inline]
-pub const fn fx_spark_cloud_handle_from_ptr_delta(byte_delta: u32) -> u16 {
+pub const fn spark_cloud_handle_from_ptr_delta(byte_delta: u32) -> u16 {
     (byte_delta >> 4) as u16
 }
 
 #[inline]
-pub const fn fx_spark_cloud_addr(history_base: u32, handle: u16) -> u32 {
+pub const fn spark_cloud_addr(history_base: u32, handle: u16) -> u32 {
     history_base.wrapping_add((handle as u32).wrapping_mul(0x10))
 }
 
 #[inline]
-pub const fn fx_spark_cloud_handle_for_slot(slot: u32) -> u16 {
-    fx_spark_cloud_handle_from_ptr_delta(slot.wrapping_mul(FX_SPARK_CLOUD_HISTORY_STRIDE as u32))
+pub const fn spark_cloud_handle_for_slot(slot: u32) -> u16 {
+    spark_cloud_handle_from_ptr_delta(slot.wrapping_mul(FX_SPARK_CLOUD_HISTORY_STRIDE as u32))
 }
 
 #[inline]
-pub const fn fx_particle_cloud_draw_cell_count(cloud_flags: u32) -> usize {
+pub const fn particle_cloud_draw_cell_count(cloud_flags: u32) -> usize {
     1024usize >> (cloud_flags & 3)
 }
 
 #[inline]
-pub const fn fx_particle_cloud_draw_counts(spark: bool, cloud_flags: u32) -> (u32, u32) {
-    let cells = fx_particle_cloud_draw_cell_count(cloud_flags) as u32;
+pub const fn particle_cloud_draw_counts(spark: bool, cloud_flags: u32) -> (u32, u32) {
+    let cells = particle_cloud_draw_cell_count(cloud_flags) as u32;
     if spark {
         (
             cells.wrapping_mul(FX_PARTICLE_SPARK_VERTS_PER_CELL),
@@ -141,7 +141,7 @@ pub const fn fx_particle_cloud_draw_counts(spark: bool, cloud_flags: u32) -> (u3
 }
 
 #[inline]
-pub fn fx_sparkcloud_tent_weights(v: f32) -> [f32; 3] {
+pub fn sparkcloud_tent_weights(v: f32) -> [f32; 3] {
     let t = v * 2.0 - 1.0;
     let w0 = sat(t);
     let w2 = sat(-t);
@@ -149,7 +149,7 @@ pub fn fx_sparkcloud_tent_weights(v: f32) -> [f32; 3] {
 }
 
 #[inline]
-pub const fn fx_particle_cloud_particle_id(x: u32, y: u32, z: u32) -> u32 {
+pub const fn particle_cloud_particle_id(x: u32, y: u32, z: u32) -> u32 {
     z.wrapping_add(x.wrapping_shl(7))
         .wrapping_add(y.wrapping_mul(16))
 }
@@ -169,7 +169,7 @@ pub fn msvcrt_rand01(holdrand: &mut u32) -> f32 {
 }
 
 #[inline]
-pub fn fx_particle_cloud_cell_xyz(x: u32, y: u32, z: u32, rand01: [f32; 3]) -> [f32; 3] {
+pub fn particle_cloud_cell_xyz(x: u32, y: u32, z: u32, rand01: [f32; 3]) -> [f32; 3] {
     [
         (rand01[0] + x as f32) * FX_PARTICLE_CLOUD_CELL_SCALE_XY - FX_PARTICLE_CLOUD_CELL_ORIGIN,
         (rand01[1] + y as f32) * FX_PARTICLE_CLOUD_CELL_SCALE_XY - FX_PARTICLE_CLOUD_CELL_ORIGIN,
@@ -178,14 +178,14 @@ pub fn fx_particle_cloud_cell_xyz(x: u32, y: u32, z: u32, rand01: [f32; 3]) -> [
 }
 
 #[inline]
-pub fn fx_particle_cloud_cell_radius_sq(xyz: [f32; 3]) -> f32 {
+pub fn particle_cloud_cell_radius_sq(xyz: [f32; 3]) -> f32 {
     xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2]
 }
 
 #[inline]
-pub fn fx_particle_cloud_compare_cell_radius(a: [f32; 3], b: [f32; 3]) -> i32 {
-    let ra = fx_particle_cloud_cell_radius_sq(a);
-    let rb = fx_particle_cloud_cell_radius_sq(b);
+pub fn particle_cloud_compare_cell_radius(a: [f32; 3], b: [f32; 3]) -> i32 {
+    let ra = particle_cloud_cell_radius_sq(a);
+    let rb = particle_cloud_cell_radius_sq(b);
     if ra < rb {
         -1
     } else if ra > rb {
@@ -196,7 +196,7 @@ pub fn fx_particle_cloud_compare_cell_radius(a: [f32; 3], b: [f32; 3]) -> i32 {
 }
 
 #[inline]
-pub fn fx_particle_cloud_cell_verts(xyz: [f32; 3]) -> [GfxPosTexVertex; 4] {
+pub fn particle_cloud_cell_verts(xyz: [f32; 3]) -> [GfxPosTexVertex; 4] {
     let mut verts = [GfxPosTexVertex {
         xyz: [0.0; 3],
         tex_coord: [0.0; 2],
@@ -213,7 +213,7 @@ pub fn fx_particle_cloud_cell_verts(xyz: [f32; 3]) -> [GfxPosTexVertex; 4] {
 }
 
 #[inline]
-pub fn fx_particle_cloud_cell_indices(cell: u32) -> [u16; 6] {
+pub fn particle_cloud_cell_indices(cell: u32) -> [u16; 6] {
     let base = (cell.wrapping_mul(FX_PARTICLE_CLOUD_VERTS_PER_CELL)) as u16;
     let mut out = [0u16; 6];
     let mut i = 0;
@@ -225,7 +225,7 @@ pub fn fx_particle_cloud_cell_indices(cell: u32) -> [u16; 6] {
 }
 
 #[inline]
-pub fn fx_particle_spark_cell_verts(xyz: [f32; 3]) -> [GfxPosTexVertex; 8] {
+pub fn particle_spark_cell_verts(xyz: [f32; 3]) -> [GfxPosTexVertex; 8] {
     let mut verts = [GfxPosTexVertex {
         xyz: [0.0; 3],
         tex_coord: [0.0; 2],
@@ -242,7 +242,7 @@ pub fn fx_particle_spark_cell_verts(xyz: [f32; 3]) -> [GfxPosTexVertex; 8] {
 }
 
 #[inline]
-pub fn fx_particle_spark_cell_indices(particle_id: u32) -> [u16; 18] {
+pub fn particle_spark_cell_indices(particle_id: u32) -> [u16; 18] {
     let base = (particle_id.wrapping_mul(FX_PARTICLE_SPARK_VERTS_PER_CELL)) as u16;
     let mut out = [0u16; 18];
     let mut i = 0;
@@ -265,7 +265,7 @@ pub fn gfx_pos_tex_vertex_bytes(vert: GfxPosTexVertex) -> [u8; GFX_POS_TEX_VERTE
 }
 
 #[inline]
-pub fn fx_particle_cloud_color_const(color: u32) -> [f32; 4] {
+pub fn particle_cloud_color_const(color: u32) -> [f32; 4] {
     let b = color.to_le_bytes();
     let s = crate::FX_RECIP_255 as f32;
     [
@@ -277,12 +277,12 @@ pub fn fx_particle_cloud_color_const(color: u32) -> [f32; 4] {
 }
 
 #[inline]
-pub fn fx_particle_cloud_matrix_diag(size0: f32, size1: f32) -> [f32; 4] {
+pub fn particle_cloud_matrix_diag(size0: f32, size1: f32) -> [f32; 4] {
     [size0, 0.0, 0.0, size1]
 }
 
 #[inline]
-pub fn fx_particle_fountain_parm0(age_msec: f32) -> [f32; 4] {
+pub fn particle_fountain_parm0(age_msec: f32) -> [f32; 4] {
     [
         (age_msec - FX_PARTICLE_FOUNTAIN_AGE_BIAS_MS) * FX_PARTICLE_FOUNTAIN_AGE_SCALE,
         age_msec * FX_PARTICLE_FOUNTAIN_AGE_SCALE,
@@ -292,7 +292,7 @@ pub fn fx_particle_fountain_parm0(age_msec: f32) -> [f32; 4] {
 }
 
 #[inline]
-pub fn fx_sparkcloud_history_should_advance(write_idx: u32, last_time: i32, now_msec: i32) -> bool {
+pub fn sparkcloud_history_should_advance(write_idx: u32, last_time: i32, now_msec: i32) -> bool {
     if write_idx == 0 {
         return true;
     }
@@ -300,11 +300,7 @@ pub fn fx_sparkcloud_history_should_advance(write_idx: u32, last_time: i32, now_
 }
 
 #[inline]
-pub fn fx_sparkcloud_history_advance(
-    read_idx: u32,
-    write_idx: u32,
-    now_msec: i32,
-) -> (u32, u32, i32) {
+pub fn sparkcloud_history_advance(read_idx: u32, write_idx: u32, now_msec: i32) -> (u32, u32, i32) {
     let new_write = write_idx.wrapping_add(1);
     let new_read = if new_write.wrapping_sub(read_idx) > FX_SPARK_CLOUD_SAMPLE_RING {
         read_idx.wrapping_add(1)
@@ -315,7 +311,7 @@ pub fn fx_sparkcloud_history_advance(
 }
 
 #[inline]
-pub const fn fx_empty_particle_cloud() -> GfxParticleCloud {
+pub const fn empty_particle_cloud() -> GfxParticleCloud {
     GfxParticleCloud {
         quat: [0.0, 0.0, 0.0, 1.0],
         pos: [0.0; 3],
@@ -330,13 +326,13 @@ pub const fn fx_empty_particle_cloud() -> GfxParticleCloud {
 }
 
 #[inline]
-pub const fn fx_pack_gfx_color(rgba: [u8; 4]) -> u32 {
+pub const fn pack_gfx_color(rgba: [u8; 4]) -> u32 {
     let [r, g, b, a] = rgba;
     u32::from_le_bytes([b, g, r, a])
 }
 
 #[inline]
-pub fn fx_build_cloud(
+pub fn build_cloud(
     world_origin: [f32; 3],
     elem_axis: [[f32; 3]; 3],
     size0: f32,
@@ -347,8 +343,8 @@ pub fn fx_build_cloud(
     velocity: [f32; 3],
     time_offset: f32,
 ) -> GfxParticleCloud {
-    let quat = fx_axis_to_quat(elem_axis);
-    let vel = fx_vec3_normalize(velocity);
+    let quat = axis_to_quat(elem_axis);
+    let vel = vec3_normalize(velocity);
     GfxParticleCloud {
         quat,
         pos: world_origin,
@@ -358,7 +354,7 @@ pub fn fx_build_cloud(
             world_origin[1] - vel[1],
             world_origin[2] - vel[2],
         ],
-        color: fx_pack_gfx_color(color_rgba),
+        color: pack_gfx_color(color_rgba),
         size0,
         size1,
         flags: ((elem_flags as u32) >> 29) & 3,
@@ -367,7 +363,7 @@ pub fn fx_build_cloud(
 }
 
 #[inline]
-pub fn fx_sparkcloud_fill_sample(
+pub fn sparkcloud_fill_sample(
     world_origin: [f32; 3],
     elem_axis: [[f32; 3]; 3],
     size0: f32,
@@ -376,14 +372,14 @@ pub fn fx_sparkcloud_fill_sample(
     elem_flags: i32,
     msec_now: i32,
 ) -> GfxParticleCloud {
-    let quat = fx_axis_to_quat(elem_axis);
+    let quat = axis_to_quat(elem_axis);
     let flags = (((elem_flags as u32) >> 29) & 3) | FX_PARTICLE_CLOUD_FLAG_SPARK;
     GfxParticleCloud {
         quat,
         pos: world_origin,
         placement_scale,
         axis_or_vel: world_origin,
-        color: fx_pack_gfx_color(color_rgba),
+        color: pack_gfx_color(color_rgba),
         size0,
         size1: size0,
         flags,
@@ -392,7 +388,7 @@ pub fn fx_sparkcloud_fill_sample(
 }
 
 #[inline]
-pub fn fx_sparkcloud_lerp_sample(
+pub fn sparkcloud_lerp_sample(
     a: GfxParticleCloud,
     b: GfxParticleCloud,
     t: f32,
@@ -404,7 +400,7 @@ pub fn fx_sparkcloud_lerp_sample(
         lerp(a.pos[2], b.pos[2]),
     ];
     GfxParticleCloud {
-        quat: fx_quat_nlerp(a.quat, b.quat, t),
+        quat: quat_nlerp(a.quat, b.quat, t),
         pos,
         placement_scale: lerp(a.placement_scale, b.placement_scale),
         axis_or_vel: pos,
@@ -417,7 +413,7 @@ pub fn fx_sparkcloud_lerp_sample(
 }
 
 #[inline]
-pub fn fx_sparkcloud_build_triplet(
+pub fn sparkcloud_build_triplet(
     samples: &[GfxParticleCloud; FX_SPARK_CLOUD_SAMPLE_RING as usize],
     read_idx: u32,
     write_idx: u32,
@@ -428,8 +424,8 @@ pub fn fx_sparkcloud_build_triplet(
     if write_idx == 0 {
         return [current, current, current];
     }
-    let near_t = draw_msec - fx_sparkcloud_history_lookback_ms(size1, false);
-    let far_t = draw_msec - fx_sparkcloud_history_lookback_ms(size1, true);
+    let near_t = draw_msec - sparkcloud_history_lookback_ms(size1, false);
+    let far_t = draw_msec - sparkcloud_history_lookback_ms(size1, true);
     let near = history_sample_at(samples, read_idx, write_idx, near_t);
     let far = history_sample_at(samples, read_idx, write_idx, far_t);
     [current, near, far]
@@ -441,7 +437,7 @@ fn history_latest(
     write_idx: u32,
 ) -> GfxParticleCloud {
     if write_idx == 0 {
-        return fx_empty_particle_cloud();
+        return empty_particle_cloud();
     }
     samples[((write_idx.wrapping_sub(1)) & FX_SPARK_CLOUD_SAMPLE_MASK) as usize]
 }
@@ -454,7 +450,7 @@ fn history_sample_at(
     target_age: f32,
 ) -> GfxParticleCloud {
     if write_idx == 0 {
-        return fx_empty_particle_cloud();
+        return empty_particle_cloud();
     }
     let mut u = write_idx.wrapping_sub(1);
     let mut newer = samples[(u & FX_SPARK_CLOUD_SAMPLE_MASK) as usize];
@@ -479,7 +475,7 @@ fn history_sample_at(
             return older;
         }
         let t = (target_age - older.scale) / denom;
-        return fx_sparkcloud_lerp_sample(older, newer, t);
+        return sparkcloud_lerp_sample(older, newer, t);
     }
 }
 

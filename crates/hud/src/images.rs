@@ -2,15 +2,16 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use assets::{
-    AssetNamespace, HUD_CHROME_MENUS, MenuCatalog, NamespaceTrees, SessionCompass, TS_COLOR_MAP,
-};
+use asset_core::AssetNamespace;
+use asset_game::{HUD_CHROME_MENUS, MenuCatalog};
+use asset_material::TS_COLOR_MAP;
+use assets::{NamespaceTrees, SessionCompass};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use gamemode_iw4::DAMAGE_FEEDBACK_SHADER;
-use hud_iw4::COMPASS_ENEMY_FIRING_PING_IMAGE;
+use hud_iw4::{COMPASS_ENEMY_FIRING_PING_IMAGE, COMPASS_RADAR_LINE_IMAGE};
 
 use crate::gaps::ImageMiss;
 
@@ -31,7 +32,7 @@ pub(crate) fn hud_sampling_for(name: &str) -> HudSampling {
 }
 
 fn cache_key(name: &str) -> String {
-    assets::AssetRef::bare_name(name).to_ascii_lowercase()
+    asset_core::AssetRef::bare_name(name).to_ascii_lowercase()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -120,7 +121,7 @@ fn make_image(
         RenderAssetUsages::default(),
     );
     if let Some(state) = sampler {
-        image.sampler = ImageSampler::Descriptor(assets::sampler_from_iw4(state, 1, false));
+        image.sampler = ImageSampler::Descriptor(asset_material::sampler_from_iw4(state, 1, false));
     }
     image
 }
@@ -140,6 +141,7 @@ pub struct HudImages {
     zone_image_name: HashMap<String, String>,
     material_images: HashMap<String, String>,
     zone_states: HashMap<String, Option<[u32; 2]>>,
+    zone_srgb_reads: HashMap<String, bool>,
     blood_plan: Option<Result<BloodMaterialBinding, String>>,
     zone_installed: bool,
     zone_uploaded: bool,
@@ -152,7 +154,7 @@ impl HudImages {
             return;
         }
         self.games_root = root.to_path_buf();
-        self.trees = NamespaceTrees::discover(&assets::GamesRoot(self.games_root.clone()));
+        self.trees = NamespaceTrees::discover(&asset_transport::GamesRoot(self.games_root.clone()));
         self.adopted_zone = None;
         self.by_name.clear();
         self.rgba_by_name.clear();
@@ -166,7 +168,7 @@ impl HudImages {
             return;
         }
         self.adopted_zone = Some(zone_ff.to_path_buf());
-        let namespace = assets::zone_game_for_path(zone_ff)
+        let namespace = asset_transport::zone_game_for_path(zone_ff)
             .map_or(AssetNamespace::Iw4, AssetNamespace::from_zone_game);
         let mut trees = self.trees.clone();
         trees.adopt_zone(zone_ff);
@@ -202,6 +204,12 @@ impl HudImages {
         self.zone_installed = true;
         self.zone_uploaded = false;
         self.blood_plan = Some(blood_material_binding(catalog));
+        self.zone_srgb_reads.extend(
+            catalog
+                .material_srgb_reads
+                .iter()
+                .map(|(name, &srgb)| (cache_key(name), srgb)),
+        );
         self.material_images.extend(
             catalog
                 .material_images
@@ -264,6 +272,30 @@ impl HudImages {
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
         self.get_sampled(ns, name, HudSampling::Color, images)
+    }
+
+    pub(crate) fn get_native(
+        &mut self,
+        ns: AssetNamespace,
+        name: &str,
+        images: &mut Assets<Image>,
+    ) -> Option<Handle<Image>> {
+        let srgb = ns == HUD_CHROME_NAMESPACE
+            && self
+                .zone_srgb_reads
+                .get(&cache_key(name))
+                .copied()
+                .unwrap_or(false);
+        self.get_sampled(
+            ns,
+            name,
+            if srgb {
+                HudSampling::Color
+            } else {
+                HudSampling::Data
+            },
+            images,
+        )
     }
 
     pub fn get_sampled(
@@ -351,6 +383,7 @@ impl HudImages {
             ),
             (DAMAGE_FEEDBACK_SHADER, HudSampling::Color, None),
             (COMPASS_ENEMY_FIRING_PING_IMAGE, HudSampling::Color, None),
+            (COMPASS_RADAR_LINE_IMAGE, HudSampling::Color, None),
         ] {
             let _ = self.get_sampled_with_sampler(
                 HUD_CHROME_NAMESPACE,
@@ -441,7 +474,7 @@ impl HudImages {
             .into_iter()
             .chain(std::iter::once(name))
         {
-            match assets::decode_ui_image_from_main(main, image_name) {
+            match asset_material::decode_ui_image_from_main(main, image_name) {
                 Ok(Some(image)) => return Some(image),
                 Ok(None) => {}
                 Err(error) => {

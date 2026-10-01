@@ -1,4 +1,4 @@
-use crate::life::fx_life_span_range_from_bytes;
+use crate::life::life_span_range_from_bytes;
 
 pub const FX_ELEM_DEF_STRIDE: usize = 0xFC;
 
@@ -74,20 +74,20 @@ impl FxEffectDefView {
     }
 }
 
-pub fn fx_elem_def_view(bytes: &[u8]) -> Option<FxElemDefView> {
-    fx_elem_def_view_layout(bytes, false)
+pub fn elem_def_view(bytes: &[u8]) -> Option<FxElemDefView> {
+    elem_def_view_layout(bytes, false)
 }
 
-pub fn fx_elem_def_view_x64(bytes: &[u8]) -> Option<FxElemDefView> {
-    fx_elem_def_view_layout(bytes, true)
+pub fn elem_def_view_x64(bytes: &[u8]) -> Option<FxElemDefView> {
+    elem_def_view_layout(bytes, true)
 }
 
-fn fx_elem_def_view_layout(bytes: &[u8], x64: bool) -> Option<FxElemDefView> {
+fn elem_def_view_layout(bytes: &[u8], x64: bool) -> Option<FxElemDefView> {
     if bytes.len() < if x64 { 288 } else { FX_ELEM_DEF_STRIDE } {
         return None;
     }
     let flags = i32::from_le_bytes(bytes[0x00..0x04].try_into().ok()?);
-    let spawn = fx_life_span_range_from_bytes(bytes[0x04..0x0c].try_into().ok()?);
+    let spawn = life_span_range_from_bytes(bytes[0x04..0x0c].try_into().ok()?);
     let spawn_range_base = f32::from_le_bytes(bytes[0x0c..0x10].try_into().ok()?);
     let spawn_range_amplitude = f32::from_le_bytes(bytes[0x10..0x14].try_into().ok()?);
     let fade_in_range = [
@@ -99,8 +99,8 @@ fn fx_elem_def_view_layout(bytes: &[u8], x64: bool) -> Option<FxElemDefView> {
         f32::from_le_bytes(bytes[0x20..0x24].try_into().ok()?),
     ];
     let spawn_frustum_cull_radius = f32::from_le_bytes(bytes[0x24..0x28].try_into().ok()?);
-    let delay = fx_life_span_range_from_bytes(bytes[0x28..0x30].try_into().ok()?);
-    let life = fx_life_span_range_from_bytes(bytes[0x30..0x38].try_into().ok()?);
+    let delay = life_span_range_from_bytes(bytes[0x28..0x30].try_into().ok()?);
+    let life = life_span_range_from_bytes(bytes[0x30..0x38].try_into().ok()?);
     let mut spawn_origin = [[0.0f32; 2]; 3];
     for i in 0..3 {
         let off = 0x38 + i * 8;
@@ -201,7 +201,7 @@ fn fx_elem_def_view_layout(bytes: &[u8], x64: bool) -> Option<FxElemDefView> {
     })
 }
 
-pub fn fx_effect_def_view(bytes: &[u8]) -> Option<FxEffectDefView> {
+pub fn effect_def_view(bytes: &[u8]) -> Option<FxEffectDefView> {
     if bytes.len() < FX_EFFECT_DEF_SIZE {
         return None;
     }
@@ -214,9 +214,9 @@ pub fn fx_effect_def_view(bytes: &[u8]) -> Option<FxEffectDefView> {
     })
 }
 
-pub fn fx_elem_def_gravity_accel_z(view: &FxElemDefView, u01: f32) -> f32 {
+pub fn elem_def_gravity_accel_z(view: &FxElemDefView, u01: f32) -> f32 {
     let authored = view.gravity_base + view.gravity_amplitude * clamp01(u01);
-    crate::gravity::fx_elem_gravity_accel_z(authored)
+    crate::gravity::elem_gravity_accel_z(authored)
 }
 
 fn clamp01(x: f32) -> f32 {

@@ -1,4 +1,4 @@
-use fx_iw4::{fx_existing_elem_sorts_before_new, fx_sort_dist_to_cam_sq};
+use fx_iw4::{existing_elem_sorts_before_new, sort_dist_to_cam_sq};
 
 use crate::elem::{FX_ELEM_HANDLE_NONE, elem_slot_for_handle};
 use crate::spark::spark_elem_world_origin;
@@ -104,8 +104,7 @@ fn sort_sprite_elem_into_effect(
         } else {
             0.0
         };
-        if !fx_existing_elem_sorts_before_new(ex_type, ex_vis, ex_sort, ex_dist, new_sort, new_dist)
-        {
+        if !existing_elem_sorts_before_new(ex_type, ex_vis, ex_sort, ex_dist, new_sort, new_dist) {
             break;
         }
         prev_handle = cursor;
@@ -146,7 +145,7 @@ fn sort_distance(
     }
     let elem = host.elems.get(elem_slot)?;
     let effect = host.effect_at(effect_slot)?;
-    let seed = fx_iw4::fx_elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+    let seed = fx_iw4::elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
     let world = spark_elem_world_origin(
         elem.origin,
         elem.flags,
@@ -154,7 +153,7 @@ fn sort_distance(
         &effect.frame_when_played(),
         Some(elem.orient_spawn_params(seed)),
     );
-    let distance = fx_sort_dist_to_cam_sq(camera_origin, world);
+    let distance = sort_dist_to_cam_sq(camera_origin, world);
     host.sort_distances[elem_slot] = (host.sort_epoch, distance);
     Some(distance)
 }

@@ -1,6 +1,6 @@
 use playerstate_iw4::{PlayerState, UserCmd};
 
-use crate::{CollisionBackend, MoveBounds, Pml, pm_accelerate, pm_friction, pm_step_slide_move};
+use crate::{CollisionBackend, MoveBounds, Pml, accelerate, friction, step_slide_move};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AirMoveContext {
@@ -11,7 +11,7 @@ pub struct AirMoveContext {
     pub shellshock_gravity_bias: f32,
 }
 
-pub fn pm_air_move<C: CollisionBackend>(
+pub fn air_move<C: CollisionBackend>(
     ps: &mut PlayerState,
     pml: &Pml,
     cmd: &UserCmd,
@@ -19,9 +19,9 @@ pub fn pm_air_move<C: CollisionBackend>(
     bounds: MoveBounds,
     collision: &C,
 ) {
-    pm_friction(ps, pml);
+    friction(ps, pml);
 
-    let command_scale = pm_cmd_scale(ps, cmd, context.player_spectate_speed_scale);
+    let command_scale = cmd_scale(ps, cmd, context.player_spectate_speed_scale);
     let mut forward = pml.forward;
     let mut right = pml.right;
     forward[2] = 0.0;
@@ -35,7 +35,7 @@ pub fn pm_air_move<C: CollisionBackend>(
         (cmd.rightmove as f32) * right[2] + (cmd.forwardmove as f32) * forward[2],
     ];
     let wishspeed = normalize(&mut wishdir);
-    pm_accelerate(ps, pml, &wishdir, wishspeed * command_scale, 1.0);
+    accelerate(ps, pml, &wishdir, wishspeed * command_scale, 1.0);
 
     if pml.ground_plane != 0 {
         let velocity = ps.velocity;
@@ -51,7 +51,7 @@ pub fn pm_air_move<C: CollisionBackend>(
     }
 
     let effective_gravity = adjusted_gravity(ps, context);
-    pm_step_slide_move(
+    step_slide_move(
         ps,
         pml,
         collision,
@@ -62,7 +62,7 @@ pub fn pm_air_move<C: CollisionBackend>(
     );
 }
 
-fn pm_cmd_scale(ps: &PlayerState, cmd: &UserCmd, spectate_speed_scale: f32) -> f32 {
+fn cmd_scale(ps: &PlayerState, cmd: &UserCmd, spectate_speed_scale: f32) -> f32 {
     let forward = cmd.forwardmove as f32;
     let right = cmd.rightmove as f32;
     let magnitude = libm::sqrtf(forward * forward + right * right);

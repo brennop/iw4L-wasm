@@ -150,7 +150,7 @@ fn lightmap_page_bytes(page: &super::world::WorldLightmap) -> u64 {
 #[derive(Resource, Default)]
 pub struct ResidentGpuImages {
     profile_id: u64,
-    by_variant: std::collections::HashMap<assets::ImageVariantId, Handle<Image>>,
+    by_variant: std::collections::HashMap<asset_material::ImageVariantId, Handle<Image>>,
     map: ResidentMapImages,
 }
 
@@ -187,7 +187,7 @@ impl ResidentGpuImages {
 
     fn get_live(
         &mut self,
-        variant: assets::ImageVariantId,
+        variant: asset_material::ImageVariantId,
         images: &Assets<Image>,
     ) -> Option<Handle<Image>> {
         let handle = self.by_variant.get(&variant)?;
@@ -228,13 +228,13 @@ pub struct WorldImageUpload {
 
     pub pipeline_smodel_materials: Arc<std::collections::HashSet<u16>>,
     exact_images: Vec<Option<Arc<Image>>>,
-    exact_variants: Vec<Option<assets::ImageVariantId>>,
+    exact_variants: Vec<Option<asset_material::ImageVariantId>>,
     /// One asset per prepared variant. Two catalog slots that hold the same
     /// variant hold byte-identical images with the same sampler and colour
     /// space; giving each its own `Assets<Image>` entry uploads the same
     /// texture twice and keeps two copies of it resident, so the second slot
     /// takes a clone of the first one's handle and drops its own copy.
-    exact_by_variant: std::collections::HashMap<assets::ImageVariantId, Handle<Image>>,
+    exact_by_variant: std::collections::HashMap<asset_material::ImageVariantId, Handle<Image>>,
     /// Slots that took another slot's handle, and the bytes that saved.
     pub reused_handles: u32,
     pub reused_handle_bytes: u64,
@@ -252,7 +252,7 @@ pub struct WorldImageUpload {
     lightmaps: Vec<Option<super::world::WorldLightmap>>,
     lightmap_handles: Vec<Option<RuntimeLightmapHandles>>,
     lightmap_at: usize,
-    upload_stage: Option<assets::StageHandle>,
+    upload_stage: Option<asset_transport::StageHandle>,
     reachable_exact: HashSet<u32>,
 }
 
@@ -287,11 +287,11 @@ impl WorldImageUpload {
         &self.lightmap_handles
     }
 
-    pub fn take_stage(&mut self) -> Option<assets::StageHandle> {
+    pub fn take_stage(&mut self) -> Option<asset_transport::StageHandle> {
         self.upload_stage.take()
     }
 
-    pub fn arm(&mut self, scene: &mut WorldScene, progress: Option<&assets::LoadProgress>) {
+    pub fn arm(&mut self, scene: &mut WorldScene, progress: Option<&asset_transport::LoadProgress>) {
         self.pipeline_world_materials = Arc::new(
             scene
                 .batches
@@ -401,7 +401,7 @@ impl WorldImageUpload {
         }
         if let Some(progress) = progress {
             self.upload_stage =
-                Some(progress.begin(assets::StageId::WorldImages, Some(u64::from(self.total))));
+                Some(progress.begin(asset_transport::StageId::WorldImages, Some(u64::from(self.total))));
         }
     }
 

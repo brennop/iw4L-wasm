@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use assets::{AssetKey, AssetKind, WeaponRegistry};
+use asset_core::{AssetKey, AssetKind};
+use asset_game::WeaponRegistry;
 use bevy::prelude::Resource;
 
 pub const SESSION_MANIFEST_SCHEME: u32 = 2;
@@ -87,7 +88,7 @@ impl SessionContentManifest {
     pub fn build(
         map: &assets::PreparedMap,
         registry: &WeaponRegistry,
-        combat: &[sim::WeaponCombatFacts],
+        combat: &[weapon_iw4::WeaponCombatFacts],
         equipment: &[sim::EquipmentRuntimeFacts],
         gameplay_digest: u64,
     ) -> Result<Self, SessionManifestError> {
@@ -120,7 +121,7 @@ impl SessionContentManifest {
             let authority = if combat
                 .get(raw_id as usize)
                 .copied()
-                .is_some_and(sim::WeaponCombatFacts::is_usable)
+                .is_some_and(weapon_iw4::WeaponCombatFacts::is_usable)
             {
                 ManifestFact::Known(AuthorityWeaponProfile::Combat)
             } else if equipment
@@ -277,11 +278,11 @@ impl Digest {
     }
 }
 
-fn namespace_tag(namespace: assets::AssetNamespace) -> u8 {
+fn namespace_tag(namespace: asset_core::AssetNamespace) -> u8 {
     match namespace {
-        assets::AssetNamespace::Iw4 => 1,
-        assets::AssetNamespace::Iw5 => 2,
-        assets::AssetNamespace::T5 => 3,
+        asset_core::AssetNamespace::Iw4 => 1,
+        asset_core::AssetNamespace::Iw5 => 2,
+        asset_core::AssetNamespace::T5 => 3,
     }
 }
 

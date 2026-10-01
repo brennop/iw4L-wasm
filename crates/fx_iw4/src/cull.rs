@@ -1,9 +1,9 @@
-use crate::flags::fx_elem_spawn_frustum_cull;
+use crate::flags::elem_spawn_frustum_cull;
 
 pub const FX_ELEM_FLAG_CULL_DRAW_5_PLANES: i32 = 0x400;
 
 #[inline]
-pub fn fx_cull_elem_for_spawn_allows(
+pub fn cull_elem_for_spawn_allows(
     spawn_range_base: f32,
     spawn_range_amplitude: f32,
     camera_distance_inches: f32,
@@ -16,14 +16,14 @@ pub fn fx_cull_elem_for_spawn_allows(
             return false;
         }
     }
-    if fx_elem_spawn_frustum_cull(flags) && sphere_outside_frustum {
+    if elem_spawn_frustum_cull(flags) && sphere_outside_frustum {
         return false;
     }
     true
 }
 
 #[inline]
-pub const fn fx_cull_cloud_plane_count(elem_flags: i32, view_plane_count: u32) -> u32 {
+pub const fn cull_cloud_plane_count(elem_flags: i32, view_plane_count: u32) -> u32 {
     if (elem_flags & FX_ELEM_FLAG_CULL_DRAW_5_PLANES) != 0 {
         5
     } else {
@@ -32,7 +32,7 @@ pub const fn fx_cull_cloud_plane_count(elem_flags: i32, view_plane_count: u32) -
 }
 
 #[inline]
-pub fn fx_cull_cloud_radius(size0: f32, size1: f32, scale: f32) -> f32 {
+pub fn cull_cloud_radius(size0: f32, size1: f32, scale: f32) -> f32 {
     let mut r = size1;
     if r < size0 {
         r = size0;
@@ -41,7 +41,7 @@ pub fn fx_cull_cloud_radius(size0: f32, size1: f32, scale: f32) -> f32 {
 }
 
 #[inline]
-pub fn fx_cull_sphere(planes: &[[f32; 4]], plane_count: u32, pos: [f32; 3], radius: f32) -> bool {
+pub fn cull_sphere(planes: &[[f32; 4]], plane_count: u32, pos: [f32; 3], radius: f32) -> bool {
     if plane_count == 0 {
         return false;
     }
@@ -60,7 +60,7 @@ pub fn fx_cull_sphere(planes: &[[f32; 4]], plane_count: u32, pos: [f32; 3], radi
 }
 
 #[inline]
-pub fn fx_cull_cloud(
+pub fn cull_cloud(
     cull_elem_draw: bool,
     planes: &[[f32; 4]],
     view_plane_count: u32,
@@ -73,17 +73,12 @@ pub fn fx_cull_cloud(
     if !cull_elem_draw {
         return false;
     }
-    let count = fx_cull_cloud_plane_count(elem_flags, view_plane_count);
-    fx_cull_sphere(
-        planes,
-        count,
-        pos,
-        fx_cull_cloud_radius(size0, size1, scale),
-    )
+    let count = cull_cloud_plane_count(elem_flags, view_plane_count);
+    cull_sphere(planes, count, pos, cull_cloud_radius(size0, size1, scale))
 }
 
 #[inline]
-pub fn fx_cull_elem_light(
+pub fn cull_elem_light(
     cull_elem_draw: bool,
     planes: &[[f32; 4]],
     view_plane_count: u32,
@@ -94,12 +89,12 @@ pub fn fx_cull_elem_light(
     if !cull_elem_draw {
         return false;
     }
-    let count = fx_cull_cloud_plane_count(elem_flags, view_plane_count);
-    fx_cull_sphere(planes, count, pos, size0)
+    let count = cull_cloud_plane_count(elem_flags, view_plane_count);
+    cull_sphere(planes, count, pos, size0)
 }
 
 #[inline]
-pub fn fx_elem_light_color_bgr(color_rgba: [u8; 4], scale: f32) -> [f32; 3] {
+pub fn elem_light_color_bgr(color_rgba: [u8; 4], scale: f32) -> [f32; 3] {
     let s = scale * (crate::FX_RECIP_255 as f32);
     [
         color_rgba[2] as f32 * s,

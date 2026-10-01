@@ -52,7 +52,7 @@ pub enum RelativeTeamColorChoice {
 }
 
 #[inline]
-pub fn cg_relative_team_color_key(
+pub fn relative_team_color_key(
     local_client: i32,
     local_team: i32,
     target_client: i32,
@@ -76,7 +76,7 @@ pub fn cg_relative_team_color_key(
 }
 
 #[inline]
-pub fn cg_overhead_fade_alpha(
+pub fn overhead_fade_alpha(
     now_ms: i32,
     start_ms: i32,
     last_seen_ms: i32,
@@ -104,7 +104,7 @@ pub enum OverheadHeadResult {
 }
 
 #[inline]
-pub fn cg_overhead_anchor(head: OverheadHeadResult, centity_origin: [f32; 3]) -> [f32; 3] {
+pub fn overhead_anchor(head: OverheadHeadResult, centity_origin: [f32; 3]) -> [f32; 3] {
     match head {
         OverheadHeadResult::Exact(mut head) => {
             head[2] += OVERHEAD_HEAD_LIFT;
@@ -130,7 +130,7 @@ pub struct OverheadView {
 }
 
 #[inline]
-pub fn cg_world_pos_to_overhead_pixel(view: OverheadView, world: [f32; 3]) -> Option<[f32; 2]> {
+pub fn world_pos_to_overhead_pixel(view: OverheadView, world: [f32; 3]) -> Option<[f32; 2]> {
     let delta = [
         world[0] - view.origin[0],
         world[1] - view.origin[1],
@@ -149,7 +149,7 @@ pub fn cg_world_pos_to_overhead_pixel(view: OverheadView, world: [f32; 3]) -> Op
 }
 
 #[inline]
-pub fn cg_overhead_distance_scale(
+pub fn overhead_distance_scale(
     view_origin: [f32; 3],
     anchor: [f32; 3],
     near_distance: f32,

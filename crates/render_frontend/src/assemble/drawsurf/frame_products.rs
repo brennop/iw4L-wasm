@@ -912,7 +912,7 @@ pub(crate) fn open_frame_products(
             .copied()
             .map(|light| lighting_iw4::SceneDlight { light, used: false })
             .collect();
-        let mut extra = [lighting_iw4::r_omni_light_pack([0.0; 3], 1.0, [0.0; 3]);
+        let mut extra = [lighting_iw4::omni_light_pack([0.0; 3], 1.0, [0.0; 3]);
             lighting_iw4::R_DLIGHT_BACKEND_MAX];
         let planes = prepared.as_ref().and_then(|view| {
             if view.ready && !view.frustum_planes.is_empty() {

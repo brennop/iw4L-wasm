@@ -37,7 +37,7 @@ impl CapsuleSize {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "preserves the CM_TransformedBoxTrace moving-hull, temp-model, and contents inputs"
+    reason = "keeps the moving-hull, temp-model, and contents inputs together"
 )]
 pub fn transformed_temp_capsule_trace(
     start: [f32; 3],

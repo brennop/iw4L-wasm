@@ -1,6 +1,7 @@
-use assets::{ClipCollision, PreparedWeapons};
+use asset_world::ClipCollision;
+use assets::PreparedWeapons;
 use bevy::prelude::*;
-use entity_iw4::{EntityState, Trajectory, bg_evaluate_trajectory};
+use entity_iw4::{EntityState, Trajectory, evaluate_trajectory};
 use net::PresentedSnapshot;
 use playerstate_iw4::{ENTITYNUM_NONE, KillCamMode};
 use render_scene::WorldCameraPose;
@@ -23,7 +24,7 @@ pub struct KillcamCamera {
 }
 
 fn entity_origin(es: &EntityState, now: i32) -> Vec3 {
-    Vec3::from_array(bg_evaluate_trajectory(
+    Vec3::from_array(evaluate_trajectory(
         &Trajectory {
             tr_time: es.tr_time,
             tr_type: es.tr_type,
@@ -186,10 +187,10 @@ impl KillcamCamera {
         }
         if let Some(p) = projectile {
             self.origin = Vec3::from_array(presented.projectile_origin_at(p, now));
-            self.angles = bg_evaluate_trajectory(&p.apos, trajectory_time);
+            self.angles = evaluate_trajectory(&p.apos, trajectory_time);
         } else if let Some(es) = entity {
             self.origin = entity_origin(es, trajectory_time);
-            self.angles = bg_evaluate_trajectory(
+            self.angles = evaluate_trajectory(
                 &Trajectory {
                     tr_time: es.apos_tr_time,
                     tr_type: es.apos_tr_type,

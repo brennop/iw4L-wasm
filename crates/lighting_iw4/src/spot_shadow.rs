@@ -339,8 +339,8 @@ pub struct SpotShadowViewParms {
 }
 
 #[must_use]
-pub fn spot_shadow_near_bias(light_index: u32, world_plus_0x20: u32, dvar: f32) -> f32 {
-    if light_index < world_plus_0x20 {
+pub fn spot_shadow_near_bias(light_index: u32, caster_light_count: u32, dvar: f32) -> f32 {
+    if light_index < caster_light_count {
         0.0
     } else {
         dvar
@@ -367,7 +367,7 @@ pub fn spot_shadow_tan_half_fov(cos: f32) -> f32 {
 #[must_use]
 pub fn spot_shadow_view_axis(dir: [f32; 3]) -> SpotShadowViewAxis {
     let forward = [-dir[0], -dir[1], -dir[2]];
-    let right = fx_iw4::fx_perpendicular_vector(forward);
+    let right = fx_iw4::perpendicular_vector(forward);
     let up = [
         right[1] * forward[2] - right[2] * forward[1],
         right[2] * forward[0] - right[0] * forward[2],
@@ -387,10 +387,10 @@ pub fn spot_shadow_view_parms(
     let axis = spot_shadow_view_axis(dir);
     let tan = spot_shadow_tan_half_fov(cos);
     let z_near = spot_shadow_z_near(near_bias);
-    let projection = hud_iw4::r_setup_finite_projection_matrix(tan, tan, z_near, z_far)?;
-    let view = hud_iw4::r_matrix_for_viewer(axis.as_viewer_axis());
+    let projection = hud_iw4::setup_finite_projection_matrix(tan, tan, z_near, z_far)?;
+    let view = hud_iw4::matrix_for_viewer(axis.as_viewer_axis());
     let (view_projection, inv_view_projection) =
-        hud_iw4::r_compose_view_projection(&view, &projection, origin)?;
+        hud_iw4::compose_view_projection(&view, &projection, origin)?;
     Some(SpotShadowViewParms {
         axis,
         origin,
@@ -545,8 +545,8 @@ pub fn spot_shadow_take_slot(shadowable_count: &mut u32) -> Option<u32> {
 }
 
 #[must_use]
-pub fn spot_shadow_emit_walks_casters(light_index: u32, world_plus_0x20: u32) -> bool {
-    light_index < world_plus_0x20
+pub fn spot_shadow_emit_walks_casters(light_index: u32, caster_light_count: u32) -> bool {
+    light_index < caster_light_count
 }
 
 #[must_use]
@@ -595,7 +595,7 @@ pub fn spot_shadow_link_primary_vis(
     entnum: u32,
     origin: [f32; 3],
     extra: f32,
-    lights: &[crate::cull::ComPrimaryLightCull],
+    lights: &[crate::cull::PrimaryLightCull],
     sun_primary: u32,
 ) {
     let primary_count = lights.len() as u32;
@@ -661,7 +661,7 @@ pub fn spot_shadow_link_dyn_brush_vis(
     brush_id: u32,
     origin: [f32; 3],
     extra: f32,
-    lights: &[crate::cull::ComPrimaryLightCull],
+    lights: &[crate::cull::PrimaryLightCull],
     sun_primary: u32,
 ) {
     let primary_count = lights.len() as u32;
@@ -781,7 +781,7 @@ pub fn spot_shadow_link_player(
     entnum: u32,
     origin: [f32; 3],
     dobj_radius: f32,
-    lights: &[crate::cull::ComPrimaryLightCull],
+    lights: &[crate::cull::PrimaryLightCull],
     sun_primary: u32,
 ) {
     spot_shadow_link_primary_vis(
@@ -801,7 +801,7 @@ pub fn spot_shadow_link_entity(
     entnum: u32,
     origin: [f32; 3],
     dobj_radius: f32,
-    lights: &[crate::cull::ComPrimaryLightCull],
+    lights: &[crate::cull::PrimaryLightCull],
     sun_primary: u32,
 ) {
     spot_shadow_link_primary_vis(

@@ -1,6 +1,5 @@
-use entity_iw4::cg_adjust_position_for_mover;
-use movement_iw4::PMF_SPRINTING;
-use playerstate_iw4::{PlayerState, UserCmd, buttons, eflags, other_flags};
+use entity_iw4::adjust_position_for_mover;
+use playerstate_iw4::{PlayerState, UserCmd, buttons, eflags, other_flags, pm_flags};
 use sim::{AdoptReport, ClientId, SimWorld, Snapshot, Tick, TickInput};
 use std::collections::VecDeque;
 
@@ -310,12 +309,6 @@ impl ClientPrediction {
         self.had_local_last_snap
     }
 
-    pub fn install_world(&mut self, mut world: SimWorld) {
-        world.suppress_snapshot_publish();
-        self.world = world;
-        self.armed = true;
-    }
-
     pub fn arm_from_content(&mut self, authority: &SimWorld) {
         self.world.initialize_prediction_from(authority);
         self.armed = true;
@@ -386,8 +379,17 @@ impl ClientPrediction {
         if self.history.is_empty() {
             return;
         }
-        self.history.clear();
+        self.drop_history();
         self.metrics.forced_adopts += 1;
+    }
+
+    /// The floor lets stale acks for the dropped commands retire; read as
+    /// `Broken` they would drop every later window too, for good.
+    fn drop_history(&mut self) {
+        if let Some(cmd) = self.last_cmd {
+            self.replay_floor = Some((CmdSeq(self.next_seq.0.wrapping_sub(1)), cmd));
+        }
+        self.history.clear();
     }
 
     pub fn retire_acks(&mut self, ack: Option<CmdSeq>) {
@@ -423,16 +425,20 @@ impl ClientPrediction {
                 AckMatch::Broken => {
                     outcome.forced_adopt = true;
                     self.metrics.forced_adopts += 1;
-                    self.history.clear();
+                    self.drop_history();
                     None
                 }
             },
+            None if self.history.is_empty() => {
+                self.snapshots_since_ack = 0;
+                None
+            }
             None => {
                 self.snapshots_since_ack = self.snapshots_since_ack.saturating_add(1);
-                if self.snapshots_since_ack > MAX_UNACKED_SNAPSHOTS && !self.history.is_empty() {
+                if self.snapshots_since_ack > MAX_UNACKED_SNAPSHOTS {
                     outcome.forced_adopt = true;
                     self.metrics.forced_adopts += 1;
-                    self.history.clear();
+                    self.drop_history();
                     self.snapshots_since_ack = 0;
                 }
                 None
@@ -520,7 +526,7 @@ impl ClientPrediction {
                     .unwrap_or(0);
 
                 let e_type = snapshot_ground_e_type(snapshot, ground);
-                let post = cg_adjust_position_for_mover(post, ground, e_type, None, 0, 0);
+                let post = adjust_position_for_mover(post, ground, e_type, None, 0, 0);
                 self.predicted_error.begin(pre, post);
             }
         }
@@ -584,7 +590,7 @@ impl ClientPrediction {
                 if self
                     .world
                     .player(self.local)
-                    .is_some_and(|ps| (ps.pm_flags & PMF_SPRINTING) != 0)
+                    .is_some_and(|ps| (ps.pm_flags & pm_flags::SPRINTING) != 0)
                 {
                     seeded |= buttons::SPRINT;
                 }
@@ -606,7 +612,7 @@ impl ClientPrediction {
         input.cmds.clear();
         input.actions.clear();
         input.cmds.push((local, cmd));
-        let _ = sim::step(&mut self.world, tick, &input, msec, reason);
+        let _ = sim::try_step(&mut self.world, tick, &input, msec, reason);
         self.tick_input = input;
         self.world.player(local).copied()
     }

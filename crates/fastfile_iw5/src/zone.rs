@@ -273,6 +273,7 @@ pub struct ZoneStream<'a> {
     xmodel: Option<XModelGeometry>,
 
     latest_xmodel_surfs: Option<Ptr>,
+    latest_xmodel_surfs_name: Option<Ptr>,
 
     last_insert_binding: Option<(Ptr, Ptr)>,
     gfx_world: Option<GfxWorldGeometry>,
@@ -354,6 +355,8 @@ pub struct WeaponGeometry {
 
     pub world_model_name: Option<Ptr>,
 
+    pub knife_xmodel_name: Option<Ptr>,
+
     pub hide_tags: Option<Ptr>,
 
     pub sz_xanims: Option<Ptr>,
@@ -411,7 +414,7 @@ pub struct WeaponGeometry {
 
     pub fx_override_count: i32,
 
-    pub fx_overrides: Option<Ptr>,
+    pub overrides: Option<Ptr>,
 
     pub reload_override_count: i32,
 
@@ -428,6 +431,7 @@ pub struct XModelGeometry {
     pub material_handles: Option<Ptr>,
     pub surfaces: Option<Ptr>,
     pub surface_count: usize,
+    pub surfaces_name: Option<Ptr>,
 
     pub num_bones: usize,
 
@@ -964,6 +968,7 @@ impl<'a> ZoneStream<'a> {
             header,
             xmodel: None,
             latest_xmodel_surfs: None,
+            latest_xmodel_surfs_name: None,
             last_insert_binding: None,
             gfx_world: None,
             com_world: None,
@@ -1036,6 +1041,14 @@ impl<'a> ZoneStream<'a> {
 
     pub fn take_latest_xmodel_surfs_array(&mut self) -> Option<Ptr> {
         self.latest_xmodel_surfs.take()
+    }
+
+    pub fn record_xmodel_surfs_name(&mut self, name: Option<Ptr>) {
+        self.latest_xmodel_surfs_name = name;
+    }
+
+    pub fn take_latest_xmodel_surfs_name(&mut self) -> Option<Ptr> {
+        self.latest_xmodel_surfs_name.take()
     }
 
     pub fn insert_slot_bound_to(&self, body: Ptr) -> Option<Ptr> {

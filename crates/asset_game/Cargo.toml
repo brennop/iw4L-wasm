@@ -25,6 +25,8 @@ xmodel_runtime.workspace = true
 fx_iw4.workspace = true
 diag.workspace = true
 bevy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

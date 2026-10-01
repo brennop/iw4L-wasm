@@ -19,12 +19,12 @@ pub struct MantleHintLayout {
 }
 
 #[must_use]
-pub fn cg_draw_mantle_hint_visible(mantle_flags: u32) -> bool {
+pub fn draw_mantle_hint_visible(mantle_flags: u32) -> bool {
     (mantle_flags & MANTLE_HINT_FLAG) != 0
 }
 
 #[must_use]
-pub fn cg_draw_mantle_hint_layout(
+pub fn draw_mantle_hint_layout(
     rect_x: f32,
     rect_y: f32,
     rect_w: f32,
@@ -43,6 +43,6 @@ pub fn cg_draw_mantle_hint_layout(
 }
 
 #[must_use]
-pub fn mantle_hint_replace_bind(template: &str, bind: &str) -> alloc::string::String {
+pub fn hint_replace_bind(template: &str, bind: &str) -> alloc::string::String {
     crate::centerprint_replace_name(template, bind)
 }

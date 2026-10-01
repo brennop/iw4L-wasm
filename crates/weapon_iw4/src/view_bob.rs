@@ -2,12 +2,11 @@ use crate::placement::{
     VIEWHEIGHT_TARGET_CROUCH, VIEWHEIGHT_TARGET_PRONE, WEAPON_BOB_AMPLITUDE_BASE,
     WEAPON_BOB_AMPLITUDE_ROLL, WEAPON_BOB_LAG, WEAPON_BOB_UP_PHASE, WEAPON_IDLE_FACTOR_LERP,
     WEAPON_IDLE_PITCH_FREQ, WEAPON_IDLE_SIN_SCALE, WEAPON_IDLE_TIME_MS_SCALE, WEAPON_IDLE_YAW_FREQ,
-    WeaponIdleInputs, WeaponPlacementPsInputs, bg_weapon_idle_amount_speed,
-    weapon_bob_ads_attenuation,
+    WeaponIdleInputs, WeaponPlacementPsInputs, weapon_bob_ads_attenuation,
+    weapon_idle_amount_speed,
 };
-use crate::sprint::PMF_SPRINTING;
 use math_iw4::{angle_vectors, get_lean_fraction};
-use playerstate_iw4::eflags;
+use playerstate_iw4::{eflags, pm_flags};
 
 pub const VIEW_BOB_MAX: f32 = 8.0;
 
@@ -117,7 +116,7 @@ fn f64_as_f32(bits: u64) -> f32 {
 }
 
 #[inline]
-pub fn bg_view_bob_cycle(bob_cycle: u8) -> f32 {
+pub fn view_bob_cycle(bob_cycle: u8) -> f32 {
     let bob = (f32::from(bob_cycle) / f64_as_f32(BOB_CYCLE_DIV_F64)) * f64_as_f32(PI_F64);
     bob + bob + f64_as_f32(TAU_F64)
 }
@@ -141,7 +140,7 @@ fn view_bob_helper_amplitude(
         VIEW_BOB_AMP_PRONE[idx]
     } else if view_height_target == VIEWHEIGHT_TARGET_CROUCH {
         (1.0 - ads) * VIEW_BOB_AMP_DUCKED[idx] + ads * VIEW_BOB_AMP_DUCKED_ADS[idx]
-    } else if (pm_flags & PMF_SPRINTING) == 0 {
+    } else if (pm_flags & pm_flags::SPRINTING) == 0 {
         (1.0 - ads) * VIEW_BOB_AMP_STANDING[idx] + ads * VIEW_BOB_AMP_STANDING_ADS[idx]
     } else {
         VIEW_BOB_AMP_SPRINTING[idx]
@@ -156,7 +155,7 @@ fn view_bob_helper_amplitude(
     amp
 }
 
-pub fn bg_calc_view_bob_pitch(cycle: f32, inputs: ViewOrgBobInputs) -> f32 {
+pub fn calc_view_bob_pitch(cycle: f32, inputs: ViewOrgBobInputs) -> f32 {
     let amp = view_bob_helper_amplitude(
         inputs.view_height_target,
         inputs.pm_flags,
@@ -172,7 +171,7 @@ pub fn bg_calc_view_bob_pitch(cycle: f32, inputs: ViewOrgBobInputs) -> f32 {
         * amp
 }
 
-pub fn bg_calc_view_bob_roll(cycle: f32, inputs: ViewOrgBobInputs) -> f32 {
+pub fn calc_view_bob_roll(cycle: f32, inputs: ViewOrgBobInputs) -> f32 {
     let amp = view_bob_helper_amplitude(
         inputs.view_height_target,
         inputs.pm_flags,
@@ -184,7 +183,7 @@ pub fn bg_calc_view_bob_roll(cycle: f32, inputs: ViewOrgBobInputs) -> f32 {
     view_bob_sinf(cycle) * amp
 }
 
-pub fn bg_crash_land_fall_height(
+pub fn crash_land_fall_height(
     gravity: i32,
     previous_origin_z: f32,
     origin_z: f32,
@@ -210,7 +209,7 @@ pub fn bg_crash_land_fall_height(
     Some((land_vel * land_vel) / ((gravity as f32) * LAND_FALL_TWO))
 }
 
-pub fn bg_crash_land_view_dip(fall_height: f32) -> i32 {
+pub fn crash_land_view_dip(fall_height: f32) -> i32 {
     if !(fall_height > LAND_VIEW_DIP_FALL_IN) {
         return 0;
     }
@@ -226,7 +225,7 @@ pub fn bg_crash_land_view_dip(fall_height: f32) -> i32 {
     }
 }
 
-pub fn bg_land_origin_weight(delta_ms: f32) -> Option<f32> {
+pub fn land_origin_weight(delta_ms: f32) -> Option<f32> {
     if !(delta_ms > 0.0) {
         return None;
     }
@@ -239,14 +238,14 @@ pub fn bg_land_origin_weight(delta_ms: f32) -> Option<f32> {
     Some(1.0 - (delta_ms - LAND_DEFLECT_MS) / LAND_RETURN_MS)
 }
 
-pub fn bg_land_origin_z(delta_ms: f32, land_change: f32) -> f32 {
-    match bg_land_origin_weight(delta_ms) {
+pub fn land_origin_z(delta_ms: f32, land_change: f32) -> f32 {
+    match land_origin_weight(delta_ms) {
         Some(weight) => weight * land_change,
         None => 0.0,
     }
 }
 
-pub fn bg_viewweapon_land_origin_z(delta_ms: i32, land_change: f32) -> f32 {
+pub fn viewweapon_land_origin_z(delta_ms: i32, land_change: f32) -> f32 {
     if delta_ms < LAND_DEFLECT_MS as i32 {
         return land_change * VIEWWEAPON_LAND_SCALE * (delta_ms as f32) / LAND_DEFLECT_MS;
     }
@@ -257,14 +256,14 @@ pub fn bg_viewweapon_land_origin_z(delta_ms: i32, land_change: f32) -> f32 {
     0.0
 }
 
-pub fn bg_view_org_bob(inputs: ViewOrgBobInputs) -> ViewOrgBob {
+pub fn view_org_bob(inputs: ViewOrgBobInputs) -> ViewOrgBob {
     if !(inputs.xyspeed > 0.0) {
         return ViewOrgBob::default();
     }
-    let cycle = bg_view_bob_cycle(inputs.bob_cycle);
+    let cycle = view_bob_cycle(inputs.bob_cycle);
     ViewOrgBob {
-        vertical: bg_calc_view_bob_pitch(cycle, inputs),
-        horizontal: bg_calc_view_bob_roll(cycle, inputs),
+        vertical: calc_view_bob_pitch(cycle, inputs),
+        horizontal: calc_view_bob_roll(cycle, inputs),
     }
 }
 
@@ -278,7 +277,7 @@ const VIEW_ORG_BOB_GATE_PM_TYPE_A: i32 = 5;
 const VIEW_ORG_BOB_GATE_PM_TYPE_B: i32 = 6;
 
 #[must_use]
-pub fn bg_should_apply_view_org_bob(
+pub fn should_apply_view_org_bob(
     camera_third_person: bool,
     pm_type: i32,
     other_flags: u32,
@@ -333,9 +332,9 @@ pub struct ViewAngleBobInputs {
 
     pub overlay_reticle: i32,
 
-    pub ads_bob_factor_at_0x330: f32,
+    pub ads_bob_factor: f32,
 
-    pub ads_view_bob_mult_at_0x334: f32,
+    pub ads_view_bob_mult: f32,
 
     pub time: i32,
 
@@ -360,23 +359,23 @@ pub struct ViewAngleBobInputs {
 
 #[inline]
 fn overlay_view_bob_cycle(bob_cycle: u8) -> f32 {
-    bg_view_bob_cycle(bob_cycle) + f64_as_f32(TAU_F64) + WEAPON_BOB_LAG * f64_as_f32(PI_F64)
+    view_bob_cycle(bob_cycle) + f64_as_f32(TAU_F64) + WEAPON_BOB_LAG * f64_as_f32(PI_F64)
 }
 
 fn org_with_speed(org: ViewOrgBobInputs, xyspeed: f32) -> ViewOrgBobInputs {
     ViewOrgBobInputs { xyspeed, ..org }
 }
 
-fn bg_view_overlay_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
+fn view_overlay_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
     if inputs.overlay_reticle == 0 {
         return;
     }
     let cycle = overlay_view_bob_cycle(inputs.org.bob_cycle);
     let speed = WEAPON_BOB_AMPLITUDE_BASE * inputs.org.xyspeed;
     let scaled = org_with_speed(inputs.org, speed);
-    let mut pitch = bg_calc_view_bob_pitch(cycle, scaled) * OVERLAY_BOB_SIGN;
-    let mut yaw = bg_calc_view_bob_roll(cycle, scaled) * OVERLAY_BOB_SIGN;
-    let mut roll = bg_calc_view_bob_roll(
+    let mut pitch = calc_view_bob_pitch(cycle, scaled) * OVERLAY_BOB_SIGN;
+    let mut yaw = calc_view_bob_roll(cycle, scaled) * OVERLAY_BOB_SIGN;
+    let mut roll = calc_view_bob_roll(
         cycle - WEAPON_BOB_UP_PHASE,
         org_with_speed(inputs.org, WEAPON_BOB_AMPLITUDE_ROLL * speed),
     );
@@ -386,7 +385,7 @@ fn bg_view_overlay_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInp
     }
     let frac = inputs.org.weapon_pos_frac;
     if frac != 0.0 {
-        let atten = weapon_bob_ads_attenuation(frac, inputs.ads_bob_factor_at_0x330);
+        let atten = weapon_bob_ads_attenuation(frac, inputs.ads_bob_factor);
         pitch *= atten;
         yaw *= atten;
         roll *= atten;
@@ -396,7 +395,7 @@ fn bg_view_overlay_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInp
     angles.roll += frac * roll;
 }
 
-fn bg_view_ads_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
+fn view_ads_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
     let frac = inputs.org.weapon_pos_frac;
     if !(frac > 0.0) {
         return;
@@ -404,16 +403,16 @@ fn bg_view_ads_bob_angles(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs)
     if (inputs.e_flags & EFLAGS_TURRET_VEHICLE) != 0 {
         return;
     }
-    if !(inputs.ads_view_bob_mult_at_0x334 > 0.0) {
+    if !(inputs.ads_view_bob_mult > 0.0) {
         return;
     }
-    let scale = inputs.ads_view_bob_mult_at_0x334 * frac;
-    let cycle = bg_view_bob_cycle(inputs.org.bob_cycle);
-    angles.pitch -= bg_calc_view_bob_pitch(cycle, inputs.org) * scale;
-    angles.yaw -= bg_calc_view_bob_roll(cycle, inputs.org) * scale;
+    let scale = inputs.ads_view_bob_mult * frac;
+    let cycle = view_bob_cycle(inputs.org.bob_cycle);
+    angles.pitch -= calc_view_bob_pitch(cycle, inputs.org) * scale;
+    angles.yaw -= calc_view_bob_roll(cycle, inputs.org) * scale;
 }
 
-pub fn bg_view_kick_amplitude(damage_count: i32) -> f32 {
+pub fn view_kick_amplitude(damage_count: i32) -> f32 {
     let scaled = damage_count as f32 * BG_VIEW_KICK_SCALE;
     if scaled < BG_VIEW_KICK_MIN {
         BG_VIEW_KICK_MIN
@@ -430,13 +429,13 @@ pub struct ViewDamageFeedback {
     pub v_dmg_roll: f32,
 }
 
-pub fn cg_damage_feedback_kick(
+pub fn damage_feedback_kick(
     yaw_byte: u32,
     pitch_byte: u32,
     damage_count: i32,
     viewangles: [f32; 3],
 ) -> ViewDamageFeedback {
-    let kick = bg_view_kick_amplitude(damage_count);
+    let kick = view_kick_amplitude(damage_count);
     if yaw_byte == VIEW_DAMAGE_UNDIRECTED && pitch_byte == VIEW_DAMAGE_UNDIRECTED {
         return ViewDamageFeedback {
             v_dmg_pitch: -kick,
@@ -455,7 +454,7 @@ pub fn cg_damage_feedback_kick(
     }
 }
 
-fn bg_view_damage_kick(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
+fn view_damage_kick(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
     if inputs.damage_time == 0 {
         return;
     }
@@ -481,13 +480,13 @@ fn bg_view_damage_kick(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
     }
 }
 
-pub fn bg_view_damage_angles(inputs: ViewAngleBobInputs) -> ViewAngleBob {
+pub fn view_damage_angles(inputs: ViewAngleBobInputs) -> ViewAngleBob {
     let mut angles = ViewAngleBob::default();
-    bg_view_damage_kick(&mut angles, inputs);
+    view_damage_kick(&mut angles, inputs);
     angles
 }
 
-fn bg_view_camera_idle(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
+fn view_camera_idle(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
     if inputs.overlay_reticle == 0 || inputs.org.weapon_pos_frac == 0.0 {
         return;
     }
@@ -498,14 +497,14 @@ fn bg_view_camera_idle(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
         overlay_reticle: inputs.overlay_reticle,
         ..WeaponPlacementPsInputs::default()
     };
-    let (amount, speed) = bg_weapon_idle_amount_speed(ps, inputs.idle);
+    let (amount, speed) = weapon_idle_amount_speed(ps, inputs.idle);
     let add = libm::roundf(speed * WEAPON_IDLE_TIME_MS_SCALE * inputs.frametime) as i32;
     angles.weap_idle_time = angles.weap_idle_time.wrapping_add(add);
 
     let target = if inputs.e_flags & eflags::PRONE != 0 {
-        inputs.idle.idle_prone_factor_at_0x380
+        inputs.idle.idle_prone_factor
     } else if inputs.e_flags & eflags::DUCK != 0 {
-        inputs.idle.idle_crouch_factor_at_0x37c
+        inputs.idle.idle_crouch_factor
     } else {
         1.0
     };
@@ -534,15 +533,15 @@ fn bg_view_camera_idle(angles: &mut ViewAngleBob, inputs: ViewAngleBobInputs) {
     angles.pitch += pitch;
 }
 
-pub fn bg_view_angle_bob(inputs: ViewAngleBobInputs) -> ViewAngleBob {
+pub fn view_angle_bob(inputs: ViewAngleBobInputs) -> ViewAngleBob {
     let mut angles = ViewAngleBob {
         weap_idle_time: inputs.weap_idle_time,
         view_last_idle_factor: inputs.view_last_idle_factor,
         ..ViewAngleBob::default()
     };
-    bg_view_damage_kick(&mut angles, inputs);
-    bg_view_camera_idle(&mut angles, inputs);
-    bg_view_overlay_bob_angles(&mut angles, inputs);
-    bg_view_ads_bob_angles(&mut angles, inputs);
+    view_damage_kick(&mut angles, inputs);
+    view_camera_idle(&mut angles, inputs);
+    view_overlay_bob_angles(&mut angles, inputs);
+    view_ads_bob_angles(&mut angles, inputs);
     angles
 }

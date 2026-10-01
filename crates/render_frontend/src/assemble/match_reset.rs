@@ -3,8 +3,8 @@ use frame::{MatchTornDown, SessionSwapApplied};
 use net::ClientSet;
 
 use super::drawsurf::{
-    CgGlassTable, DrawSurfList, FxCodeMeshPlan, FxModelDrawPlan, FxParticleCloudPlan,
-    GfxGlassMeshPlan, GfxMarkMeshPlan,
+    DrawSurfList, FxCodeMeshPlan, FxModelDrawPlan, FxParticleCloudPlan, GfxGlassMeshPlan,
+    GfxMarkMeshPlan, GlassTable,
 };
 
 pub(crate) fn reset_world_draw_plans_on_teardown(
@@ -13,7 +13,7 @@ pub(crate) fn reset_world_draw_plans_on_teardown(
     mut dfog: ResMut<super::drawsurf::DrawMethodDfog>,
     mut draw_list: ResMut<DrawSurfList>,
     mut glass: ResMut<GfxGlassMeshPlan>,
-    mut cg_glass: ResMut<CgGlassTable>,
+    mut cg_glass: ResMut<GlassTable>,
     mut fx_code: ResMut<FxCodeMeshPlan>,
     mut spark: ResMut<FxParticleCloudPlan>,
     mut marks: ResMut<GfxMarkMeshPlan>,
@@ -23,6 +23,7 @@ pub(crate) fn reset_world_draw_plans_on_teardown(
         return;
     }
     commands.remove_resource::<super::drawsurf::MapFrameFog>();
+    commands.insert_resource(super::drawsurf::fog::ScriptFogPresentation::default());
     dfog.0 = false;
     *draw_list = DrawSurfList::default();
     *glass = GfxGlassMeshPlan::default();

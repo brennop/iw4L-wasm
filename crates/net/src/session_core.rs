@@ -814,7 +814,6 @@ pub struct ClientMatchCore {
     presentation_ready: bool,
     local_authority_ready: bool,
     adopted: Option<AdmissionKey>,
-    direct_adopted: Option<LocalLoadKey>,
     enter: Option<AdmissionKey>,
     failed: Option<SessionFail>,
 }
@@ -829,7 +828,6 @@ impl Default for ClientMatchCore {
             presentation_ready: false,
             local_authority_ready: false,
             adopted: None,
-            direct_adopted: None,
             enter: None,
             failed: None,
         }
@@ -895,7 +893,6 @@ impl ClientMatchCore {
         self.presentation_ready = false;
         self.local_authority_ready = false;
         self.adopted = None;
-        self.direct_adopted = None;
         self.enter = None;
         self.failed = None;
         self.match_key = match_key;
@@ -911,12 +908,6 @@ impl ClientMatchCore {
 
     pub fn match_key(&self) -> MatchKey {
         self.match_key
-    }
-
-    pub fn apply_direct_adopted(&mut self, load: LocalLoadKey) {
-        if self.match_key.is_none() && load.match_key.is_none() && self.installed == Some(load) {
-            self.direct_adopted = Some(load);
-        }
     }
 
     pub fn apply_adopted(&mut self, key: AdmissionKey) -> Option<String> {
@@ -954,17 +945,12 @@ impl ClientMatchCore {
     }
 
     pub fn class_select_allowed(&self) -> bool {
-        let direct = self.match_key.is_none()
-            && self.direct_adopted.is_some()
-            && self.direct_adopted == self.installed;
         class_select_allowed(
             self.session_open,
-            direct
-                || self
-                    .installed
-                    .is_some_and(|key| key.belongs_to(self.match_key)),
+            self.installed
+                .is_some_and(|key| key.belongs_to(self.match_key)),
             self.presentation_ready,
-            direct || self.enter.is_some(),
+            self.enter.is_some(),
             self.failed.is_some(),
         )
     }

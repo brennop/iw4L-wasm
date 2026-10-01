@@ -258,7 +258,7 @@ fn reject_negative_half(
 }
 
 #[derive(Clone, Debug)]
-pub enum RetailWorldVertexPayload {
+pub enum WorldVertexPayload {
     Iw4(Vec<[u8; asset_iw4::size::GFX_WORLD_VERTEX]>),
 
     Iw5(Vec<[u8; fastfile_iw5::size::GFX_WORLD_VERTEX]>),
@@ -267,7 +267,7 @@ pub enum RetailWorldVertexPayload {
     Unavailable { source_layout: &'static str },
 }
 
-impl Default for RetailWorldVertexPayload {
+impl Default for WorldVertexPayload {
     fn default() -> Self {
         Self::Unavailable {
             source_layout: "world vertex payload not installed",
@@ -275,7 +275,7 @@ impl Default for RetailWorldVertexPayload {
     }
 }
 
-impl RetailWorldVertexPayload {
+impl WorldVertexPayload {
     pub fn type2_stream0(
         &self,
     ) -> Result<&[[u8; asset_iw4::size::GFX_WORLD_VERTEX]], &'static str> {
@@ -308,7 +308,7 @@ pub struct WorldDraw {
     pub lightmap: Result<Vec<Option<WorldLightmap>>, WorldLightmapGap>,
     pub stats: WorldMeshStats,
 
-    pub retail_vertices: RetailWorldVertexPayload,
+    pub packed_vertices: WorldVertexPayload,
 
     pub vertex_layer: Vec<u8>,
 
@@ -551,8 +551,8 @@ pub struct WorldLightRegionHull {
 }
 
 impl WorldPrimaryLight {
-    pub fn cull_input(&self) -> lighting_iw4::ComPrimaryLightCull {
-        lighting_iw4::ComPrimaryLightCull {
+    pub fn cull_input(&self) -> lighting_iw4::PrimaryLightCull {
+        lighting_iw4::PrimaryLightCull {
             light_type: self.light_type,
             origin: self.origin,
             direction: self.direction,
@@ -686,7 +686,7 @@ pub fn build_world_draw(
         return Err(WorldMeshError::NoGeometry);
     };
 
-    let mut retail_vertices = Vec::with_capacity(geometry.vertex_count);
+    let mut packed_vertices = Vec::with_capacity(geometry.vertex_count);
     let mut positions = Vec::with_capacity(geometry.vertex_count);
     let mut normals = Vec::with_capacity(geometry.vertex_count);
     let mut tangents = Vec::with_capacity(geometry.vertex_count);
@@ -698,11 +698,11 @@ pub fn build_world_draw(
 
     for i in 0..geometry.vertex_count {
         let v = vertices.at(i * sz::GFX_WORLD_VERTEX);
-        let mut retail = [0u8; sz::GFX_WORLD_VERTEX];
-        for (offset, byte) in retail.iter_mut().enumerate() {
+        let mut packed = [0u8; sz::GFX_WORLD_VERTEX];
+        for (offset, byte) in packed.iter_mut().enumerate() {
             *byte = s.u8_at(v, offset)?;
         }
-        retail_vertices.push(retail);
+        packed_vertices.push(packed);
         let xyz = [s.f32_at(v, 0)?, s.f32_at(v, 4)?, s.f32_at(v, 8)?];
         for axis in 0..3 {
             min[axis] = min[axis].min(xyz[axis]);
@@ -874,7 +874,7 @@ pub fn build_world_draw(
             batches,
             lightmap,
             stats,
-            retail_vertices: RetailWorldVertexPayload::Iw4(retail_vertices),
+            packed_vertices: WorldVertexPayload::Iw4(packed_vertices),
             vertex_layer: Vec::new(),
             surface_vertex_layer: Vec::new(),
             surface_first_vertex: surface_draw_fields

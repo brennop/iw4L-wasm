@@ -336,7 +336,7 @@ fn rpg_claim(t: &Trace) -> Claim {
     claim.check(
         t.projectiles > 0,
         format!(
-            "G_FireMissile events={} (chaos recipe gives RPG)",
+            "missile fire events={} (chaos recipe gives RPG)",
             t.projectiles
         ),
     );

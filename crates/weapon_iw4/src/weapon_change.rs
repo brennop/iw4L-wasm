@@ -1,8 +1,7 @@
-use crate::melee::pm_weapon_settle_ready;
-use crate::pm_weapon::{WeaponCmd, WeaponCombatFacts, WeaponHandState, WeaponTickEvent};
+use crate::melee::weapon_settle_ready;
+use crate::tick::{WeaponCmd, WeaponCombatFacts, WeaponHandState, WeaponTickEvent};
 use crate::weaponstate::WeaponState;
-
-pub const PMF_LADDER: u32 = 0x8;
+use playerstate_iw4::pm_flags;
 
 pub const PMF_CHANGE_BLOCK: u32 = 0xc00;
 
@@ -46,7 +45,7 @@ pub fn check_for_change_admits(weaponstate: i32, weapon_time: i32, weapon_delay:
 
 #[inline]
 pub fn traversal_forces_holster(cmd: &WeaponCmd) -> bool {
-    cmd.mantle_weapon_inactive || (cmd.pm_flags & PMF_LADDER) != 0
+    cmd.mantle_weapon_inactive || (cmd.pm_flags & pm_flags::LADDER) != 0
 }
 
 fn is_dropping(ws: i32) -> bool {
@@ -58,7 +57,7 @@ fn is_dropping(ws: i32) -> bool {
     )
 }
 
-pub fn pm_weapon_check_for_change(
+pub fn weapon_check_for_change(
     hand: &mut WeaponHandState,
     facts: &WeaponCombatFacts,
     cmd: &mut WeaponCmd,
@@ -69,15 +68,15 @@ pub fn pm_weapon_check_for_change(
 
     if traversal_forces_holster(cmd) {
         if hand.weapon != 0 {
-            return pm_begin_weapon_change(hand, facts, 0, true, cmd.pm_flags);
+            return begin_weapon_change(hand, facts, 0, true, cmd.pm_flags);
         }
         return None;
     }
 
     if is_dropping(hand.weaponstate) {
         if u32::from(cmd.cmd_weapon) == hand.weapon {
-            pm_weapon_settle_ready(hand, &mut cmd.weap_flags, &mut cmd.pm_flags, cmd.pm_type);
-            crate::weap_anim::pm_start_weapon_anim(&mut hand.weap_anim, 1);
+            weapon_settle_ready(hand, &mut cmd.weap_flags, &mut cmd.pm_flags, cmd.pm_type);
+            crate::weap_anim::start_weapon_anim(&mut hand.weap_anim, 1);
         }
         return None;
     }
@@ -91,14 +90,11 @@ pub fn pm_weapon_check_for_change(
         }
         if cmd_w == 0 || cmd.cmd_weapon_owned {
             let quick = cmd.mantle_quick_raise || cmd.cmd_weapon_pistol_quick;
-            let event = pm_begin_weapon_change(hand, facts, cmd_w, quick, cmd.pm_flags);
-            if cmd.alternate_switch
-                && event.is_some()
-                && cmd.pm_flags & crate::sprint::PMF_SPRINTING == 0
-            {
+            let event = begin_weapon_change(hand, facts, cmd_w, quick, cmd.pm_flags);
+            if cmd.alternate_switch && event.is_some() && cmd.pm_flags & pm_flags::SPRINTING == 0 {
                 hand.weaponstate = WeaponState::DroppingAltswitch as i32;
                 hand.weapon_time = facts.alternate_drop_time_ms;
-                crate::weap_anim::pm_start_weapon_anim(&mut hand.weap_anim, 0x11);
+                crate::weap_anim::start_weapon_anim(&mut hand.weap_anim, 0x11);
                 return Some(WeaponTickEvent::AlternateStarted);
             }
             return event;
@@ -109,7 +105,7 @@ pub fn pm_weapon_check_for_change(
     None
 }
 
-pub fn pm_begin_weapon_change(
+pub fn begin_weapon_change(
     hand: &mut WeaponHandState,
     facts: &WeaponCombatFacts,
     new_weapon: u32,
@@ -147,8 +143,8 @@ pub fn pm_begin_weapon_change(
         facts.drop_time_ms.max(1)
     };
 
-    if pm_flags & crate::sprint::PMF_SPRINTING == 0 {
-        crate::weap_anim::pm_start_weapon_anim(
+    if pm_flags & pm_flags::SPRINTING == 0 {
+        crate::weap_anim::start_weapon_anim(
             &mut hand.weap_anim,
             if quick {
                 crate::weap_anim::weap_anim_event::QUICK_DROP
@@ -179,7 +175,7 @@ pub fn finish_putaway_while_holstered(hand: &mut WeaponHandState) {
     hand.shot_count = 0;
     hand.burst_latch = false;
     hand.rechamber_pending = false;
-    crate::weap_anim::pm_start_weapon_anim(&mut hand.weap_anim, 0);
+    crate::weap_anim::start_weapon_anim(&mut hand.weap_anim, 0);
 }
 
 pub fn finish_putaway_to_cmd(hand: &mut WeaponHandState, cmd: &WeaponCmd) {
@@ -206,7 +202,7 @@ pub fn finish_putaway_to_cmd(hand: &mut WeaponHandState, cmd: &WeaponCmd) {
     } else {
         raise_time_for_cmd(cmd, quick)
     };
-    crate::weap_anim::pm_start_weapon_anim(
+    crate::weap_anim::start_weapon_anim(
         &mut hand.weap_anim,
         if alternate {
             0x12

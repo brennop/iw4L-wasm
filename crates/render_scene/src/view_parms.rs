@@ -284,14 +284,9 @@ pub fn prepare_scene_view(
         [right.x, right.y, right.z],
         [up.x, up.y, up.z],
     ];
-    let portal_bevels = hud_iw4::r_set_view_parms_matrices(
-        eye.to_array(),
-        axis,
-        tan_half_x,
-        tan_half_y,
-        dpvs_z_near,
-    )
-    .map(|(vp, inv)| dpvs_iw4::portal_bevels_from_d3d_row_major(&vp, &inv));
+    let portal_bevels =
+        hud_iw4::set_view_parms_matrices(eye.to_array(), axis, tan_half_x, tan_half_y, dpvs_z_near)
+            .map(|(vp, inv)| dpvs_iw4::portal_bevels_from_d3d_row_major(&vp, &inv));
     PreparedSceneView {
         ready: true,
         eye,
