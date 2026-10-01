@@ -1372,19 +1372,25 @@ impl AssetLinkSink for CommonWalkSink {
             if let Some(geometry) = stream.xmodel()
                 && let Some(name) = geometry.name.and_then(|p| stream.cstr(p).ok())
             {
-                let asset = asset_model::capture_xmodel_skel(
+                let skel = asset_model::capture_xmodel_skel(
                     stream,
                     &self.script_strings,
                     geometry,
                     Some(&self.materials),
                 )
-                .map(|skel| asset_world::MapXModelSceneAsset::Iw4(std::sync::Arc::new(skel)))
-                .unwrap_or(asset_world::MapXModelSceneAsset::Unavailable {
-                    reason: "common XModel skeleton capture failed",
-                });
-                if let asset_world::MapXModelSceneAsset::Iw4(skel) = &asset {
+                .map(std::sync::Arc::new);
+                // One decode for the scene catalog and the FX catalog: each is
+                // pruned only after the map walk, so separate copies of every
+                // common_mp XModel would both be live at the load's peak.
+                if let Some(skel) = &skel {
                     self.shared_surfaces.retain(stream, geometry, skel.clone());
+                    self.fx_models.capture_shared(skel.clone(), &self.materials);
                 }
+                let asset = skel.map(asset_world::MapXModelSceneAsset::Iw4).unwrap_or(
+                    asset_world::MapXModelSceneAsset::Unavailable {
+                        reason: "common XModel skeleton capture failed",
+                    },
+                );
                 self.scene_models
                     .insert(asset_world::MapXModelAssetKey(name.to_owned()), asset);
             }
@@ -1393,7 +1399,6 @@ impl AssetLinkSink for CommonWalkSink {
             self.projectile_meshes
                 .capture_unclassified(stream, &self.materials);
             self.models.capture(stream);
-            self.fx_models.capture(stream, &self.materials);
         }
         Ok(())
     }
