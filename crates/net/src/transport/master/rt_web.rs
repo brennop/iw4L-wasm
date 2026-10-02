@@ -32,10 +32,25 @@ const STEP: Duration = Duration::from_millis(100);
 /// stall of the page and is not counted.
 const STALL_SLACK: Duration = Duration::from_millis(100);
 
+/// Lateness at which `log_late` reports.
+const LATE_LOG: Duration = Duration::from_millis(50);
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_name = setTimeout)]
     fn set_timeout(handler: &js_sys::Function, ms: i32) -> JsValue;
+}
+
+/// O13: logs a timer that fired 50 ms or more late (behind `pred_log`).
+fn log_late(kind: &str, late: Duration) {
+    if late >= LATE_LOG && crate::client::pred_log::enabled() {
+        diag::info!(
+            Net,
+            "rt late: kind={kind} late_ms={} unix_ms={}",
+            late.as_millis(),
+            super::conn::hop_probe::unix_ms()
+        );
+    }
 }
 
 /// One `setTimeout` as a future. Dropping it leaves the timer to fire into a
@@ -54,6 +69,7 @@ pub(super) async fn sleep(duration: Duration) {
         let step = left.min(STEP);
         let started = Instant::now();
         let _ = delay(step).await;
+        log_late("sleep", started.elapsed().saturating_sub(step));
         left = left.saturating_sub(started.elapsed().min(step + STALL_SLACK));
     }
 }
@@ -127,6 +143,7 @@ impl Interval {
         loop {
             let now = Instant::now();
             if now >= self.next {
+                log_late("interval", now - self.next);
                 self.timer = None;
                 self.next = now + self.period;
                 return now;

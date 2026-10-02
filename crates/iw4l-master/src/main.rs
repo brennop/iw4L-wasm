@@ -25,6 +25,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Mutex, Semaphore};
 
 mod peer_conn;
+mod relay_probe;
 mod webtransport;
 use peer_conn::{PeerConnection, PeerRecv};
 use webtransport::WebTransportConfig;
@@ -646,6 +647,7 @@ async fn handle_connection(
     connection_id: u64,
     connection: PeerConnection,
 ) {
+    relay_probe::watch(connection_id, &connection);
     let outcome = run_connection(&state, connection_id, connection.clone()).await;
     let seat = state
         .lock()

@@ -11,6 +11,10 @@
 use std::fmt;
 use std::ops::Deref;
 
+// Declared here (not in `master.rs`) to keep that file untouched.
+#[path = "hop_probe.rs"]
+pub(super) mod hop_probe;
+
 #[derive(Debug)]
 pub(super) struct ConnError(String);
 
@@ -72,8 +76,41 @@ pub(super) struct QuicConn(quinn::Connection);
 #[cfg(not(target_arch = "wasm32"))]
 impl From<quinn::Connection> for QuicConn {
     fn from(connection: quinn::Connection) -> Self {
+        if crate::client::pred_log::enabled() {
+            watch_quic_stats(connection.clone());
+        }
         Self(connection)
     }
+}
+
+/// O13: logs the connection's QUIC stats every 5 s until it closes. A no-op
+/// outside a tokio runtime.
+#[cfg(not(target_arch = "wasm32"))]
+fn watch_quic_stats(connection: quinn::Connection) {
+    if tokio::runtime::Handle::try_current().is_err() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            if connection.close_reason().is_some() {
+                return;
+            }
+            let stats = connection.stats();
+            diag::info!(
+                Net,
+                "quic stats: conn={} kind=quic rtt_ms={} cwnd={} lost_packets={} congestion_events={} sent_datagrams={} recv_datagrams={}",
+                connection.stable_id(),
+                stats.path.rtt.as_millis(),
+                stats.path.cwnd,
+                stats.path.lost_packets,
+                stats.path.congestion_events,
+                stats.frame_tx.datagram,
+                stats.frame_rx.datagram
+            );
+        }
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -110,16 +147,20 @@ impl MasterConn for QuicConn {
     }
 
     fn send_datagram(&self, data: Vec<u8>) -> Result<(), ConnError> {
+        hop_probe::probe("H.send", &data, "");
         self.0
             .send_datagram(data.into())
             .map_err(ConnError::from_display)
     }
 
     async fn read_datagram(&self) -> Result<bytes::Bytes, ConnError> {
-        self.0
+        let datagram = self
+            .0
             .read_datagram()
             .await
-            .map_err(ConnError::from_display)
+            .map_err(ConnError::from_display)?;
+        hop_probe::probe("H.recv", &datagram, "");
+        Ok(datagram)
     }
 
     fn close(&self, code: u32, reason: &[u8]) {

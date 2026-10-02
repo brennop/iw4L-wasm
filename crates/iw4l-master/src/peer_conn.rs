@@ -14,6 +14,7 @@ use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::Result;
+use crate::relay_probe;
 
 /// How long `run_connection` waits for a WebTransport peer's first Hello.
 ///
@@ -66,14 +67,24 @@ impl PeerConnection {
         })
     }
 
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Quic(_) => "quic",
+            Self::WebTransport(_) => "wt",
+        }
+    }
+
     pub async fn read_datagram(&self) -> Result<Bytes> {
-        Ok(match self {
+        let datagram = match self {
             Self::Quic(c) => c.read_datagram().await?,
             Self::WebTransport(c) => c.receive_datagram().await?.payload(),
-        })
+        };
+        relay_probe::probe("M.recv", self.stable_id(), self.kind(), &datagram);
+        Ok(datagram)
     }
 
     pub fn send_datagram(&self, data: Bytes) -> Result<()> {
+        relay_probe::probe("M.send", self.stable_id(), self.kind(), &data);
         match self {
             Self::Quic(c) => c.send_datagram(data)?,
             Self::WebTransport(c) => c.send_datagram(data)?,

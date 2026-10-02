@@ -25,7 +25,7 @@ use web_sys::{
     ReadableStream, ReadableStreamDefaultReader, WritableStream, WritableStreamDefaultWriter,
 };
 
-use super::conn::{ConnError, MasterConn, MasterRecvStream, MasterSendStream};
+use super::conn::{ConnError, MasterConn, MasterRecvStream, MasterSendStream, hop_probe};
 use super::{MasterTarget, Result, rt, web_config};
 
 const CONNECT_DEADLINE: Duration = Duration::from_secs(8);
@@ -278,7 +278,67 @@ pub(super) async fn connect(
         inner.datagrams.max_datagram_size(),
         started.elapsed().as_millis()
     );
+    if crate::client::pred_log::enabled() {
+        log_datagram_queues(&inner.datagrams);
+        start_stats_loop(&inner.transport, Rc::clone(&inner.close_reason));
+    }
     Ok(((), WebConn(Rc::new(inner))))
+}
+
+/// O13: the datagram queue settings, once at connect.
+fn log_datagram_queues(datagrams: &JsDatagrams) {
+    let value = |key: &str| format!("{:?}", get(datagrams, key));
+    diag::info!(
+        Net,
+        "wt datagram queues: incomingHighWaterMark={} incomingMaxAge={} outgoingHighWaterMark={} outgoingMaxAge={}",
+        value("incomingHighWaterMark"),
+        value("incomingMaxAge"),
+        value("outgoingHighWaterMark"),
+        value("outgoingMaxAge")
+    );
+}
+
+/// Appends every numeric field of `value` to `out` as `path=number`, nested
+/// objects as `outer.inner`.
+fn flatten_numbers(value: &JsValue, path: &str, out: &mut Vec<String>) {
+    if let Some(number) = value.as_f64() {
+        out.push(format!("{path}={number}"));
+    } else if value.is_object() {
+        for key in Object::keys(value.unchecked_ref::<Object>()).iter() {
+            let Some(key) = key.as_string() else { continue };
+            let child = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            flatten_numbers(&get(value, &key), &child, out);
+        }
+    }
+}
+
+/// O13: `WebTransport.getStats()` every 5 s until the session closes.
+fn start_stats_loop(transport: &JsWebTransport, close_reason: Rc<RefCell<Option<String>>>) {
+    let transport: &JsValue = transport;
+    let transport = transport.clone();
+    let get_stats = get(&transport, "getStats");
+    let Some(get_stats) = get_stats.dyn_ref::<js_sys::Function>().cloned() else {
+        diag::info!(Net, "wt stats: WebTransport.getStats is not available");
+        return;
+    };
+    spawn_local(async move {
+        while close_reason.borrow().is_none() {
+            rt::sleep(Duration::from_secs(5)).await;
+            let Ok(promise) = get_stats.call0(&transport) else {
+                return;
+            };
+            let Ok(stats) = JsFuture::from(js_sys::Promise::from(promise)).await else {
+                continue;
+            };
+            let mut fields = Vec::new();
+            flatten_numbers(&stats, "", &mut fields);
+            diag::info!(Net, "wt stats: {}", fields.join(" "));
+        }
+    });
 }
 
 impl MasterConn for WebConn {
@@ -333,14 +393,36 @@ impl MasterConn for WebConn {
             }
             return Ok(());
         }
+        let hash = hop_probe::probe("B.send", &data, "");
+        let desired = hash.and_then(|_| self.0.datagram_writer.desired_size().ok().flatten());
         let chunk = Uint8Array::from(&data[..]);
-        forget(self.0.datagram_writer.write_with_chunk(&chunk));
+        let promise = self.0.datagram_writer.write_with_chunk(&chunk);
+        match hash {
+            Some(hash) => {
+                let len = data.len();
+                spawn_local(async move {
+                    let started = web_time::Instant::now();
+                    let _ = JsFuture::from(promise).await;
+                    diag::info!(
+                        Net,
+                        "hop probe: hop=B.write dir=up hash={hash:016x} len={len} unix_ms={} write_ms={} desired_size={desired:?}",
+                        hop_probe::unix_ms(),
+                        started.elapsed().as_millis()
+                    );
+                });
+            }
+            None => forget(promise),
+        }
         Ok(())
     }
 
     async fn read_datagram(&self) -> std::result::Result<Vec<u8>, ConnError> {
         match self.0.datagram_read.read(&self.0.datagram_reader).await? {
-            Some(value) => Ok(value.unchecked_into::<Uint8Array>().to_vec()),
+            Some(value) => {
+                let datagram = value.unchecked_into::<Uint8Array>().to_vec();
+                hop_probe::probe("B.recv", &datagram, "");
+                Ok(datagram)
+            }
             None => Err(ConnError::from_display("connection closed")),
         }
     }
