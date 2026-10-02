@@ -8,11 +8,20 @@
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::Result;
+
+/// How long `run_connection` waits for a WebTransport peer's first Hello.
+///
+/// A browser joiner starts the WebTransport handshake, then the page runs a
+/// blocking load frame of about 10 s during which JS cannot open the bidi
+/// stream or write the Hello. Temporary until O5 stops loading the map
+/// before joining.
+pub const WEBTRANSPORT_HELLO_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub enum PeerConnection {
@@ -21,6 +30,15 @@ pub enum PeerConnection {
 }
 
 impl PeerConnection {
+    /// Per-transport Hello deadline: native QUIC peers keep `HELLO_DEADLINE`
+    /// (8 s); WebTransport peers get longer (browser main-thread load stall).
+    pub fn hello_deadline(&self) -> Duration {
+        match self {
+            Self::Quic(_) => crate::HELLO_DEADLINE,
+            Self::WebTransport(_) => WEBTRANSPORT_HELLO_DEADLINE,
+        }
+    }
+
     pub async fn accept_bi(&self) -> Result<(PeerSend, PeerRecv)> {
         Ok(match self {
             Self::Quic(c) => {

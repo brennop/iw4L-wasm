@@ -675,11 +675,12 @@ async fn run_connection(
     connection_id: u64,
     connection: PeerConnection,
 ) -> Result<()> {
-    let (mut send, recv) = tokio::time::timeout(HELLO_DEADLINE, connection.accept_bi())
-        .await
-        .map_err(|_| "hello deadline (accept_bi)")??;
+    let (mut send, recv) =
+        tokio::time::timeout(connection.hello_deadline(), connection.accept_bi())
+            .await
+            .map_err(|_| "hello deadline (accept_bi)")??;
     send.set_priority(CONTROL_PRIORITY)?;
-    let (recv, hello) = tokio::time::timeout(HELLO_DEADLINE, read_owned_frame(recv))
+    let (recv, hello) = tokio::time::timeout(connection.hello_deadline(), read_owned_frame(recv))
         .await
         .map_err(|_| "hello deadline (first frame)")?;
     let hello = hello?;
