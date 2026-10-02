@@ -24,6 +24,11 @@ fn param(query: &web_sys::UrlSearchParams, name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// O14: any URL parameter by name (diagnostic switches such as `up_drop`).
+pub(super) fn query_param(name: &str) -> Option<String> {
+    query().and_then(|query| param(&query, name))
+}
+
 /// The WebTransport URL for a `master` parameter.
 fn webtransport_url(master: &str) -> String {
     if master.starts_with("https://") {

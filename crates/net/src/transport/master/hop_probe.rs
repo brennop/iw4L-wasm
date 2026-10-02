@@ -151,9 +151,76 @@ pub(crate) fn probe(hop: &'static str, datagram: &[u8], extra: &str) -> Option<u
     Some(hash)
 }
 
+/// O14: whether an upstream relay datagram may be dropped when Chrome's
+/// datagram queue is backed up. True only for a single-fragment `ClientToHost`
+/// carrying `ClientPacket::Commands` (tag 2) or `SnapshotAck` (tag 3). Both are
+/// resent by the client (unacked commands every send, the ack on every send),
+/// and nothing else (actions, handshake, bootstrap) rides upstream datagrams.
+/// The fragment header is `RF`, version, 0, index u16, count u16, id u32,
+/// total_len u32 (`fragment.rs`).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn upstream_droppable(datagram: &[u8]) -> bool {
+    let Ok(RelayDatagram::ClientToHost(fragment)) = decode_relay(datagram) else {
+        return false;
+    };
+    fragment.len() > 16
+        && fragment[..2] == *b"RF"
+        && fragment[4..6] == [0, 0]
+        && fragment[6..8] == [1, 0]
+        && matches!(fragment[16], 2 | 3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn relay_of(packet: &crate::transport::protocol::ClientPacket) -> Vec<Vec<u8>> {
+        use crate::transport::fragment::Fragmenter;
+        let mut fragmenter = Fragmenter::new(master_protocol::MAX_OPAQUE_PAYLOAD, 256 * 1024);
+        fragmenter
+            .split(&packet.to_bytes())
+            .unwrap()
+            .iter()
+            .map(|f| master_protocol::encode_relay(RelayDatagram::ClientToHost(f)).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn droppable_classification() {
+        use crate::transport::protocol::{ClientPacket, ConnectionId, PacketHeader};
+        let header = PacketHeader {
+            connection: ConnectionId(7),
+            sequence: 1,
+            ack: 0,
+            epoch: 0,
+        };
+        let ack = relay_of(&ClientPacket::SnapshotAck {
+            header,
+            snapshot_seq: 5,
+        });
+        assert_eq!(ack.len(), 1);
+        assert!(upstream_droppable(&ack[0]));
+        let cmds = relay_of(&ClientPacket::Commands {
+            header,
+            claimed_client: 1,
+            cmds: Vec::new(),
+            samples: Vec::new(),
+            actions: Vec::new(),
+            reliable_ack: 0,
+        });
+        assert!(upstream_droppable(&cmds[0]));
+        // Not ClientToHost, not a fragment, or a multi-fragment message.
+        let down =
+            master_protocol::encode_relay(RelayDatagram::ServiceToMember(&ack[0][2..])).unwrap();
+        assert!(!upstream_droppable(&down));
+        assert!(!upstream_droppable(&[1, 1, 0, 0, 0]));
+        let mut multi = ack[0].clone();
+        multi[2 + 6] = 2;
+        assert!(!upstream_droppable(&multi));
+        let mut other_tag = ack[0].clone();
+        other_tag[2 + 16] = 1;
+        assert!(!upstream_droppable(&other_tag));
+    }
 
     #[test]
     fn fnv1a64_vector() {

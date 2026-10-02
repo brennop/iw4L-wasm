@@ -134,6 +134,13 @@ struct Inner {
     uni_read: PendingRead,
     close_reason: Rc<RefCell<Option<String>>>,
     oversize_drops: Cell<u64>,
+    up_drop: &'static str,
+    drop_bp: bool,
+    bp_thresh: f64,
+    bp_dropped: Cell<u64>,
+    written: Cell<u64>,
+    min_desired: Cell<f64>,
+    counters_at: Cell<web_time::Instant>,
 }
 
 #[derive(Clone)]
@@ -203,6 +210,11 @@ pub(super) async fn connect(
         set(&entry, "value", &Uint8Array::from(&hash[..]));
         set(&options, "serverCertificateHashes", &Array::of1(&entry));
     }
+    // O14: `?wt_cc=low-latency|throughput|default` as `congestionControl`.
+    let cc_requested = web_config::query_param("wt_cc");
+    if let Some(cc) = &cc_requested {
+        set(&options, "congestionControl", &JsValue::from_str(cc));
+    }
     diag::info!(
         Net,
         "master webtransport handshake begin url={} trust={}",
@@ -256,6 +268,23 @@ pub(super) async fn connect(
     }
 
     let datagrams = transport.datagrams();
+    let (up_drop, drop_bp, max_age) = up_drop_mode();
+    if let Some(ms) = max_age {
+        set(&datagrams, "outgoingMaxAge", &JsValue::from_f64(ms));
+        diag::info!(
+            Net,
+            "wt up_drop={up_drop}: outgoingMaxAge set to {ms}, read back {:?}",
+            get(&datagrams, "outgoingMaxAge")
+        );
+    }
+    if cc_requested.is_some() {
+        diag::info!(
+            Net,
+            "wt_cc requested={:?} congestionControl read back {:?}",
+            cc_requested,
+            get(&transport, "congestionControl")
+        );
+    }
     let datagram_writer = datagrams
         .writable()
         .get_writer()
@@ -270,7 +299,21 @@ pub(super) async fn connect(
         transport,
         close_reason,
         oversize_drops: Cell::new(0),
+        up_drop,
+        drop_bp,
+        bp_thresh: web_config::query_param("up_bp_thresh")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-1.0),
+        bp_dropped: Cell::new(0),
+        written: Cell::new(0),
+        min_desired: Cell::new(f64::MAX),
+        counters_at: Cell::new(web_time::Instant::now()),
     };
+    diag::info!(
+        Net,
+        "wt up_drop mode={up_drop} max_age={max_age:?} bp_thresh={}",
+        inner.bp_thresh
+    );
     diag::info!(
         Net,
         "master webtransport ready url={} max_datagram_size={} elapsed_ms={}",
@@ -341,6 +384,50 @@ fn start_stats_loop(transport: &JsWebTransport, close_reason: Rc<RefCell<Option<
     });
 }
 
+impl WebConn {
+    /// O14: upstream datagram counters under `pred_log`, every 5 s and at close.
+    fn log_up_counters(&self, closing: bool) {
+        if !crate::client::pred_log::enabled() {
+            return;
+        }
+        let inner = &self.0;
+        if !closing && inner.counters_at.get().elapsed() < Duration::from_secs(5) {
+            return;
+        }
+        inner.counters_at.set(web_time::Instant::now());
+        diag::info!(
+            Net,
+            "wt up counters: mode={} bp_dropped={} written={} min_desired_size={} closing={closing}",
+            inner.up_drop,
+            inner.bp_dropped.get(),
+            inner.written.get(),
+            inner.min_desired.get()
+        );
+    }
+}
+
+/// O14 `?up_drop=` mode: whether the page drops on backpressure and the
+/// `outgoingMaxAge` to set, if any.
+fn up_drop_mode() -> (&'static str, bool, Option<f64>) {
+    let mode = web_config::query_param("up_drop").unwrap_or_default();
+    let (name, bp, age) = match mode.as_str() {
+        "" | "off" => ("off", false, false),
+        "bp" => ("bp", true, false),
+        "age" => ("age", false, true),
+        "both" => ("both", true, true),
+        other => {
+            diag::warn!(Net, "up_drop={other} is not off|bp|age|both; using off");
+            ("off", false, false)
+        }
+    };
+    let max_age = age.then(|| {
+        web_config::query_param("up_max_age")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(100.0)
+    });
+    (name, bp, max_age)
+}
+
 impl MasterConn for WebConn {
     type SendStream = WebSend;
     type RecvStream = WebRecv;
@@ -393,8 +480,36 @@ impl MasterConn for WebConn {
             }
             return Ok(());
         }
+        // O14: with `?up_drop=bp|both`, a stale upstream datagram is skipped
+        // while Chrome's datagram queue holds a backlog (`desiredSize <=
+        // bp_thresh`, default -1). A threshold of 0 (the queue merely busy)
+        // drops every commands packet that follows the snapshot ack of the
+        // same tick, since the high water mark is 1, and the host never acks.
+        let pred = crate::client::pred_log::enabled();
+        let drop_bp = self.0.drop_bp;
+        let desired_now = if drop_bp || pred {
+            self.0.datagram_writer.desired_size().ok().flatten()
+        } else {
+            None
+        };
+        if let Some(d) = desired_now
+            && d < self.0.min_desired.get()
+        {
+            self.0.min_desired.set(d);
+        }
+        if drop_bp
+            && desired_now.is_some_and(|d| d <= self.0.bp_thresh)
+            && hop_probe::upstream_droppable(&data)
+        {
+            self.0.bp_dropped.set(self.0.bp_dropped.get() + 1);
+            hop_probe::probe("B.drop", &data, "");
+            self.log_up_counters(false);
+            return Ok(());
+        }
+        self.0.written.set(self.0.written.get() + 1);
+        self.log_up_counters(false);
         let hash = hop_probe::probe("B.send", &data, "");
-        let desired = hash.and_then(|_| self.0.datagram_writer.desired_size().ok().flatten());
+        let desired = hash.and_then(|_| desired_now);
         let chunk = Uint8Array::from(&data[..]);
         let promise = self.0.datagram_writer.write_with_chunk(&chunk);
         match hash {
@@ -428,6 +543,7 @@ impl MasterConn for WebConn {
     }
 
     fn close(&self, code: u32, reason: &[u8]) {
+        self.log_up_counters(true);
         let reason = String::from_utf8_lossy(reason).into_owned();
         let info = Object::new();
         set(&info, "closeCode", &JsValue::from_f64(f64::from(code)));
