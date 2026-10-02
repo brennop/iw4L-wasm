@@ -226,11 +226,19 @@ impl ClientCommandInbox {
         self.last_acked_seq.get(&id).copied().map(CmdSeq)
     }
 
+    /// Read-only view of a client's queued rows as (seq, server_time); diagnostics only.
+    pub fn peek_queue(&self, id: ClientId) -> impl Iterator<Item = (Option<CmdSeq>, i32)> + '_ {
+        self.queued
+            .get(&id)
+            .into_iter()
+            .flat_map(|queue| queue.iter().map(|(seq, cmd, _)| (*seq, cmd.server_time)))
+    }
+
     pub fn last_consumed(&self, id: ClientId) -> Option<UserCmd> {
         self.last_consumed.get(&id).copied()
     }
 
-    fn known_clients(&self) -> Vec<ClientId> {
+    pub fn known_clients(&self) -> Vec<ClientId> {
         let mut ids: Vec<ClientId> = self
             .queued
             .keys()

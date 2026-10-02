@@ -2,8 +2,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::prelude::*;
 
+use crate::ServerTime;
+use crate::authority::ack_log::percentile;
 use crate::client::predict::PredictionMetrics;
-use crate::client::runtime::ClientPredictionState;
+use crate::client::runtime::{ClientPredictionState, LastAdoptedSnapshot, PendingClientSends};
 use crate::schedule::ClientSet;
 
 const WINDOW_SECS: f64 = 5.0;
@@ -14,7 +16,7 @@ pub fn enable() {
     ENABLED.store(true, Ordering::Relaxed);
 }
 
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
@@ -36,16 +38,60 @@ struct Window {
     start: Option<f64>,
     frames: u64,
     prev: PredictionMetrics,
+    lead_ms: Vec<i32>,
+    ack_age: Vec<i32>,
+    newest_seq: Option<u32>,
+    adopted_tick: Option<u32>,
+}
+
+fn unix_ms() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn log_prediction_window(
     time: Res<Time<Real>>,
     prediction: Res<ClientPredictionState>,
+    adopted: Option<Res<LastAdoptedSnapshot>>,
+    sends: Option<Res<PendingClientSends>>,
     mut window: Local<Window>,
 ) {
     let now = time.elapsed_secs_f64();
     let start = *window.start.get_or_insert(now);
     window.frames += 1;
+    let adopted_tick = adopted.as_deref().and_then(|a| a.next()).map(|s| s.tick.0);
+    if let (Some(cmd), Some(tick)) = (prediction.0.last_cmd(), adopted_tick) {
+        window
+            .lead_ms
+            .push(cmd.server_time - ServerTime::from_tick(sim::Tick(tick)).ms());
+    }
+    window.ack_age.push(prediction.0.history().len() as i32);
+    if let Some(cur) = sends.as_deref().and_then(|s| s.newest_seq()).map(|s| s.0) {
+        let prev = window.newest_seq.unwrap_or(cur);
+        if prev < cur && prev / 60 < cur / 60 {
+            diag::info!(
+                Net,
+                "cmd probe client: seq={} unix_ms={}",
+                cur / 60 * 60,
+                unix_ms()
+            );
+        }
+        window.newest_seq = Some(cur);
+    }
+    if let Some(cur) = adopted_tick {
+        let prev = window.adopted_tick.unwrap_or(cur);
+        if prev < cur && prev / 20 < cur / 20 {
+            diag::info!(
+                Net,
+                "snap probe client: tick={} adopted_tick={cur} unix_ms={}",
+                cur / 20 * 20,
+                unix_ms()
+            );
+        }
+        window.adopted_tick = Some(cur);
+    }
     let secs = now - start;
     if secs < WINDOW_SECS {
         return;
@@ -58,13 +104,21 @@ fn log_prediction_window(
         &metrics,
         prediction.0.history().len(),
     ) {
-        diag::info!(Net, "{line}");
+        let max = |v: &[i32]| v.iter().copied().max().unwrap_or(0);
+        diag::info!(
+            Net,
+            "{line} cmd_lead_ms_p50={} cmd_lead_ms_max={} ack_age_p50={} ack_age_max={}",
+            percentile(&window.lead_ms, 0.5),
+            max(&window.lead_ms),
+            percentile(&window.ack_age, 0.5),
+            max(&window.ack_age)
+        );
     }
-    *window = Window {
-        start: Some(now),
-        frames: 0,
-        prev: metrics,
-    };
+    window.start = Some(now);
+    window.frames = 0;
+    window.prev = metrics;
+    window.lead_ms.clear();
+    window.ack_age.clear();
 }
 
 pub fn window_line(

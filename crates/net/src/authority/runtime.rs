@@ -1187,6 +1187,7 @@ pub fn register_listen_runtime(app: &mut App) {
         );
         crate::client::presentation::entities::register_authority_entities(app);
     }
+    crate::authority::ack_log::register(app);
     app.init_resource::<AuthorityPhaseCensus>().add_systems(
         RunFixedMainLoop,
         (publish_fixed_census, publish_authority_phase_census)
