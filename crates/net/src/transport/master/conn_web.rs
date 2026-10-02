@@ -26,7 +26,8 @@ use web_sys::{
 };
 
 use super::conn::{ConnError, MasterConn, MasterRecvStream, MasterSendStream, hop_probe};
-use super::{MasterTarget, Result, rt, web_config};
+use super::conn_ws::{WsConn, WsRecv, WsSend};
+use super::{MasterTarget, Result, conn_ws, rt, web_config};
 
 const CONNECT_DEADLINE: Duration = Duration::from_secs(8);
 
@@ -58,7 +59,7 @@ extern "C" {
     fn max_datagram_size(this: &JsDatagrams) -> f64;
 }
 
-fn js_error(value: &JsValue) -> String {
+pub(super) fn js_error(value: &JsValue) -> String {
     if let Some(error) = value.dyn_ref::<js_sys::Error>() {
         return format!(
             "{}: {}",
@@ -69,7 +70,7 @@ fn js_error(value: &JsValue) -> String {
     value.as_string().unwrap_or_else(|| format!("{value:?}"))
 }
 
-fn conn_error(value: JsValue) -> ConnError {
+pub(super) fn conn_error(value: JsValue) -> ConnError {
     ConnError::from_display(js_error(&value))
 }
 
@@ -144,14 +145,14 @@ struct Inner {
 }
 
 #[derive(Clone)]
-pub(super) struct WebConn(Rc<Inner>);
+pub(super) struct WtConn(Rc<Inner>);
 
-pub(super) struct WebSend {
+pub(super) struct WtSend {
     stream: JsValue,
     writer: WritableStreamDefaultWriter,
 }
 
-pub(super) struct WebRecv {
+pub(super) struct WtRecv {
     reader: ReadableStreamDefaultReader,
     read: PendingRead,
     chunk: Vec<u8>,
@@ -159,7 +160,7 @@ pub(super) struct WebRecv {
     done: bool,
 }
 
-impl WebRecv {
+impl WtRecv {
     fn new(stream: &ReadableStream) -> Self {
         Self {
             reader: default_reader(stream),
@@ -191,10 +192,7 @@ impl WebRecv {
 /// Opens the WebTransport session. The certificate hash comes from the page
 /// URL for now (`web_config.rs`, O5 moves it into `MasterTarget`). The first
 /// value stands in for native's `quinn::Endpoint`.
-pub(super) async fn connect(
-    target: &MasterTarget,
-    cancel: &CancellationToken,
-) -> Result<((), WebConn)> {
+async fn connect_wt(target: &MasterTarget, cancel: &CancellationToken) -> Result<((), WtConn)> {
     if let Some(path) = &target.ca_cert {
         diag::warn!(
             Net,
@@ -325,7 +323,7 @@ pub(super) async fn connect(
         log_datagram_queues(&inner.datagrams);
         start_stats_loop(&inner.transport, Rc::clone(&inner.close_reason));
     }
-    Ok(((), WebConn(Rc::new(inner))))
+    Ok(((), WtConn(Rc::new(inner))))
 }
 
 /// O13: the datagram queue settings, once at connect.
@@ -384,7 +382,7 @@ fn start_stats_loop(transport: &JsWebTransport, close_reason: Rc<RefCell<Option<
     });
 }
 
-impl WebConn {
+impl WtConn {
     /// O14: upstream datagram counters under `pred_log`, every 5 s and at close.
     fn log_up_counters(&self, closing: bool) {
         if !crate::client::pred_log::enabled() {
@@ -428,12 +426,12 @@ fn up_drop_mode() -> (&'static str, bool, Option<f64>) {
     (name, bp, max_age)
 }
 
-impl MasterConn for WebConn {
-    type SendStream = WebSend;
-    type RecvStream = WebRecv;
+impl MasterConn for WtConn {
+    type SendStream = WtSend;
+    type RecvStream = WtRecv;
     type Datagram = Vec<u8>;
 
-    async fn open_bi(&self) -> std::result::Result<(WebSend, WebRecv), ConnError> {
+    async fn open_bi(&self) -> std::result::Result<(WtSend, WtRecv), ConnError> {
         let stream = JsFuture::from(self.0.transport.create_bidirectional_stream())
             .await
             .map_err(conn_error)?;
@@ -441,23 +439,23 @@ impl MasterConn for WebConn {
         let writable: WritableStream = get(&stream, "writable").unchecked_into();
         let writer = writable.get_writer().map_err(conn_error)?;
         Ok((
-            WebSend {
+            WtSend {
                 stream: writable.into(),
                 writer,
             },
-            WebRecv::new(&readable),
+            WtRecv::new(&readable),
         ))
     }
 
-    async fn open_uni(&self) -> std::result::Result<WebSend, ConnError> {
+    async fn open_uni(&self) -> std::result::Result<WtSend, ConnError> {
         Err(ConnError::from_display(
             "the browser build joins only: hosting (bootstrap uni streams) is not supported",
         ))
     }
 
-    async fn accept_uni(&self) -> std::result::Result<WebRecv, ConnError> {
+    async fn accept_uni(&self) -> std::result::Result<WtRecv, ConnError> {
         match self.0.uni_read.read(&self.0.uni_reader).await? {
-            Some(stream) => Ok(WebRecv::new(&stream.unchecked_into())),
+            Some(stream) => Ok(WtRecv::new(&stream.unchecked_into())),
             None => Err(ConnError::from_display("connection closed")),
         }
     }
@@ -560,7 +558,7 @@ impl MasterConn for WebConn {
     }
 }
 
-impl MasterSendStream for WebSend {
+impl MasterSendStream for WtSend {
     fn set_priority(&self, priority: i32) -> std::result::Result<(), ConnError> {
         // WebTransport `sendOrder`: higher is sent first, as with quinn.
         set(
@@ -585,7 +583,7 @@ impl MasterSendStream for WebSend {
     }
 }
 
-impl MasterRecvStream for WebRecv {
+impl MasterRecvStream for WtRecv {
     async fn read_exact(&mut self, buf: &mut [u8]) -> std::result::Result<(), ConnError> {
         let mut filled = 0;
         while filled < buf.len() {
@@ -616,5 +614,140 @@ impl MasterRecvStream for WebRecv {
             }
         }
         Ok(out)
+    }
+}
+
+/// O16: the connection behind `conn::Conn` in the browser. WebTransport is the
+/// default; `?transport=ws` selects the WebSocket backend (`conn_ws.rs`).
+#[derive(Clone)]
+pub(super) enum WebConn {
+    Wt(WtConn),
+    Ws(WsConn),
+}
+
+pub(super) enum WebSend {
+    Wt(WtSend),
+    Ws(WsSend),
+}
+
+pub(super) enum WebRecv {
+    Wt(WtRecv),
+    Ws(WsRecv),
+}
+
+/// Opens the session on the transport the page URL names. The first value
+/// stands in for native's `quinn::Endpoint`.
+pub(super) async fn connect(
+    target: &MasterTarget,
+    cancel: &CancellationToken,
+) -> Result<((), WebConn)> {
+    if web_config::transport_is_ws() {
+        diag::info!(Net, "master transport=ws");
+        let (endpoint, conn) = conn_ws::connect(target, cancel).await?;
+        Ok((endpoint, WebConn::Ws(conn)))
+    } else {
+        diag::info!(Net, "master transport=wt");
+        let (endpoint, conn) = connect_wt(target, cancel).await?;
+        Ok((endpoint, WebConn::Wt(conn)))
+    }
+}
+
+impl MasterConn for WebConn {
+    type SendStream = WebSend;
+    type RecvStream = WebRecv;
+    type Datagram = Vec<u8>;
+
+    async fn open_bi(&self) -> std::result::Result<(WebSend, WebRecv), ConnError> {
+        match self {
+            Self::Wt(c) => c
+                .open_bi()
+                .await
+                .map(|(s, r)| (WebSend::Wt(s), WebRecv::Wt(r))),
+            Self::Ws(c) => c
+                .open_bi()
+                .await
+                .map(|(s, r)| (WebSend::Ws(s), WebRecv::Ws(r))),
+        }
+    }
+
+    async fn open_uni(&self) -> std::result::Result<WebSend, ConnError> {
+        match self {
+            Self::Wt(c) => c.open_uni().await.map(WebSend::Wt),
+            Self::Ws(c) => c.open_uni().await.map(WebSend::Ws),
+        }
+    }
+
+    async fn accept_uni(&self) -> std::result::Result<WebRecv, ConnError> {
+        match self {
+            Self::Wt(c) => c.accept_uni().await.map(WebRecv::Wt),
+            Self::Ws(c) => c.accept_uni().await.map(WebRecv::Ws),
+        }
+    }
+
+    fn send_datagram(&self, data: Vec<u8>) -> std::result::Result<(), ConnError> {
+        match self {
+            Self::Wt(c) => c.send_datagram(data),
+            Self::Ws(c) => c.send_datagram(data),
+        }
+    }
+
+    async fn read_datagram(&self) -> std::result::Result<Vec<u8>, ConnError> {
+        match self {
+            Self::Wt(c) => c.read_datagram().await,
+            Self::Ws(c) => c.read_datagram().await,
+        }
+    }
+
+    fn close(&self, code: u32, reason: &[u8]) {
+        match self {
+            Self::Wt(c) => c.close(code, reason),
+            Self::Ws(c) => c.close(code, reason),
+        }
+    }
+
+    fn close_reason(&self) -> Option<String> {
+        match self {
+            Self::Wt(c) => c.close_reason(),
+            Self::Ws(c) => c.close_reason(),
+        }
+    }
+}
+
+impl MasterSendStream for WebSend {
+    fn set_priority(&self, priority: i32) -> std::result::Result<(), ConnError> {
+        match self {
+            Self::Wt(s) => s.set_priority(priority),
+            Self::Ws(s) => s.set_priority(priority),
+        }
+    }
+
+    async fn write_all(&mut self, bytes: &[u8]) -> std::result::Result<(), ConnError> {
+        match self {
+            Self::Wt(s) => s.write_all(bytes).await,
+            Self::Ws(s) => s.write_all(bytes).await,
+        }
+    }
+
+    fn finish(&mut self) -> std::result::Result<(), ConnError> {
+        match self {
+            Self::Wt(s) => s.finish(),
+            Self::Ws(s) => s.finish(),
+        }
+    }
+}
+
+impl MasterRecvStream for WebRecv {
+    async fn read_exact(&mut self, buf: &mut [u8]) -> std::result::Result<(), ConnError> {
+        match self {
+            Self::Wt(s) => s.read_exact(buf).await,
+            Self::Ws(s) => s.read_exact(buf).await,
+        }
+    }
+
+    async fn read_to_end(&mut self, limit: usize) -> std::result::Result<Vec<u8>, ConnError> {
+        match self {
+            Self::Wt(s) => s.read_to_end(limit).await,
+            Self::Ws(s) => s.read_to_end(limit).await,
+        }
     }
 }

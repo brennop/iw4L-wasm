@@ -29,6 +29,19 @@ pub(super) fn query_param(name: &str) -> Option<String> {
     query().and_then(|query| param(&query, name))
 }
 
+/// O16: `?transport=ws` selects the WebSocket backend (with `?master_ws=`,
+/// `?ws_buf_max=`); the default `wt` keeps WebTransport.
+pub(super) fn transport_is_ws() -> bool {
+    match query_param("transport").as_deref() {
+        None | Some("wt") => false,
+        Some("ws") => true,
+        Some(other) => {
+            diag::warn!(Net, "transport={other} is not wt|ws; using wt");
+            false
+        }
+    }
+}
+
 /// The WebTransport URL for a `master` parameter.
 fn webtransport_url(master: &str) -> String {
     if master.starts_with("https://") {
@@ -44,7 +57,10 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
     let Some(query) = query() else {
         return Ok(None);
     };
-    let (Some(master), Some(join)) = (param(&query, "master"), param(&query, "join")) else {
+    // O16: a `?transport=ws` page may give only `master_ws` (the WebTransport
+    // URL below is then unused).
+    let master = param(&query, "master").or_else(|| param(&query, "master_ws"));
+    let (Some(master), Some(join)) = (master, param(&query, "join")) else {
         return Ok(None);
     };
     if cert_hash()?.is_none() {

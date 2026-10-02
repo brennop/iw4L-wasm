@@ -21,6 +21,8 @@ use crate::transport::udp_session::RelayMailbox;
 mod conn;
 #[cfg(all(online, target_arch = "wasm32"))]
 mod conn_web;
+#[cfg(all(online, target_arch = "wasm32"))]
+mod conn_ws;
 #[cfg(online)]
 mod online;
 #[cfg(online)]

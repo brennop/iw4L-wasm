@@ -50,10 +50,15 @@ tokio = { version = "1.47", default-features = false, features = ["macros", "syn
 wasm-bindgen = { version = "=0.2.129", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
+    "BinaryType",
+    "CloseEvent",
+    "Event",
     "Location",
+    "MessageEvent",
     "ReadableStream",
     "ReadableStreamDefaultReader",
     "UrlSearchParams",
+    "WebSocket",
     "Window",
     "WritableStream",
     "WritableStreamDefaultWriter",
