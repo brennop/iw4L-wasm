@@ -1,5 +1,6 @@
 //! One peer connection, whichever transport carried it: raw QUIC (native
-//! clients, ALPN `iw4l-master/10`) or WebTransport over HTTP/3 (browsers).
+//! clients, ALPN `iw4l-master/10`), WebTransport over HTTP/3 (browsers), or a
+//! plain WebSocket (browsers with `?transport=ws`, O16).
 //!
 //! Method names follow `quinn` so the call sites in `main.rs` keep their shape;
 //! only the types differ. Streams implement tokio's `AsyncRead`/`AsyncWrite`,
@@ -15,28 +16,31 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::Result;
 use crate::relay_probe;
+use crate::ws_peer::{WsPeer, WsRecv, WsSend};
 
-/// How long `run_connection` waits for a WebTransport peer's first Hello.
+/// How long `run_connection` waits for a WebTransport or WebSocket peer's
+/// first Hello.
 ///
-/// A browser joiner starts the WebTransport handshake, then the page runs a
-/// blocking load frame of about 10 s during which JS cannot open the bidi
-/// stream or write the Hello. Temporary until O5 stops loading the map
-/// before joining.
+/// A browser joiner starts the handshake, then the page runs a blocking load
+/// frame of about 10 s during which JS cannot open the bidi stream or write the
+/// Hello. Temporary until O5 stops loading the map before joining.
 pub const WEBTRANSPORT_HELLO_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub enum PeerConnection {
     Quic(quinn::Connection),
     WebTransport(wtransport::Connection),
+    /// O16: a browser on the WebSocket transport (`ws_peer.rs`).
+    WebSocket(WsPeer),
 }
 
 impl PeerConnection {
     /// Per-transport Hello deadline: native QUIC peers keep `HELLO_DEADLINE`
-    /// (8 s); WebTransport peers get longer (browser main-thread load stall).
+    /// (8 s); browser peers get longer (main-thread load stall).
     pub fn hello_deadline(&self) -> Duration {
         match self {
             Self::Quic(_) => crate::HELLO_DEADLINE,
-            Self::WebTransport(_) => WEBTRANSPORT_HELLO_DEADLINE,
+            Self::WebTransport(_) | Self::WebSocket(_) => WEBTRANSPORT_HELLO_DEADLINE,
         }
     }
 
@@ -50,6 +54,10 @@ impl PeerConnection {
                 let (send, recv) = c.accept_bi().await?;
                 (PeerSend::WebTransport(send), PeerRecv::WebTransport(recv))
             }
+            Self::WebSocket(c) => {
+                let (send, recv) = c.accept_bi().await?;
+                (PeerSend::WebSocket(send), PeerRecv::WebSocket(recv))
+            }
         })
     }
 
@@ -57,6 +65,7 @@ impl PeerConnection {
         Ok(match self {
             Self::Quic(c) => PeerRecv::Quic(c.accept_uni().await?),
             Self::WebTransport(c) => PeerRecv::WebTransport(c.accept_uni().await?),
+            Self::WebSocket(c) => PeerRecv::WebSocket(c.accept_uni().await?),
         })
     }
 
@@ -64,13 +73,15 @@ impl PeerConnection {
         Ok(match self {
             Self::Quic(c) => PeerSend::Quic(c.open_uni().await?),
             Self::WebTransport(c) => PeerSend::WebTransport(c.open_uni().await?.await?),
+            Self::WebSocket(c) => PeerSend::WebSocket(c.open_uni().await?),
         })
     }
 
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Quic(_) => "quic",
             Self::WebTransport(_) => "wt",
+            Self::WebSocket(_) => "ws",
         }
     }
 
@@ -78,6 +89,7 @@ impl PeerConnection {
         let datagram = match self {
             Self::Quic(c) => c.read_datagram().await?,
             Self::WebTransport(c) => c.receive_datagram().await?.payload(),
+            Self::WebSocket(c) => c.read_datagram().await?,
         };
         relay_probe::probe("M.recv", self.stable_id(), self.kind(), &datagram);
         Ok(datagram)
@@ -88,6 +100,7 @@ impl PeerConnection {
         match self {
             Self::Quic(c) => c.send_datagram(data)?,
             Self::WebTransport(c) => c.send_datagram(data)?,
+            Self::WebSocket(c) => c.send_datagram(&data)?,
         }
         Ok(())
     }
@@ -99,6 +112,7 @@ impl PeerConnection {
                 wtransport::VarInt::from_u32(code.into_inner() as u32),
                 reason,
             ),
+            Self::WebSocket(c) => c.close(code.into_inner() as u32, reason),
         }
     }
 
@@ -106,6 +120,7 @@ impl PeerConnection {
         match self {
             Self::Quic(c) => c.stable_id(),
             Self::WebTransport(c) => c.stable_id(),
+            Self::WebSocket(c) => c.stable_id(),
         }
     }
 }
@@ -113,6 +128,7 @@ impl PeerConnection {
 pub enum PeerSend {
     Quic(quinn::SendStream),
     WebTransport(wtransport::SendStream),
+    WebSocket(WsSend),
 }
 
 impl PeerSend {
@@ -120,6 +136,7 @@ impl PeerSend {
         match self {
             Self::Quic(s) => s.set_priority(priority)?,
             Self::WebTransport(s) => s.set_priority(priority),
+            Self::WebSocket(s) => s.set_priority(priority)?,
         }
         Ok(())
     }
@@ -130,6 +147,7 @@ impl PeerSend {
         match self {
             Self::Quic(s) => s.finish()?,
             Self::WebTransport(s) => s.quic_stream_mut().finish()?,
+            Self::WebSocket(s) => s.finish()?,
         }
         Ok(())
     }
@@ -138,6 +156,7 @@ impl PeerSend {
 pub enum PeerRecv {
     Quic(quinn::RecvStream),
     WebTransport(wtransport::RecvStream),
+    WebSocket(WsRecv),
 }
 
 impl PeerRecv {
@@ -145,6 +164,7 @@ impl PeerRecv {
         Ok(match self {
             Self::Quic(s) => s.read_to_end(limit).await?,
             Self::WebTransport(s) => s.quic_stream_mut().read_to_end(limit).await?,
+            Self::WebSocket(s) => s.read_to_end(limit).await?,
         })
     }
 
@@ -152,6 +172,7 @@ impl PeerRecv {
         match self {
             Self::Quic(s) => s.stop(code)?,
             Self::WebTransport(s) => s.quic_stream_mut().stop(code)?,
+            Self::WebSocket(s) => s.stop(code.into_inner() as u32)?,
         }
         Ok(())
     }
@@ -166,6 +187,7 @@ impl AsyncRead for PeerRecv {
         match self.get_mut() {
             Self::Quic(s) => Pin::new(s).poll_read(cx, buf),
             Self::WebTransport(s) => Pin::new(s).poll_read(cx, buf),
+            Self::WebSocket(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -179,6 +201,7 @@ impl AsyncWrite for PeerSend {
         match self.get_mut() {
             Self::Quic(s) => AsyncWrite::poll_write(Pin::new(s), cx, buf),
             Self::WebTransport(s) => AsyncWrite::poll_write(Pin::new(s), cx, buf),
+            Self::WebSocket(s) => AsyncWrite::poll_write(Pin::new(s), cx, buf),
         }
     }
 
@@ -186,6 +209,7 @@ impl AsyncWrite for PeerSend {
         match self.get_mut() {
             Self::Quic(s) => AsyncWrite::poll_flush(Pin::new(s), cx),
             Self::WebTransport(s) => AsyncWrite::poll_flush(Pin::new(s), cx),
+            Self::WebSocket(s) => AsyncWrite::poll_flush(Pin::new(s), cx),
         }
     }
 
@@ -193,6 +217,7 @@ impl AsyncWrite for PeerSend {
         match self.get_mut() {
             Self::Quic(s) => AsyncWrite::poll_shutdown(Pin::new(s), cx),
             Self::WebTransport(s) => AsyncWrite::poll_shutdown(Pin::new(s), cx),
+            Self::WebSocket(s) => AsyncWrite::poll_shutdown(Pin::new(s), cx),
         }
     }
 }

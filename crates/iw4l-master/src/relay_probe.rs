@@ -167,6 +167,10 @@ pub fn watch(connection_id: u64, connection: &PeerConnection) {
     let (quic, kind) = match connection {
         PeerConnection::Quic(c) => (c.clone(), "quic"),
         PeerConnection::WebTransport(c) => (c.quic_connection().clone(), "wt"),
+        PeerConnection::WebSocket(peer) => {
+            watch_ws(connection_id, peer.clone());
+            return;
+        }
     };
     let conn = connection.stable_id();
     let _ = writeln!(
@@ -190,6 +194,35 @@ pub fn watch(connection_id: u64, connection: &PeerConnection) {
                 stats.path.congestion_events,
                 stats.frame_tx.datagram,
                 stats.frame_rx.datagram
+            );
+        }
+    });
+}
+
+/// O16: a WebSocket peer has no QUIC stats; log its own counters instead
+/// (`dropped_out` is the datagrams the writer queue refused to hold).
+fn watch_ws(connection_id: u64, peer: crate::ws_peer::WsPeer) {
+    let conn = peer.stable_id();
+    let _ = writeln!(
+        std::io::stderr(),
+        "relay probe: conn={conn} id={connection_id} kind=ws"
+    );
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            if peer.is_closed() {
+                return;
+            }
+            let stats = peer.stats();
+            let _ = writeln!(
+                std::io::stderr(),
+                "ws stats: conn={conn} kind=ws sent_datagrams={} recv_datagrams={} dropped_out={} dropped_in={} queued_max={}",
+                stats.sent_datagrams,
+                stats.recv_datagrams,
+                stats.dropped_out,
+                stats.dropped_in,
+                stats.queued_max
             );
         }
     });

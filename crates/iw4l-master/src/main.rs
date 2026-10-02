@@ -26,7 +26,9 @@ use tokio::sync::{Mutex, Semaphore};
 
 mod peer_conn;
 mod relay_probe;
+mod websocket;
 mod webtransport;
+mod ws_peer;
 use peer_conn::{PeerConnection, PeerRecv};
 use webtransport::WebTransportConfig;
 
@@ -95,6 +97,8 @@ enum Command {
         cert: PathBuf,
         key: PathBuf,
         webtransport: Option<WebTransportConfig>,
+        /// O16: `--ws-bind`, plain WebSocket listener for browsers.
+        websocket: Option<SocketAddr>,
     },
     Status(ClientTarget),
     List(ClientTarget),
@@ -399,7 +403,8 @@ async fn main() -> Result<()> {
             cert,
             key,
             webtransport,
-        } => serve(bind, &cert, &key, webtransport).await,
+            websocket,
+        } => serve(bind, &cert, &key, webtransport, websocket).await,
         Command::Status(target) => tokio::time::timeout(CLI_DEADLINE, status(&target))
             .await
             .map_err(|_| "master status deadline (connect + RPC)")?,
@@ -428,6 +433,7 @@ fn parse_args() -> Result<Command> {
     let mut webtransport_bind = None;
     let mut webtransport_dir = None;
     let mut webtransport_sans = Vec::new();
+    let mut ws_bind = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -446,6 +452,7 @@ fn parse_args() -> Result<Command> {
             "--webtransport-bind" => webtransport_bind = Some(value.parse()?),
             "--webtransport-dir" => webtransport_dir = Some(PathBuf::from(value)),
             "--webtransport-san" => webtransport_sans.push(value),
+            "--ws-bind" => ws_bind = Some(value.parse()?),
             _ => return Err(format!("unknown option {flag}").into()),
         }
     }
@@ -465,6 +472,7 @@ fn parse_args() -> Result<Command> {
                 cert,
                 key: key.ok_or("serve requires --key PATH")?,
                 webtransport,
+                websocket: ws_bind,
             })
         }
         "status" | "list" => {
@@ -540,6 +548,7 @@ async fn serve(
     cert_path: &Path,
     key_path: &Path,
     webtransport: Option<WebTransportConfig>,
+    websocket: Option<SocketAddr>,
 ) -> Result<()> {
     let certs = load_certificates(cert_path)?;
     let key = load_private_key(key_path)?;
@@ -580,6 +589,14 @@ async fn serve(
     let address_counts = Arc::new(std::sync::Mutex::new(HashMap::new()));
     if let Some(config) = &webtransport {
         tokio::spawn(webtransport::bind(config)?.run(
+            Arc::clone(&state),
+            Arc::clone(&next_connection_id),
+            Arc::clone(&connection_slots),
+            Arc::clone(&address_counts),
+        ));
+    }
+    if let Some(addr) = websocket {
+        tokio::spawn(websocket::bind(addr).await?.run(
             Arc::clone(&state),
             Arc::clone(&next_connection_id),
             Arc::clone(&connection_slots),

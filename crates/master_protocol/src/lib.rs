@@ -2,6 +2,9 @@
 
 use core::{fmt, str::FromStr};
 
+/// O16: framing of the WebSocket transport, shared by the master and the browser.
+pub mod ws_frame;
+
 pub const PROTOCOL_VERSION: u16 = 10;
 pub const ALPN: &[u8] = b"iw4l-master/10";
 pub const MAX_CONTROL_BYTES: usize = 16 * 1024;
