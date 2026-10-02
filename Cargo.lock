@@ -3907,6 +3907,7 @@ dependencies = [
  "diag",
  "gamefs",
  "js-sys",
+ "net",
  "wasm-bindgen",
  "web-sys",
 ]

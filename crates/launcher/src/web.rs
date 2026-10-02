@@ -80,6 +80,9 @@ pub fn main() {
     }));
     let query = UrlQuery::from_page();
     set_console_log(query.get("log").is_some_and(|value| value != "0"));
+    if query.get("pred_log").is_some_and(|value| value != "0") {
+        net::client::pred_log::enable();
+    }
     diag::set_console(|level, line| match level {
         diag::Level::Error => console_error(line),
         diag::Level::Warn => console_warn(line),

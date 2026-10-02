@@ -1860,6 +1860,7 @@ pub fn register_client_runtime(app: &mut App) {
         .add_message::<crate::SvcHudSplash>()
         .add_message::<crate::SvcGameNotify>();
     crate::client::frame_census::register_update_phase_census(app);
+    crate::client::pred_log::register(app);
     app.configure_sets(
         Update,
         (
