@@ -15,12 +15,14 @@ bevy-trace = ["bootstrap/bevy-trace"]
 
 [dependencies]
 artifactfs.workspace = true
-updater = { path = "../updater" }
 diag.workspace = true
 gamefs.workspace = true
 assets.workspace = true
 asset_transport.workspace = true
 bootstrap = { path = "../bootstrap" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+updater = { path = "../updater" }
 
 # Web build: WebGPU backend for wgpu. Cargo unifies features per target, so this
 # adds `webgpu` on wasm32 only and leaves native feature sets untouched.

@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use bevy::prelude::Resource;
 
@@ -113,23 +114,27 @@ impl AudioRuntime {
         let control_rejections = rejections.clone();
         let cue_budget = crate::pending::PendingBudget::default();
         let control_budget = cue_budget.clone();
-        let worker = std::thread::Builder::new()
-            .name("audio-control".into())
-            .spawn(move || {
-                control(
-                    thread_shared,
-                    thread_shutdown,
-                    cue_rx,
-                    device_enabled,
-                    control_sources,
-                    control_listener,
-                    control_event_context,
-                    control_ids,
-                    control_rejections,
-                    control_budget,
-                )
-            })
-            .expect("cannot start audio control thread");
+        // Threads cannot spawn on wasm32: the browser build is silent until the worklet
+        // backend returns.
+        let worker = (!cfg!(target_arch = "wasm32")).then(|| {
+            std::thread::Builder::new()
+                .name("audio-control".into())
+                .spawn(move || {
+                    control(
+                        thread_shared,
+                        thread_shutdown,
+                        cue_rx,
+                        device_enabled,
+                        control_sources,
+                        control_listener,
+                        control_event_context,
+                        control_ids,
+                        control_rejections,
+                        control_budget,
+                    )
+                })
+                .expect("cannot start audio control thread")
+        });
         Self {
             shared,
             cue_tx,
@@ -143,7 +148,7 @@ impl AudioRuntime {
             source_publisher: Mutex::new(SourcePublisher::new()),
             rejections,
             shutdown,
-            worker: Some(worker),
+            worker,
         }
     }
 

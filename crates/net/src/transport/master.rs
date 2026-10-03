@@ -167,6 +167,12 @@ struct MasterTarget {
     ca_pem: String,
 }
 
+#[cfg(target_arch = "wasm32")]
+fn master_target() -> Result<Option<MasterTarget>> {
+    Ok(None)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn master_target() -> Result<Option<MasterTarget>> {
     if let Some(community) = updater::selected() {
         return Ok(Some(MasterTarget {

@@ -15,6 +15,7 @@ fn main() {
     web::main();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const LICENSES: [(&str, &str); 5] = [
     ("LICENSE", include_str!("../../../LICENSE")),
     ("NOTICE", include_str!("../../../NOTICE")),

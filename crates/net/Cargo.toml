@@ -7,7 +7,6 @@ description = "Our wire: frames, deltas, prediction, interpolation. Not retail's
 
 [dependencies]
 web-time = { workspace = true }
-updater = { path = "../updater" }
 structured_data_iw4.workspace = true
 ring = "0.17.14"
 diag.workspace = true
@@ -33,6 +32,7 @@ tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 # None of it builds for wasm32, so the crates are target-specific; wasm32 gets
 # its own set below. The `online` cfg (build.rs) follows the feature.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+updater = { path = "../updater" }
 bytes = { version = "1", optional = true }
 quinn = { version = "0.11.11", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"], optional = true }
 rustls = { version = "0.23.31", default-features = false, features = ["ring", "std"], optional = true }
@@ -46,6 +46,7 @@ zstd = { version = "0.13", default-features = false, optional = true }
 # event loop. tokio is only `sync` + `select!` here; timers and spawning are
 # `master/rt_web.rs`. ruzstd decodes the native host's zstd snapshots.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+ring = { version = "0.17.14", features = ["wasm32_unknown_unknown_js"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
 js-sys = { version = "0.3", optional = true }
 ruzstd = { version = "0.9", default-features = false, features = ["std"], optional = true }

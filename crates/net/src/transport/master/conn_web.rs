@@ -193,11 +193,10 @@ impl WtRecv {
 /// URL for now (`web_config.rs`, O5 moves it into `MasterTarget`). The first
 /// value stands in for native's `quinn::Endpoint`.
 async fn connect_wt(target: &MasterTarget, cancel: &CancellationToken) -> Result<((), WtConn)> {
-    if let Some(path) = &target.ca_cert {
+    if !target.ca_pem.is_empty() {
         diag::warn!(
             Net,
-            "master CA file {} ignored: a browser trusts a certificate hash or the Web PKI",
-            path.display()
+            "master CA ignored: a browser trusts a certificate hash or the Web PKI"
         );
     }
     let hash = web_config::cert_hash()?;

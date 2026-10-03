@@ -33,5 +33,8 @@ hud = { path = "../hud" }
 entity_iw4.workspace = true
 perf.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [lints]
 workspace = true

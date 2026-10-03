@@ -105,11 +105,11 @@ pub fn main() {
     let artifacts = PathBuf::from(ARTIFACTS_ROOT);
     diag::init_log(&artifacts);
     diag::info!(Launch, "web launch args: {args:?}");
-    let (mode, acceptance) =
+    let (mode, acceptance, cheats) =
         bootstrap::parse_cli(args.into_iter()).unwrap_or_else(|e| diag::exit_launch_error(&e));
     let games =
         asset_transport::games_root_from_env().unwrap_or_else(|e| diag::exit_launch_error(&e));
-    bootstrap::launch(games, artifacts, mode, acceptance);
+    bootstrap::launch(games, artifacts, mode, acceptance, cheats);
 }
 
 fn local_storage() -> Option<web_sys::Storage> {
