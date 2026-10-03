@@ -73,7 +73,7 @@ window.iw4l = {
 };
 </script>
 <script type="module">
-// Launch args come from this page's query string: ?map=<zone>&cmds=<script>, see launcher/src/web.rs.
+// Launch args default to mp_rust and can be overridden with ?map=<zone>&cmds=<script>, see launcher/src/web.rs.
 // ?pack=<url> is read here. ?log=1 turns on the engine's info lines in the console.
 import init, { artifacts, artifact, set_console_log } from './iw4l.js';
 

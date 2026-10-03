@@ -29,12 +29,12 @@ pub(super) fn query_param(name: &str) -> Option<String> {
     query().and_then(|query| param(&query, name))
 }
 
-/// O16: `?transport=ws` selects the WebSocket backend (with `?master_ws=`,
-/// `?ws_buf_max=`); the default `wt` keeps WebTransport.
+/// O16: WebSocket is the browser default; `?transport=wt` opts into
+/// WebTransport for diagnostics.
 pub(super) fn transport_is_ws() -> bool {
     match query_param("transport").as_deref() {
-        None | Some("wt") => false,
-        Some("ws") => true,
+        None | Some("ws") => true,
+        Some("wt") => false,
         Some(other) => {
             diag::warn!(Net, "transport={other} is not wt|ws; using wt");
             false

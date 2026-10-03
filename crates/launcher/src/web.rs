@@ -4,8 +4,8 @@
 //! `iw4l.log(true)`; warnings and errors always do, and the in-memory log file
 //! keeps every line either way.
 //!
-//! `?map=<zone>` loads a map, otherwise the menu; `?mode=` names the launch word
-//! (`menu`, `map`, `play`, `export-gltf`) when it isn't implied. `cmds`,
+//! Defaults to `mp_rust`; `?map=<zone>` overrides it. `?mode=` names the launch
+//! word (`menu`, `map`, `play`, `export-gltf`) when it isn't implied. `cmds`,
 //! `acceptance` and `games` map to `--cmds`, `--render-acceptance` and the games
 //! root.
 //!
@@ -21,6 +21,7 @@ use wasm_bindgen::prelude::*;
 
 /// Where the game files appear in the virtual file system unless `?games=` says otherwise.
 const DEFAULT_GAMES_ROOT: &str = "/games";
+const DEFAULT_MAP: &str = "mp_rust";
 const ERROR_OVERLAY_ID: &str = "iw4l-error";
 const ARTIFACTS_ROOT: &str = "iw4l-artifacts";
 /// Artifacts that outlive the page, stored under `localStorage["iw4l:<path>"]`.
@@ -184,7 +185,7 @@ impl UrlQuery {
 
 /// The argv a native launch would get for the same run.
 fn launch_args(query: &UrlQuery) -> Vec<String> {
-    let map = query.get("map");
+    let map = Some(query.get("map").unwrap_or_else(|| DEFAULT_MAP.into()));
     let mode = query
         .get("mode")
         .unwrap_or_else(|| if map.is_some() { "map" } else { "menu" }.into());

@@ -154,7 +154,7 @@ def main():
     else:
         print("no --pack / IW4L_WEB_PACK: game.pack not linked; open the page with ?pack=<url>")
 
-    print(f"http://127.0.0.1:{args.port}/?map=mp_rust", flush=True)
+    print(f"http://127.0.0.1:{args.port}/", flush=True)
     py = shutil.which("python3") or sys.executable
     os.chdir(DIST)
     sys.exit(subprocess.call([py, str(ROOT / "scripts" / "web_serve.py"), str(args.port)]))
