@@ -42,6 +42,56 @@ pub(super) fn transport_is_ws() -> bool {
     }
 }
 
+/// D3a: the page's own origin as a ws URL, for a page the master serves.
+fn origin_ws_url() -> Option<String> {
+    let location = web_sys::window()?.location();
+    let scheme = if location.protocol().ok()? == "https:" {
+        "wss"
+    } else {
+        "ws"
+    };
+    Some(format!("{scheme}://{}/", location.host().ok()?))
+}
+
+/// `?master_ws=` when given, else (D3a) the page's origin: `?transport=ws`
+/// alone is a complete link on a page served by the master's `--web-root`.
+pub(super) fn master_ws_url() -> Option<String> {
+    query_param("master_ws").or_else(origin_ws_url)
+}
+
+/// D3a: the first room of the origin's `/master.json` that is neither locked
+/// nor full (a synchronous request: launch intent is built synchronously, and
+/// the file is a few hundred bytes from the page's own server).
+fn first_open_room() -> Result<String> {
+    use js_sys::{Array, Reflect};
+    let js = |error: wasm_bindgen::JsValue| format!("master.json: {error:?}");
+    let request = web_sys::XmlHttpRequest::new().map_err(js)?;
+    request
+        .open_with_async("GET", "/master.json", false)
+        .map_err(js)?;
+    request.send().map_err(js)?;
+    if request.status().map_err(js)? != 200 {
+        return Err("no ?join= and /master.json is not served here".into());
+    }
+    let text = request
+        .response_text()
+        .map_err(js)?
+        .ok_or("master.json: empty")?;
+    let json = js_sys::JSON::parse(&text).map_err(js)?;
+    let rooms = Array::from(&Reflect::get(&json, &"rooms".into()).map_err(js)?);
+    let field = |room: &wasm_bindgen::JsValue, name: &str| {
+        Reflect::get(room, &name.into()).unwrap_or(wasm_bindgen::JsValue::UNDEFINED)
+    };
+    for room in rooms.iter() {
+        let open = field(&room, "locked").as_bool() == Some(false)
+            && field(&room, "players").as_f64() < field(&room, "max_players").as_f64();
+        if let (true, Some(id)) = (open, field(&room, "id").as_string()) {
+            return Ok(id);
+        }
+    }
+    Err("no ?join= and /master.json lists no open room".into())
+}
+
 /// The WebTransport URL for a `master` parameter.
 fn webtransport_url(master: &str) -> String {
     if master.starts_with("https://") {
@@ -59,9 +109,22 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
     };
     // O16: a `?transport=ws` page may give only `master_ws` (the WebTransport
     // URL below is then unused).
-    let master = param(&query, "master").or_else(|| param(&query, "master_ws"));
-    let (Some(master), Some(join)) = (master, param(&query, "join")) else {
+    // D3a: with `?transport=ws` both may be left out on a page the master
+    // serves: `master_ws` defaults to the page origin and `join` to the first
+    // open room of its `/master.json`. (`wt` stays explicit: it needs the
+    // port and certificate hash, which `/master.json` also has but this does
+    // not read.)
+    let ws = transport_is_ws();
+    let master = param(&query, "master")
+        .or_else(|| param(&query, "master_ws"))
+        .or_else(|| ws.then(origin_ws_url).flatten());
+    let Some(master) = master else {
         return Ok(None);
+    };
+    let join = match param(&query, "join") {
+        Some(join) => join,
+        None if ws => first_open_room()?,
+        None => return Ok(None),
     };
     if cert_hash()?.is_none() {
         diag::warn!(

@@ -142,7 +142,7 @@ pub(super) async fn connect(
     _target: &MasterTarget,
     cancel: &CancellationToken,
 ) -> Result<((), WsConn)> {
-    let url = web_config::query_param("master_ws")
+    let url = web_config::master_ws_url()
         .ok_or("transport=ws needs ?master_ws=ws://host:port/ (the master's --ws-bind)")?;
     let buf_max = buf_max();
     diag::info!(

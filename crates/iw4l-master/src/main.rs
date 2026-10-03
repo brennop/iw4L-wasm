@@ -26,6 +26,7 @@ use tokio::sync::{Mutex, Semaphore};
 
 mod peer_conn;
 mod relay_probe;
+mod web_static;
 mod websocket;
 mod webtransport;
 mod ws_peer;
@@ -99,6 +100,8 @@ enum Command {
         webtransport: Option<WebTransportConfig>,
         /// O16: `--ws-bind`, plain WebSocket listener for browsers.
         websocket: Option<SocketAddr>,
+        /// D3a: serve this directory over HTTP on the ws port.
+        web_root: Option<PathBuf>,
     },
     Status(ClientTarget),
     List(ClientTarget),
@@ -404,7 +407,8 @@ async fn main() -> Result<()> {
             key,
             webtransport,
             websocket,
-        } => serve(bind, &cert, &key, webtransport, websocket).await,
+            web_root,
+        } => serve(bind, &cert, &key, webtransport, websocket, web_root).await,
         Command::Status(target) => tokio::time::timeout(CLI_DEADLINE, status(&target))
             .await
             .map_err(|_| "master status deadline (connect + RPC)")?,
@@ -434,6 +438,7 @@ fn parse_args() -> Result<Command> {
     let mut webtransport_dir = None;
     let mut webtransport_sans = Vec::new();
     let mut ws_bind = None;
+    let mut web_root = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -453,12 +458,16 @@ fn parse_args() -> Result<Command> {
             "--webtransport-dir" => webtransport_dir = Some(PathBuf::from(value)),
             "--webtransport-san" => webtransport_sans.push(value),
             "--ws-bind" => ws_bind = Some(value.parse()?),
+            "--web-root" => web_root = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown option {flag}").into()),
         }
     }
     match command.as_str() {
         "serve" => {
             let cert = cert.ok_or("serve requires --cert PATH")?;
+            if web_root.is_some() && ws_bind.is_none() {
+                return Err("--web-root requires --ws-bind".into());
+            }
             let webtransport = webtransport_bind.map(|bind| WebTransportConfig {
                 bind,
                 dir: webtransport_dir.unwrap_or_else(|| {
@@ -473,6 +482,7 @@ fn parse_args() -> Result<Command> {
                 key: key.ok_or("serve requires --key PATH")?,
                 webtransport,
                 websocket: ws_bind,
+                web_root,
             })
         }
         "status" | "list" => {
@@ -549,6 +559,7 @@ async fn serve(
     key_path: &Path,
     webtransport: Option<WebTransportConfig>,
     websocket: Option<SocketAddr>,
+    web_root: Option<PathBuf>,
 ) -> Result<()> {
     let certs = load_certificates(cert_path)?;
     let key = load_private_key(key_path)?;
@@ -596,11 +607,35 @@ async fn serve(
         ));
     }
     if let Some(addr) = websocket {
+        let web = match web_root {
+            Some(root) => {
+                let root = root
+                    .canonicalize()
+                    .map_err(|error| format!("--web-root {}: {error}", root.display()))?;
+                // `/master.json` reports the WebTransport port and cert hash
+                // from the file the wt listener just wrote.
+                let wt = match &webtransport {
+                    Some(config) => {
+                        let json = std::fs::read_to_string(config.dir.join("webtransport.json"))?;
+                        Some(web_static::WtInfo::from_json(&json)?)
+                    }
+                    None => None,
+                };
+                writeln!(
+                    std::io::stderr(),
+                    "iw4l-master serving {} over http on the ws port",
+                    root.display()
+                )?;
+                Some(Arc::new(web_static::WebConfig { root, wt }))
+            }
+            None => None,
+        };
         tokio::spawn(websocket::bind(addr).await?.run(
             Arc::clone(&state),
             Arc::clone(&next_connection_id),
             Arc::clone(&connection_slots),
             Arc::clone(&address_counts),
+            web,
         ));
     }
     while let Some(incoming) = endpoint.accept().await {
