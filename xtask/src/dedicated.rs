@@ -490,7 +490,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
             &format!("host {host_name}"),
             Command::new(&host_exe)
                 .current_dir(&host_dir)
-                .args(["serve", &args.map])
+                .args(["--no-cheats", "serve", &args.map])
                 .env("IW4L_GAMES", &games)
                 .env("IW4L_MASTER_ADDR", format!("127.0.0.1:{QUIC_PORT}"))
                 .env("IW4L_MASTER_SERVER_NAME", &server_name)

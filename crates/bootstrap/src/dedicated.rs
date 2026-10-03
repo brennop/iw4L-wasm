@@ -74,7 +74,7 @@ fn exit_on_master_loss(
     match &reason {
         ExitReason::NotHosting => diag::error!(
             Net,
-            "dedicated: no master host configured; set IW4L_MASTER_ADDR, IW4L_MASTER_SERVER_NAME and IW4L_MASTER_HOST_NAME. Exiting with code {EXIT_BRIDGE_LOST}"
+            "dedicated: no master host configured; set IW4L_MASTER_ADDR (with IW4L_MASTER_SERVER_NAME, IW4L_MASTER_CA_CERT) or ship a community .iw4l-server file, plus IW4L_MASTER_HOST_NAME. Exiting with code {EXIT_BRIDGE_LOST}"
         ),
         ExitReason::BridgeFailed(error) => diag::error!(
             Net,
