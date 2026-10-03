@@ -161,8 +161,32 @@ wasmModule.catch(() => {}); // reported where init() awaits it, not as an unhand
 // The game files come from a pack (xtask web-pack) kept in this JS buffer, outside
 // wasm memory: ?pack=<url>, default ./game.pack next to this page. Never bundled.
 const packUrl = new URLSearchParams(location.search).get('pack') || './game.pack';
+// The pack is far too big for the HTTP cache (and the dev server sends no validators), so it
+// lives in the Cache API, revalidated with a HEAD on Last-Modified/ETag + Content-Length.
+async function fetchPack(url) {
+  let cache = null;
+  try { cache = await caches.open('iw4l-pack'); } catch { /* insecure context / blocked */ }
+  if (!cache) return fetch(url);
+  const sig = (r) => [r.headers.get('etag'), r.headers.get('last-modified'),
+    r.headers.get('content-length')].join('|');
+  const cached = await cache.match(url);
+  if (cached) {
+    try {
+      const head = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (head.ok && sig(head) === sig(cached)) return cached;
+    } catch { return cached; } // offline: better stale than nothing
+  }
+  const response = await fetch(url, { cache: 'no-store' });
+  if (response.ok) {
+    // clone() must happen now: once the caller reads the body it is too late.
+    const copy = response.clone();
+    cache.delete(url).then(() => cache.put(url, copy))
+      .catch((e) => console.warn('pack not cached:', e)); // e.g. over storage quota
+  }
+  return response;
+}
 try {
-  const response = await fetch(packUrl);
+  const response = await fetchPack(packUrl);
   if (!response.ok) throw new Error(`pack ${packUrl}: HTTP ${response.status}`);
   window.iw4l_pack = new Uint8Array(await tracked(response, 'pack').arrayBuffer());
   console.log(`pack ${packUrl}: ${window.iw4l_pack.length} bytes`);

@@ -344,11 +344,17 @@ async fn serve_inner(
         Ok(file) => file,
         Err(_) => return respond(tcp, 404, "Not Found", "", "not found\n", head_only).await,
     };
-    let length = file.metadata().await?.len();
+    let metadata = file.metadata().await?;
+    let length = metadata.len();
     let mut out = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {length}\r\nConnection: close\r\n",
         mime(&path)
     );
+    // Validator the page's pack cache compares (index.html fetchPack): size + mtime.
+    if let Ok(age) = metadata.modified().map(|m| m.duration_since(std::time::UNIX_EPOCH)) {
+        let secs = age.map(|d| d.as_secs()).unwrap_or(0);
+        out.push_str(&format!("ETag: \"{length:x}-{secs:x}\"\r\n"));
+    }
     if no_cache(&path) {
         out.push_str("Cache-Control: no-cache\r\n");
     }
