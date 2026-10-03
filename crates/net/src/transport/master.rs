@@ -17,6 +17,8 @@ use crate::transport::udp_session::RelayMailbox;
 // Worker half (master sessions, browser poller, the systems that drive them).
 // Native: QUIC on a worker thread. wasm32: join-only WebTransport on the page's
 // event loop (`conn_web`, `rt_web`, URL settings in `web_config`).
+#[cfg(not(target_arch = "wasm32"))]
+mod env_target;
 #[cfg(online)]
 mod conn;
 #[cfg(all(online, target_arch = "wasm32"))]
@@ -174,6 +176,9 @@ fn master_target() -> Result<Option<MasterTarget>> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn master_target() -> Result<Option<MasterTarget>> {
+    if let Some(t) = env_target::from_env()? {
+        return Ok(Some(t));
+    }
     if let Some(community) = updater::selected() {
         return Ok(Some(MasterTarget {
             address: community.master.address.clone(),
