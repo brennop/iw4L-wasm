@@ -122,6 +122,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
 
 pub(crate) fn publish(world: &mut World) {
     let vehicles = super::vehicles::compass_rows(world);
+    let vehicle_targets = super::vehicles::hud_targets(world);
     let rows: Vec<(u8, ScriptObjective)> = world
         .resource::<Runtime>()
         .engine
@@ -192,6 +193,7 @@ pub(crate) fn publish(world: &mut World) {
     let scripted_effects = runtime.program.is_some();
     let naked_vision = runtime.engine.naked_vision.clone();
     let thermal_vision = runtime.engine.thermal_vision.clone();
+    let thermal_body_material = runtime.engine.thermal_body_material.clone();
     let missile_vision = runtime.engine.missile_vision.clone();
     let night_vision = runtime.engine.night_vision.clone();
     let pain_vision = runtime.engine.pain_vision.clone();
@@ -229,6 +231,7 @@ pub(crate) fn publish(world: &mut World) {
         scores,
         compass,
         vehicles,
+        vehicle_targets,
         server_info,
         game_end_time,
         slow_motion,
@@ -241,6 +244,7 @@ pub(crate) fn publish(world: &mut World) {
         earthquakes,
         naked_vision,
         thermal_vision,
+        thermal_body_material,
         missile_vision,
         night_vision,
         pain_vision,

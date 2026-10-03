@@ -80,6 +80,9 @@ pub fn host_game_mode_kind() -> GameModeKind {
         .unwrap_or(GameModeKind::FreeForAll)
 }
 
+#[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostCheats(pub bool);
+
 #[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostGameModeSelection(GameModeKind);
 

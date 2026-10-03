@@ -352,6 +352,7 @@ impl Runner<'_, '_> {
         }
         self.menus.stack.push(OpenMenu {
             name: def.name.clone(),
+            captures_input: def.static_flags & super::WINDOW_DECORATION == 0,
             focus: None,
             hover: None,
             items: vec![ItemState::default(); def.items.len()],

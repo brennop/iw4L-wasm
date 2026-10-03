@@ -16,8 +16,16 @@ use crate::client::runtime::{LastAdoptedSnapshot, PendingPresentedEntityEvents};
 use crate::gaps::{NetGapCause, NetIdentityGaps};
 use crate::schedule::ClientSet;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EntityEventDomain {
+    Snapshot,
+    Ring,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DispatchedEntityEvent {
+    pub domain: EntityEventDomain,
+    pub timeline: u64,
     pub sequence: EventSequence,
     pub tick: Tick,
     pub event: EntityEventKind,
@@ -130,6 +138,7 @@ pub struct EntityEventCursor {
 
     archived_through: Option<(EventSequence, Tick)>,
     in_killcam: bool,
+    timeline: u64,
 }
 
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,14 +227,29 @@ impl EntityEventCursor {
         // Each snapshot re-carries the records of the last temp-event lifetime,
         // so only a tick further back than that window marks a rewind.
         if let Some((sequence, tick)) = self.archived_through
-            && tick.0.saturating_sub(record.tick.0) * sim::MATCH_TICK_MS
+            && tick
+                .0
+                .saturating_sub(record.tick.0)
+                .saturating_mul(sim::MATCH_TICK_MS)
                 <= sim::GENTITY_TEMP_EVENT_LIFETIME_MS as u32
             && !record.sequence.is_newer_than(sequence)
         {
             return false;
         }
+        if self.archived_through.is_some_and(|(_, tick)| {
+            tick.0
+                .saturating_sub(record.tick.0)
+                .saturating_mul(sim::MATCH_TICK_MS)
+                > sim::GENTITY_TEMP_EVENT_LIFETIME_MS as u32
+        }) {
+            self.timeline = self.timeline.wrapping_add(1);
+        }
         self.archived_through = Some((record.sequence, record.tick));
         true
+    }
+
+    pub const fn timeline(&self) -> u64 {
+        self.timeline
     }
 
     pub const fn seen_through(&self) -> EventSequence {
@@ -262,12 +286,14 @@ fn dispatch_entity_events(
     let local_number = i32::try_from(local.0.0).unwrap_or(-1);
     let killcam_transition = pending.in_killcam != cursor.in_killcam;
     if killcam_transition {
+        cursor.timeline = cursor.timeline.wrapping_add(1);
         cursor.in_killcam = pending.in_killcam;
         cursor.archived_through = None;
         commands.trigger(KillcamFxTransition {
             entering: pending.in_killcam,
         });
     }
+    let timeline = cursor.timeline;
     for (entity, identity, mut runtime) in runtimes.iter_mut() {
         if !packet_entity_uses_event_ring(runtime.next_state.e_type) {
             continue;
@@ -291,6 +317,8 @@ fn dispatch_entity_events(
                 number,
                 entity,
                 DispatchedEntityEvent {
+                    domain: EntityEventDomain::Ring,
+                    timeline,
                     sequence: EventSequence(u32::try_from(ev.sequence).unwrap_or(0)),
                     tick,
                     event: ev.event,
@@ -332,6 +360,8 @@ fn dispatch_entity_events(
         walk.last_number = record.payload.number;
 
         let dispatched = DispatchedEntityEvent {
+            domain: EntityEventDomain::Snapshot,
+            timeline: cursor.timeline,
             sequence: record.sequence,
             tick: record.tick,
             event: record.event,

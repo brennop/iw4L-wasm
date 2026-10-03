@@ -26,27 +26,35 @@ pub enum SoundClass {
     Weapon,
     World,
     Ui,
+    Music,
+    Ambience,
 }
 
 impl SoundClass {
-    pub fn oneshot_wait(self) -> std::time::Duration {
+    pub fn start_wait(self) -> std::time::Duration {
         match self {
             Self::Weapon => std::time::Duration::from_millis(200),
             Self::World => std::time::Duration::from_millis(350),
             Self::Ui => std::time::Duration::from_millis(500),
+            Self::Music | Self::Ambience => std::time::Duration::from_secs(30),
         }
     }
 
     pub fn scope(self) -> crate::backend::AudioScope {
         match self {
             Self::Ui => crate::backend::AudioScope::Menu,
-            Self::Weapon | Self::World => crate::backend::AudioScope::Match,
+            Self::Weapon | Self::World | Self::Music | Self::Ambience => {
+                crate::backend::AudioScope::Match
+            }
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartFailure {
+    AdmissionRefused(crate::AdmissionFailure),
+    CueRefused(crate::CueFailure),
+    BankChanged,
     BankMissing,
     MissingAlias,
     NoPcm,
@@ -54,7 +62,21 @@ pub enum StartFailure {
     NoFalloffCurve,
     FalloffEval,
     DecodeFailed,
+    MediaQueueFull,
+    MediaRequestLimit,
+    InvalidPcm(crate::media::PcmError),
     Expired,
+}
+
+impl From<crate::clip_store::ClipError> for StartFailure {
+    fn from(error: crate::clip_store::ClipError) -> Self {
+        match error {
+            crate::clip_store::ClipError::InvalidPcm(reason) => Self::InvalidPcm(reason),
+            crate::clip_store::ClipError::QueueFull => Self::MediaQueueFull,
+            crate::clip_store::ClipError::RequestLimit => Self::MediaRequestLimit,
+            _ => Self::DecodeFailed,
+        }
+    }
 }
 
 impl StartOutcome {
@@ -81,13 +103,21 @@ impl fmt::Display for StartOutcome {
             Self::Pending => f.write_str("Pending"),
             Self::Suppressed(SuppressReason::Inaudible) => f.write_str("SuppressedInaudible"),
             Self::Suppressed(SuppressReason::VoiceLimit) => f.write_str("SuppressedVoiceLimit"),
+            Self::Failed(StartFailure::CueRefused(reason)) => write!(f, "CueRefused{reason:?}"),
+            Self::Failed(StartFailure::BankChanged) => f.write_str("FailedBankChanged"),
             Self::Failed(StartFailure::BankMissing) => f.write_str("FailedBankMissing"),
+            Self::Failed(StartFailure::AdmissionRefused(reason)) => {
+                write!(f, "AdmissionRefused{reason:?}")
+            }
             Self::Failed(StartFailure::MissingAlias) => f.write_str("FailedMissingAlias"),
             Self::Failed(StartFailure::NoPcm) => f.write_str("FailedNoPcm"),
             Self::Failed(StartFailure::NoListener) => f.write_str("FailedNoListener"),
             Self::Failed(StartFailure::NoFalloffCurve) => f.write_str("FailedNoFalloffCurve"),
             Self::Failed(StartFailure::FalloffEval) => f.write_str("FailedFalloffEval"),
+            Self::Failed(StartFailure::MediaQueueFull) => f.write_str("FailedMediaQueueFull"),
+            Self::Failed(StartFailure::MediaRequestLimit) => f.write_str("FailedMediaRequestLimit"),
             Self::Failed(StartFailure::DecodeFailed) => f.write_str("FailedDecode"),
+            Self::Failed(StartFailure::InvalidPcm(reason)) => write!(f, "FailedPcm{reason:?}"),
             Self::Failed(StartFailure::Expired) => f.write_str("ExpiredAwaitingDecode"),
         }
     }
@@ -95,6 +125,7 @@ impl fmt::Display for StartOutcome {
 
 #[derive(Clone, Debug)]
 pub struct StartDecision {
+    pub event: Option<crate::AudioEvent>,
     pub namespace: AssetNamespace,
     pub alias: String,
     pub variant: Option<usize>,
@@ -116,6 +147,9 @@ impl StartDecision {
             self.alias,
             self.outcome
         );
+        if let Some(event) = self.event {
+            line.push_str(&format!(" event={:?}", event.id));
+        }
         if let Some((sec, outcome)) = &self.secondary {
             line.push_str(&format!(" secondary=`{sec}` result={outcome}"));
         }

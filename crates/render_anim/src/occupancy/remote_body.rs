@@ -171,6 +171,7 @@ fn occupy_remote_scene_ents(
     local: Res<LocalPresentClient>,
     presented: Res<PresentedSnapshot>,
     subject: Option<Res<ViewSubject>>,
+    settings: Res<frame::GameSettings>,
     bodies: Option<Res<PreparedBodies>>,
     weapons: Option<Res<PreparedWeapons>>,
     world_weapons: Option<Res<PreparedWorldWeapons>>,
@@ -215,7 +216,10 @@ fn occupy_remote_scene_ents(
             .map(|ps| ps.other_flags)
             .unwrap_or(0),
         rendering_third_person: crate::occupancy::third_person::presented_is_third_person(
-            &presented, local.0, in_killcam,
+            &presented,
+            local.0,
+            in_killcam,
+            settings.third_person,
         ),
     };
     for (identity, runtime, transform) in &remotes {
@@ -305,6 +309,7 @@ fn sync_remote_bodies(
     local: Res<LocalPresentClient>,
     presented: Res<PresentedSnapshot>,
     subject: Option<Res<ViewSubject>>,
+    settings: Res<frame::GameSettings>,
     bodies: Option<Res<PreparedBodies>>,
     existing: Query<(Entity, &CEntity, &CEntityRuntime, Option<&RemotePlayer>)>,
 ) {
@@ -331,7 +336,10 @@ fn sync_remote_bodies(
             .map(|ps| ps.other_flags)
             .unwrap_or(0),
         rendering_third_person: crate::occupancy::third_person::presented_is_third_person(
-            &presented, local.0, in_killcam,
+            &presented,
+            local.0,
+            in_killcam,
+            settings.third_person,
         ),
     };
 

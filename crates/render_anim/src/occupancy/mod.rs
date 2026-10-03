@@ -7,6 +7,7 @@ pub mod killcam;
 pub mod match_reset;
 pub mod missile;
 pub mod remote_body;
+mod screen_effects;
 pub mod script_model;
 pub mod third_person;
 pub mod view_kick;

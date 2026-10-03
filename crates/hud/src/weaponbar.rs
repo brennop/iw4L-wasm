@@ -78,6 +78,7 @@ struct WeaponbarExprHost<'a> {
     input: Option<&'a frame::HudInputView>,
     ms: i32,
     cg_time: i32,
+    fov: f32,
     shock_screen_type: i32,
     in_killcam: bool,
     missilecam: bool,
@@ -214,6 +215,13 @@ impl ExprHost for WeaponbarExprHost<'_> {
     fn dvar_bool(&self, name: &str) -> Result<i32, ExprError> {
         self.dvar_int(name)
     }
+    fn dvar_float(&self, name: &str) -> Result<f32, ExprError> {
+        self.dvars
+            .string(name)
+            .and_then(|value| value.parse().ok())
+            .or_else(|| name.eq_ignore_ascii_case("cg_fov").then_some(self.fov))
+            .ok_or(ExprError::Host("dvarfloat"))
+    }
     fn table_lookup(
         &self,
         table: &str,
@@ -288,6 +296,7 @@ struct OwnerDrawState<'a> {
     cg_time: i32,
     yaw: f32,
     north_yaw: f32,
+    ticker_stretch: f32,
     hide_ammo: bool,
 }
 
@@ -297,6 +306,8 @@ fn paint_owner(
     frame: &mut ChromeFrame,
 ) -> OwnerDrawPaint {
     match args.item.owner_draw {
+        145 => paint_heading_tape(state, &args, frame),
+        190 if state.ps.e_flags & 0x20000 == 0 => OwnerDrawPaint::Painted,
         171..=174 => paint_action_slot(state, args, frame),
         OWNERDRAW_STOCK => paint_stock(state, &args, frame),
         OWNERDRAW_CLIP => match state.ammo.as_ref() {
@@ -466,6 +477,31 @@ fn paint_offhand(
     OwnerDrawPaint::Painted
 }
 
+fn paint_heading_tape(
+    state: &OwnerDrawState<'_>,
+    args: &OwnerDrawArgs<'_>,
+    frame: &mut ChromeFrame,
+) -> OwnerDrawPaint {
+    let Some(material) = background_stem(&args.item.background) else {
+        return OwnerDrawPaint::Gap(ChromeGapKind::MaterialExp);
+    };
+    let before = frame.list.cmds.len();
+    push_owner_pic(
+        args,
+        material,
+        crate::images::HUD_CHROME_NAMESPACE,
+        args.color,
+        Draw2dOp::StretchPic,
+        frame,
+    );
+    if let Some(cmd) = frame.list.cmds.get_mut(before) {
+        let center = -(state.yaw - state.north_yaw) / 360.0;
+        cmd.s0 = center - state.ticker_stretch * 0.5;
+        cmd.s1 = center + state.ticker_stretch * 0.5;
+    }
+    OwnerDrawPaint::Painted
+}
+
 fn paint_compass_ring(
     state: &OwnerDrawState<'_>,
     args: &OwnerDrawArgs<'_>,
@@ -621,6 +657,7 @@ fn ammo_hud_hidden(ps: &PlayerState) -> bool {
 
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct WeaponbarInput<'w, 's> {
+    settings: Res<'w, frame::GameSettings>,
     select: Res<'w, WeaponSelect>,
     input: Option<Res<'w, frame::HudInputView>>,
     cameras: Query<'w, 's, &'static Projection, With<Camera3d>>,
@@ -698,6 +735,7 @@ pub(crate) fn update_weaponbar(
         input: client_input.input.as_deref(),
         ms: milliseconds() as i32,
         cg_time: cg_clock.time(),
+        fov: client_input.settings.fov,
         shock_screen_type: presented
             .shellshock(local.0)
             .map_or(SCREEN_BLEND_BLURRED, |shock| shock.screen_type),
@@ -749,6 +787,12 @@ pub(crate) fn update_weaponbar(
         cg_time: cg_clock.time(),
         yaw: ps.viewangles[1],
         north_yaw,
+        ticker_stretch: host
+            .dvars
+            .string("compassTickertapeStretch")
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.5)
+            .clamp(0.01, 1.0),
         hide_ammo,
     };
 
@@ -793,7 +837,13 @@ pub(crate) fn update_weaponbar(
         });
     }
 
-    for name in ["dpad_hd", "javelin_overlay_hd", "missilecam_hud_hd"] {
+    for name in [
+        "dpad_hd",
+        "javelin_overlay_hd",
+        "missilecam_hud_hd",
+        "remote_chopper_overlay_hd",
+        "ac130_hud_hd",
+    ] {
         let Some(menu) = catalog.get(name) else {
             continue;
         };

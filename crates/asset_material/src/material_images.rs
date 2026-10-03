@@ -16,12 +16,8 @@ use bevy::render::render_resource::{
 };
 use bevy::tasks::TaskPool;
 
-use crate::material_catalog::TS_2D;
 use crate::progress::StageHandle;
-use crate::{
-    AuthoredImage, ImageVariantId, MaterialDefinitions, TS_COLOR_MAP, TS_FUNCTION, TS_NORMAL_MAP,
-    TS_WATER_MAP,
-};
+use crate::{AuthoredImage, ImageVariantId, MaterialDefinitions, TS_NORMAL_MAP, TS_WATER_MAP};
 
 /// The texels one archive entry decodes to.
 ///
@@ -273,7 +269,7 @@ fn color_map_force_linear(
 
 fn texture_semantic_decodes_as_normal(semantic: u8) -> Option<bool> {
     match semantic {
-        TS_FUNCTION | TS_WATER_MAP => None,
+        TS_WATER_MAP => None,
         TS_NORMAL_MAP => Some(true),
         _ => Some(false),
     }
@@ -375,14 +371,14 @@ fn requested_color_map_slots(catalog: &MaterialDefinitions) -> Vec<ImageRequest>
         .collect()
 }
 
-pub fn decode_color_or_2d_for_keys(
+pub fn decode_images_for_keys(
     zone_ff: &Path,
     catalog: &mut MaterialDefinitions,
     keys: impl IntoIterator<Item = crate::MaterialKey>,
     stage: &StageHandle,
     pool: &TaskPool,
 ) -> Result<usize, String> {
-    let work = requested_keyed_2d_slots(catalog, keys);
+    let work = requested_keyed_image_slots(catalog, keys);
     if work.is_empty() {
         return Ok(0);
     }
@@ -411,7 +407,7 @@ pub fn decode_color_or_2d_for_keys(
     Ok(n)
 }
 
-fn requested_keyed_2d_slots(
+fn requested_keyed_image_slots(
     catalog: &MaterialDefinitions,
     keys: impl IntoIterator<Item = crate::MaterialKey>,
 ) -> Vec<ImageRequest> {
@@ -435,33 +431,40 @@ fn requested_keyed_2d_slots(
         if bind.is_empty() || !wanted.contains(&(material.namespace, bind.to_owned())) {
             continue;
         }
-        let tex = material
-            .textures
-            .iter()
-            .find(|t| t.semantic == TS_COLOR_MAP && t.image.is_some())
-            .or_else(|| {
-                material
-                    .textures
-                    .iter()
-                    .find(|t| t.semantic == TS_2D && t.image.is_some())
-            });
-        let Some(texture) = tex else {
-            continue;
-        };
-        let Some(image) = texture.image else {
-            continue;
-        };
-        if catalog
-            .images
-            .get(image)
-            .is_some_and(|img| img.decoded.is_some() || img.pending_decode.is_some())
-        {
-            continue;
+        let alpha_test = catalog
+            .agreed_alpha_test_cutoff(material)
+            .is_some_and(|cutoff| cutoff.is_some());
+        let force_linear = color_map_force_linear(
+            catalog.is_unlit(material),
+            catalog.color_map_transform(material),
+            catalog.takes_model_lighting(material),
+        );
+        for texture in &material.textures {
+            let Some(is_normal) = texture_semantic_decodes_as_normal(texture.semantic) else {
+                continue;
+            };
+            let Some(image) = texture.image else {
+                continue;
+            };
+            if catalog
+                .images
+                .get(image)
+                .is_some_and(|img| img.decoded.is_some() || img.pending_decode.is_some())
+            {
+                continue;
+            }
+            let sharp = alpha_test && !is_normal;
+            let linear = force_linear && !is_normal;
+            if let Some((_, (_, normal, already_sharp, already_linear))) =
+                work.iter_mut().find(|(already, _)| *already == image)
+            {
+                *normal |= is_normal;
+                *already_sharp |= sharp;
+                *already_linear |= linear;
+            } else {
+                work.push((image, (texture.sampler_state, is_normal, sharp, linear)));
+            }
         }
-        if work.iter().any(|(already, _)| *already == image) {
-            continue;
-        }
-        work.push((image, (texture.sampler_state, false, false, false)));
     }
     work
 }
@@ -2451,7 +2454,7 @@ impl ImageDemandPlan {
     /// row carrying the plan's id, whether or not the plan had anything to put
     /// there. A plan that [`Self::prune_to`] emptied never reaches `apply`, so
     /// without this its rows keep a mark saying a decode is owed on them —
-    /// and [`requested_color_map_slots`] and [`requested_keyed_2d_slots`] read
+    /// and [`requested_color_map_slots`] and [`requested_keyed_image_slots`] read
     /// that mark as "somebody else is already handling this name" and skip the
     /// row. Every row still marked here was answered by another plan, which is
     /// why the plan is empty; the count is that plan's `already_decoded`.
@@ -2895,14 +2898,14 @@ fn claim(
     inline
 }
 
-pub fn plan_color_or_2d_for_keys(
+pub fn plan_images_for_keys(
     plan: &mut ImageDemandPlan,
     catalog: &mut MaterialDefinitions,
     keys: impl IntoIterator<Item = crate::MaterialKey>,
     stage: &StageHandle,
     pool: &TaskPool,
 ) -> usize {
-    let requested = requested_keyed_2d_slots(catalog, keys);
+    let requested = requested_keyed_image_slots(catalog, keys);
     let inline = claim(catalog, plan, requested);
     decode_inline(catalog, &inline, stage, pool).decoded
 }

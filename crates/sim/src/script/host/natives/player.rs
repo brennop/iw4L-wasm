@@ -44,7 +44,8 @@ pub(crate) fn present(
 
 pub(crate) fn text(value: &Value) -> Result<Arc<str>, String> {
     match value {
-        Value::String(s) | Value::LocalizedString(s) => Ok(s.clone()),
+        Value::String(s) => Ok(s.clone().into()),
+        Value::LocalizedString(s) => Ok(s.clone()),
         Value::Int(n) => Ok(n.to_string().into()),
         Value::Vector(v) => Ok(format!("{} {} {}", v[0], v[1], v[2]).into()),
         Value::Float(f) => Ok(runtime::to_text(&Value::Float(*f))
@@ -67,6 +68,20 @@ fn client_dvar_value(value: &Value, params: &[Value]) -> Result<String, String> 
 }
 
 fn publish_client_dvar(world: &mut World, client: u32, name: &str, value: String) {
+    let value = if let Some(setting) = crate::TargetBoxDvar::named(name) {
+        let Some(value) = setting.parse(&value) else {
+            return;
+        };
+        let value = value.to_string();
+        let mut runtime = world.resource_mut::<Runtime>();
+        if runtime.local_presentation_client == Some(ClientId(client)) {
+            runtime.pending_local_dvars.push((setting, value));
+            return;
+        }
+        value
+    } else {
+        value
+    };
     let mut frame = FrameWorld::from_world(world);
     if frame.client_meta(ClientId(client)).is_none() {
         return;
@@ -88,51 +103,155 @@ pub(crate) fn send_menu_command(world: &mut World, client: u32, kind: crate::Men
         .push_menu_command(kind);
 }
 
-fn data_path(keys: &[Value]) -> Result<String, String> {
-    let mut path = String::new();
-    for (i, key) in keys.iter().enumerate() {
-        if i > 0 {
-            path.push('.');
-        }
-        match key {
-            Value::String(s) => path.push_str(&s.to_ascii_lowercase()),
-            Value::Int(n) => path.push_str(&n.to_string()),
-            other => {
-                return Err(format!(
-                    "player data key must be a string or int, not {}",
-                    kind(other)
-                ));
+fn data_keys(values: &[Value]) -> Result<Vec<structured_data_iw4::Key<'_>>, String> {
+    values
+        .iter()
+        .map(|value| match value {
+            Value::String(name) => {
+                let bytes = name.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(bytes.len());
+                std::str::from_utf8(&bytes[..end])
+                    .map(structured_data_iw4::Key::Name)
+                    .map_err(|_| "player data key is not a schema name".to_owned())
             }
-        }
-    }
-    if path.is_empty() {
-        return Err("player data needs a key".into());
-    }
-    Ok(path)
+            Value::Int(index) => Ok(structured_data_iw4::Key::Index(*index)),
+            other => Err(format!(
+                "player data key must be a string or int, not {}",
+                kind(other)
+            )),
+        })
+        .collect()
 }
 
-const DEFAULT_KILLSTREAKS: [&str; 3] = ["uav", "airdrop", "predator_missile"];
+fn cast_data_keys(
+    store: &crate::PersistentDataStore,
+    client: ClientId,
+    values: &[Value],
+) -> Result<Vec<Value>, String> {
+    use structured_data_iw4::DataType as T;
+    let mut converted = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let keys = data_keys(&converted)?;
+        let value = match store.path_type(client, &keys).map_err(data_error)? {
+            T::Struct(_) | T::EnumArray(_) => {
+                Value::String(super::super::args::byte_string(values, index)?)
+            }
+            T::IndexedArray(_) => match value {
+                Value::Int(_) => value.clone(),
+                other => {
+                    return Err(format!(
+                        "parameter {} is {}, not an int",
+                        index + 1,
+                        kind(other)
+                    ));
+                }
+            },
+            _ => {
+                return Err(data_error(crate::PersistentDataError::Field(
+                    structured_data_iw4::Error::ExtraKey,
+                )));
+            }
+        };
+        converted.push(value);
+    }
+    Ok(converted)
+}
 
-fn unset_player_data(path: &str) -> Value {
-    // A missing field is that field's zero, not undefined.
-    if let Some(slot) = path.strip_prefix("killstreaks.") {
-        let streak = slot
-            .parse::<usize>()
-            .ok()
-            .and_then(|i| DEFAULT_KILLSTREAKS.get(i));
-        return Value::string(streak.copied().unwrap_or("none"));
+fn data_value<'a>(
+    ty: structured_data_iw4::DataType,
+    value: &'a Value,
+) -> Result<structured_data_iw4::Value<'a>, String> {
+    use structured_data_iw4::{DataType as T, Value as V};
+    match (ty, value) {
+        (T::Int | T::Byte | T::Short, Value::Int(n)) => Ok(V::Int(*n)),
+        (T::Bool, Value::Int(n)) => Ok(V::Bool(*n != 0)),
+        (T::Float, Value::Float(n)) => Ok(V::Float(*n)),
+        (T::Float, Value::Int(n)) => Ok(V::Float(*n as f32)),
+        (T::String(_), Value::String(s)) => Ok(V::Bytes(s.as_bytes())),
+        (T::Enum(_), Value::String(s)) => std::str::from_utf8(s.as_bytes())
+            .map(V::String)
+            .map_err(|_| "player data value is not an enum name".to_owned()),
+        _ => Err(format!(
+            "{} is not a value for player data type {ty:?}",
+            kind(value)
+        )),
     }
-    let field = path
-        .rsplit('.')
-        .find(|key| !key.bytes().all(|b| b.is_ascii_digit()))
-        .unwrap_or("");
-    match field {
-        "weapon" | "attachment" | "camo" | "perks" | "specialgrenade" | "killstreaks" => {
-            Value::string("none")
-        }
-        "cardtitle" | "cardicon" | "cardnameplate" | "name" => Value::string(""),
-        _ => Value::Int(0),
+}
+
+fn data_error(error: crate::PersistentDataError) -> String {
+    format!("player data: {error:?}")
+}
+
+fn check_data_write(world: &World) -> Result<(), String> {
+    if world
+        .resource::<Runtime>()
+        .program
+        .as_ref()
+        .is_some_and(|program| program.has_impure_scripts())
+    {
+        return Err("player data cannot be changed after loading external scripts".into());
     }
+    if world
+        .resource::<Runtime>()
+        .dvars
+        .get("developer_script")
+        .and_then(|value| value.parse::<i32>().ok())
+        .is_some_and(|value| value != 0)
+    {
+        return Err("player data cannot be changed with developer_script enabled".into());
+    }
+    Ok(())
+}
+
+fn data_client(world: &mut World, client: u32) -> Result<ClientId, String> {
+    slot(world, client)?;
+    if FrameWorld::from_world(world)
+        .client_meta(ClientId(client))
+        .is_none()
+    {
+        return Err("player has disconnected".into());
+    }
+    Ok(ClientId(client))
+}
+
+pub(crate) fn write_class_data(
+    world: &mut World,
+    client: u32,
+    fields: &[(Vec<Value>, Value)],
+) -> Result<(), String> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let keys = fields
+        .iter()
+        .map(|(keys, _)| data_keys(keys))
+        .collect::<Result<Vec<_>, _>>()?;
+    let store = world.resource::<crate::PersistentDataStore>();
+    let values = fields
+        .iter()
+        .zip(&keys)
+        .map(|((_, value), keys)| {
+            data_value(
+                store
+                    .field_type(ClientId(client), keys)
+                    .map_err(data_error)?,
+                value,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let writes = keys
+        .iter()
+        .zip(values)
+        .map(|(keys, value)| (keys.as_slice(), value))
+        .collect::<Vec<_>>();
+    world
+        .resource_mut::<crate::PersistentDataStore>()
+        .write_many(ClientId(client), &writes)
+        .map_err(data_error)?;
+    Ok(())
 }
 
 pub(crate) fn register(registry: &mut NativeRegistry) {
@@ -248,22 +367,57 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     }
     registry.register(Method, "getplayerdata", |world, receiver, args| {
         let client = player(world, receiver)?;
-        let path = data_path(args)?;
-        let stored = slot(world, client)?.data.get(&path).cloned();
-        Ok(stored.unwrap_or_else(|| unset_player_data(&path)))
+        let client = data_client(world, client)?;
+        let store = world.resource::<crate::PersistentDataStore>();
+        let converted = cast_data_keys(store, client, args)?;
+        let keys = data_keys(&converted)?;
+        if let Some((index, false)) = store.enum_index(client, &keys).map_err(data_error)? {
+            diag::warn!(
+                Sim,
+                "gsc: invalid player data enum index {index}; using index zero"
+            );
+        }
+        use structured_data_iw4::Value as V;
+        Ok(match store.read(client, &keys).map_err(data_error)? {
+            V::Int(n) => Value::Int(n),
+            V::Bool(n) => Value::Int(n.into()),
+            V::Float(n) => Value::Float(n),
+            V::String(s) => Value::string(s),
+            V::Bytes(s) => Value::byte_string(s),
+        })
     });
     registry.register(Method, "setplayerdata", |world, receiver, args| {
         let client = player(world, receiver)?;
+        check_data_write(world)?;
+        let client = data_client(world, client)?;
         let (value, keys) = args
             .split_last()
             .ok_or("setplayerdata needs a key and a value")?;
-        let path = data_path(keys)?;
-        slot(world, client)?.data.insert(path, value.clone());
+        let converted =
+            cast_data_keys(world.resource::<crate::PersistentDataStore>(), client, keys)?;
+        let keys = data_keys(&converted)?;
+        let ty = world
+            .resource::<crate::PersistentDataStore>()
+            .field_type(client, &keys)
+            .map_err(data_error)?;
+        let value = if matches!(
+            ty,
+            structured_data_iw4::DataType::String(_) | structured_data_iw4::DataType::Enum(_)
+        ) {
+            Value::String(super::super::args::byte_string(args, args.len() - 1)?)
+        } else {
+            value.clone()
+        };
+        let value = data_value(ty, &value)?;
+        world
+            .resource_mut::<crate::PersistentDataStore>()
+            .write(client, &keys, value)
+            .map_err(data_error)?;
         Ok(Value::Undefined)
     });
     registry.register(Method, "notifyonplayercommand", |world, receiver, args| {
         let client = player(world, receiver)?;
-        let notify: Arc<str> = string(args, 0)?.into();
+        let notify: Arc<str> = super::super::args::byte_string(args, 0)?.symbol_key();
         let command: Arc<str> = string(args, 1)?.to_ascii_lowercase().into();
         let slot = slot(world, client)?;
         if !slot
@@ -510,6 +664,9 @@ fn register_death(registry: &mut NativeRegistry) {
             };
             let attacker = maybe_player(world, args, 1);
             let weapon = weapon_arg(world, args, 2)?;
+            let weapon = attacker.map_or(weapon, |attacker| {
+                super::super::players::bridged_weapon(world, attacker.0, weapon)
+            });
             let means = string(args, 3)?;
             let tick = tick(world);
             script_player::obituary(
@@ -689,7 +846,18 @@ pub(crate) fn link_to(
         .player(ClientId(client))
         .map_or(base, |ps| ps.origin);
     let delta: [f32; 3] = std::array::from_fn(|i| origin[i] - base[i]);
-    let local = std::array::from_fn(|i| (0..3).map(|j| delta[j] * axis[i][j]).sum());
+    let local = if view == LinkView::WeaponDelta {
+        [0.0; 3]
+    } else {
+        std::array::from_fn(|i| (0..3).map(|j| delta[j] * axis[i][j]).sum())
+    };
+    let restore_view = (view == LinkView::WeaponDelta)
+        .then(|| {
+            FrameWorld::from_world(world)
+                .player(ClientId(client))
+                .map(|ps| ps.viewangles)
+        })
+        .flatten();
     super::super::players::link_player(
         world,
         client,
@@ -701,6 +869,7 @@ pub(crate) fn link_to(
             view,
             clamp,
             parent_angles: math_iw4::axis_to_angles(axis),
+            restore_view,
         },
     );
     Ok(Value::Undefined)
@@ -988,7 +1157,7 @@ fn register_body(registry: &mut NativeRegistry) {
     registry.register(
         Method,
         "playerlinkweaponviewtodelta",
-        |world, receiver, args| link_to(world, receiver, args, LinkView::Delta),
+        |world, receiver, args| link_to(world, receiver, args, LinkView::WeaponDelta),
     );
     registry.register(Method, "playerlinktoabsolute", |world, receiver, args| {
         link_to(world, receiver, args, LinkView::Absolute)
@@ -1418,7 +1587,17 @@ fn register_inventory(registry: &mut NativeRegistry) {
         ($($name:literal => $field:ident),* $(,)?) => {$(
             registry.register(Method, $name, |world, receiver, args| {
                 let id = client_of(world, receiver)?;
-                let class = offhand_class_of(world, &string(args, 0)?);
+                let mut class = offhand_class_of(world, &string(args, 0)?);
+                if let Some(bridge) = world.resource::<Runtime>().weapon_bridge.get(&id.0).cloned() {
+                    let frame = FrameWorld::from_world(world);
+                    if let Some(native_class) = bridge.iter().find_map(|(stand_in, native)| {
+                        let source = frame.equipment_facts_for(*stand_in)?;
+                        let target = frame.equipment_facts_for(*native)?;
+                        (source.offhand_class == class).then_some(target.offhand_class)
+                    }) {
+                        class = native_class;
+                    }
+                }
                 if let Some(ps) = FrameWorld::from_world(world).player_mut(id) {
                     ps.$field = class;
                 }

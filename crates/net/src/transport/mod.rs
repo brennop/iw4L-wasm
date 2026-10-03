@@ -1,3 +1,4 @@
+pub(crate) mod account_wire;
 pub mod acked_baseline;
 pub mod archive;
 pub mod bootstrap;

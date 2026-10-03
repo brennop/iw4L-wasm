@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use asset_core::AssetNamespace;
 use asset_game::{HUD_CHROME_MENUS, MenuCatalog};
-use asset_material::TS_COLOR_MAP;
+use asset_material::{TS_2D, TS_COLOR_MAP};
 use assets::{NamespaceTrees, SessionCompass};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -142,6 +142,7 @@ pub struct HudImages {
     material_images: HashMap<String, String>,
     zone_states: HashMap<String, Option<[u32; 2]>>,
     zone_srgb_reads: HashMap<String, bool>,
+    zone_samplers: HashMap<String, u8>,
     blood_plan: Option<Result<BloodMaterialBinding, String>>,
     zone_installed: bool,
     zone_uploaded: bool,
@@ -216,6 +217,24 @@ impl HudImages {
                 .iter()
                 .map(|(material, image)| (cache_key(material), image.clone())),
         );
+        for (name, plan) in &catalog.material_2d_plans {
+            let binding =
+                plan.textures
+                    .iter()
+                    .rev()
+                    .find(|binding| binding.semantic == TS_2D && binding.image.is_some())
+                    .or_else(|| {
+                        plan.textures.iter().rev().find(|binding| {
+                            binding.semantic == TS_COLOR_MAP && binding.image.is_some()
+                        })
+                    });
+            if let Some(binding) = binding
+                && catalog.material_images.get(name) == binding.image.as_ref()
+            {
+                self.zone_samplers
+                    .insert(cache_key(name), binding.sampler_state);
+            }
+        }
         for (name, state) in &catalog.material_state_bits {
             self.zone_states.insert(name.clone(), state.agreed());
             if catalog.zone_images.contains_key(name) && state.agreed().is_none() {
@@ -286,7 +305,10 @@ impl HudImages {
                 .get(&cache_key(name))
                 .copied()
                 .unwrap_or(false);
-        self.get_sampled(
+        let sampler = (ns == HUD_CHROME_NAMESPACE)
+            .then(|| self.zone_samplers.get(&cache_key(name)).copied())
+            .flatten();
+        self.get_sampled_with_sampler(
             ns,
             name,
             if srgb {
@@ -294,6 +316,7 @@ impl HudImages {
             } else {
                 HudSampling::Data
             },
+            sampler,
             images,
         )
     }

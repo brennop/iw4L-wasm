@@ -1512,7 +1512,7 @@ pub(crate) fn execute_sun_product(
 }
 
 pub(crate) fn bake_spot_shadow_casters(
-    inputs: Res<FrameAssemblyInputs>,
+    inputs: (Res<FrameAssemblyInputs>, Res<MaterialGeneration>),
     retained: Res<StaticDrawLane>,
     scene: Option<Res<crate::prepare::scene::world::WorldScene>>,
     world_plan: Option<Res<WorldDrawGpuPlan>>,
@@ -1532,6 +1532,7 @@ pub(crate) fn bake_spot_shadow_casters(
     mut spot_lights: ResMut<super::SpotShadowMapLights>,
     mut mat_frame: ResMut<MaterialFrameInputs>,
 ) {
+    let (inputs, generation) = inputs;
     let (smodel_plan, lod_ramp) = smodel_plan;
     let (sm_enable, sm_sun_enable) = sm;
     let Some(world) = scene.as_deref() else {
@@ -1548,6 +1549,7 @@ pub(crate) fn bake_spot_shadow_casters(
         world,
         prepared.as_deref(),
         xmodel_plan.as_deref(),
+        &generation.catalog,
         retained_items,
         world_run_surfs,
         world_plan

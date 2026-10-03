@@ -17,11 +17,19 @@ pub mod hudelem;
 pub mod identities;
 pub mod input;
 mod item;
+mod local_profile;
+pub use local_profile::LocalPlayerProfile;
 mod mantle_xanim;
 pub mod match_state;
 mod missile;
 mod missile_guidance;
 pub use missile_guidance::{MissileGuide, MissileTarget};
+mod persistent_data;
+mod persistent_defaults;
+pub use persistent_data::{
+    AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES, PersistentDataError, PersistentDataStore,
+};
+pub use persistent_defaults::PlayerDataDefaults;
 mod presence;
 mod remote_missile;
 pub mod script;
@@ -97,11 +105,12 @@ pub use match_state::{
     ClassDef, ClassRejectReason, ClientLifecycle, ClientSnapshotMeta,
     ConfigurationChangeRejectReason, DroppedItemAmmo, EntityEventPayload, EntityEventRecord,
     EventAudience, EventRecord, GiveRejectReason, HealthRegenCensus, InputReceipt,
-    ItemPickupRecord, KillcamHud, LoadoutSpec, LocationSelection, MENU_COMMAND_TAIL,
-    MatchEndReason, MenuCommand, MenuCommandKind, PelletFxRecord, PersonalClass, RadarMode,
-    RemoteMissile, RngDebugMeta, SIM_EVENT_ROSTER, ScriptBlur, ScriptControls, ScriptDepthOfField,
-    ScriptDvars, ScriptSeat, SimEvent, SimEventRow, SnapshotMeta, UNRELIABLE_SIM_EVENT_COUNT,
-    ViewEffects, VisionChange, is_postfx_dvar, sim_event_is_reliable,
+    ItemPickupRecord, KillcamHud, LinkedWeaponView, LoadoutSpec, LocationSelection,
+    MENU_COMMAND_TAIL, MatchEndReason, MenuCommand, MenuCommandKind, PelletFxRecord, PersonalClass,
+    RadarMode, RemoteMissile, RngDebugMeta, SIM_EVENT_ROSTER, ScriptBlur, ScriptControls,
+    ScriptDepthOfField, ScriptDvars, ScriptSeat, SimEvent, SimEventRow, SnapshotMeta,
+    TargetBoxDvar, UNRELIABLE_SIM_EVENT_COUNT, ViewEffects, VisionChange, is_postfx_dvar,
+    sim_event_is_reliable,
 };
 pub use player_anim_script::{
     AnimConditions, AnimScriptCommand, AnimScriptCondition, AnimScriptItem, PlayerAnimScript,
@@ -121,9 +130,9 @@ pub use sound_alias_cs::{
     hud_string_in_occupied, name_in_occupied,
 };
 pub use spawn::{
-    AuthoredSpawnPoint, HostGameModeSelection, MatchBootstrap, SPAWN_BAD_DIST, SPAWN_IDEAL_DIST,
-    SpawnAttemptReport, SpawnDecision, SpawnReject, host_game_mode_kind, pick_ffa_spawn,
-    spawn_candidate_indices, spawn_candidate_indices_for,
+    AuthoredSpawnPoint, HostCheats, HostGameModeSelection, MatchBootstrap, SPAWN_BAD_DIST,
+    SPAWN_IDEAL_DIST, SpawnAttemptReport, SpawnDecision, SpawnReject, host_game_mode_kind,
+    pick_ffa_spawn, spawn_candidate_indices, spawn_candidate_indices_for,
 };
 pub use step::phase_materialize_entity_dobjs;
 pub use world::{
@@ -148,9 +157,12 @@ pub use time_scale::ScriptSlowMotion;
 mod objectives;
 pub use objectives::{
     CompassObjective, CompassVehicle, ObjectiveMatch, ObjectiveState, ScriptEffect,
+    VehicleHudTarget,
 };
 
 pub use world::{SimContent, SimContentBuilder, WeaponSetup};
 
 mod script_audio;
 pub use script_audio::{ScriptAmbient, ScriptAudioCommand};
+
+pub use input::PlayerProfile;

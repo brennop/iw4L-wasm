@@ -200,13 +200,30 @@ fn boot_bots(
     mut actions: ResMut<ClientActionInbox>,
     mut request_ids: ResMut<net::ActionRequestIds>,
     installed: Option<Res<HasWorld>>,
+    world: Option<ResMut<AuthorityWorld>>,
 ) {
+    let Some(mut world) = world else {
+        return;
+    };
     if !installed.is_some_and(|installed| installed.0) {
         return;
     }
     let seed = roster.seed;
     for bot in &mut roster.bots {
         if bot.joined {
+            continue;
+        }
+        if world.0.gsc_realm() == Some(sim::script::Realm::Iw4)
+            && let Err(error) = world
+                .0
+                .persistent_data_mut()
+                .admit_temporary(bot.id, bot.account)
+        {
+            diag::warn!(
+                Sim,
+                "bots: client {} account admission failed: {error:?}",
+                bot.id.0
+            );
             continue;
         }
         let index = default_class_index(seed, bot.id, bot.class_picks);

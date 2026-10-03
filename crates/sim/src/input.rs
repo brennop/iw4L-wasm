@@ -69,9 +69,18 @@ pub enum ClientAction {
         speed: f32,
     },
 
+    ToggleGod {
+        request_id: ActionRequestId,
+    },
+
     DebugDamage {
         request_id: ActionRequestId,
         amount: i32,
+    },
+
+    SetProfile {
+        request_id: ActionRequestId,
+        profile: PlayerProfile,
     },
 
     SetName {
@@ -107,6 +116,13 @@ pub enum ClientAction {
         request_id: ActionRequestId,
         name: [u8; MENU_RESPONSE_BYTES],
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayerProfile {
+    pub title: u32,
+    pub emblem: u32,
+    pub killstreaks: [u32; 3],
 }
 
 pub const MENU_RESPONSE_BYTES: usize = 48;
@@ -168,8 +184,10 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::SetMatchPhase { request_id, .. }
         | ClientAction::Move { request_id, .. }
         | ClientAction::BeginScriptMoverRotateVelocity { request_id, .. }
+        | ClientAction::ToggleGod { request_id }
         | ClientAction::DebugDamage { request_id, .. }
         | ClientAction::SetName { request_id, .. }
+        | ClientAction::SetProfile { request_id, .. }
         | ClientAction::UseCopycat { request_id }
         | ClientAction::ActionSlot { request_id, .. }
         | ClientAction::ChooseDefaultClass { request_id, .. }

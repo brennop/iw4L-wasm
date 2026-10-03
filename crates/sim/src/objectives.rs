@@ -5,6 +5,7 @@ pub struct ObjectiveMatch {
     pub scores: [i32; 3],
     pub compass: Vec<CompassObjective>,
     pub vehicles: Vec<CompassVehicle>,
+    pub vehicle_targets: Vec<VehicleHudTarget>,
     pub server_info: Vec<(String, String)>,
     pub game_end_time: i32,
     pub slow_motion: Option<crate::ScriptSlowMotion>,
@@ -17,6 +18,7 @@ pub struct ObjectiveMatch {
     pub earthquakes: Vec<crate::ScriptEarthquake>,
     pub naked_vision: Option<crate::VisionChange>,
     pub thermal_vision: Option<crate::VisionChange>,
+    pub thermal_body_material: String,
     pub missile_vision: Option<crate::VisionChange>,
     pub night_vision: Option<crate::VisionChange>,
     pub pain_vision: Option<crate::VisionChange>,
@@ -112,4 +114,12 @@ pub struct CompassVehicle {
     pub team: i32,
     pub icons: [String; 2],
     pub size: [i32; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VehicleHudTarget {
+    pub slot: u8,
+    pub entity: u16,
+    pub model: crate::ScriptModelId,
+    pub owner: crate::ClientId,
 }

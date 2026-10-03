@@ -99,6 +99,7 @@ pub struct FxTrailSampleVisual {
 
 #[derive(Clone, Debug)]
 pub struct FxSpriteInstance {
+    pub viewmodel: bool,
     pub origin: [f32; 3],
 
     pub size0: f32,
@@ -653,7 +654,13 @@ fn draw_one_elem(
         elem_handle: handle,
     };
     match on_elem(ctx) {
-        Some(sprite) => out.sprites.push(sprite),
+        Some(mut sprite) => {
+            let dobj = fx_iw4::bolt_dobj(effect.bolt_packed);
+            sprite.viewmodel = (fx_iw4::FX_BOLT_VIEWMODEL_DOBJ_BASE
+                ..fx_iw4::FX_BOLT_VIEWMODEL_DOBJ_BASE + 2)
+                .contains(&dobj);
+            out.sprites.push(sprite);
+        }
         None => out.skipped_no_lookup = out.skipped_no_lookup.saturating_add(1),
     }
 }

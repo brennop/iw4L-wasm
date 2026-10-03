@@ -404,15 +404,21 @@ pub fn occupy_fpv_scene(
     mut submissions: MessageWriter<AnimDObjSceneSubmission>,
     presented: Res<PresentedSnapshot>,
     local: Res<LocalPresentClient>,
-    view: Res<ViewSubject>,
+    view_settings: (Res<ViewSubject>, Res<frame::GameSettings>),
     prepared: Res<PreparedFpv>,
     kick: Option<Res<SessionViewKick>>,
     session_vm: Option<Res<SessionViewmodel>>,
     tess: Option<Res<render_scene::TessMaterials>>,
     fpv_meshes: Option<Res<PreparedFpvMeshes>>,
 ) {
+    let (view, settings) = view_settings;
     if presented.viewweapon_player(local.0).is_none()
-        || presented_is_third_person(&presented, local.0, view.in_killcam())
+        || presented_is_third_person(
+            &presented,
+            local.0,
+            view.in_killcam(),
+            settings.third_person,
+        )
     {
         return;
     }
@@ -493,8 +499,12 @@ fn refuse_gap_cause(refuse: FpvPoseRefuse) -> RenderGapCause {
 
 pub fn tick_fpv_viewmodel(
     time: Res<Time>,
-    presented: Res<PresentedSnapshot>,
-    local: Res<LocalPresentClient>,
+    (presented, local, generation, events): (
+        Res<PresentedSnapshot>,
+        Res<LocalPresentClient>,
+        Res<frame::WorldGeneration>,
+        Res<net::EntityEventCursor>,
+    ),
     mut cursor: ResMut<FpvPresentCursor>,
     prepared: Res<PreparedFpv>,
     fpv_meshes: Option<Res<PreparedFpvMeshes>>,
@@ -506,15 +516,20 @@ pub fn tick_fpv_viewmodel(
     mut pending_notes: ResMut<PendingFpvNotetracks>,
     mut bolts: ResMut<FpvBoltTargets>,
     kick: Option<Res<SessionViewKick>>,
-    view: Res<ViewSubject>,
+    view_settings: (Res<ViewSubject>, Res<frame::GameSettings>),
 ) {
+    let (view, settings) = view_settings;
     let table = prepared.table().map(|table| &**table);
-    pending_notes.weapon = 0;
-    pending_notes.names.clear();
+    pending_notes.batch = None;
     bolts.clear();
     *product = FpvPoseProduct::default();
     if let Some(ps) = presented.viewweapon_player(local.0) {
-        if !presented_is_third_person(&presented, local.0, view.in_killcam()) {
+        if !presented_is_third_person(
+            &presented,
+            local.0,
+            view.in_killcam(),
+            settings.third_person,
+        ) {
             product.drawgun = viewweapon_drawgun_value(
                 ps,
                 table,
@@ -547,7 +562,12 @@ pub fn tick_fpv_viewmodel(
         product.kind = FpvPoseKind::Hide;
         return;
     }
-    if presented_is_third_person(&presented, local.0, view.in_killcam()) {
+    if presented_is_third_person(
+        &presented,
+        local.0,
+        view.in_killcam(),
+        settings.third_person,
+    ) {
         product.kind = FpvPoseKind::Hide;
         return;
     }
@@ -705,7 +725,7 @@ pub fn tick_fpv_viewmodel(
         view: equipped_view,
         ..
     } = session;
-    let mut kind = generate_fpv_pose(FpvGenerateArgs {
+    let (mut kind, notetracks) = generate_fpv_pose(FpvGenerateArgs {
         dt,
         equipped,
         rigs: &equipped_view.rigs,
@@ -723,11 +743,21 @@ pub fn tick_fpv_viewmodel(
         dual,
         dual_offset,
     });
+    if weapon_id != 0
+        && (!notetracks.records.is_empty() || notetracks.discarded != 0)
+        && let Some(snapshot) = presented.snapshot()
+        && let Some(meta) = snapshot.meta.for_client(local.0)
+    {
+        pending_notes.batch = Some(notetracks.into_audio_batch(
+            *generation,
+            events.timeline(),
+            local.0,
+            meta.life_sequence,
+            weapon_id,
+            snapshot.tick,
+        ));
+    }
     if let FpvPoseKind::Posed(frame) = &mut kind {
-        if weapon_id != 0 && !frame.notetracks.is_empty() {
-            pending_notes.weapon = weapon_id;
-            pending_notes.names.clone_from(&frame.notetracks);
-        }
         // Nothing downstream of the bones waits for a vertex.
         if let Some(bolt) = frame.secondary_bolt.take() {
             bolts.set_pose(1, bolt);
@@ -898,9 +928,10 @@ pub fn apply_fpv_placement(
             Without<WorldScriptModelInstance>,
         ),
     >,
-    view: Res<ViewSubject>,
+    view_settings: (Res<ViewSubject>, Res<frame::GameSettings>),
     mut gfx_scene: ResMut<HostGfxScene>,
 ) {
+    let (view, settings) = view_settings;
     *aim = ViewweaponAim::default();
     let Ok(mut transform) = roots.single_mut() else {
         return;
@@ -908,7 +939,12 @@ pub fn apply_fpv_placement(
     let Some(ps) = presented.player(local.0) else {
         return;
     };
-    if presented_is_third_person(&presented, local.0, view.in_killcam()) {
+    if presented_is_third_person(
+        &presented,
+        local.0,
+        view.in_killcam(),
+        settings.third_person,
+    ) {
         return;
     }
     let Some(table) = prepared.table() else {
@@ -1116,32 +1152,25 @@ fn flush_fpv_spawn(world: &mut World) {
 }
 
 fn publish_fpv_notetracks(
-    generation: Res<frame::WorldGeneration>,
-    presented: Res<PresentedSnapshot>,
-    local: Res<LocalPresentClient>,
     pending: Res<PendingFpvNotetracks>,
     mut notes: MessageWriter<audio::ViewmodelNotetracks>,
 ) {
-    if pending.weapon == 0 || pending.names.is_empty() {
-        return;
+    if let Some(batch) = &pending.batch {
+        notes.write(batch.clone());
     }
-    let Some(meta) = presented
-        .snapshot()
-        .and_then(|snapshot| snapshot.meta.for_client(local.0))
-    else {
-        return;
-    };
-    notes.write(audio::ViewmodelNotetracks {
-        generation: *generation,
-        client: local.0,
-        life: meta.life_sequence,
-        weapon: pending.weapon,
-        names: pending.names.clone(),
-    });
 }
 
 pub fn register_fpv_present_systems(app: &mut App) {
-    app.init_resource::<LocalSpawnArmed>()
+    app.init_resource::<frame::ScreenEffectsView>()
+        .init_resource::<frame::ScreenEffectsDvars>()
+        .add_systems(
+            Update,
+            super::screen_effects::update
+                .in_set(frame::ScreenEffectsPublished)
+                .in_set(LifeFrontPublished)
+                .after(reset_view_kick_on_life_started),
+        )
+        .init_resource::<LocalSpawnArmed>()
         .init_resource::<SessionViewmodel>()
         .init_resource::<PreparedFpv>()
         .init_resource::<crate::anim::model_materials::PreparedModelMaterials>()

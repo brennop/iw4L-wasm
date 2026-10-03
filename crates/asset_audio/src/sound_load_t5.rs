@@ -5,7 +5,7 @@ use crate::sound_catalog::{
     CapturedAlias, CapturedSndCurve, CapturedSound, LoadedSoundPcm, MSS_PCM, SoundCatalog,
 };
 use crate::zone::{T5ZoneMemory, open_zone_shared};
-use crate::{ZoneGame, ZoneOwner};
+use crate::{AssetNamespace, ZoneGame, ZoneOwner};
 use fastfile_t5::size as sz;
 use fastfile_t5::{
     AssetLinkSink, AssetSink, AssetType, Ptr, ScriptStrings, ZonePtr, ZoneStream,
@@ -83,6 +83,35 @@ impl AssetLinkSink for T5SoundCapture {
                 .curves
                 .insert(name.clone(), CapturedSndCurve { name, knots });
         }
+        Ok(())
+    }
+
+    fn capture_snd_groups(
+        &mut self,
+        s: &ZoneStream<'_>,
+        rows: Ptr,
+        count: usize,
+    ) -> fastfile_t5::Result<()> {
+        let mut groups = Vec::with_capacity(count);
+        for i in 0..count {
+            let row = rows.at(i * 80);
+            groups.push((s.i32_at(row, 68)?, f32::from(s.u16_at(row, 78)?) / 65535.0));
+        }
+        let volumes = (0..count)
+            .map(|mut group| {
+                let mut volume = 1.0;
+                for _ in 0..100 {
+                    let (parent, attenuation) = groups[group];
+                    volume *= attenuation;
+                    match usize::try_from(parent) {
+                        Ok(parent) if parent < count => group = parent,
+                        _ => break,
+                    }
+                }
+                volume
+            })
+            .collect();
+        self.catalog.set_group_volumes(AssetNamespace::T5, volumes);
         Ok(())
     }
 
@@ -339,6 +368,7 @@ impl T5SoundCapture {
             sequence: 0,
             vol_min,
             vol_max,
+            vol_mod_index: None,
             pitch_min,
             pitch_max,
             dist_min,

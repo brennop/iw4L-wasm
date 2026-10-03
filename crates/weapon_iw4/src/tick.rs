@@ -928,7 +928,9 @@ fn prepare_weapon_tick(
         );
         return PreparedWeaponTick::Complete(None);
     }
-    let fire_mask = if detonator.is_some() {
+    let fire_mask = if fire_ty == FireType::DoubleBarrel && cmd.last_weapon_hand != 1 {
+        BUTTON_ATTACK | BUTTON_THROW
+    } else if detonator.is_some() {
         playerstate_iw4::buttons::THROW
     } else {
         get_weapon_fire_button(cmd.last_weapon_hand, i32::from(hand.hand_index))
@@ -945,7 +947,7 @@ fn prepare_weapon_tick(
         hand.weapon_time = (hand.weapon_time - decay_ms).max(0);
     }
 
-    if time_before != 0 && hand.weapon_time < 1 {
+    if time_before != 0 && hand.weapon_time < 1 && hand.weapon_delay == 0 {
         weapon_decay_hold_interrupt(hand, fire_ty, cmd, attack);
     }
     if hand.weapon_delay > 0 {
@@ -1008,10 +1010,6 @@ fn finish_weapon_tick(
         && begin_weapon_reload(hand, facts)
     {
         return Some(WeaponTickEvent::ReloadStarted);
-    }
-
-    if event.is_none() {
-        event = weapon_check_for_rechamber(hand, facts, cmd, delayed_action);
     }
 
     match WeaponState::from_i32(hand.weaponstate) {
@@ -1138,6 +1136,10 @@ fn finish_weapon_tick(
         Err(_) => return None,
     }
 
+    if event.is_none() {
+        event = weapon_check_for_rechamber(hand, facts, cmd, delayed_action);
+    }
+
     if event.is_some() {
         return event;
     }
@@ -1153,7 +1155,9 @@ fn finish_weapon_tick(
     if ready_idle || mid_burst_continue || delayed_fire {
         let trigger = match fire_ty {
             FireType::FullAuto => attack || delayed_fire,
-            FireType::SingleShot => (attack && hand.shot_count == 0) || delayed_fire,
+            FireType::SingleShot | FireType::DoubleBarrel => {
+                (attack && hand.shot_count == 0) || delayed_fire
+            }
             FireType::BurstFire2 | FireType::BurstFire3 | FireType::BurstFire4 => {
                 attack || pending || delayed_fire
             }
@@ -1180,37 +1184,44 @@ fn finish_weapon_tick(
                 return None;
             }
 
-            if ready_idle {
-                hand.weapon_restrict_kick_time = crate::start_firing_restrict_kick_time(
-                    cmd.f_weapon_pos_frac,
-                    facts.ads_gun_kick_reduced_kick_bullets,
-                    facts.hip_gun_kick_reduced_kick_bullets,
-                    facts.fire_time_ms,
-                    facts.fire_delay_ms,
-                );
-            }
-            hand.weaponstate = WeaponState::Firing as i32;
-            hand.weapon_time = facts.fire_time_ms.max(1);
-            if facts.ads_fire_only {
-                hand.weapon_delay =
-                    ads_fire_only_delay_ms(cmd.f_weapon_pos_frac, facts.ads_in_rate);
-            } else if facts.fire_delay_ms > 0 {
-                hand.weapon_delay = facts.fire_delay_ms;
-            }
-
-            if !fire_ty.is_full_auto() {
-                if fire_ty.is_burst() && hand.shot_count == 0 {
-                    hand.burst_latch = false;
+            if !delayed_fire {
+                if ready_idle {
+                    hand.weapon_restrict_kick_time = crate::start_firing_restrict_kick_time(
+                        cmd.f_weapon_pos_frac,
+                        facts.ads_gun_kick_reduced_kick_bullets,
+                        facts.hip_gun_kick_reduced_kick_bullets,
+                        facts.fire_time_ms,
+                        facts.fire_delay_ms,
+                    );
                 }
-                hand.shot_count = hand.shot_count.saturating_add(1).min(4);
-            }
-            if hand.weapon_delay != 0 {
-                return None;
+                hand.weaponstate = WeaponState::Firing as i32;
+                hand.weapon_time = facts.fire_time_ms.max(1);
+                if facts.ads_fire_only {
+                    hand.weapon_delay =
+                        ads_fire_only_delay_ms(cmd.f_weapon_pos_frac, facts.ads_in_rate);
+                } else if facts.fire_delay_ms > 0 {
+                    hand.weapon_delay = facts.fire_delay_ms;
+                }
+
+                if !fire_ty.is_full_auto() {
+                    if fire_ty.is_burst() && hand.shot_count == 0 {
+                        hand.burst_latch = false;
+                    }
+                    hand.shot_count = hand.shot_count.saturating_add(1).min(4);
+                }
+                if hand.weapon_delay != 0 {
+                    return None;
+                }
             }
             if fire_weapon_kind(facts.weap_type, facts.weap_class).is_none() {
                 return Some(WeaponTickEvent::EmptyClick);
             }
-            let used = facts.ammo_per_shot().min(hand.clip);
+            let double = fire_ty == FireType::DoubleBarrel
+                && cmd.last_weapon_hand != 1
+                && cmd.buttons & (BUTTON_ATTACK | BUTTON_THROW) == (BUTTON_ATTACK | BUTTON_THROW)
+                && hand.clip > 1;
+            cmd.weap_flags = (cmd.weap_flags & !0x200) | if double { 0x200 } else { 0 };
+            let used = if double { 2 } else { facts.ammo_per_shot() }.min(hand.clip);
             hand.clip -= used;
             if facts.bolt_action {
                 hand.rechamber_pending = true;

@@ -25,6 +25,8 @@ use crate::transport::protocol::{
 use crate::transport::udp_socket::UdpSendError;
 use crate::transport::wire::WireReader;
 
+use super::account_wire::{AccountMessage, profile_payload};
+
 const RELAY_MAIL_CAP: usize = 64;
 pub(crate) const CMDS_PER_PACKET: usize = 16;
 
@@ -163,6 +165,7 @@ pub struct UdpAuthorityHub {
     committed_admissions: Vec<CommittedAdmission>,
 
     denied: HashSet<master_protocol::MemberId>,
+    accounts_required: bool,
 }
 
 #[derive(Debug)]
@@ -177,6 +180,16 @@ struct PeerReplicationState {
     admission: PeerAdmission,
     last_control_seq: Option<u16>,
     control_drops_sent: u32,
+    account: Option<PeerAccount>,
+}
+
+#[derive(Debug)]
+struct PeerAccount {
+    challenge: crate::AccountChallenge,
+    challenge_sent: bool,
+    refusal_pending: bool,
+    owner: Option<sim::AccountId>,
+    offered: Option<sim::AccountSnapshot>,
 }
 
 #[derive(Debug)]
@@ -195,6 +208,7 @@ enum PeerAdmission {
     },
     Committed {
         bootstrap_id: u32,
+        epoch: u32,
     },
 }
 
@@ -211,6 +225,7 @@ impl PeerReplicationState {
             admission: PeerAdmission::Uncommitted,
             last_control_seq: None,
             control_drops_sent: 0,
+            account: None,
         }
     }
 
@@ -304,6 +319,7 @@ impl UdpAuthorityHub {
             member_by_conn: HashMap::new(),
             committed_admissions: Vec::new(),
             denied: HashSet::new(),
+            accounts_required: false,
         }
     }
 
@@ -336,7 +352,29 @@ impl UdpAuthorityHub {
     }
 
     pub fn take_committed_admissions(&mut self) -> Vec<CommittedAdmission> {
-        std::mem::take(&mut self.committed_admissions)
+        let mut ready = Vec::new();
+        let live = self.live_packet_epoch();
+        self.committed_admissions.retain(|admission| {
+            if admission.epoch != live
+                || !self
+                    .replication
+                    .contains_key(&ConnectionId(admission.connection_id))
+            {
+                return false;
+            }
+
+            let bound = !self.accounts_required
+                || self
+                    .replication
+                    .get(&ConnectionId(admission.connection_id))
+                    .and_then(|peer| peer.account.as_ref())
+                    .is_some_and(|account| account.owner.is_some() && account.offered.is_some());
+            if bound {
+                ready.push(*admission);
+            }
+            !bound
+        });
+        ready
     }
 
     pub fn client_of_member(&self, member_id: master_protocol::MemberId) -> Option<ClientId> {
@@ -403,6 +441,8 @@ impl UdpAuthorityHub {
         self.member_by_conn.remove(&conn);
         self.replication.remove(&conn);
         self.next_bootstrap_id.remove(&conn);
+        self.committed_admissions
+            .retain(|admission| admission.connection_id != conn.0);
         client
     }
 
@@ -420,6 +460,7 @@ impl UdpAuthorityHub {
     }
 
     pub fn reset_match(&mut self) {
+        self.accounts_required = false;
         self.next_bootstrap_id.clear();
         self.committed_admissions.clear();
         self.denied.clear();
@@ -437,8 +478,20 @@ impl UdpAuthorityHub {
         action_inbox: &mut crate::ClientActionInbox,
         _samples: Option<&mut ClientShotSamples>,
         mut reliable: Option<&mut crate::ReliableEventHub>,
+        account_context: Option<(&mut sim::SimWorld, frame::MatchKey)>,
     ) -> Result<(), String> {
+        let (mut account_world, match_key) = match account_context {
+            Some((world, key)) => (Some(world), key),
+            None => (None, frame::MatchKey::NONE),
+        };
+        self.accounts_required = self.bootstrap.is_some()
+            && account_world
+                .as_ref()
+                .is_some_and(|world| world.gsc_realm() == Some(sim::script::Realm::Iw4));
         self.apply_admission_acks();
+        if self.accounts_required {
+            self.offer_accounts(account_world.as_deref().unwrap(), match_key)?;
+        }
         let mut packets: Vec<(Vec<u8>, MemberId, bool)> = Vec::new();
         for (member, bytes) in self.relay.take_inbound() {
             packets.push((bytes, member, false));
@@ -447,6 +500,26 @@ impl UdpAuthorityHub {
             packets.push((bytes, member, true));
         }
         for (bytes, from, control) in packets {
+            if control {
+                match AccountMessage::decode(&bytes) {
+                    Ok(Some(message)) => {
+                        if self.accounts_required {
+                            self.apply_account_message(
+                                from,
+                                message,
+                                account_world.as_deref_mut().unwrap(),
+                                match_key,
+                            )?;
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        diag::warn!(Net, "account control refused: {error}");
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
+            }
             let packet = match decode_client_packet(&bytes, &self.limits) {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -478,6 +551,19 @@ impl UdpAuthorityHub {
                         .replication
                         .get(&header.connection)
                         .is_some_and(|peer| peer.admits_gameplay(relay))
+                    {
+                        continue;
+                    }
+                    if self.accounts_required
+                        && !self
+                            .replication
+                            .get(&header.connection)
+                            .and_then(|peer| peer.account.as_ref())
+                            .is_some_and(|account| {
+                                account.challenge.match_key == match_key
+                                    && account.owner.is_some()
+                                    && account.offered.is_some()
+                            })
                     {
                         continue;
                     }
@@ -543,6 +629,152 @@ impl UdpAuthorityHub {
         Ok(())
     }
 
+    fn offer_accounts(
+        &mut self,
+        world: &sim::SimWorld,
+        match_key: frame::MatchKey,
+    ) -> Result<(), String> {
+        for (connection, peer) in &mut self.replication {
+            if !matches!(peer.admission, PeerAdmission::Committed { epoch, .. } if epoch == match_key.match_epoch)
+            {
+                continue;
+            }
+            let member = self.member_by_conn[connection];
+            if peer
+                .account
+                .as_ref()
+                .is_some_and(|account| account.challenge.match_key != match_key)
+            {
+                peer.account = None;
+            }
+            if peer.account.is_none() {
+                peer.account = Some(PeerAccount {
+                    challenge: crate::AccountChallenge::new(match_key, *connection, member)
+                        .map_err(|error| format!("account challenge: {error:?}"))?,
+                    challenge_sent: false,
+                    refusal_pending: false,
+                    owner: None,
+                    offered: None,
+                });
+            }
+            let account = peer.account.as_mut().unwrap();
+            if !account.challenge_sent {
+                let bytes = AccountMessage::Challenge(account.challenge)
+                    .encode()
+                    .map_err(|error| error.to_string())?;
+                if self.relay.push_control_outbound(member, bytes).is_err() {
+                    continue;
+                }
+                account.challenge_sent = true;
+            }
+            if account.refusal_pending {
+                let bytes = AccountMessage::Refused(account.challenge)
+                    .encode()
+                    .map_err(|error| error.to_string())?;
+                if self.relay.push_control_outbound(member, bytes).is_err() {
+                    continue;
+                }
+                account.refusal_pending = false;
+            }
+            if let Some(owner) = account.owner
+                && let Some(snapshot) = world.persistent_data().snapshot(owner)
+                && account.offered.as_ref() != Some(&snapshot)
+            {
+                let bytes = AccountMessage::Update {
+                    challenge: account.challenge,
+                    snapshot: snapshot.clone(),
+                }
+                .encode()
+                .map_err(|error| error.to_string())?;
+                if self.relay.push_control_outbound(member, bytes).is_ok() {
+                    account.offered = Some(snapshot);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_account_message(
+        &mut self,
+        from: MemberId,
+        message: AccountMessage,
+        world: &mut sim::SimWorld,
+        match_key: frame::MatchKey,
+    ) -> Result<(), String> {
+        let context = match &message {
+            AccountMessage::Profile { challenge, .. } | AccountMessage::Saved { challenge, .. } => {
+                *challenge
+            }
+            _ => return Ok(()),
+        };
+        if context.match_key != match_key
+            || context.member != from
+            || self.peers.get(&context.connection) != Some(&from)
+        {
+            return Ok(());
+        }
+        let Some(account) = self
+            .replication
+            .get_mut(&context.connection)
+            .and_then(|peer| peer.account.as_mut())
+        else {
+            return Ok(());
+        };
+        if account.challenge != context || !account.challenge_sent {
+            return Ok(());
+        }
+        match message {
+            AccountMessage::Profile {
+                proof, snapshot, ..
+            } => {
+                let verified = profile_payload(proof.account, snapshot.as_ref())
+                    .map_err(|error| error.to_string())
+                    .and_then(|payload| {
+                        proof
+                            .verify(&context, &payload)
+                            .map_err(|error| format!("{error:?}"))
+                    });
+                let accepted = verified.and_then(|owner| {
+                    if account.owner.is_some_and(|old| old != owner) {
+                        return Err("account owner cannot change".into());
+                    }
+                    let client = ClientId(
+                        self.connections
+                            .resolve(context.connection, 0)
+                            .map_err(|error| format!("{error:?}"))?,
+                    );
+                    world
+                        .persistent_data_mut()
+                        .admit(client, owner, snapshot.as_ref(), None)
+                        .map_err(|error| format!("{error:?}"))?;
+                    account.owner = Some(owner);
+                    account.refusal_pending = false;
+                    Ok(())
+                });
+                if let Err(error) = accepted {
+                    diag::warn!(Net, "remote account admission refused: {error}");
+                    account.refusal_pending = true;
+                }
+            }
+            AccountMessage::Saved {
+                account: owner,
+                revision,
+                ..
+            } if account.owner == Some(owner)
+                && account
+                    .offered
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.revision == revision) =>
+            {
+                world
+                    .persistent_data_mut()
+                    .acknowledge_saved(owner, revision);
+            }
+            _ => {}
+        }
+        self.offer_accounts(world, match_key)
+    }
+
     fn apply_admission_acks(&mut self) {
         let Some(lane) = &self.bootstrap else {
             return;
@@ -592,7 +824,7 @@ impl UdpAuthorityHub {
             _ => None,
         };
         let committed = match &peer.admission {
-            PeerAdmission::Committed { bootstrap_id } => Some(*bootstrap_id),
+            PeerAdmission::Committed { bootstrap_id, .. } => Some(*bootstrap_id),
             _ => None,
         };
         let action = applied_action(
@@ -616,6 +848,7 @@ impl UdpAuthorityHub {
             AppliedAction::Commit => {
                 peer.admission = PeerAdmission::Committed {
                     bootstrap_id: ack.bootstrap_id,
+                    epoch: ack.epoch,
                 };
                 let _ = peer.baseline.ack(ack.snapshot_seq);
                 true
@@ -878,6 +1111,11 @@ pub struct UdpClientLink {
     failed: Option<HandshakeReject>,
     bootstrap: Option<Arc<BootstrapLane>>,
     controls: Vec<crate::ReliablePayload>,
+    account_messages: Vec<AccountMessage>,
+    account_challenge: Option<crate::AccountChallenge>,
+    account_profile: Option<Vec<u8>>,
+    account_ack: Option<sim::AccountSnapshot>,
+    account_offer: Option<sim::AccountSnapshot>,
     sent_actions: HashSet<sim::ActionRequestId>,
 }
 
@@ -899,6 +1137,11 @@ impl UdpClientLink {
             last_applied_offer: None,
             pending_applied: Vec::new(),
             controls: Vec::new(),
+            account_messages: Vec::new(),
+            account_challenge: None,
+            account_profile: None,
+            account_ack: None,
+            account_offer: None,
             sent_actions: HashSet::new(),
             held_bootstrap: Vec::new(),
             failed: None,
@@ -1019,6 +1262,11 @@ impl UdpClientLink {
         self.pending_applied.clear();
         self.held_bootstrap.clear();
         self.controls.clear();
+        self.account_messages.clear();
+        self.account_challenge = None;
+        self.account_profile = None;
+        self.account_ack = None;
+        self.account_offer = None;
         self.sent_actions.clear();
         self.failed = None;
         if let Some(lane) = &self.bootstrap {
@@ -1044,6 +1292,12 @@ impl UdpClientLink {
         }
         self.drain_bootstrap_offers(&mut ticks, &mut snap_acks)?;
         for (_, bytes) in self.relay.take_control_inbound() {
+            if let Some(message) =
+                AccountMessage::decode(&bytes).map_err(|error| error.to_string())?
+            {
+                self.account_messages.push(message);
+                continue;
+            }
             let packet = decode_server_packet(&bytes, &self.limits).map_err(|e| e.to_string())?;
             if matches!(packet, ServerPacket::Control { .. }) {
                 self.apply_server_packet(packet, &mut ticks, &mut snap_acks)?;
@@ -1056,6 +1310,136 @@ impl UdpClientLink {
             }
         }
         Ok(ticks)
+    }
+
+    pub fn poll_accounts(
+        &mut self,
+        identity: Option<crate::SessionIdentity>,
+        account: Option<&mut crate::LocalAccount>,
+        schemas: &BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
+        receipt: Option<&crate::AccountSaveReceipt>,
+    ) -> Result<(), String> {
+        let Some(identity) = identity else {
+            self.account_messages.clear();
+            return Ok(());
+        };
+        if self.account_challenge.is_some_and(|context| {
+            context.match_key != identity.match_key()
+                || context.member != identity.member_id
+                || context.connection != self.connection.unwrap_or(ConnectionId(0))
+        }) {
+            self.account_challenge = None;
+            self.account_profile = None;
+            self.account_ack = None;
+            self.account_offer = None;
+        }
+        let mut account = account;
+        for message in std::mem::take(&mut self.account_messages) {
+            let context = match &message {
+                AccountMessage::Challenge(context) | AccountMessage::Refused(context) => *context,
+                AccountMessage::Update { challenge, .. } => *challenge,
+                _ => continue,
+            };
+            if context.match_key != identity.match_key()
+                || context.member != identity.member_id
+                || self.connection != Some(context.connection)
+            {
+                continue;
+            }
+            let local = account
+                .as_deref_mut()
+                .ok_or("no durable local account for remote admission")?;
+            match message {
+                AccountMessage::Challenge(context) => {
+                    if self.account_challenge.is_some_and(|old| old != context) {
+                        return Err("account challenge changed within a connection".into());
+                    }
+                    if local.id != local.key.account() {
+                        return Err("local account signing owner mismatch".into());
+                    }
+                    let payload = profile_payload(local.id, local.snapshot.as_ref())
+                        .map_err(|error| error.to_string())?;
+                    let message = AccountMessage::Profile {
+                        challenge: context,
+                        proof: local.key.prove(&context, &payload),
+                        snapshot: local.snapshot.clone(),
+                    };
+                    if self.account_challenge != Some(context) {
+                        self.account_profile =
+                            Some(message.encode().map_err(|error| error.to_string())?);
+                        self.account_challenge = Some(context);
+                    }
+                }
+                AccountMessage::Update { snapshot, .. }
+                    if self.account_challenge == Some(context) =>
+                {
+                    if snapshot.account != local.id || local.id != local.key.account() {
+                        return Err("remote account update owner mismatch".into());
+                    }
+                    if self
+                        .account_offer
+                        .as_ref()
+                        .is_some_and(|old| snapshot.revision < old.revision)
+                    {
+                        continue;
+                    }
+                    if self
+                        .account_offer
+                        .as_ref()
+                        .is_some_and(|old| old.revision == snapshot.revision && old != &snapshot)
+                    {
+                        return Err("conflicting account updates at one revision".into());
+                    }
+                    let mut validation = sim::PersistentDataStore::default();
+                    validation
+                        .install_schemas(schemas.clone())
+                        .map_err(|error| format!("account schema: {error:?}"))?;
+                    validation
+                        .import(snapshot.clone())
+                        .map_err(|error| format!("account update: {error:?}"))?;
+                    self.account_offer = Some(snapshot.clone());
+                    local.snapshot = Some(snapshot);
+                }
+                AccountMessage::Refused(_) if self.account_challenge == Some(context) => {
+                    return Err("host refused account admission".into());
+                }
+                _ => {}
+            }
+        }
+        if let Some(profile) = &self.account_profile {
+            if self
+                .relay
+                .push_control_outbound(MemberId([0; 16]), profile.clone())
+                .is_err()
+            {
+                return Ok(());
+            }
+            self.account_profile = None;
+        }
+        if let (Some(context), Some(local), Some(receipt)) =
+            (self.account_challenge, account, receipt)
+            && let Some(snapshot) = &local.snapshot
+            && self.account_offer.as_ref() == Some(snapshot)
+            && receipt.0.as_ref() == Some(snapshot)
+            && self.account_ack.as_ref() != Some(snapshot)
+        {
+            let message = AccountMessage::Saved {
+                challenge: context,
+                account: local.id,
+                revision: snapshot.revision,
+            };
+            if self
+                .relay
+                .push_control_outbound(
+                    MemberId([0; 16]),
+                    message.encode().map_err(|error| error.to_string())?,
+                )
+                .is_ok()
+            {
+                self.account_ack = Some(snapshot.clone());
+            }
+        }
+        Ok(())
     }
 
     fn adopt_entered_client(&mut self) {

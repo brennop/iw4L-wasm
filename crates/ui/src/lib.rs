@@ -1,3 +1,4 @@
+pub mod barracks;
 pub mod classes;
 pub mod frontend;
 mod gap_hud;

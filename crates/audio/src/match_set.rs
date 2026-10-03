@@ -27,6 +27,8 @@ impl AudioSilent {
     }
 }
 
+const PREFETCH_PER_PASS: usize = 64;
+
 const MATCH_HUD_PULSE: &[&str] = &["ui_pulse_text_type", "ui_pulse_text_delete"];
 
 const MENU_CODE: [&str; 2] = ["mouse_over", "mouse_click"];
@@ -38,14 +40,14 @@ struct MatchRequests {
     required: HashSet<ClipKey>,
     missing: BTreeSet<String>,
     resolved_aliases: usize,
+    capacity_failure: bool,
 }
 
 #[derive(Resource, Default)]
 struct MatchClipPrep {
     submitted: bool,
+    capacity_failure: bool,
     required: HashSet<ClipKey>,
-    /// Clips this match still had to convert when the set was queued — not the
-    /// alias count, and not the whole cache.
     total: usize,
     stage: Option<asset_transport::StageHandle>,
     /// Resident sample bytes this process had already produced when the set
@@ -54,7 +56,6 @@ struct MatchClipPrep {
     sample_bytes_at_queue: u64,
 }
 
-/// Resident `f32` samples every decoder has produced so far.
 fn prepared_sample_bytes() -> u64 {
     crate::clip_prep_cost()
         .paths
@@ -76,7 +77,6 @@ pub(crate) fn register(app: &mut App) {
             (
                 queue_match_clips.after(crate::ambient::install_sound_bank),
                 poll_match_audio_ready.after(queue_match_clips),
-                pump_inline_clips,
                 reset_match_audio_on_match_end,
             )
                 .in_set(ClientSet::Load),
@@ -263,16 +263,9 @@ fn queue_match_clips(
             names.join(" ")
         );
     }
-    if clips.is_inline() {
-        diag::info!(
-            Audio,
-            "audio: no clip prep threads — {} clips decode inline on demand, {}ms/frame ahead of use",
-            clips.inline_backlog(),
-            crate::clip_store::INLINE_BULK_BUDGET.as_millis(),
-        );
-    }
     prep.total = set.required.len();
     prep.required = set.required;
+    prep.capacity_failure = set.capacity_failure;
     prep.submitted = true;
     if let Some(loading) = loading {
         prep.sample_bytes_at_queue = prepared_sample_bytes();
@@ -290,7 +283,7 @@ fn queue_match_clips(
     }
     diag::info!(
         Audio,
-        "audio: match-set queued {} aliases ({} type-10), {} clips still converting ({} workers); resident reused={} clips/{}B",
+        "audio: match-set queued {} aliases ({} type-10), {} required clips ({} workers); resident reused={} clips/{}B",
         aliases,
         type10.0.len(),
         prep.total,
@@ -298,18 +291,10 @@ fn queue_match_clips(
         clips.reused_resident().0,
         clips.reused_resident().1,
     );
-    if prep.total == 0 {
+    if prep.capacity_failure {
+        fail_capacity(&mut ready, &mut prep, Some(&mut **clips));
+    } else if prep.total == 0 {
         mark_ready(&mut ready, &mut prep, Some(&mut **clips));
-    }
-}
-
-/// Where the clips get decoded when no prep thread could start.
-fn pump_inline_clips(mut clips: Option<ResMut<ClipStore>>) {
-    if let Some(clips) = clips.as_mut() {
-        clips.pump_inline(
-            crate::clip_store::INLINE_BULK_BUDGET,
-            crate::clip_store::INLINE_URGENT_BUDGET,
-        );
     }
 }
 
@@ -318,13 +303,45 @@ fn poll_match_audio_ready(
     mut prep: ResMut<MatchClipPrep>,
     mut ready: ResMut<AudioReady>,
 ) {
-    if ready.0 || !prep.submitted {
+    if ready.0 || !prep.submitted || prep.capacity_failure {
         return;
     }
     let Some(clips) = clips.as_mut() else {
         return;
     };
-    prep.required.retain(|key| clips.ready(key).is_none());
+    let mut capacity_failure = false;
+    let mut submissions = PREFETCH_PER_PASS;
+    prep.required.retain(|key| {
+        if submissions != 0 {
+            match clips.prefetch(key.clone()) {
+                crate::clip_store::MediaRequest::Submitted
+                | crate::clip_store::MediaRequest::Resident => submissions -= 1,
+                crate::clip_store::MediaRequest::Deferred => submissions = 0,
+                crate::clip_store::MediaRequest::Existing => {}
+                crate::clip_store::MediaRequest::Refused => {
+                    capacity_failure = true;
+                    submissions = 0;
+                }
+            }
+        }
+        match clips.ready(key) {
+            Some(Err(
+                crate::clip_store::ClipError::QueueFull
+                | crate::clip_store::ClipError::RequestLimit
+                | crate::clip_store::ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit),
+            )) => {
+                capacity_failure = true;
+                false
+            }
+            Some(_) => false,
+            None => true,
+        }
+    });
+    if capacity_failure {
+        prep.capacity_failure = true;
+        fail_capacity(&mut ready, &mut prep, Some(&mut **clips));
+        return;
+    }
     let done = prep.total.saturating_sub(prep.required.len());
     let decoded = prepared_sample_bytes().saturating_sub(prep.sample_bytes_at_queue);
     if let Some(stage) = prep.stage.as_ref() {
@@ -333,6 +350,22 @@ fn poll_match_audio_ready(
     }
     if prep.required.is_empty() {
         mark_ready(&mut ready, &mut prep, Some(&mut **clips));
+    }
+}
+
+fn fail_capacity(ready: &mut AudioReady, prep: &mut MatchClipPrep, clips: Option<&mut ClipStore>) {
+    if let Some(stage) = prep.stage.take() {
+        stage.fail();
+    }
+    diag::warn!(
+        Audio,
+        "audio: match media capacity exceeded; {} of {} clips not prepared",
+        prep.required.len(),
+        prep.total
+    );
+    ready.0 = true;
+    if let Some(clips) = clips {
+        clips.arm_match_live();
     }
 }
 
@@ -364,12 +397,26 @@ fn request_named(
     } else {
         set.resolved_aliases += 1;
     }
-    for key in keys {
-        clips.request_bulk(key.clone());
-        // An inline store decodes a few milliseconds a frame, so holding
-        // AudioReady for the whole set would hold the world spawn for it.
-        if !clips.is_inline() && clips.ready(&key).is_none() {
-            set.required.insert(key);
+    for key in keys
+        .into_iter()
+        .filter(|key| matches!(key, ClipKey::Loaded(_)))
+    {
+        match clips.ready(&key) {
+            Some(Err(
+                crate::clip_store::ClipError::QueueFull
+                | crate::clip_store::ClipError::RequestLimit
+                | crate::clip_store::ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit),
+            )) => set.capacity_failure = true,
+            Some(_) => {}
+            None => {
+                if set.required.len() == crate::clip_store::MEDIA_REQUEST_LIMIT
+                    && !set.required.contains(&key)
+                {
+                    set.capacity_failure = true;
+                } else {
+                    set.required.insert(key);
+                }
+            }
         }
     }
 }

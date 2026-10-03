@@ -156,11 +156,12 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     registry.register(Method, "controlslinkto", |world, receiver, args| {
         let client = super::natives::player::player(world, receiver)?;
         let (_, id, number) = missile_of(world, arg(args, 0)?)?;
+        let now = now_ms(world);
         let mut frame = FrameWorld::from_world(world);
         let Some(projectile) = frame.projectile_by_number(number).filter(|p| p.id == id) else {
             return Ok(Value::Undefined);
         };
-        let angles = math_iw4::vect_to_angles(projectile.velocity);
+        let angles = entity_iw4::evaluate_trajectory(&projectile.apos, now);
         if frame.client_meta(ClientId(client)).is_some() {
             frame.client_meta_mut(ClientId(client)).remote_missile = Some(crate::RemoteMissile {
                 projectile: id,

@@ -266,7 +266,7 @@ pub(crate) fn update_script_menus(
         match &command.kind {
             sim::MenuCommandKind::Open(name) => runner.open(name),
             sim::MenuCommandKind::ClosePopup => {
-                if let Some(top) = runner.menus.stack.last().map(|m| m.name.clone()) {
+                if let Some(top) = runner.menus.input_menu().map(|m| m.name.clone()) {
                     runner.close(&top);
                 }
             }
@@ -335,8 +335,7 @@ pub(crate) fn update_script_menus(
     if runner.menus.binding_menu.as_ref().is_some_and(|name| {
         runner
             .menus
-            .stack
-            .last()
+            .input_menu()
             .is_none_or(|top| &top.name != name)
     }) {
         runner.binding.command = None;
@@ -653,7 +652,7 @@ fn handle_input(
         return;
     }
     if pressed.escape {
-        match runner.menus.stack.last().map(|m| m.name.clone()) {
+        match runner.menus.input_menu().map(|m| m.name.clone()) {
             Some(top) => runner.escape(&top),
             None if !runner.world.in_game => runner.open("iw4l_main"),
             None => {
@@ -676,7 +675,7 @@ fn handle_input(
         }
         return;
     }
-    let Some(top) = runner.menus.stack.last().map(|m| m.name.clone()) else {
+    let Some(top) = runner.menus.input_menu().map(|m| m.name.clone()) else {
         return;
     };
 
@@ -688,14 +687,14 @@ fn handle_input(
     }
     if pressed.left || pressed.right {
         let step = if pressed.left { -1 } else { 1 };
-        let focus = runner.menus.stack.last().and_then(|m| m.focus);
+        let focus = runner.menus.input_menu().and_then(|m| m.focus);
         if !focus.is_some_and(|focus| runner.adjust(&top, focus, step)) {
             runner.focus_nav(&top, step, 0);
         }
         return;
     }
     if pressed.enter {
-        if let Some(focus) = runner.menus.stack.last().and_then(|m| m.focus) {
+        if let Some(focus) = runner.menus.input_menu().and_then(|m| m.focus) {
             runner.activate(&top, focus, true);
         }
         return;
@@ -723,7 +722,7 @@ fn handle_input(
     let Some(def) = runner.catalog.get(&top) else {
         return;
     };
-    let Some(open) = runner.menus.stack.last() else {
+    let Some(open) = runner.menus.input_menu() else {
         return;
     };
     let painted = painted_def(def, open);

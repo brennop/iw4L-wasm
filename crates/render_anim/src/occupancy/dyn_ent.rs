@@ -678,6 +678,7 @@ fn append_dynent_draws(
                 packed_lighting: None,
                 is_scope: false,
                 scene_entnum: None,
+                body_client: None,
                 caster_bound,
             });
         }

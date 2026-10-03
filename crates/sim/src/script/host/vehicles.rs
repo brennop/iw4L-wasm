@@ -7,6 +7,7 @@ use bevy_ecs::prelude::World;
 
 pub(crate) const DAMAGE: &str = "maps/mp/gametypes/_callbacksetup::codecallback_vehicledamage";
 
+const VEHICLE_SLOTS: u8 = 8;
 const MPH: f32 = 17.6;
 const TICK_S: f32 = crate::MATCH_TICK_MS as f32 / 1000.0;
 const ARRIVED: f32 = 4.0;
@@ -22,6 +23,7 @@ pub(crate) struct Plane {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Heli {
+    slot: u8,
     goal: Option<[f32; 3]>,
     path_node: Option<u64>,
     path_running: bool,
@@ -92,6 +94,7 @@ pub(crate) enum TurretAim {
 impl Default for Heli {
     fn default() -> Self {
         Self {
+            slot: 0,
             goal: None,
             path_node: None,
             path_running: false,
@@ -232,14 +235,32 @@ fn spawn_vehicle(
     model: &str,
     flight: Option<Heli>,
 ) -> Result<Value, String> {
+    let slot = if flight.is_some() {
+        let runtime = world.resource::<Runtime>();
+        Some(
+            (0..VEHICLE_SLOTS)
+                .find(|slot| {
+                    !runtime
+                        .vehicles
+                        .iter()
+                        .any(|(id, vehicle)| runtime.live(id) && vehicle.slot == *slot)
+                })
+                .ok_or("vehicle pool exhausted")?,
+        )
+    } else {
+        None
+    };
     let presence = super::presence::spawn_presence(world, origin)?;
     let mut runtime = world.resource_mut::<Runtime>();
     let id = runtime.create_entity(EntityKind::Vehicle, classname)?;
     runtime.set_object_field(id, "origin", Value::Vector(origin));
     runtime.set_object_field(id, "angles", Value::Vector(angles));
     runtime.set_object_field(id, "model", Value::string(model));
-    runtime.entities.get_mut(&id).unwrap().presence = Some(presence);
+    let entity = runtime.entities.get_mut(&id).unwrap();
+    entity.presence = Some(presence);
+    entity.can_damage = true;
     if let Some(mut flight) = flight {
+        flight.slot = slot.unwrap();
         flight.heading = math_iw4::angle_vectors(angles).0;
         runtime.set_object_field(id, "veh_speed", Value::Float(0.0));
         runtime.vehicles.insert(id, flight);
@@ -300,18 +321,30 @@ fn next_node(runtime: &mut Runtime, object: u64) -> Result<Option<u64>, String> 
 
 fn vehicle_array(world: &mut World, prefix: Option<&str>) -> Result<Value, String> {
     let runtime = world.resource::<Runtime>();
-    let ids = runtime
-        .entities
-        .iter()
-        .filter(|(_, entity)| match prefix {
-            Some(prefix) => {
+    let ids = match prefix {
+        None => {
+            let mut vehicles: Vec<_> = runtime
+                .vehicles
+                .iter()
+                .filter(|(id, _)| runtime.live(id))
+                .map(|(id, vehicle)| (vehicle.slot, *id))
+                .collect();
+            vehicles.sort_by_key(|(slot, _)| *slot);
+            vehicles
+                .into_iter()
+                .map(|(_, id)| Value::Object(id))
+                .collect()
+        }
+        Some(prefix) => runtime
+            .entities
+            .iter()
+            .filter(|(_, entity)| {
                 entity.classname.starts_with(prefix)
                     && (prefix != "script_vehicle" || entity.kind != EntityKind::Vehicle)
-            }
-            None => entity.kind == EntityKind::Vehicle,
-        })
-        .map(|(id, _)| Value::Object(*id))
-        .collect();
+            })
+            .map(|(id, _)| Value::Object(*id))
+            .collect(),
+    };
     super::arrays::new_array(world, ids)
 }
 
@@ -323,12 +356,12 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         vehicle_array(world, None)
     });
     registry.register(Function, "getnumvehicles", |world, _, _| {
+        let runtime = world.resource::<Runtime>();
         Ok(Value::Int(
-            world
-                .resource::<Runtime>()
-                .entities
-                .values()
-                .filter(|entity| entity.kind == EntityKind::Vehicle)
+            runtime
+                .vehicles
+                .keys()
+                .filter(|id| runtime.live(id))
                 .count() as i32,
         ))
     });
@@ -1069,4 +1102,31 @@ pub(crate) fn compass_rows(world: &mut World) -> Vec<crate::CompassVehicle> {
             })
         })
         .collect()
+}
+
+pub(crate) fn hud_targets(world: &World) -> Vec<crate::VehicleHudTarget> {
+    let runtime = world.resource::<Runtime>();
+    let mut rows: Vec<_> = runtime
+        .vehicles
+        .iter()
+        .filter_map(|(id, vehicle)| {
+            if !runtime.live(id) {
+                return None;
+            }
+            let entity = runtime.entities.get(id)?;
+            Some(crate::VehicleHudTarget {
+                slot: vehicle.slot,
+                entity: u16::try_from(
+                    crate::frame::script_mover_by_id(world, entity.presence?)?
+                        .state
+                        .number,
+                )
+                .ok()?,
+                model: entity.presence?,
+                owner: crate::ClientId(vehicle.owner.unwrap_or(0)),
+            })
+        })
+        .collect();
+    rows.sort_by_key(|row| row.slot);
+    rows
 }

@@ -24,6 +24,7 @@ mod lochit;
 mod menu_catalog;
 mod menu_source;
 mod penetration;
+pub mod structured_data;
 mod tracer_catalog;
 mod weapon_anim_dispatch;
 mod weapon_animations;

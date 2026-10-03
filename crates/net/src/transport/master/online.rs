@@ -11,10 +11,7 @@ use super::{Error, Result};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::fs::File;
-use std::io::BufReader;
 use std::net::ToSocketAddrs;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,10 +26,6 @@ use master_protocol::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use quinn::crypto::rustls::QuicClientConfig;
-#[cfg(not(target_arch = "wasm32"))]
-use rustls::pki_types::CertificateDer;
-#[cfg(not(target_arch = "wasm32"))]
-use rustls_platform_verifier::ConfigVerifierExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::authority::runtime::AuthorityWorld;
@@ -643,26 +636,6 @@ fn apply_master_lifecycle(
     {
         hub.reconcile_relay_membership(state.members(), state.identity().member_id);
     }
-    if let Some(hub) = hub.as_mut() {
-        for admission in hub.take_committed_admissions() {
-            let client = hub.client_of_member(admission.member_id);
-            bridge.admit_enter(
-                admission.member_id,
-                admission.epoch,
-                admission.bootstrap_id,
-                Some(admission.connection_id),
-                client.map(|client| client.0).unwrap_or(0),
-            );
-
-            if admission.first_commit
-                && let Some(client) = client
-                && let Some(authority) = authority.as_ref()
-                && let Some(pending) = pending_notify.as_mut()
-            {
-                pending.push_left(crate::client_name_string(&authority.0, client));
-            }
-        }
-    }
     for fact in bridge.drain_facts() {
         match fact {
             MasterLifecycleFact::MemberLeft { member_id } => {
@@ -691,6 +664,26 @@ fn apply_master_lifecycle(
                 }
             }
             MasterLifecycleFact::SessionClosed { .. } => {}
+        }
+    }
+    if let Some(hub) = hub.as_mut() {
+        for admission in hub.take_committed_admissions() {
+            let client = hub.client_of_member(admission.member_id);
+            bridge.admit_enter(
+                admission.member_id,
+                admission.epoch,
+                admission.bootstrap_id,
+                Some(admission.connection_id),
+                client.map(|client| client.0).unwrap_or(0),
+            );
+
+            if admission.first_commit
+                && let Some(client) = client
+                && let Some(authority) = authority.as_ref()
+                && let Some(pending) = pending_notify.as_mut()
+            {
+                pending.push_left(crate::client_name_string(&authority.0, client));
+            }
         }
     }
 }
@@ -1732,6 +1725,9 @@ fn handle_command(
                     connection_id,
                 },
             );
+            if !applied.accepted {
+                return Ok(CommandEffect::Continue);
+            }
             execute_host_match_effects(
                 applied.effects,
                 map_ready,
@@ -2527,17 +2523,9 @@ async fn connect(
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| format!("{} resolved no addresses", target.address))?;
-    let mut crypto = if let Some(path) = target.ca_cert.as_deref() {
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in load_certificates(path)? {
-            roots.add(cert)?;
-        }
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth()
-    } else {
-        rustls::ClientConfig::with_platform_verifier()?
-    };
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(updater::trust_roots(&target.ca_pem)?)
+        .with_no_client_auth();
     crypto.alpn_protocols = vec![ALPN.to_vec()];
     let mut client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
     let mut transport = quinn::TransportConfig::default();
@@ -2556,11 +2544,7 @@ async fn connect(
     let mut endpoint = quinn::Endpoint::client(bind.parse()?)?;
     endpoint.set_default_client_config(client_config);
     let local = endpoint.local_addr()?;
-    let trust = if target.ca_cert.is_some() {
-        "custom-ca"
-    } else {
-        "platform"
-    };
+    let trust = "community-ca";
     diag::info!(
         Net,
         "master quic handshake begin local={} remote={} server_name={} trust={} alpn={:?}",
@@ -2592,15 +2576,6 @@ async fn connect(
     Ok((endpoint, connection.into()))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let mut reader = BufReader::new(File::open(path)?);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect::<std::io::Result<_>>()?;
-    if certs.is_empty() {
-        return Err(format!("{} contains no certificates", path.display()).into());
-    }
-    Ok(certs)
-}
 fn handshake_for_match(
     world: Option<&sim::SimWorld>,
     descriptor: Option<&MatchDescriptor>,

@@ -1,4 +1,5 @@
 mod createfx;
+mod encoded_audio;
 mod ent_channel;
 mod map_script_sound;
 mod sound_catalog;

@@ -22,9 +22,9 @@ mod loadout;
 mod snapshot_meta;
 
 pub use client_view::{
-    KillcamHud, LocationSelection, MENU_COMMAND_TAIL, MenuCommand, MenuCommandKind, RadarMode,
-    RemoteMissile, ScriptBlur, ScriptDepthOfField, ScriptSeat, ViewEffects, VisionChange,
-    is_postfx_dvar,
+    KillcamHud, LinkedWeaponView, LocationSelection, MENU_COMMAND_TAIL, MenuCommand,
+    MenuCommandKind, RadarMode, RemoteMissile, ScriptBlur, ScriptDepthOfField, ScriptSeat,
+    ViewEffects, VisionChange, is_postfx_dvar,
 };
 pub use events::{
     EntityEventPayload, EntityEventRecord, EventAudience, EventRecord, PelletFxRecord,
@@ -43,6 +43,7 @@ pub fn class_catalog_perk_name(id: u32) -> Option<&'static str> {
 
 pub use snapshot_meta::{
     ClientSnapshotMeta, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta, ScriptDvars, SnapshotMeta,
+    TargetBoxDvar,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +87,7 @@ pub struct ClientMatchState {
     pub shield: Option<crate::ShieldAttachment>,
     pub weapon_lock: crate::WeaponLock,
     pub lifecycle: ClientLifecycle,
+    pub god_mode: bool,
     pub input_receipt: InputReceipt,
     pub loadout: Option<LoadoutSpec>,
     pub life_sequence: LifeSequence,
@@ -122,6 +124,7 @@ pub struct ClientMatchState {
     pub kill_streak: i32,
     pub radar: RadarMode,
     pub remote_missile: Option<RemoteMissile>,
+    pub linked_weapon_view: Option<LinkedWeaponView>,
 
     pub(crate) ffa_team: Option<u8>,
 
@@ -212,6 +215,7 @@ impl ClientMatchState {
             weapon_lock: self.weapon_lock,
             killcam_hud: None,
             lifecycle: self.lifecycle,
+            god_mode: self.god_mode,
             loadout: self.loadout.clone(),
             life_sequence: self.life_sequence,
             item_use_spawn_ms: self.item_use_spawn_ms,
@@ -224,6 +228,7 @@ impl ClientMatchState {
             kill_streak: self.kill_streak,
             radar: self.radar,
             remote_missile: self.remote_missile,
+            linked_weapon_view: self.linked_weapon_view,
             ammo_by_weapon: self.ammo_by_weapon.clone(),
             taped_mag_spent: self.taped_mag_spent.clone(),
             weapon_shot_count: self.weapon_shot_count,
@@ -266,6 +271,7 @@ impl ClientMatchState {
         self.shield = meta.shield;
         self.weapon_lock = meta.weapon_lock;
         self.lifecycle = meta.lifecycle;
+        self.god_mode = meta.god_mode;
         self.loadout = meta.loadout.clone();
         self.life_sequence = meta.life_sequence;
         self.item_use_spawn_ms = meta.item_use_spawn_ms;
@@ -278,6 +284,7 @@ impl ClientMatchState {
         self.kill_streak = meta.kill_streak;
         self.radar = meta.radar;
         self.remote_missile = meta.remote_missile;
+        self.linked_weapon_view = meta.linked_weapon_view;
         self.ammo_by_weapon = meta.ammo_by_weapon.clone();
         self.taped_mag_spent = meta.taped_mag_spent.clone();
         self.weapon_shot_count = meta.weapon_shot_count;

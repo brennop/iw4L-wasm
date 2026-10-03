@@ -9,6 +9,7 @@ mod plugin;
 
 pub use anim::dobj_pose::{
     HostDObjPoseFrame, HostDObjPoseRefuse, PosedPlayer, PosedPlayerFrame, PosedPlayerHead,
+    ScriptModelDObjFrame,
 };
 pub use anim::fpv_host::{
     FpvBoltTargets, FpvGenerateArgs, FpvHeldLife, FpvHeldSettled, FpvPoseKind, FpvPoseProduct,

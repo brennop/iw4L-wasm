@@ -38,6 +38,7 @@ pub struct MenuDefCapture<'a> {
     pub window_background: &'a str,
     pub expr_dvars: &'a str,
     pub fullscreen: i32,
+    pub static_flags: i32,
     pub item_count: i32,
     pub focus_color: [f32; 4],
 
@@ -286,6 +287,7 @@ pub(super) fn load_menu(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -
         window_background,
         expr_dvars,
         fullscreen,
+        static_flags: s.i32_at(p, s.layout(68, 76))?,
         item_count: item_count as i32,
         focus_color: read_vec4(s, p, s.layout(240, 292)).unwrap_or([1.0; 4]),
         rect,

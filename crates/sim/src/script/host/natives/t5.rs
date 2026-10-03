@@ -472,11 +472,15 @@ fn profile_item(world: &mut World, client: u32, class: &str, slot: &str) -> i32 
         "body" => stats_number(world, "standard_mp"),
         "head" => stats_number(world, "head_standard_mp"),
         "primarygrenade" if def.lethal != 0 => {
-            let reference = name(world, def.lethal);
+            let weapon =
+                super::super::players::stand_in_for(world, 2, def.lethal).unwrap_or(def.lethal);
+            let reference = name(world, weapon);
             stats_number(world, &reference)
         }
         "specialgrenade" if def.tactical != 0 => {
-            let reference = name(world, def.tactical);
+            let weapon =
+                super::super::players::stand_in_for(world, 3, def.tactical).unwrap_or(def.tactical);
+            let reference = name(world, weapon);
             stats_number(world, &reference)
         }
         "specialty1" | "specialty2" | "specialty3" => {
@@ -1129,7 +1133,7 @@ fn register_player(registry: &mut NativeRegistry) {
             .map(|slot| {
                 slot.perks
                     .iter()
-                    .map(|p| Value::String(p.clone()))
+                    .map(|p| Value::String(p.clone().into()))
                     .collect()
             })
             .unwrap_or_default();

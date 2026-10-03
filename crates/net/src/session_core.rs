@@ -626,6 +626,14 @@ impl HostMatchCore {
                 let Some(phase) = self.peers.get(&member).map(|peer| peer.phase) else {
                     return self.reject(&ids, before, "applied unknown peer");
                 };
+                if self
+                    .peers
+                    .get(&member)
+                    .and_then(|peer| peer.connection_id)
+                    .is_some_and(|expected| connection_id != Some(expected))
+                {
+                    return self.reject(&ids, before, "applied connection mismatch");
+                }
                 let repeat = match phase {
                     PeerPhase::Syncing {
                         bootstrap_id: pending,

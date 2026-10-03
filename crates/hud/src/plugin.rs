@@ -38,7 +38,8 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         crate::gpu_list::register(app);
         let _ = crate::scorebar::milliseconds();
-        app.init_resource::<HudImages>()
+        app.init_resource::<frame::ScreenEffectsView>()
+            .init_resource::<HudImages>()
             .init_resource::<HudPresentationGaps>()
             .init_resource::<ReticleAdsLatch>()
             .init_resource::<IrisLetterboxFill>()
@@ -99,7 +100,7 @@ impl Plugin for HudPlugin {
                             hud_stage_close::<1>,
                             update_blood_overlay,
                             hud_stage_close::<2>,
-                            update_flash_whiteout,
+                            update_flash_whiteout.after(frame::ScreenEffectsPublished),
                             hud_stage_close::<3>,
                             update_compass,
                             hud_stage_close::<4>,

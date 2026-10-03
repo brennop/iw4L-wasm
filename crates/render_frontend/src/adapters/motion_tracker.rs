@@ -110,6 +110,7 @@ pub(crate) fn draw_motion_tracker(
     let mut play = |alias: &str, pitch: f32| {
         sound.write(audio::AliasCommand::PlayPitched {
             sound: audio::PlayAlias {
+                event: None,
                 namespace: asset_core::AssetNamespace::Iw4,
                 alias: alias.to_owned(),
                 fallback: None,

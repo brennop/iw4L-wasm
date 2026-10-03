@@ -66,6 +66,7 @@ members = [
     "crates/replay",
     "crates/session",
     "crates/sim",
+    "crates/structured_data_iw4",
     "crates/trace_iw4",
     "crates/ui",
     "crates/updater",
@@ -92,7 +93,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_sprite",
     "bevy_sprite_render",
     "bevy_asset",
-    "bevy_audio",
     "bevy_gilrs",
     "multi_threaded",
     "x11",
@@ -146,6 +146,7 @@ fx_iw4 = { path = "crates/fx_iw4" }
 gamemode_iw4 = { path = "crates/gamemode_iw4" }
 hud = { path = "crates/hud" }
 hud_iw4 = { path = "crates/hud_iw4" }
+structured_data_iw4 = { path = "crates/structured_data_iw4" }
 killcam_iw4 = { path = "crates/killcam_iw4" }
 input_iw4 = { path = "crates/input_iw4" }
 launcher = { path = "crates/launcher" }

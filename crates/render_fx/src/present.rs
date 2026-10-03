@@ -1189,6 +1189,7 @@ pub fn build_fx_verts(
         }
         let (def_name, material_name) = sprite_names.as_ref().unwrap();
         Some(FxSpriteInstance {
+            viewmodel: false,
             origin: ctx.origin,
             size0,
             size1,

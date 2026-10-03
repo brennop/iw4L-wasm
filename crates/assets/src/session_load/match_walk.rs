@@ -567,7 +567,7 @@ pub(super) async fn walk_prepared_match(
     }
     if let Ok(path) = &zone_ff {
         let stage = progress.begin_scoped(StageId::Images, "tracers", None);
-        let decoded = asset_material::material_images::decode_color_or_2d_for_keys(
+        let decoded = asset_material::material_images::decode_images_for_keys(
             path,
             &mut global,
             common_tracers.material_keys(),
@@ -576,9 +576,7 @@ pub(super) async fn walk_prepared_match(
         );
         stage.finish_from(&decoded);
         match decoded {
-            Ok(n) => report.push(format!(
-                "tracer beam images after absorb: {n} TS_COLOR_MAP/TS_2D decoded"
-            )),
+            Ok(n) => report.push(format!("tracer beam images after absorb: {n} decoded")),
             Err(error) => report.push(format!("tracer beam images after absorb: {error}")),
         }
     }
@@ -1048,7 +1046,7 @@ fn decode_fx_colour_maps(
     if !missing.is_empty() {
         if let Ok(path) = zone_ff {
             let stage = progress.begin_scoped(StageId::Images, "fx_elem", None);
-            let decoded = asset_material::material_images::decode_color_or_2d_for_keys(
+            let decoded = asset_material::material_images::decode_images_for_keys(
                 path,
                 global,
                 missing,
@@ -1057,9 +1055,7 @@ fn decode_fx_colour_maps(
             );
             stage.finish_from(&decoded);
             match decoded {
-                Ok(n) => report.push(format!(
-                    "fx elem 2d images after absorb: {n} TS_COLOR_MAP/TS_2D decoded"
-                )),
+                Ok(n) => report.push(format!("fx elem 2d images after absorb: {n} decoded")),
                 Err(error) => report.push(format!("fx elem 2d images after absorb: {error}")),
             }
         }

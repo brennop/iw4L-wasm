@@ -66,7 +66,7 @@ pub struct LoadedSoundPcm {
     pub(crate) channels: i32,
     pub samples: u32,
     pub block_size: u32,
-    pub(crate) pcm: std::sync::Arc<[u8]>,
+    pub(crate) pcm: crate::encoded_audio::EncodedAudio,
 
     pub zone: ZoneOwner,
 
@@ -98,7 +98,7 @@ impl LoadedSoundPcm {
     }
 
     pub fn t5_adpcm_bytes(&self) -> Option<&[u8]> {
-        (self.format == 6).then_some(&self.pcm[..])
+        (self.format == 6).then_some(self.pcm.bytes())
     }
 
     pub fn channels(&self) -> i32 {
@@ -108,11 +108,15 @@ impl LoadedSoundPcm {
     /// Source bytes are immutable. Decoded samples and failures belong to the
     /// runtime ClipStore, never to this shared catalog entry.
     pub fn encoded_bytes(&self) -> &[u8] {
-        &self.pcm
+        self.pcm.bytes()
     }
 
-    pub fn encoded_arc(&self) -> std::sync::Arc<[u8]> {
-        self.pcm.clone()
+    pub fn encoded_shared(&self) -> std::sync::Arc<[u8]> {
+        self.pcm.shared()
+    }
+
+    pub fn encoded_content_id(&self) -> [u8; 32] {
+        self.pcm.content_id()
     }
 
     pub fn format(&self) -> i32 {
@@ -168,6 +172,7 @@ pub struct CapturedAlias {
 
     pub vol_min: f32,
     pub vol_max: f32,
+    pub vol_mod_index: Option<u32>,
     pub pitch_min: f32,
     pub pitch_max: f32,
 
@@ -368,6 +373,8 @@ pub struct SoundCatalog {
     pub rawfiles: HashMap<(AssetNamespace, String), Vec<u8>>,
 
     pub ent_channels: Vec<EntChannel>,
+
+    group_volumes: HashMap<AssetNamespace, Vec<f32>>,
     by_alias: HashMap<(AssetNamespace, String), usize>,
 
     by_alias_ci: HashMap<(AssetNamespace, String), usize>,
@@ -412,6 +419,9 @@ impl SoundCatalog {
         if self.ent_channels.is_empty() && !other.ent_channels.is_empty() {
             self.ent_channels = other.ent_channels;
         }
+        for (ns, volumes) in other.group_volumes {
+            self.group_volumes.entry(ns).or_insert(volumes);
+        }
         for (name, curve) in other.curves {
             match self.curves.get_mut(&name) {
                 Some(existing) if existing.knots.is_empty() && !curve.knots.is_empty() => {
@@ -437,6 +447,7 @@ impl SoundCatalog {
     }
 
     pub fn finalize(&mut self) {
+        self.resolve_volume_mod_groups();
         self.resolve_loaded_edges();
         self.resolve_curve_knots();
         self.resolve_ent_channels();
@@ -470,6 +481,9 @@ impl SoundCatalog {
         if self.ent_channels.is_empty() && !other.ent_channels.is_empty() {
             self.ent_channels = other.ent_channels;
         }
+        for (ns, volumes) in other.group_volumes {
+            self.group_volumes.entry(ns).or_insert(volumes);
+        }
         for (name, curve) in other.curves {
             match self.curves.get_mut(&name) {
                 Some(existing) if existing.knots.is_empty() && !curve.knots.is_empty() => {
@@ -482,6 +496,54 @@ impl SoundCatalog {
             }
         }
         self.capture_gaps += other.capture_gaps;
+    }
+
+    fn resolve_volume_mod_groups(&mut self) {
+        if self.group_volumes.contains_key(&AssetNamespace::Iw5) {
+            return;
+        }
+        let Some(file) = self.rawfiles.get(&(
+            AssetNamespace::Iw5,
+            "soundaliases/volumemodgroups.svmod".to_owned(),
+        )) else {
+            return;
+        };
+        let volumes = String::from_utf8_lossy(file)
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split(',').map(str::trim);
+                let name = fields.next()?;
+                if name.is_empty() || name.starts_with('#') {
+                    return None;
+                }
+                Some(fields.next()?.parse::<f32>().unwrap_or(1.0))
+            })
+            .collect();
+        self.group_volumes.insert(AssetNamespace::Iw5, volumes);
+    }
+
+    pub(crate) fn set_group_volumes(&mut self, namespace: AssetNamespace, volumes: Vec<f32>) {
+        self.group_volumes.insert(namespace, volumes);
+    }
+
+    pub fn alias_volume(&self, namespace: AssetNamespace, row: &CapturedAlias, t: f32) -> f32 {
+        let volume = if namespace != AssetNamespace::T5 && row.vol_min == 0.0 && row.vol_max == 0.0
+        {
+            1.0
+        } else {
+            lerp_range(row.vol_min, row.vol_max, t)
+        };
+        let group = match namespace {
+            AssetNamespace::Iw5 => row.vol_mod_index,
+            AssetNamespace::T5 => row.flags.map(|flags| (flags >> 16) & 0x3f),
+            _ => None,
+        };
+        let scale = group
+            .zip(self.group_volumes.get(&namespace))
+            .and_then(|(group, volumes)| volumes.get(group as usize))
+            .copied()
+            .unwrap_or(1.0);
+        volume * scale
     }
 
     pub fn publish(&mut self) {
@@ -1208,11 +1270,7 @@ impl SoundCatalog {
         };
         let t_vol = unit_random(rng);
         let t_pitch = unit_random(rng);
-        let volume = if ns != AssetNamespace::T5 && row.vol_min == 0.0 && row.vol_max == 0.0 {
-            1.0
-        } else {
-            lerp_range(row.vol_min, row.vol_max, t_vol)
-        };
+        let volume = self.alias_volume(ns, row, t_vol);
         let pitch = if row.pitch_min == 0.0 && row.pitch_max == 0.0 {
             1.0
         } else {
@@ -1615,6 +1673,7 @@ impl AssetLinkSink for SoundCatalog {
                 vol_max: s
                     .f32_at(row, s.layout(SND_ALIAS_VOL_MAX, 56))
                     .unwrap_or(0.0),
+                vol_mod_index: None,
                 pitch_min: s
                     .f32_at(row, s.layout(SND_ALIAS_PITCH_MIN, 60))
                     .unwrap_or(0.0),
