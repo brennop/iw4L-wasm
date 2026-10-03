@@ -508,6 +508,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
                 .current_dir(&host_dir)
                 .args(["--no-cheats", "serve", &args.map])
                 .env("IW4L_GAMES", &games)
+                .env("IW4L_SCRIPT_DVARS", env.get("IW4L_SCRIPT_DVARS").unwrap_or_default())
                 .env("IW4L_MASTER_ADDR", format!("127.0.0.1:{QUIC_PORT}"))
                 .env("IW4L_MASTER_SERVER_NAME", &server_name)
                 .env("IW4L_MASTER_CA_CERT", &ca_cert)
