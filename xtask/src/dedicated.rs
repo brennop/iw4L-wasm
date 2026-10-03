@@ -35,7 +35,6 @@ options:
   --hosts N          dedicated hosts to start (default 1)
   --name NAME        host name prefix; rooms are NAME-1, NAME-2 ... (default iw4l-dedicated)
   --map MAP          map each host serves (default mp_rust)
-  --time-limit MIN   match time limit in minutes (default 30)
   --bind IP          master listen address (default 0.0.0.0, the LAN; 127.0.0.1 = local only)
   --pack PATH        game pack, linked or copied to <web>/game.pack
                      (default on Windows: E:\\iw4l\\packs\\mp_rust_cap512_merge2.pack)
@@ -56,7 +55,6 @@ struct Args {
     hosts: usize,
     name: String,
     map: String,
-    time_limit_min: u32,
     bind: Ipv4Addr,
     pack: Option<PathBuf>,
     certs: Option<PathBuf>,
@@ -73,7 +71,6 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
         hosts: 1,
         name: "iw4l-dedicated".into(),
         map: "mp_rust".into(),
-        time_limit_min: 30,
         bind: Ipv4Addr::UNSPECIFIED,
         pack: None,
         certs: None,
@@ -100,11 +97,6 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
             }
             "--name" => out.name = value("a name")?,
             "--map" => out.map = value("a map")?,
-            "--time-limit" => {
-                out.time_limit_min = value("minutes")?
-                    .parse()
-                    .map_err(|_| "--time-limit needs minutes".to_string())?;
-            }
             "--bind" => {
                 out.bind = value("an IPv4 address")?
                     .parse()
@@ -516,7 +508,6 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
                 .current_dir(&host_dir)
                 .args(["--no-cheats", "serve", &args.map])
                 .env("IW4L_GAMES", &games)
-                .env("IW4L_TIME_LIMIT_MIN", args.time_limit_min.to_string())
                 .env("IW4L_MASTER_ADDR", format!("127.0.0.1:{QUIC_PORT}"))
                 .env("IW4L_MASTER_SERVER_NAME", &server_name)
                 .env("IW4L_MASTER_CA_CERT", &ca_cert)
