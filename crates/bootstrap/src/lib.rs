@@ -1,5 +1,6 @@
 pub mod args;
 pub mod bench;
+mod dedicated;
 mod frame_owner;
 mod launch;
 mod plugins;

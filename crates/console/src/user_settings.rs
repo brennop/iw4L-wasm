@@ -245,7 +245,12 @@ pub(crate) fn sync_player_name(
     mut inbox: Option<ResMut<net::ClientActionInbox>>,
     mut seq: ResMut<net::ActionRequestIds>,
     mut sent: Local<Option<(frame::WorldGeneration, sim::ClientId, [u8; 16])>>,
+    headless: Option<Res<frame::Headless>>,
 ) {
+    // A dedicated host has no local player; SetName would create client 0's row.
+    if headless.is_some() {
+        return;
+    }
     if !has_world.0 || *role == frame::RuntimeRole::Replay {
         *sent = None;
         return;

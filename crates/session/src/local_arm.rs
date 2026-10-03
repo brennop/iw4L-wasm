@@ -70,9 +70,14 @@ pub fn join_local_on_class_select(
     hold: Option<Res<AuthorityLoadHold>>,
     signon: Option<Res<SignonState>>,
     mut joining: Local<Option<sim::ActionRequestId>>,
+    headless: Option<Res<frame::Headless>>,
 ) {
     if !matches!(*screen, AppScreen::ClassSelect) {
         *joining = None;
+        return;
+    }
+    // A dedicated host has no local player; remote players start at client 1.
+    if headless.is_some() {
         return;
     }
     if role.is_some_and(|role| *role == RuntimeRole::Replay) {

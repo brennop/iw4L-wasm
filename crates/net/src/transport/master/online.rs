@@ -167,6 +167,7 @@ pub fn arm_master_bridge(
     bridge: Option<Res<MasterBridge>>,
     udp_hub: Option<Res<UdpAuthorityHub>>,
     udp_link: Option<Res<UdpClientLink>>,
+    headless: Option<Res<frame::Headless>>,
     mut commands: Commands,
 ) {
     if let Some(bridge) = bridge {
@@ -215,7 +216,12 @@ pub fn arm_master_bridge(
             if *role != frame::RuntimeRole::Listen || udp_hub.is_some() {
                 return;
             }
-            let relay = spawn_host(config.clone(), settings.player_name.clone());
+            let host_name = if headless.is_some() {
+                config.name.clone()
+            } else {
+                settings.player_name.clone()
+            };
+            let relay = spawn_host(config.clone(), host_name);
             diag::info!(
                 Net,
                 "master public lobby arming for {}",
