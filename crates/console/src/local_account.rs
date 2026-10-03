@@ -1,7 +1,13 @@
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io,
     path::{Path, PathBuf},
+};
+
+// The browser has no real filesystem, locks or hard links: it goes through artifactfs only.
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
 };
 
 use bevy::prelude::*;
@@ -204,13 +210,12 @@ fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
 }
 
 fn read(path: &Path) -> io::Result<(LocalAccount, bool)> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take((SNAPSHOT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
+    let mut bytes = artifactfs::read(path)?;
+    bytes.truncate(SNAPSHOT_BYTES + 1);
     decode(&bytes)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn random_id() -> io::Result<[u8; 16]> {
     let mut id = [0; 16];
     while id == [0; 16] {
@@ -219,6 +224,12 @@ fn random_id() -> io::Result<[u8; 16]> {
     Ok(id)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn lock_file(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn lock_file(path: &Path) -> io::Result<File> {
     let parent = path
         .parent()
@@ -294,6 +305,17 @@ fn load_or_create_locked(path: &Path) -> io::Result<LocalAccount> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn write_atomic(path: &Path, account: &LocalAccount, create: bool) -> io::Result<()> {
+    let bytes = encode(account)?;
+    if create {
+        artifactfs::write_new(path, bytes)
+    } else {
+        artifactfs::write(path, bytes)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn write_atomic(path: &Path, account: &LocalAccount, create: bool) -> io::Result<()> {
     let bytes = encode(account)?;
     let parent = path
