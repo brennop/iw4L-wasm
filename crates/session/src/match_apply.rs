@@ -1635,15 +1635,11 @@ fn install_clip_and_player(
                 gamemode_iw4::GameModeKind::Demolition => 0,
                 _ => sim::FFA.score_limit,
             }),
-        time_limit_ms: std::env::var("IW4L_TIME_LIMIT_MIN")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .map(|minutes| minutes.saturating_mul(60_000))
-            .unwrap_or(match kind {
-                gamemode_iw4::GameModeKind::Domination => gamemode_iw4::dom::TIME_LIMIT_MS,
-                gamemode_iw4::GameModeKind::Demolition => gamemode_iw4::dd::TIME_LIMIT_MS,
-                _ => sim::FFA.time_limit_ms,
-            }),
+        time_limit_ms: match kind {
+            gamemode_iw4::GameModeKind::Domination => gamemode_iw4::dom::TIME_LIMIT_MS,
+            gamemode_iw4::GameModeKind::Demolition => gamemode_iw4::dd::TIME_LIMIT_MS,
+            _ => sim::FFA.time_limit_ms,
+        },
         allow_debug_actions,
         intermission_view,
         airstrike_height,

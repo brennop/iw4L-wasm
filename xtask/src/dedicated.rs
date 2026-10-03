@@ -430,6 +430,16 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     let server_name = env
         .get("IW4L_MASTER_SERVER_NAME")
         .unwrap_or_else(|| Channel::Prod.server_name().to_string());
+    // The match clock is the game script's `scr_<gametype>_timelimit` dvar (minutes), set
+    // through IW4L_SCRIPT_DVARS ahead of whatever the caller already put there.
+    let gametype = env
+        .get("IW4L_GAMETYPE")
+        .unwrap_or_else(|| "dm".into())
+        .to_ascii_lowercase();
+    let mut script_dvars = format!("set scr_{gametype}_timelimit {}", args.time_limit_min);
+    if let Some(extra) = env.get("IW4L_SCRIPT_DVARS") {
+        script_dvars = format!("{script_dvars};{extra}");
+    }
     if args.build {
         build(root, &args)?;
     }
@@ -516,7 +526,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
                 .current_dir(&host_dir)
                 .args(["--no-cheats", "serve", &args.map])
                 .env("IW4L_GAMES", &games)
-                .env("IW4L_TIME_LIMIT_MIN", args.time_limit_min.to_string())
+                .env("IW4L_SCRIPT_DVARS", &script_dvars)
                 .env("IW4L_MASTER_ADDR", format!("127.0.0.1:{QUIC_PORT}"))
                 .env("IW4L_MASTER_SERVER_NAME", &server_name)
                 .env("IW4L_MASTER_CA_CERT", &ca_cert)
