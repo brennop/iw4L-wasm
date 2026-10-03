@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use bevy::prelude::*;
 use sim::LocalPlayerProfile;
@@ -26,7 +26,7 @@ pub(crate) fn load(
                 .map(|path| path.with_file_name("profile.cfg"))
         });
     if let Some(path) = path {
-        match fs::read_to_string(&path) {
+        match artifactfs::read_to_string(&path) {
             Ok(source) => match parse(&source) {
                 Ok(loaded) => *profile = loaded,
                 Err(error) => warn!("could not parse {}: {error}", path.display()),
@@ -105,9 +105,9 @@ fn write_profile(path: &std::path::Path, profile: &LocalPlayerProfile) -> std::i
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        fs::create_dir_all(parent)?;
+        artifactfs::create_dir_all(parent)?;
     }
     let temporary = path.with_extension("cfg.tmp");
-    fs::write(&temporary, serialize(profile))?;
-    fs::rename(temporary, path)
+    artifactfs::write(&temporary, serialize(profile))?;
+    artifactfs::rename(temporary, path)
 }

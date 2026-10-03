@@ -25,10 +25,32 @@ const DEFAULT_MAP: &str = "mp_rust";
 const ERROR_OVERLAY_ID: &str = "iw4l-error";
 const ARTIFACTS_ROOT: &str = "iw4l-artifacts";
 /// Artifacts that outlive the page, stored under `localStorage["iw4l:<path>"]`.
-const PERSISTED: [&str; 2] = [
+const PERSISTED: [&str; 5] = [
     "iw4l-artifacts/settings.cfg",
     "iw4l-artifacts/profile/classes.txt",
+    "iw4l-artifacts/profile/barracks.txt",
+    "iw4l-artifacts/profile.cfg",
+    "iw4l-artifacts/account.dat",
 ];
+
+/// localStorage holds text, so a binary artifact (the account file: signing-key
+/// seed and player-data buffer) is stored as hex; everything else as-is.
+fn is_binary(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "dat")
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn hex_decode(text: &str) -> Option<Vec<u8>> {
+    if !text.is_ascii() || text.len() % 2 != 0 {
+        return None;
+    }
+    (0..text.len() / 2)
+        .map(|index| u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok())
+        .collect()
+}
 
 static ARTIFACTS: OnceLock<Arc<artifactfs::Memory>> = OnceLock::new();
 
@@ -128,7 +150,11 @@ fn install_artifact_sink() {
         let Some(storage) = local_storage() else {
             return;
         };
-        let text = String::from_utf8_lossy(bytes);
+        let text = if is_binary(path) {
+            hex_encode(bytes)
+        } else {
+            String::from_utf8_lossy(bytes).into_owned()
+        };
         if let Err(error) = storage.set_item(&storage_key(path), &text) {
             console_warn(&format!(
                 "localStorage: {} not saved: {error:?}",
@@ -139,7 +165,14 @@ fn install_artifact_sink() {
     if let Some(storage) = local_storage() {
         for kept in PERSISTED {
             if let Ok(Some(text)) = storage.get_item(&storage_key(Path::new(kept))) {
-                memory.insert(Path::new(kept), text.into_bytes());
+                let bytes = if is_binary(Path::new(kept)) {
+                    hex_decode(&text)
+                } else {
+                    Some(text.into_bytes())
+                };
+                if let Some(bytes) = bytes {
+                    memory.insert(Path::new(kept), bytes);
+                }
             }
         }
     }
