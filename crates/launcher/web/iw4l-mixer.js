@@ -1,83 +1,56 @@
-// AudioWorklet mixer (U8, experimental). Holds clip PCM and a voice table and mixes them on the
-// audio render thread, so a stalled main thread can delay a new sound but never interrupts one
-// that already plays. The game drives it through `node.port` only (no SharedArrayBuffer).
+// AudioWorklet ring-buffer player (`iw4l-mixer`). The game mixes on the main thread (audio
+// crate, web_output.rs) and posts finished 48 kHz stereo blocks here; this only plays them.
+// The game keeps a small margin buffered ahead, so a stalled main thread runs this dry and it
+// plays silence (an underrun) rather than the game rendering a burst to catch up.
 //
-// Messages to the worklet, one per game frame at most:
-//   { clips: [{ id, ch, rate, pcm: ArrayBuffer }],   // interleaved f32, registered once per clip
-//     free: [id],                                     // clips the game no longer holds
-//     cmds: Float32Array }                            // records of CMD_STRIDE floats, below
-// A record is [op, voice, clip, flags, gainL, gainR, rate]. Ops: 1 start, 2 set, 3 stop.
-// flags: bit 0 loop, bit 1 paused. rate is the playback speed (pitch), 1 = the clip's own rate.
-// Messages from the worklet:
-//   { finished: [voice] }                             // one-shots that ran out (or could not start)
-//   { stats: { voices, clips } }              // about once a second
+// Messages to the worklet:
+//   { pcm: Float32Array }   // interleaved L/R frames, a whole number of 128-frame blocks
+// Messages from the worklet, every REPORT_QUANTA render quanta while playing:
+//   { consumed,             // frames played out of the ring since the node started (cumulative)
+//     time,                 // `currentTime` when the report was made
+//     buffered,             // frames still in the ring
+//     underruns,            // render quanta that found the ring short (cumulative, after the first block)
+//     underrunFrames,       // frames of silence those quanta played (cumulative)
+//     overflowFrames,       // frames dropped because the ring was full (cumulative)
+//     peak, sumsq, n }      // output level over the frames since the last report
 
-const CMD_START = 1;
-const CMD_SET = 2;
-const CMD_STOP = 3;
-const CMD_STRIDE = 7;
-const MAX_VOICES = 160;
-const STATS_BLOCKS = 375;
+const RING_FRAMES = 48000; // 1 s at 48 kHz, far above any margin the game keeps
+const REPORT_QUANTA = 8; // ~21 ms
 
 class Iw4lMixer extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.clips = new Map();
-    this.voices = new Map();
-    this.finished = [];
-    this.blocks = 0;
-    this.port.onmessage = (event) => this.onMessage(event.data);
+    this.ring = new Float32Array(RING_FRAMES * 2);
+    this.read = 0; // frame index into the ring
+    this.fill = 0; // frames buffered
+    this.consumed = 0;
+    this.underruns = 0;
+    this.underrunFrames = 0;
+    this.overflowFrames = 0;
+    this.started = false;
+    this.quanta = 0;
+    this.peak = 0;
+    this.sumsq = 0;
+    this.n = 0;
+    this.port.onmessage = (event) => this.push(event.data.pcm);
   }
 
-  onMessage(msg) {
-    if (msg.clips) {
-      for (const clip of msg.clips) {
-        const data = new Float32Array(clip.pcm);
-        this.clips.set(clip.id, { ch: clip.ch, rate: clip.rate, data, frames: Math.floor(data.length / clip.ch) });
-      }
+  push(pcm) {
+    if (!pcm) return;
+    const frames = pcm.length >> 1;
+    const room = RING_FRAMES - this.fill;
+    const take = Math.min(frames, room);
+    this.overflowFrames += frames - take;
+    let write = (this.read + this.fill) % RING_FRAMES;
+    let offset = 0;
+    while (offset < take) {
+      const run = Math.min(take - offset, RING_FRAMES - write);
+      this.ring.set(pcm.subarray(offset * 2, (offset + run) * 2), write * 2);
+      offset += run;
+      write = (write + run) % RING_FRAMES;
     }
-    if (msg.free) {
-      for (const id of msg.free) this.clips.delete(id);
-    }
-    const cmds = msg.cmds;
-    if (!cmds) return;
-    for (let i = 0; i + CMD_STRIDE <= cmds.length; i += CMD_STRIDE) {
-      const op = cmds[i];
-      const id = cmds[i + 1];
-      if (op === CMD_START) {
-        this.start(id, cmds[i + 2], cmds[i + 3], cmds[i + 4], cmds[i + 5], cmds[i + 6]);
-      } else if (op === CMD_SET) {
-        const voice = this.voices.get(id);
-        if (!voice) continue;
-        const flags = cmds[i + 3];
-        voice.paused = (flags & 2) !== 0;
-        voice.tl = cmds[i + 4];
-        voice.tr = cmds[i + 5];
-        voice.step = (voice.clip.rate / sampleRate) * cmds[i + 6];
-      } else if (op === CMD_STOP) {
-        this.voices.delete(id);
-      }
-    }
-  }
-
-  start(id, clipId, flags, gl, gr, speed) {
-    const clip = this.clips.get(clipId);
-    if (!clip || clip.frames === 0 || this.voices.size >= MAX_VOICES) {
-      this.finished.push(id);
-      return;
-    }
-    this.voices.set(id, {
-      clip,
-      pos: 0,
-      step: (clip.rate / sampleRate) * speed,
-      loop: (flags & 1) !== 0,
-      paused: (flags & 2) !== 0,
-      // First block ramps from silence so a start never clicks.
-      gl: 0,
-      gr: 0,
-      tl: gl,
-      tr: gr,
-    });
+    this.fill += take;
+    if (take > 0) this.started = true;
   }
 
   process(_inputs, outputs) {
@@ -85,65 +58,54 @@ class Iw4lMixer extends AudioWorkletProcessor {
     const left = out[0];
     const right = out[1] || out[0];
     const n = left.length;
-    left.fill(0);
-    if (right !== left) right.fill(0);
-
-    for (const [id, v] of this.voices) {
-      if (v.paused) continue;
-      const { data, ch, frames } = v.clip;
-      const step = v.step;
-      const dl = (v.tl - v.gl) / n;
-      const dr = (v.tr - v.gr) / n;
-      let pos = v.pos;
-      let gl = v.gl;
-      let gr = v.gr;
-      let ended = false;
-      for (let i = 0; i < n; i++) {
-        let i0 = pos | 0;
-        if (i0 >= frames) {
-          if (!v.loop) {
-            ended = true;
-            break;
-          }
-          pos -= frames;
-          i0 = pos | 0;
-        }
-        const frac = pos - i0;
-        let i1 = i0 + 1;
-        if (i1 >= frames) i1 = v.loop ? 0 : i0;
-        let l;
-        let r;
-        if (ch === 1) {
-          l = r = data[i0] + (data[i1] - data[i0]) * frac;
-        } else {
-          const a = i0 * ch;
-          const b = i1 * ch;
-          l = data[a] + (data[b] - data[a]) * frac;
-          r = data[a + 1] + (data[b + 1] - data[a + 1]) * frac;
-        }
-        gl += dl;
-        gr += dr;
-        left[i] += l * gl;
-        right[i] += r * gr;
-        pos += step;
-      }
-      v.pos = pos;
-      v.gl = v.tl;
-      v.gr = v.tr;
-      if (ended) {
-        this.voices.delete(id);
-        this.finished.push(id);
-      }
+    const take = Math.min(n, this.fill);
+    const ring = this.ring;
+    let read = this.read;
+    let peak = this.peak;
+    let sumsq = this.sumsq;
+    for (let i = 0; i < take; i++) {
+      const l = ring[read * 2];
+      const r = ring[read * 2 + 1];
+      left[i] = l;
+      right[i] = r;
+      const al = l < 0 ? -l : l;
+      const ar = r < 0 ? -r : r;
+      if (al > peak) peak = al;
+      if (ar > peak) peak = ar;
+      sumsq += l * l + r * r;
+      read++;
+      if (read === RING_FRAMES) read = 0;
     }
-
-    if (this.finished.length) {
-      this.port.postMessage({ finished: this.finished });
-      this.finished = [];
+    for (let i = take; i < n; i++) {
+      left[i] = 0;
+      right[i] = 0;
     }
-    this.blocks++;
-    if (this.blocks >= STATS_BLOCKS) {
-      this.blocks = 0;
-      this.port.postMessage({ stats: { voices: this.voices.size, clips: this.clips.size } });
+    this.read = read;
+    this.fill -= take;
+    this.consumed += take;
+    this.peak = peak;
+    this.sumsq = sumsq;
+    this.n += take;
+    if (take < n && this.started) {
+      this.underruns++;
+      this.underrunFrames += n - take;
+    }
+    if (++this.quanta >= REPORT_QUANTA) {
+      this.quanta = 0;
+      this.port.postMessage({
+        consumed: this.consumed,
+        time: currentTime,
+        buffered: this.fill,
+        underruns: this.underruns,
+        underrunFrames: this.underrunFrames,
+        overflowFrames: this.overflowFrames,
+        peak: this.peak,
+        sumsq: this.sumsq,
+        n: this.n,
+      });
+      this.peak = 0;
+      this.sumsq = 0;
+      this.n = 0;
     }
     return true;
   }

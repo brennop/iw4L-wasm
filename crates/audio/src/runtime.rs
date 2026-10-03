@@ -114,27 +114,30 @@ impl AudioRuntime {
         let control_rejections = rejections.clone();
         let cue_budget = crate::pending::PendingBudget::default();
         let control_budget = cue_budget.clone();
-        // Threads cannot spawn on wasm32: the browser build is silent until the worklet
-        // backend returns.
-        let worker = (!cfg!(target_arch = "wasm32")).then(|| {
+        let state = ControlState::new(
+            thread_shared,
+            cue_rx,
+            control_sources,
+            control_listener,
+            control_event_context,
+            control_ids,
+            control_rejections,
+            control_budget,
+        );
+        // Threads cannot spawn on wasm32: the browser output runs `control_pass` on the
+        // main thread once a frame (web_output.rs).
+        #[cfg(target_arch = "wasm32")]
+        let worker = {
+            crate::web_output::adopt(state, thread_shutdown, device_enabled);
+            None
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let worker = Some(
             std::thread::Builder::new()
                 .name("audio-control".into())
-                .spawn(move || {
-                    control(
-                        thread_shared,
-                        thread_shutdown,
-                        cue_rx,
-                        device_enabled,
-                        control_sources,
-                        control_listener,
-                        control_event_context,
-                        control_ids,
-                        control_rejections,
-                        control_budget,
-                    )
-                })
-                .expect("cannot start audio control thread")
-        });
+                .spawn(move || control(state, thread_shutdown, device_enabled))
+                .expect("cannot start audio control thread"),
+        );
         Self {
             shared,
             cue_tx,
@@ -397,48 +400,86 @@ impl Drop for AudioRuntime {
     }
 }
 
-fn control(
-    shared: Arc<RenderShared>,
-    shutdown: Arc<AtomicBool>,
-    cue_rx: Receiver<CueRequest>,
-    device_enabled: bool,
-    sources: Arc<SourceInbox>,
-    listener: Arc<ListenerState>,
-    event_context: Arc<crate::event::EventContextState>,
-    next_id: Arc<AtomicU64>,
-    rejections: Arc<[AtomicU64; 6]>,
-    cue_budget: crate::pending::PendingBudget,
-) {
-    let mut resolver = CueResolver::new();
-    let mut events = crate::event::EventJournal::new();
-    let mut pending_cues = VecDeque::<CueWork>::with_capacity(LOGICAL_INSTANCES);
+#[path = "control_state.rs"]
+mod control_state;
+pub(crate) use control_state::ControlState;
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn control(mut state: ControlState, shutdown: Arc<AtomicBool>, device_enabled: bool) {
     let device = device_enabled.then(|| {
-        let shared = shared.clone();
+        let shared = state.shared.clone();
         let shutdown = shutdown.clone();
         std::thread::Builder::new()
             .name("audio-device".into())
             .spawn(move || crate::device::supervise(shared, shutdown))
             .expect("cannot start audio device thread")
     });
-    let mut device_was_active = false;
-    let mut null_anchor = Instant::now();
-    let mut null_frame = 0;
-    let mut instances: Vec<LogicalInstance> = Vec::with_capacity(LOGICAL_INSTANCES);
-    let mut next_voice = 1;
-    let mut desired = SourceScene {
-        revision: 0,
-        sources: Vec::new(),
-        asserted: Vec::new(),
-    };
-    let mut present_sources = HashSet::with_capacity(LOGICAL_INSTANCES);
-    let mut source_cues = HashMap::<(SourceKey, u64), Arc<crate::cue::CueState>>::with_capacity(
-        crate::sources::SOURCE_HISTORY,
-    );
-    let mut silence = [[0.0; 2]; QUANTUM];
     while !shutdown.load(Ordering::Acquire) {
+        control_pass(&mut state, Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let ControlState {
+        shared,
+        cue_rx,
+        pending_cues,
+        instances,
+        ..
+    } = state;
+    for work in pending_cues {
+        work.complete(crate::StartOutcome::Failed(
+            crate::StartFailure::CueRefused(CueFailure::Cancelled),
+        ));
+    }
+    while let Ok(request) = cue_rx.try_recv() {
+        request.reject(CueFailure::Cancelled);
+    }
+    // Join/destroy the device before the last owner can free render payloads.
+    if let Some(device) = device {
+        let _ = device.join();
+    }
+    for logical in instances {
+        logical.request.instance.retire();
+    }
+    diag::info!(
+        Audio,
+        "audio: control stopped frames={} device_blocks={} null_blocks={} busy_blocks={}",
+        shared.frame.load(Ordering::Acquire),
+        shared.device_blocks.load(Ordering::Relaxed),
+        shared.null_blocks.load(Ordering::Relaxed),
+        shared.busy_blocks.load(Ordering::Relaxed)
+    );
+}
+
+/// One control pass: cancellation, sources, null transport, reclaim, cue
+/// intake, scheduling. `now` only drives the null transport's wall clock; with
+/// an active output the render frame advances only as blocks are rendered.
+pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
+    let ControlState {
+        shared,
+        cue_rx,
+        sources,
+        listener,
+        event_context,
+        next_id,
+        rejections,
+        cue_budget,
+        resolver,
+        events,
+        pending_cues,
+        device_was_active,
+        null_anchor,
+        null_frame,
+        instances,
+        next_voice,
+        desired,
+        present_sources,
+        source_cues,
+        silence,
+    } = state;
+    {
         let listener = listener.get();
         events.advance(event_context.get());
-        for logical in &instances {
+        for logical in instances.iter() {
             if logical
                 .request
                 .cancellation
@@ -459,7 +500,7 @@ fn control(
         if let Some(scene) = sources.take()
             && scene.revision > desired.revision
         {
-            desired = scene;
+            *desired = scene;
         }
         let epoch = shared.match_epoch.load(Ordering::Acquire);
         desired.sources.retain(|source| {
@@ -483,7 +524,7 @@ fn control(
             }
             current
         });
-        for logical in &mut instances {
+        for logical in instances.iter_mut() {
             let Some(binding) = logical.source else {
                 continue;
             };
@@ -534,19 +575,20 @@ fn control(
         }
         apply_source_render_budget(&instances);
         let device_active = shared.device_active.load(Ordering::Acquire);
-        if device_was_active && !device_active {
-            null_anchor = Instant::now();
-            null_frame = shared.frame.load(Ordering::Acquire);
+        if *device_was_active && !device_active {
+            *null_anchor = now;
+            *null_frame = shared.frame.load(Ordering::Acquire);
         }
-        device_was_active = device_active;
+        *device_was_active = device_active;
         if !device_active {
-            let elapsed = (null_anchor.elapsed().as_secs_f64() * f64::from(SAMPLE_RATE)) as u64;
+            let elapsed = (now.saturating_duration_since(*null_anchor).as_secs_f64()
+                * f64::from(SAMPLE_RATE)) as u64;
             let target = null_frame.saturating_add(elapsed);
             for _ in 0..CONTROL_BATCH {
                 if shared.frame.load(Ordering::Acquire) + QUANTUM as u64 > target {
                     break;
                 }
-                shared.render_for(&mut silence, Some(false));
+                shared.render_for(silence, Some(false));
             }
         }
         for index in 0..PHYSICAL_VOICES {
@@ -633,7 +675,7 @@ fn control(
                 work.request.execution.origin_inches = source.origin_inches;
             }
             let mut children = Vec::new();
-            let step = work.step(&mut resolver, listener, &mut children);
+            let step = work.step(resolver, listener, &mut children);
             match step {
                 CueStep::Waiting => pending_cues.push_back(work),
                 CueStep::Finished => {}
@@ -673,7 +715,7 @@ fn control(
                             ),
                         },
                         &shared,
-                        &mut instances,
+                        instances,
                         listener,
                         &rejections,
                         work.source.map(|(key, version)| SourceBinding {
@@ -763,14 +805,14 @@ fn control(
                 return true;
             }
             let assignment = Assignment {
-                voice: RenderVoiceId(next_voice),
+                voice: RenderVoiceId(*next_voice),
                 media: logical.request.media.clone(),
                 instance: instance.clone(),
                 start_frame: now.max(logical.request.frame),
                 start_cursor: logical.cursor,
                 looping: logical.request.looping,
             };
-            next_voice += 1;
+            *next_voice += 1;
             instance.set_status(InstanceStatus::Scheduled);
             // Only this thread may publish a new slot payload.
             match unsafe { shared.publish(assignment) } {
@@ -858,31 +900,7 @@ fn control(
         sources.rendered.store(rendered, Ordering::Relaxed);
         sources.virtualized.store(virtualized, Ordering::Relaxed);
         sources.revision.store(desired.revision, Ordering::Release);
-        std::thread::sleep(Duration::from_millis(2));
     }
-    for work in pending_cues {
-        work.complete(crate::StartOutcome::Failed(
-            crate::StartFailure::CueRefused(CueFailure::Cancelled),
-        ));
-    }
-    while let Ok(request) = cue_rx.try_recv() {
-        request.reject(CueFailure::Cancelled);
-    }
-    // Join/destroy the device before the last owner can free render payloads.
-    if let Some(device) = device {
-        let _ = device.join();
-    }
-    for logical in instances {
-        logical.request.instance.retire();
-    }
-    diag::info!(
-        Audio,
-        "audio: control stopped frames={} device_blocks={} null_blocks={} busy_blocks={}",
-        shared.frame.load(Ordering::Acquire),
-        shared.device_blocks.load(Ordering::Relaxed),
-        shared.null_blocks.load(Ordering::Relaxed),
-        shared.busy_blocks.load(Ordering::Relaxed)
-    );
 }
 
 fn apply_source_render_budget(instances: &[LogicalInstance]) {

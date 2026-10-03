@@ -27,12 +27,13 @@ perf.workspace = true
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm", "wav", "adpcm"] }
 cpal = "=0.17.3"
 
-# U8 (experimental): the browser mixes on an AudioWorklet, see `worklet.rs`.
+# Browser output: the main thread mixes and an AudioWorklet plays the blocks, see `web_output.rs`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.129"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "AudioContext",
+    "AudioContextOptions",
     "AudioContextState",
     "AudioDestinationNode",
     "AudioNode",
@@ -40,8 +41,11 @@ web-sys = { version = "0.3", features = [
     "AudioWorkletNode",
     "AudioWorkletNodeOptions",
     "BaseAudioContext",
+    "Location",
     "MessageEvent",
     "MessagePort",
+    "UrlSearchParams",
+    "Window",
 ] }
 
 [lints]
