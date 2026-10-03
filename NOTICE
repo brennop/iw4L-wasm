@@ -12,8 +12,9 @@ Third-party material bundled with this repository
 --------------------------------------------------------------------------------
 
 Both fonts below are compiled into the IW4L binary with `include_bytes!`, so
-they are redistributed with every build. Any archive that ships an IW4L binary
-ships these two licence texts with it.
+they are redistributed with every build. The binary also embeds this NOTICE,
+LICENSE, both licence texts and THIRD-PARTY-LICENSES.txt; `iw4l licenses`
+prints them.
 
 Oxanium (crates/ui/assets/Oxanium-Regular.ttf)
   Copyright 2019 The Oxanium Project Authors
@@ -44,8 +45,11 @@ Third-party source code
 
 The only third-party source code vendored in this repository is the patched
 wgpu copy named above, and the build links no other third-party project named
-below. IW4L's own dependencies are the crates declared in Cargo.toml, under
-their own licences.
+below. The Rust crates compiled into the IW4L binary, with their licence and
+copyright texts, are listed in THIRD-PARTY-LICENSES.txt; the binary embeds
+that file and `iw4l licenses` prints it. `cargo xtask licenses` regenerates
+it from Cargo.lock. IW4L's own dependencies are the crates declared in
+Cargo.toml, under their own licences.
 
 --------------------------------------------------------------------------------
 References consulted during development

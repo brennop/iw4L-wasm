@@ -414,7 +414,7 @@ fn hostile(world: &mut World, turret: &Turret, target: u64) -> bool {
     let team = |world: &mut World, object: u64| match super::players::entity_field(
         world, object, "team",
     ) {
-        Value::String(team) => Some(team),
+        Value::String(team) => Some(Arc::<str>::from(team)),
         _ => None,
     };
     let own = turret
@@ -584,13 +584,19 @@ pub(crate) fn fire_bullet(
     let range = weapon_range(world, weapon);
     let end = (Vec3::from_array(from) + Vec3::from_array(dir) * range).to_array();
     let ignore = ignore_self(world, object);
-    let TraceOutcome::Hit { collider, .. } = entity_trace(world, from, end, MASK_SHOT, ignore)
+    let TraceOutcome::Hit {
+        collider,
+        end,
+        normal,
+        ..
+    } = entity_trace(world, from, end, MASK_SHOT, ignore)
     else {
         return;
     };
-    let amount = FrameWorld::from_world(world)
-        .combat_facts_for(weapon)
-        .map_or(0, |f| f.damage);
+    let Some(facts) = FrameWorld::from_world(world).combat_facts_for(weapon) else {
+        return;
+    };
+    let amount = facts.damage;
     let hit = match collider {
         ColliderId::Player { .. } | ColliderId::World { .. } => None,
         _ => match collider_entity(world, collider) {
@@ -598,6 +604,58 @@ pub(crate) fn fire_bullet(
             _ => return,
         },
     };
+    let runtime = world.resource::<Runtime>();
+    let number = runtime.entities[&object].number;
+    let other_entity_num = match collider {
+        ColliderId::Player { client, .. } => client.0 as i32,
+        _ => hit
+            .and_then(|hit| runtime.entities.get(&hit))
+            .map_or(playerstate_iw4::ENTITYNUM_NONE, |entity| entity.number),
+    };
+    let surface_flags = match collider {
+        ColliderId::World { surface_flags, .. }
+        | ColliderId::EntityDObjBone { surface_flags, .. }
+        | ColliderId::EntityLinkedBrush { surface_flags, .. } => surface_flags,
+        ColliderId::Player { .. } => 0,
+    };
+    let surf_type = if matches!(collider, ColliderId::Player { .. }) {
+        weapon_iw4::SURF_TYPE_FLESH as u8
+    } else {
+        trace_iw4::surface_type_from_flags(surface_flags) as u8
+    };
+    let tick = world.resource::<crate::step::StepRequest>().tick;
+    let mut frame = FrameWorld::from_world(world);
+    let correlation = frame.alloc_shot_id().0;
+    let payload = crate::EntityEventPayload {
+        number,
+        attacker_entity_num: number,
+        other_entity_num,
+        weapon,
+        correlation,
+        origin: end,
+        origin2: from,
+        direction: normal,
+        surf_type,
+        surface_flags,
+        ..Default::default()
+    };
+    if let Some(event) = entity_iw4::bullet_hit_event(facts.impact_type, false) {
+        frame.push_entity_event(tick, crate::EventAudience::All, event, payload);
+    } else if fx_iw4::impact_table_row(facts.impact_type, false).is_some() {
+        frame.push_pellet_fx(crate::PelletFxRecord {
+            attacker: number,
+            weapon,
+            correlation,
+            pellet: 0,
+            hand: 0,
+            start: from,
+            end,
+            normal,
+            surf_type,
+            surface_flags,
+            flesh_flags: 0,
+        });
+    }
     let runtime = world.resource::<Runtime>();
     let target = match collider {
         ColliderId::Player { client, .. } => crate::script::HitTarget::Player(client),

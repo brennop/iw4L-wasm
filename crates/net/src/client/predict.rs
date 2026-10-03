@@ -311,6 +311,10 @@ impl ClientPrediction {
 
     pub fn arm_from_content(&mut self, authority: &SimWorld) {
         self.world.initialize_prediction_from(authority);
+        self.world
+            .persistent_data_mut()
+            .install_schemas(authority.persistent_data().schemas().clone())
+            .expect("validated match schemas must install into prediction");
         self.armed = true;
     }
 

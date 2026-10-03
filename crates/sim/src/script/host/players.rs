@@ -24,6 +24,9 @@ pub(crate) fn player_object(world: &World, client: u32) -> Value {
 }
 
 pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::script_player::Hit) {
+    if crate::script_player::god_mode(&FrameWorld::from_world(world), hit.victim) {
+        return;
+    }
     let victim = player_object(world, hit.victim.0);
     let Value::Object(object) = victim else {
         return;
@@ -176,6 +179,60 @@ pub(crate) fn force_death(world: &mut World, tick: crate::Tick, client: u32) {
     settle_deaths(world);
 }
 
+fn profile_data(world: &World, profile: crate::PlayerProfile) -> Option<Vec<(Vec<Value>, Value)>> {
+    let tables = &world.resource::<Runtime>().tables;
+    let titles = super::tables::table(tables, "mp/cardTitleTable.csv")?;
+    let emblems = super::tables::table(tables, "mp/cardIconTable.csv")?;
+    let streaks = super::tables::table(tables, "mp/killstreakTable.csv")?;
+    let title = titles
+        .cell(profile.title as usize, 0)
+        .filter(|s| !s.is_empty())?;
+    let emblem = emblems
+        .cell(profile.emblem as usize, 0)
+        .filter(|s| !s.is_empty())?;
+    let mut data = vec![
+        (vec![Value::string("cardTitle")], Value::string(title)),
+        (vec![Value::string("cardIcon")], Value::string(emblem)),
+    ];
+    let mut costs = Vec::new();
+    for (slot, row) in profile.killstreaks.into_iter().enumerate() {
+        let row = row as usize;
+        let cost = streaks.cell(row, 4)?.parse::<u32>().ok()?;
+        if !(1..=25).contains(&cost) || costs.contains(&cost) {
+            return None;
+        }
+        costs.push(cost);
+        let name = streaks.cell(row, 1)?;
+        if matches!(name, "none" | "sentry") {
+            return None;
+        }
+        data.push((
+            vec![Value::string("killstreaks"), Value::Int(slot as i32)],
+            Value::string(name),
+        ));
+    }
+    Some(data)
+}
+
+pub(crate) fn set_profile(world: &mut World, client: u32, profile: crate::PlayerProfile) {
+    if FrameWorld::from_world(world)
+        .client_meta(ClientId(client))
+        .is_none()
+    {
+        return;
+    }
+    let Some(data) = profile_data(world, profile) else {
+        return;
+    };
+    if super::natives::player::write_class_data(world, client, &data).is_err() {
+        return;
+    }
+    let mut frame = FrameWorld::from_world(world);
+    let meta = frame.client_meta_mut(ClientId(client));
+    meta.player_card_title = profile.title;
+    meta.player_card_icon = profile.emblem;
+}
+
 const GIVE_KILLSTREAK: &str = "maps/mp/killstreaks/_killstreaks::trygivekillstreak";
 
 pub(crate) fn give_killstreak(world: &mut World, client: u32, name: &str) {
@@ -230,7 +287,7 @@ const CLASS_MENU: &str = "changeclass";
 pub(crate) struct MenuAnswer {
     menu: Arc<str>,
     response: Arc<str>,
-    data: Vec<(String, Value)>,
+    data: Vec<(Vec<Value>, Value)>,
 }
 
 impl MenuAnswer {
@@ -305,8 +362,8 @@ pub(crate) fn t5_class_response(class: crate::ClassId) -> Option<String> {
     }
 }
 
-const IW4_STAND_INS: [&str; 2] = ["m4_mp", "usp_mp"];
-const T5_STAND_INS: [&str; 2] = ["ak47_mp", "m1911_mp"];
+const IW4_STAND_INS: [&str; 4] = ["m4_mp", "usp_mp", "frag_grenade_mp", "flash_grenade_mp"];
+const T5_STAND_INS: [&str; 4] = ["ak47_mp", "m1911_mp", "frag_grenade_mp", "flash_grenade_mp"];
 
 pub(crate) fn stand_in_for(world: &mut World, slot: usize, weapon: u32) -> Option<u32> {
     let realm = world
@@ -325,6 +382,19 @@ pub(crate) fn stand_in_for(world: &mut World, slot: usize, weapon: u32) -> Optio
             .is_some_and(|facts| facts.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
     {
         return frame.weapon_index_by_script_name("riotshield_mp");
+    }
+    if realm == crate::script::Realm::Iw4
+        && let Some(facts) = frame.missile_launch_facts(weapon)
+        && facts.require_lock_to_fire
+    {
+        let launcher = match facts.missile_guidance {
+            1 => Some("stinger_mp"),
+            3 => Some("javelin_mp"),
+            _ => None,
+        };
+        if let Some(launcher) = launcher {
+            return frame.weapon_index_by_script_name(launcher);
+        }
     }
     let stand_ins = if realm == crate::script::Realm::T5 {
         T5_STAND_INS
@@ -353,13 +423,27 @@ pub(crate) fn bridged_weapon(world: &World, client: u32, weapon: u32) -> u32 {
         .map_or(weapon, |(_, native)| *native)
 }
 
-pub(crate) fn script_weapon(world: &World, client: u32, weapon: u32) -> u32 {
-    world
+pub(crate) fn script_weapon(world: &mut World, client: u32, weapon: u32) -> u32 {
+    if let Some(stand_in) = world
         .resource::<Runtime>()
         .weapon_bridge
         .get(&client)
         .and_then(|bridge| bridge.iter().find(|(_, native)| *native == weapon))
-        .map_or(weapon, |(stand_in, _)| *stand_in)
+        .map(|(stand_in, _)| *stand_in)
+    {
+        return stand_in;
+    }
+    let needs_lock_bridge = FrameWorld::from_world(world)
+        .missile_launch_facts(weapon)
+        .is_some_and(|facts| facts.require_lock_to_fire && matches!(facts.missile_guidance, 1 | 3));
+    if needs_lock_bridge
+        && world.resource::<Runtime>().players.contains_key(&client)
+        && let Some(stand_in) = stand_in_for(world, 1, weapon)
+    {
+        bridge_class_weapon(world, client, 1, weapon);
+        return stand_in;
+    }
+    weapon
 }
 
 pub(crate) fn personal_class(
@@ -390,6 +474,8 @@ pub(crate) fn choose_class(world: &mut World, client: u32, class: &crate::ClassD
         .remove(&client);
     bridge_class_weapon(world, client, 0, class.primary);
     bridge_class_weapon(world, client, 1, class.secondary);
+    bridge_class_weapon(world, client, 2, class.lethal);
+    bridge_class_weapon(world, client, 3, class.tactical);
     if realm == Some(crate::script::Realm::T5) {
         if let Some(response) = t5_class_response(class.id) {
             answer_menu(world, client, CLASS_MENU, &response);
@@ -408,11 +494,13 @@ pub(crate) fn choose_class(world: &mut World, client: u32, class: &crate::ClassD
     );
 }
 
-fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(String, Value)> {
+fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(Vec<Value>, Value)> {
     let weapons = [
         stand_in_for(world, 0, class.primary).unwrap_or(class.primary),
         stand_in_for(world, 1, class.secondary).unwrap_or(class.secondary),
     ];
+    let lethal = stand_in_for(world, 2, class.lethal).unwrap_or(class.lethal);
+    let tactical = stand_in_for(world, 3, class.tactical).unwrap_or(class.tactical);
     let index = class.id.0 as usize % 10;
     let frame = FrameWorld::from_world(world);
     let name = |weapon: u32| -> String {
@@ -436,18 +524,33 @@ fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(String
         }
         (setup.base.clone(), attachments)
     };
-    let prefix = format!("customclasses.{index}");
+    let prefix = format!("customClasses.{index}");
     let mut data = Vec::new();
-    let mut put = |key: String, value: &str| data.push((key, Value::String(value.into())));
+    let mut put = |key: String, value: &str| {
+        let keys = key
+            .split('.')
+            .map(|part| {
+                part.parse::<i32>()
+                    .map(Value::Int)
+                    .unwrap_or_else(|_| Value::string(part))
+            })
+            .collect();
+        data.push((keys, Value::String(value.into())));
+    };
     for (setup_index, weapon) in weapons.into_iter().enumerate() {
         let (base, attachments) = setup(weapon);
-        let key = format!("{prefix}.weaponsetups.{setup_index}");
+        let key = format!("{prefix}.weaponSetups.{setup_index}");
         put(format!("{key}.weapon"), &base);
         put(format!("{key}.attachment.0"), &attachments[0]);
         put(format!("{key}.attachment.1"), &attachments[1]);
         put(format!("{key}.camo"), "none");
     }
-    put(format!("{prefix}.perks.0"), &name(class.lethal));
+    let lethal = if lethal == 0 {
+        "specialty_null".to_owned()
+    } else {
+        name(lethal)
+    };
+    put(format!("{prefix}.perks.0"), &lethal);
     let mut perks = ["specialty_null"; 3];
     for id in class.perks {
         if let (Some(slot), Some(perk)) = (
@@ -466,9 +569,9 @@ fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(String
         &class.deathstreak
     };
     put(format!("{prefix}.perks.4"), deathstreak);
-    let tactical = name(class.tactical);
+    let tactical = name(tactical);
     put(
-        format!("{prefix}.specialgrenade"),
+        format!("{prefix}.specialGrenade"),
         tactical.strip_suffix("_mp").unwrap_or(&tactical),
     );
 
@@ -536,12 +639,26 @@ fn deliver_answers(world: &mut World, client: u32) {
         .expect("checked above");
     let slot = runtime.players.get_mut(&client).expect("checked above");
     slot.menu = None;
-    slot.data.extend(answer.data);
+    if let Err(message) = super::natives::player::write_class_data(world, client, &answer.data) {
+        world.resource_mut::<Runtime>().fault = Some(Fault::at(
+            &Location {
+                module: "<engine>".into(),
+                function: "class selection".into(),
+                line: 0,
+                column: 0,
+            },
+            message,
+        ));
+        return;
+    }
     raise(
         world,
         Value::Object(object),
         "menuresponse",
-        vec![Value::String(answer.menu), Value::String(answer.response)],
+        vec![
+            Value::String(answer.menu.into()),
+            Value::String(answer.response.into()),
+        ],
     );
 }
 
@@ -552,7 +669,6 @@ pub(crate) struct PlayerSlot {
     pub sessionstate: Arc<str>,
     pub dvars: BTreeMap<Arc<str>, Arc<str>>,
     pub menu: Option<Arc<str>>,
-    pub data: BTreeMap<String, Value>,
     pub commands: Vec<(Arc<str>, Arc<str>)>,
     pub presented: BTreeMap<&'static str, Vec<Value>>,
     pub perks: std::collections::BTreeSet<Arc<str>>,
@@ -570,6 +686,7 @@ pub(crate) struct PlayerSlot {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum LinkView {
+    WeaponDelta,
     Free,
     Delta,
     Absolute,
@@ -584,6 +701,7 @@ pub(crate) struct PlayerLink {
     pub view: LinkView,
     pub clamp: Option<[f32; 4]>,
     pub parent_angles: [f32; 3],
+    pub restore_view: Option<[f32; 3]>,
 }
 
 impl PlayerSlot {
@@ -594,7 +712,6 @@ impl PlayerSlot {
             sessionstate: "spectator".into(),
             dvars: BTreeMap::new(),
             menu: None,
-            data: BTreeMap::new(),
             commands: Vec::new(),
             presented: BTreeMap::new(),
             perks: Default::default(),
@@ -716,6 +833,9 @@ pub(crate) fn disconnect_player(world: &mut World, client: u32) {
             .personal_classes
             .retain(|(owner, _), _| *owner != client);
         runtime.weapon_bridge.remove(&client);
+        if runtime.local_presentation_client == Some(ClientId(client)) {
+            runtime.pending_local_dvars.clear();
+        }
     }
     let Some(slot) = world.resource::<Runtime>().players.get(&client).cloned() else {
         return;
@@ -728,8 +848,14 @@ pub(crate) fn disconnect_player(world: &mut World, client: u32) {
         Vec::new(),
         now,
     );
+    world
+        .resource_mut::<crate::PersistentDataStore>()
+        .unbind(crate::ClientId(client));
     let mut runtime = world.resource_mut::<Runtime>();
     runtime.players.remove(&client);
+    if runtime.local_presentation_client == Some(ClientId(client)) {
+        runtime.pending_local_dvars.clear();
+    }
     runtime.menu_answers.remove(&client);
     runtime.joined.remove(&client);
     runtime.delete_entity(slot.object);
@@ -779,16 +905,6 @@ pub(crate) fn sync_players(world: &mut World) {
             }
             Some(_) => {}
             None => {
-                let classes: Vec<_> = world
-                    .resource::<Runtime>()
-                    .personal_classes
-                    .range((client, 0)..=(client, u32::MAX))
-                    .map(|(_, class)| class.clone())
-                    .collect();
-                let mut data = BTreeMap::new();
-                for class in &classes {
-                    data.extend(class_profile_data(world, class));
-                }
                 let mut runtime = world.resource_mut::<Runtime>();
                 let object = match runtime.create_player(client) {
                     Ok(object) => object,
@@ -805,9 +921,7 @@ pub(crate) fn sync_players(world: &mut World) {
                         return;
                     }
                 };
-                let mut slot = PlayerSlot::new(object);
-                slot.data = data;
-                runtime.players.insert(client, slot);
+                runtime.players.insert(client, PlayerSlot::new(object));
                 let kept = runtime.restored_pers.remove(&client);
                 let pers = match kept {
                     Some(kept) => super::restart::attach(&mut runtime, kept),
@@ -850,7 +964,7 @@ pub(crate) fn load_field(world: &mut World, client: u32, name: &str) -> Option<V
         return runtime
             .players
             .get(&client)
-            .map(|slot| Value::String(slot.sessionstate.clone()));
+            .map(|slot| Value::String(slot.sessionstate.clone().into()));
     }
     if SEAT_FIELDS.contains(&name) {
         let runtime = world.resource::<Runtime>();
@@ -971,7 +1085,7 @@ pub(crate) fn store_field(
                 return Err(format!("invalid sessionstate '{state}'"));
             }
             if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
-                slot.sessionstate = state.clone();
+                slot.sessionstate = state.clone().into();
             }
         }
         "origin" | "angles" => {
@@ -1096,6 +1210,10 @@ pub(crate) fn link_player(world: &mut World, client: u32, link: PlayerLink) {
             ps.pm_type = playerstate_iw4::PM_TYPE_NORMAL_LINKED;
         }
         ps.velocity = [0.0; 3];
+        if link.view == LinkView::WeaponDelta {
+            ps.link_flags |= playerstate_iw4::LINK_FLAGS_WEAPON_VIEW_ONLY;
+            ps.link_weapon_angles = ps.viewangles;
+        }
     }
     if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
         slot.link = Some(link);
@@ -1104,17 +1222,29 @@ pub(crate) fn link_player(world: &mut World, client: u32, link: PlayerLink) {
 
 pub(crate) fn unlink_player(world: &mut World, client: u32) {
     let id = ClientId(client);
-    if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
-        slot.link = None;
-    }
+    let link = world
+        .resource_mut::<Runtime>()
+        .players
+        .get_mut(&client)
+        .and_then(|slot| slot.link.take());
     let mut frame = FrameWorld::from_world(world);
     if frame.client_meta(id).is_some() {
         frame.client_meta_mut(id).controls.linked = false;
+        frame.client_meta_mut(id).linked_weapon_view = None;
     }
-    if let Some(ps) = frame.player_mut(id)
-        && ps.pm_type == playerstate_iw4::PM_TYPE_NORMAL_LINKED
-    {
-        ps.pm_type = PM_TYPE_NORMAL;
+    if let Some(ps) = frame.player_mut(id) {
+        if ps.pm_type == playerstate_iw4::PM_TYPE_NORMAL_LINKED {
+            ps.pm_type = PM_TYPE_NORMAL;
+        }
+        if let Some(link) = link.filter(|link| link.view == LinkView::WeaponDelta) {
+            ps.link_flags &= !playerstate_iw4::LINK_FLAGS_WEAPON_VIEW_ONLY;
+            if let Some(view) = link.restore_view {
+                for i in 0..3 {
+                    ps.delta_angles[i] += angle_delta(view[i], ps.viewangles[i]);
+                }
+                ps.viewangles = view;
+            }
+        }
     }
 }
 
@@ -1148,12 +1278,19 @@ pub(crate) fn apply_player_links(world: &mut World) {
             base,
         );
         let parent = math_iw4::axis_to_angles(axis);
+        let entity_num = world
+            .resource::<Runtime>()
+            .entities
+            .get(&link.parent)
+            .map_or(playerstate_iw4::ENTITYNUM_NONE, |entity| entity.number);
         let mut frame = FrameWorld::from_world(world);
-        frame.set_origin(id, origin);
+        if link.view != LinkView::WeaponDelta {
+            frame.set_origin(id, origin);
+        }
         let Some(mut view) = frame.player(id).map(|ps| ps.viewangles) else {
             continue;
         };
-        if link.view == LinkView::Delta {
+        if matches!(link.view, LinkView::Delta | LinkView::WeaponDelta) {
             for i in 0..2 {
                 view[i] += angle_delta(parent[i], link.parent_angles[i]);
             }
@@ -1167,7 +1304,22 @@ pub(crate) fn apply_player_links(world: &mut World) {
             }
             _ => {}
         }
-        frame.set_viewangles(id, view);
+        if let Some(ps) = frame.player_mut(id) {
+            for i in 0..3 {
+                ps.delta_angles[i] += angle_delta(view[i], ps.viewangles[i]);
+            }
+            ps.viewangles = view;
+            if link.view == LinkView::WeaponDelta {
+                ps.link_weapon_angles = view;
+            }
+        }
+        if link.view == LinkView::WeaponDelta {
+            frame.client_meta_mut(id).linked_weapon_view = Some(crate::LinkedWeaponView {
+                entity_num,
+                origin,
+                angles: view,
+            });
+        }
         if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client)
             && let Some(link) = slot.link.as_mut()
         {

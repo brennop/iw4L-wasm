@@ -47,7 +47,11 @@ pub(crate) fn route_debug_feature_commands(
         ResMut<net::ActionRequestIds>,
         Option<Res<BotRoster>>,
     ),
-    (mut hurt, mut pending_splash): (ResMut<PendingViewHurt>, ResMut<PendingSplash>),
+    (mut hurt, mut pending_splash, authority): (
+        ResMut<PendingViewHurt>,
+        ResMut<PendingSplash>,
+        Option<Res<net::AuthorityWorld>>,
+    ),
 ) {
     let (console, settings, line) = &mut output;
     let capacity = settings.log_capacity;
@@ -61,6 +65,11 @@ pub(crate) fn route_debug_feature_commands(
         match cmd.name.as_str() {
             "bot" => match parse_bot_args(&cmd.args) {
                 Err(msg) => echo(msg, console, line),
+                Ok(BotVerb::Hold(_) | BotVerb::Tp(_) | BotVerb::Fire(_) | BotVerb::Give { .. })
+                    if authority.as_ref().is_some_and(|a| !a.0.cheats_enabled()) =>
+                {
+                    echo("bot: cheats are off".into(), console, line);
+                }
                 Ok(BotVerb::Add(n)) => {
                     bot_add.push(n);
                     echo(format!("bot: queued add {n}"), console, line);
@@ -232,6 +241,14 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         ("ui", "ui [0|1] — hide/show game UI; console Overlay stays"),
         (
+            "thirdperson",
+            "thirdperson [0|1|toggle] — switch the saved player camera view",
+        ),
+        (
+            "cg_thirdPerson",
+            "cg_thirdPerson [0|1|toggle] — switch the saved player camera view",
+        ),
+        (
             "togglemenu",
             "togglemenu — open the script main menu (g_scriptMainMenu), or escape the top menu",
         ),
@@ -271,7 +288,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         (
             "wait",
-            "wait [seconds|<n>t|world|spawn|torn|ambient] — pause the console FIFO; <n>t = n authority ticks; world = scene.spawned; spawn = AppScreen::InGame; torn = HasWorld false and scene.spawned false (hold after MatchTornDown); ambient = MapAmbientBooted (overlay finished, CreateFX loops spawned)",
+            "wait [seconds|<n>t|world|spawn|torn|ambient] — pause the console FIFO; <n>t = n authority ticks; world = scene.spawned; spawn = AppScreen::InGame; torn = HasWorld false and scene.spawned false (hold after MatchTornDown); ambient = MapAmbientBooted (overlay finished, CreateFX sources published)",
         ),
     ] {
         if registry.resolve(name).is_none() {

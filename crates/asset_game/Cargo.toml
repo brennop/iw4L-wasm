@@ -8,6 +8,7 @@ description = "Weapons, attachments, penetration, localization, menus, teams, an
 [dependencies]
 web-time = { workspace = true }
 gamefs.workspace = true
+structured_data_iw4.workspace = true
 asset_core.workspace = true
 asset_transport.workspace = true
 asset_anim.workspace = true

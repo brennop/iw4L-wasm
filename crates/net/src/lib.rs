@@ -1,3 +1,7 @@
+mod local_account;
+pub use local_account::{AccountSaveReceipt, LocalAccount};
+mod account_identity;
+pub use account_identity::{AccountChallenge, AccountIdentityError, AccountKey, AccountProof};
 pub mod authority;
 pub mod client;
 pub mod gaps;
@@ -54,10 +58,10 @@ pub use client::presentation::entities::{
 };
 pub use client::presentation::entity_event_dispatch::{
     AppliedEntityEventWalk, DispatchedEntityEvent, EntityBulletHit, EntityEjectBrass,
-    EntityEventCursor, EntityEventSound, EntityExplosion, EntityGrenadeContact, EntityMeleeBlood,
-    EntityMovementSound, EntityObituary, EntityPhysicsSphere, EntityPlayFx, EntityResetAds,
-    EntityRumble, EntityWeaponFire, KillcamFxTransition, UnsupportedEntityEvents, WeaponFirePing,
-    WeaponFirePingBus, register_entity_event_dispatch,
+    EntityEventCursor, EntityEventDomain, EntityEventSound, EntityExplosion, EntityGrenadeContact,
+    EntityMeleeBlood, EntityMovementSound, EntityObituary, EntityPhysicsSphere, EntityPlayFx,
+    EntityResetAds, EntityRumble, EntityWeaponFire, KillcamFxTransition, UnsupportedEntityEvents,
+    WeaponFirePing, WeaponFirePingBus, register_entity_event_dispatch,
 };
 pub use client::presentation::entity_event_registry::{
     EV_DISPATCH_REGISTRY, EntityEventDispatch, EntityEventRow, ev_dispatch_row,
@@ -169,4 +173,4 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 94;
+pub const PROTOCOL_VERSION: u32 = 102;

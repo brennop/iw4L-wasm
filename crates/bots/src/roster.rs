@@ -91,6 +91,7 @@ impl BotFireQueue {
 #[derive(Debug)]
 pub struct BotSlot {
     pub id: ClientId,
+    pub account: sim::AccountId,
     pub brain: Option<HostController>,
     pub joined: bool,
     pub class_picked_in: Option<LifeSequence>,
@@ -133,10 +134,18 @@ impl BotRoster {
             let Some(id) = self.claim_id(taken) else {
                 break;
             };
+            let mut account = [0; 16];
+            while account == [0; 16] {
+                if let Err(error) = getrandom::fill(&mut account) {
+                    diag::warn!(Sim, "bots: account identity creation failed: {error}");
+                    return added;
+                }
+            }
             let brain = (!dummy)
                 .then(|| HostController::new(seed ^ (u64::from(id.0) << 32) ^ u64::from(i)));
             self.bots.push(BotSlot {
                 id,
+                account: sim::AccountId(account),
                 brain,
                 joined: false,
                 class_picked_in: None,

@@ -139,7 +139,7 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
             target: MasterTarget {
                 address: url.clone(),
                 server_name: url,
-                ca_cert: None,
+                ca_pem: String::new(),
             },
             advert_id: join.parse()?,
             map: map.to_owned(),

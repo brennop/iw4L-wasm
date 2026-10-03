@@ -442,16 +442,17 @@ pub(super) fn binary(op: Binary, a: Value, b: Value) -> Result<Value, String> {
         Binary::Add => {
             let (a, b) = match (&a, &b) {
                 (Value::String(_), _) | (_, Value::String(_)) => {
-                    let text = |v: &Value| match v {
-                        Value::String(s) => Some(s.to_string()),
-                        other => to_text(other),
+                    let bytes = |value: &Value| match value {
+                        Value::String(text) => Some(text.as_bytes().to_vec()),
+                        other => to_text(other).map(String::into_bytes),
                     };
-                    match (text(&a), text(&b)) {
-                        (Some(x), Some(y)) => {
+                    match (bytes(&a), bytes(&b)) {
+                        (Some(mut x), Some(y)) => {
                             if x.len() + y.len() > 0x2000 {
                                 return Err("string too long".into());
                             }
-                            return Ok(Value::String(format!("{x}{y}").into()));
+                            x.extend_from_slice(&y);
+                            return Ok(Value::byte_string(&x));
                         }
                         _ => return Err(mismatch(&a, &b)),
                     }
@@ -522,7 +523,7 @@ pub(super) fn binary(op: Binary, a: Value, b: Value) -> Result<Value, String> {
 
 fn object_key(runtime: &mut Runtime, key: ArrayKey) -> Result<u32, String> {
     match key {
-        ArrayKey::String(key) => Ok(runtime.symbol(&key)),
+        ArrayKey::String(key) => Ok(runtime.symbol(&key.symbol_key())),
         ArrayKey::Integer(_) => Err("object index must be a string".into()),
     }
 }
@@ -722,9 +723,9 @@ fn instruction(
                     let ArrayKey::Integer(i) = key else {
                         return Err("string index must be an integer".into());
                     };
-                    s.chars()
-                        .nth(i as usize)
-                        .map(|c| Value::String(c.to_string().into()))
+                    s.as_bytes()
+                        .get(i as usize)
+                        .map(|byte| Value::byte_string(&[*byte]))
                         .unwrap_or(Value::Undefined)
                 }
                 _ => return Err("value cannot be indexed".into()),
@@ -902,7 +903,7 @@ fn instruction(
                     .ok_or("invalid array reference")?
                     .len(),
                 Value::Object(_) => 1,
-                Value::String(s) => s.chars().count(),
+                Value::String(s) => s.len(),
                 other => return Err(format!("size cannot be applied to {}", type_name(other))),
             };
             thread.stack.push(Value::Int(size as i32));
@@ -1047,7 +1048,7 @@ fn instruction(
 
 fn event_name(value: Value) -> Result<Arc<str>, String> {
     match value {
-        Value::String(name) => Ok(name),
+        Value::String(name) => Ok(name.symbol_key()),
         other => Err(format!(
             "event name must be a string, found {}",
             type_name(&other)
@@ -1437,7 +1438,10 @@ fn stack_effect(op: &Op) -> (usize, usize) {
 }
 
 fn terminal(message: &str) -> bool {
-    message.starts_with("invalid IR") || message.contains("identifier exhausted")
+    message.starts_with("invalid IR")
+        || message.contains("identifier exhausted")
+        || message == "vehicle pool exhausted"
+        || message.ends_with(": vehicle pool exhausted")
 }
 
 fn report(world: &mut World, fault: &Fault) {
@@ -1603,7 +1607,6 @@ impl Runtime {
         );
         for slot in self.players.values() {
             pending.push(Value::Object(slot.object));
-            pending.extend(slot.data.values().cloned());
             pending.extend(slot.presented.values().flatten().cloned());
         }
         for answers in self.menu_answers.values() {

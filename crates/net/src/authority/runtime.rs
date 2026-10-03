@@ -586,6 +586,8 @@ fn advance_authority_clock(
 }
 
 fn ingress_authority(
+    mut world: ResMut<AuthorityWorld>,
+    bridge: Option<Res<crate::MasterBridge>>,
     hub: Option<ResMut<crate::transport::udp_session::UdpAuthorityHub>>,
     mut cmd_inbox: ResMut<ClientCommandInbox>,
     mut action_inbox: ResMut<ClientActionInbox>,
@@ -606,6 +608,13 @@ fn ingress_authority(
             &mut action_inbox,
             Some(&mut samples),
             Some(&mut reliable),
+            Some((
+                &mut world.0,
+                bridge
+                    .as_ref()
+                    .map(|bridge| bridge.state().identity().match_key())
+                    .unwrap_or(frame::MatchKey::NONE),
+            )),
         ) {
             diag::warn!(Net, "udp ingress: {e}");
         }

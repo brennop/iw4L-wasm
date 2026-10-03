@@ -52,6 +52,7 @@ pub(crate) fn schedule() -> Schedule {
                 dispatch_touches_system,
                 crate::script::sync_engine_events,
                 finalize_system,
+                crate::script::host::natives::iw4::deliver_local_presentation_dvars,
                 publish_snapshot_system,
             )
                 .chain()
@@ -323,7 +324,7 @@ fn run_players_system(ecs: &mut World) {
             let (melee_delay_ms, melee_charge_delay_ms) = facts
                 .map(|f| (f.melee_delay_ms, f.melee_charge_delay_ms))
                 .unwrap_or((0, 0));
-            let context = pmove_context(
+            let mut context = pmove_context(
                 old_buttons,
                 scales,
                 ads_allowed,
@@ -343,6 +344,8 @@ fn run_players_system(ecs: &mut World) {
                     .and_then(|m| m.shellshock.as_ref())
                     .is_some_and(|shock| shock.movement),
             );
+            context.view_angles.unclamped_pitch_bit =
+                ps.link_flags & playerstate_iw4::LINK_FLAGS_WEAPON_VIEW_ONLY != 0;
             crate::script::player_commands(world.ecs(), id.0, cmd.buttons, old_buttons);
             let mut cmd = *cmd;
             crate::script_player::constrain_cmd(&mut world, *id, &mut cmd);
@@ -507,6 +510,9 @@ fn run_players_system(ecs: &mut World) {
     *world.old_buttons_mut() = original_buttons;
     *world.old_cmd_angles_mut() = original_angles;
 
+    if world.publishes_snapshot() {
+        crate::script::apply_player_links(world.ecs());
+    }
     restamp_debug_move_look(&mut world, &input.actions);
 
     if allow_move && world.publishes_snapshot() {
@@ -765,6 +771,7 @@ fn action_needs_player_row(action: &ClientAction) -> bool {
         ClientAction::JoinMatch { .. }
             | ClientAction::LeaveMatch { .. }
             | ClientAction::SetName { .. }
+            | ClientAction::SetProfile { .. }
             | ClientAction::UseCopycat { .. }
             | ClientAction::ActionSlot { .. }
             | ClientAction::ChooseDefaultClass { .. }
@@ -825,6 +832,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 apply_select_class(world, tick, *id, request_id, class_id, revision, loadout);
             }
             ClientAction::GiveWeapon { request_id, weapon } => {
+                if !world.bootstrap_ref().allow_debug_actions {
+                    continue;
+                }
                 apply_give_weapon(world, tick, *id, request_id, weapon);
             }
             ClientAction::ChangeWeaponConfiguration {
@@ -832,6 +842,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 from,
                 to,
             } => {
+                if !world.bootstrap_ref().allow_debug_actions {
+                    continue;
+                }
                 apply_configuration_change(world, tick, *id, request_id, from, to);
             }
             ClientAction::ForceSpawn {
@@ -859,6 +872,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 {
                     crate::script_player::give_max_ammo(world, *id, weapon);
                 }
+            }
+            ClientAction::SetProfile { profile, .. } => {
+                crate::script::set_profile(world.ecs(), id.0, profile);
             }
             ClientAction::GiveKillstreak {
                 request_id: _,
@@ -912,6 +928,23 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 world.begin_script_movers_rotate_velocity_supplied(
                     speed,
                     crate::corpse::level_time_ms(tick),
+                );
+            }
+            ClientAction::ToggleGod { .. } => {
+                if !world.bootstrap_ref().allow_debug_actions
+                    || !world
+                        .client_meta(*id)
+                        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+                {
+                    continue;
+                }
+                let meta = world.client_meta_mut(*id);
+                meta.god_mode = !meta.god_mode;
+                diag::info!(
+                    Sim,
+                    "god: client={} {}",
+                    id.0,
+                    if meta.god_mode { "on" } else { "off" }
                 );
             }
             ClientAction::DebugDamage {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use asset_core::{AssetEdge, AssetEdgeCensus, AssetEdgeReason, MaterialSpace, ZoneOwner};
 use crate::asset_graph::AssetEdgeFromPtrs;
+use asset_core::{AssetEdge, AssetEdgeCensus, AssetEdgeReason, MaterialSpace, ZoneOwner};
 use fastfile_iw4::{Ptr, Result, TracerDefGeometry, ZoneStream};
 
 pub type TracerMaterial = AssetEdge<MaterialSpace>;

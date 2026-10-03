@@ -128,3 +128,24 @@ pub fn begin_dobj_pose_frame(
     dobj_poses.clear();
     posed_players.clear();
 }
+
+#[derive(Resource, Default)]
+pub struct ScriptModelDObjFrame {
+    models: HashMap<(sim::ScriptModelId, u16), std::sync::Arc<xmodel_runtime::DObj>>,
+}
+impl ScriptModelDObjFrame {
+    pub(crate) fn clear(&mut self) {
+        self.models.clear();
+    }
+    pub(crate) fn publish(
+        &mut self,
+        id: sim::ScriptModelId,
+        entity: u16,
+        dobj: std::sync::Arc<xmodel_runtime::DObj>,
+    ) {
+        self.models.insert((id, entity), dobj);
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (sim::ScriptModelId, u16)> + '_ {
+        self.models.keys().copied()
+    }
+}

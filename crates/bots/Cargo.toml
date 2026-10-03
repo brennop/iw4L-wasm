@@ -7,6 +7,7 @@ description = "Host-only bot controllers: sensor observations into UserCmd."
 
 [dependencies]
 web-time = { workspace = true }
+getrandom = "0.3"
 asset_transport.workspace = true
 assets.workspace = true
 diag.workspace = true

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-const IW4_ZONE_VERSION: u32 = 0x114;
+pub(crate) const IW4_ZONE_VERSION: u32 = 0x114;
 
 const T5_ZONE_VERSION: u32 = 0x1D9;
 
@@ -80,7 +80,7 @@ fn default_games_root() -> Result<PathBuf, String> {
     Err("IW4L_GAMES is not set — copy .env.example to .env and set the games root".to_owned())
 }
 
-pub(crate) fn search_roots(root: &Path) -> Vec<PathBuf> {
+pub fn search_roots(root: &Path) -> Vec<PathBuf> {
     #[cfg_attr(not(windows), allow(unused_mut))]
     let mut roots = vec![root.to_path_buf()];
     #[cfg(windows)]
@@ -686,9 +686,12 @@ fn map_pack_folder(zone_ff: &Path) -> String {
 }
 
 pub fn ensure_artifacts_dir() -> Result<PathBuf, String> {
-    let dir = Path::new("iw4l-artifacts");
-    artifactfs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    Ok(dir.to_path_buf())
+    let dir = std::env::var_os("IW4L_ARTIFACTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("iw4l-artifacts"));
+    artifactfs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
 /// T5 language archives carry a language prefix rather than `localized_`.

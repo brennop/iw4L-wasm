@@ -534,12 +534,19 @@ fn extract_iw5_dpvs(
                             ]);
                         }
                     }
+                    let axis_off = s.layout(sz::GFX_PORTAL_HULL_AXIS, 52);
+                    let mut hull_axis = [[0.0f32; 3]; 2];
+                    for (i, value) in hull_axis.as_flattened_mut().iter_mut().enumerate() {
+                        *value = s
+                            .f32_at(portal, axis_off + i * 4)
+                            .map_err(WorldMeshError::from)?;
+                    }
                     cell_portals.push(OwnedPortal {
                         plane,
                         neighbor,
                         vert_start,
                         vert_count: out.portal_verts.len() - vert_start,
-                        hull_axis: None,
+                        hull_axis: Some(hull_axis),
                     });
                 }
             }

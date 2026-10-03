@@ -66,6 +66,11 @@ pub struct MatchInstallAuthority<'w> {
     role: Res<'w, frame::RuntimeRole>,
     prediction: Option<Res<'w, net::ClientPredictionState>>,
     input_gate: Res<'w, AuthorityInputGate>,
+    cheats: Option<Res<'w, sim::HostCheats>>,
+    profile: Option<Res<'w, sim::LocalPlayerProfile>>,
+    previous: Option<Res<'w, AuthorityWorld>>,
+    account: Option<Res<'w, crate::LocalAccount>>,
+    local: Option<Res<'w, net::LocalPresentClient>>,
 }
 
 #[derive(SystemParam)]
@@ -107,7 +112,13 @@ pub fn apply_prepared_match(
         role,
         prediction,
         input_gate,
+        cheats,
+        profile,
+        previous,
+        account,
+        local,
     } = authority;
+    let allow_debug_actions = cheats.is_some_and(|cheats| cheats.0);
     let MatchInstallPresentation {
         mut probe,
         camera: sim_cam,
@@ -228,6 +239,7 @@ pub fn apply_prepared_match(
             script_level,
             script_entries,
             script_dvars,
+            account_defaults,
             script_sound_aliases,
             objective_weapons,
             kind,
@@ -290,6 +302,19 @@ pub fn apply_prepared_match(
         let mut content = sim::SimContentBuilder::default();
         content.set_script_sound_aliases(script_sound_aliases);
         let mut sim = sim::SimWorld::new();
+        if role.runs_authority()
+            && let Some(previous) = previous.as_ref()
+        {
+            sim.set_persistent_data(previous.0.persistent_data().for_new_match());
+        }
+        if *role == frame::RuntimeRole::Listen {
+            let profile = previous
+                .as_ref()
+                .map(|authority| authority.0.local_player_profile())
+                .or_else(|| profile.as_deref().copied())
+                .unwrap_or(sim::LocalPlayerProfile::default());
+            sim.set_local_player_profile(profile);
+        }
         content.set_weapon_def_scales(weapons.0.scales_table());
         let combat = combat_table::from_registry(&weapons.0, lochit_table);
         content.set_weapon_combat_table(combat.clone());
@@ -470,14 +495,31 @@ pub fn apply_prepared_match(
             &mut input_gate,
             host_classes.as_deref(),
             kind,
+            allow_debug_actions,
         )?;
         let script_facts = script_install_facts(&zone, gametype, &scripts, script_entries.len());
+        if *role == frame::RuntimeRole::Listen {
+            sim.register_local_presentation_dvars(local.as_ref().map(|local| local.0));
+        }
         sim.install_gsc_program(
             scripts,
             sim::script::NativeRegistry::default(),
             script_level,
         )
         .map_err(|e| script_refusal(&zone, gametype, "install", &e))?;
+        if *role == frame::RuntimeRole::Listen
+            && let (Some(account), Some(local)) = (account.as_ref(), local.as_ref())
+        {
+            account
+                .bind_or_initialize(
+                    sim.persistent_data_mut(),
+                    local.0,
+                    account_defaults.as_ref(),
+                )
+                .map_err(|error| {
+                    InstallRefusal::new(format!("local account binding: {error:?}"))
+                })?;
+        }
         for (name, value) in &script_dvars {
             sim.set_gsc_dvar(name, value);
         }
@@ -675,6 +717,7 @@ struct MatchInstallPlan {
     script_level: sim::script::LevelData,
     script_entries: Vec<String>,
     script_dvars: Vec<(String, String)>,
+    account_defaults: Option<sim::PlayerDataDefaults>,
     script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
     objective_weapons: Vec<(String, u32)>,
     kind: gamemode_iw4::GameModeKind,
@@ -942,6 +985,13 @@ fn preflight_match_install(
         fn read_bytes(&self, module: &str) -> Result<Vec<u8>, String> {
             self.0.read(module)
         }
+        fn origin(&self, module: &str) -> sim::script::SourceOrigin {
+            match self.0.origin(module) {
+                Some(assets::ScriptSourceOrigin::Packaged) => sim::script::SourceOrigin::Packaged,
+                Some(assets::ScriptSourceOrigin::BuiltIn) => sim::script::SourceOrigin::BuiltIn,
+                None => sim::script::SourceOrigin::External,
+            }
+        }
     }
     let sources = Sources(std::mem::take(&mut prepared.scripts));
     let gametype = kind
@@ -955,6 +1005,20 @@ fn preflight_match_install(
                 .is_ok()
         })
         .unwrap_or(kind.token());
+    let account_defaults =
+        sources
+            .0
+            .config("mp/stats_init.cfg")
+            .map(|config| sim::PlayerDataDefaults {
+                config: config.to_owned(),
+                class_names: std::array::from_fn(|index| {
+                    let key = format!("CLASS_SLOT{}", index + 1);
+                    strings
+                        .raw_text(&key)
+                        .filter(|bytes| bytes.first().is_some_and(|byte| *byte != 0))
+                        .map_or_else(|| key.into_bytes(), |bytes| bytes.to_vec())
+                }),
+            });
     let keys = match sources.0.config("radiant/keys.txt") {
         Some(text) => sim::script::parse_radiant_keys(text).unwrap_or_else(|error| {
             diag::warn!(Sim, "gsc: radiant/keys.txt: {error}");
@@ -969,6 +1033,8 @@ fn preflight_match_install(
         }
     };
     let script_level = sim::script::LevelData {
+        player_data_defaults: account_defaults.clone(),
+        schemas: sources.0.schemas().clone(),
         entities: sim::script::parse_entity_string(sources.0.entities().unwrap_or("")),
         keys,
         tables: sources
@@ -1077,6 +1143,7 @@ fn preflight_match_install(
         script_level,
         script_entries,
         script_dvars,
+        account_defaults,
         objective_weapons,
         kind,
         gametype,
@@ -1399,6 +1466,7 @@ fn install_clip_and_player(
     input_gate: &mut AuthorityInputGate,
     host_classes: Option<&HostClassLoadouts>,
     kind: gamemode_iw4::GameModeKind,
+    allow_debug_actions: bool,
 ) -> Result<(&'static str, Vec<Option<String>>), InstallRefusal> {
     let clip = clip.ok_or_else(|| InstallRefusal::new("Required collision geometry is missing"))?;
     let static_models = &clip.static_models;
@@ -1572,7 +1640,7 @@ fn install_clip_and_player(
             gamemode_iw4::GameModeKind::Demolition => gamemode_iw4::dd::TIME_LIMIT_MS,
             _ => sim::FFA.time_limit_ms,
         },
-        allow_debug_actions: true,
+        allow_debug_actions,
         intermission_view,
         airstrike_height,
         ..Default::default()

@@ -162,7 +162,7 @@ fn is_sound_source(path: &Path, game: ZoneGame) -> bool {
             "common_mp",
             "localized_common_mp",
         ],
-        ZoneGame::Iw5 => &["common_mp", "localized_common_mp"],
+        ZoneGame::Iw5 => &["code_post_gfx_mp", "common_mp", "localized_common_mp"],
         ZoneGame::T5 => &["code_post_gfx_mp", "common_mp", "localized_common_mp"],
     };
     names.iter().any(|name| stem.eq_ignore_ascii_case(name))
@@ -457,6 +457,22 @@ macro_rules! forward_t5_sound {
             {
                 let result =
                     fastfile_t5::AssetLinkSink::capture_snd_curves(capture, s, rows, count);
+                sound.guard(result);
+            }
+            Ok(())
+        }
+
+        fn capture_snd_groups(
+            &mut self,
+            s: &fastfile_t5::ZoneStream<'_>,
+            rows: fastfile_t5::Ptr,
+            count: usize,
+        ) -> fastfile_t5::Result<()> {
+            if let Some(sound) = self.sound.as_mut()
+                && let Some(capture) = sound.t5()
+            {
+                let result =
+                    fastfile_t5::AssetLinkSink::capture_snd_groups(capture, s, rows, count);
                 sound.guard(result);
             }
             Ok(())

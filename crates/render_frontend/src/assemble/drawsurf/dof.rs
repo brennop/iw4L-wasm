@@ -137,10 +137,11 @@ fn update_dof(
     mut scene: Local<DepthOfField>,
     clip: Res<crate::adapters::anim::dyn_ent::DynEntPhysClip>,
     world: Res<frame::WorldGeneration>,
-    subject: Res<frame::ViewSubject>,
+    view_settings: (Res<frame::ViewSubject>, Res<frame::GameSettings>),
     camera: Option<Res<render_anim::occupancy::view_kick::SessionViewKick>>,
     mut generation: Local<Option<u64>>,
 ) {
+    let (subject, settings) = view_settings;
     *frame = DofFrame::default();
     if *generation != world.0 {
         *generation = world.0;
@@ -202,6 +203,7 @@ fn update_dof(
         &presented,
         local.0,
         subject.in_killcam(),
+        settings.third_person,
     ) {
         if let Some(range) = weapons
             .as_ref()

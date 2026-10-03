@@ -22,6 +22,8 @@ pub struct LevelData {
     pub entities: Vec<Vec<(String, String)>>,
     pub tables: BTreeMap<String, StringTable>,
     pub keys: BTreeMap<String, KeyType>,
+    pub schemas: BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
+    pub player_data_defaults: Option<crate::PlayerDataDefaults>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +136,7 @@ pub(crate) struct EngineState {
     pub next_earthquake: u32,
     pub naked_vision: Option<crate::VisionChange>,
     pub thermal_vision: Option<crate::VisionChange>,
+    pub thermal_body_material: String,
     pub missile_vision: Option<crate::VisionChange>,
     pub night_vision: Option<crate::VisionChange>,
     pub pain_vision: Option<crate::VisionChange>,

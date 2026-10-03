@@ -1001,7 +1001,7 @@ impl ZoneLane for Iw4Lane {
                 inline.missing,
                 inline.unsupported
             ));
-            let tracer_inline = asset_material::material_images::plan_color_or_2d_for_keys(
+            let tracer_inline = asset_material::material_images::plan_images_for_keys(
                 &mut plan,
                 &mut material_population,
                 sink.tracers.material_keys(),
@@ -1009,9 +1009,9 @@ impl ZoneLane for Iw4Lane {
                 crate::session_load::load_pool(),
             );
             report.push(format!(
-                "common_mp tracer beam images: {tracer_inline} in-zone TS_COLOR_MAP/TS_2D decoded, rest claimed"
+                "common_mp tracer beam images: {tracer_inline} in-zone images decoded, rest claimed"
             ));
-            let fx_inline = asset_material::material_images::plan_color_or_2d_for_keys(
+            let fx_inline = asset_material::material_images::plan_images_for_keys(
                 &mut plan,
                 &mut material_population,
                 sink.fx.unique_material_keys(),
@@ -1019,7 +1019,7 @@ impl ZoneLane for Iw4Lane {
                 crate::session_load::load_pool(),
             );
             report.push(format!(
-                "common_mp fx elem 2d images: {fx_inline} in-zone TS_COLOR_MAP/TS_2D decoded, rest claimed"
+                "common_mp fx elem 2d images: {fx_inline} in-zone images decoded, rest claimed"
             ));
             // The planning phase is over and it succeeded: what is left of the
             // plan is decoded later, under its own stage. Dropping the handle
@@ -1259,7 +1259,7 @@ fn decode_map_material_images(
         namespace: asset_core::AssetNamespace::Iw4,
         name: name.clone(),
     }));
-    match asset_material::material_images::decode_color_or_2d_for_keys(
+    match asset_material::material_images::decode_images_for_keys(
         path,
         catalog,
         keys,
@@ -1267,7 +1267,7 @@ fn decode_map_material_images(
         crate::session_load::load_pool(),
     ) {
         Ok(n) => report.push(format!(
-            "fx elem 2d images: {n} TS_COLOR_MAP/TS_2D decoded (unique Bound names)"
+            "fx elem 2d images: {n} decoded (unique Bound names)"
         )),
         Err(error) => report.push(format!("fx elem 2d image gap: {error}")),
     }

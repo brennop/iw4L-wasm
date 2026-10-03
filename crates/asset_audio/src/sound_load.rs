@@ -205,6 +205,11 @@ fn sound_sources(games: &GamesRoot, map: &Path) -> (Vec<SoundSource>, Vec<SoundS
     let after_map = vec![
         donor(
             AssetNamespace::Iw5,
+            "code_post_gfx_mp",
+            fastfile_iw5::ZONE_VERSION_PC,
+        ),
+        donor(
+            AssetNamespace::Iw5,
             "common_mp",
             fastfile_iw5::ZONE_VERSION_PC,
         ),

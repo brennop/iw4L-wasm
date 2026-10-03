@@ -89,6 +89,7 @@ pub fn build_sky_model_draw_plan(
             packed_lighting: None,
             is_scope: false,
             scene_entnum: None,
+            body_client: None,
             caster_bound: None,
         });
     }

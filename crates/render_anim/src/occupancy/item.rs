@@ -553,6 +553,7 @@ fn append_item_draws(
                 packed_lighting: None,
                 is_scope: false,
                 scene_entnum: Some(row.entnum),
+                body_client: None,
                 caster_bound,
             });
         }

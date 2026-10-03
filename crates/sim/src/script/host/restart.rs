@@ -13,6 +13,8 @@ pub(crate) struct RestartPlan {
     pub tables: Arc<BTreeMap<String, StringTable>>,
     pub keys: Arc<BTreeMap<String, KeyType>>,
     pub entries: Vec<String>,
+    pub schemas: BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
+    pub player_data_defaults: Option<Arc<crate::PlayerDataDefaults>>,
 }
 
 impl std::fmt::Debug for RestartPlan {
@@ -115,6 +117,9 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         })
         .collect();
     let dvars = runtime.dvars.clone();
+    let local_presentation_dvars = runtime.local_presentation_dvars;
+    let local_presentation_client = runtime.local_presentation_client;
+    let pending_local_dvars = runtime.pending_local_dvars.clone();
     let weapon_bridge = runtime.weapon_bridge.clone();
     let personal_classes = runtime.personal_classes.clone();
     let next_presence = runtime.next_spawned_presence;
@@ -158,15 +163,21 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     }
 
     reset(world);
-    let plan = (*plan).clone();
-    let entries = plan.entries.clone();
+    {
+        let mut runtime = world.resource_mut::<Runtime>();
+        runtime.dvars = dvars;
+        runtime.local_presentation_dvars = local_presentation_dvars;
+        runtime.local_presentation_client = local_presentation_client;
+        runtime.pending_local_dvars = pending_local_dvars;
+    }
+    let mut plan = (*plan).clone();
+    let entries = std::mem::take(&mut plan.entries);
     if let Err(fault) = install_level(world, program, plan) {
         world.resource_mut::<Runtime>().fault = Some(fault);
         return;
     }
     let mut runtime = world.resource_mut::<Runtime>();
     runtime.last_tick = Some(tick);
-    runtime.dvars = dvars;
     runtime.weapon_bridge = weapon_bridge;
     runtime.personal_classes = personal_classes;
     runtime.next_spawned_presence = next_presence;

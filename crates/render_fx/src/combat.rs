@@ -221,6 +221,8 @@ pub fn play_pellet_segment(
             &t.0,
             tracer_edge,
             source_id,
+            correlation,
+            pellet,
             start,
             seg_end,
             own_shot,
@@ -248,9 +250,6 @@ pub fn play_pellet_segment(
         }
     }
     if normal == [0.0, 0.0, 0.0] {
-        cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);
-        combat.last_impact_miss_why = Some("zero_dir".into());
-        log_combat_fx_gaps(cursor, combat);
         sync_combat_dump(cursor, combat);
         return;
     }

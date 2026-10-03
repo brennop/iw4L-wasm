@@ -152,7 +152,13 @@ pub(crate) fn route(
                     state.folder = None;
                     state.page = 0;
                     state.hover = 0;
-                    menus.write(UiMenuRequest::Open("class_categories".into()));
+                    let folders = state.folders(&catalog);
+                    if folders.len() == 1 && folders[0].category.is_none() {
+                        state.folder = Some(folders[0]);
+                        menus.write(UiMenuRequest::Open("class_picker".into()));
+                    } else {
+                        menus.write(UiMenuRequest::Open("class_categories".into()));
+                    }
                 }
                 "ui_class_category" => {
                     state.folder = Some(
@@ -438,14 +444,18 @@ pub(crate) fn route(
         "ui_class_more_pages",
         if choices.len() > PAGE_SIZE { "1" } else { "0" },
     );
-    dvars.set(
-        "ui_class_nested",
-        if !state.attachments && state.row.is_some_and(ClassLoadoutCatalog::uses_categories) {
-            "1"
-        } else {
-            "0"
-        },
-    );
+    let picker_depth = if state.attachments
+        || state
+            .row
+            .is_none_or(|row| !ClassLoadoutCatalog::uses_categories(row))
+    {
+        1
+    } else if state.folder.is_some_and(|folder| folder.category.is_none()) {
+        2
+    } else {
+        3
+    };
+    dvars.set("ui_class_picker_depth", picker_depth.to_string());
     let mut caption = state.row.map_or_else(
         || localized(&loc, "MENU_CLASSES", "Classes"),
         |row| localized(&loc, row.loc_key(), row.label()),

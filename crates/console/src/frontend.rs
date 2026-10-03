@@ -61,6 +61,7 @@ pub(crate) fn register(registry: &mut ConsoleRegistry) {
         "ui_leave_lobby",
         "ui_start_match",
         "ui_lobby_privacy",
+        "ui_lobby_cheats",
         "ui_vote_skip",
         "ui_maps",
         "ui_map_pack",
@@ -107,6 +108,7 @@ pub(crate) fn route(
     localize: Option<Res<asset_game::LocalizeCatalog>>,
     catalog: Option<Res<asset_game::MenuCatalog>>,
     mut services: LobbyServices,
+    mut cheats: Option<ResMut<sim::HostCheats>>,
     mut state: Local<FrontendState>,
     mut echo: crate::feature_dispatch::ConsoleEcho,
 ) {
@@ -209,6 +211,13 @@ pub(crate) fn route(
                         })?;
                     }
                     state.public = !state.public;
+                }
+                "ui_lobby_cheats" => {
+                    if !party.in_lobby || !party.is_host {
+                        return Err("Only the host can change cheats".into());
+                    }
+                    let cheats = cheats.as_mut().ok_or("Cheats are unavailable")?;
+                    cheats.0 = !cheats.0;
                 }
                 "ui_start_match" => {
                     if !party.in_lobby || !party.is_host {
@@ -601,6 +610,14 @@ pub(crate) fn route(
             } else {
                 "PRIVATE LOBBY"
             }),
+    );
+    dvars.set(
+        "ui_lobby_cheats",
+        if cheats.as_ref().is_some_and(|cheats| cheats.0) {
+            "CHEATS: ON"
+        } else {
+            "CHEATS: OFF"
+        },
     );
     let selected_label = map_label(dvars.get("ui_mapname").unwrap_or_default());
     dvars.set("ui_map_label", selected_label);

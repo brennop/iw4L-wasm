@@ -21,7 +21,7 @@ use crate::anim::view_kick_state::{KickParams, ViewKickState, add_kick_to_viewan
 use crate::anim::view_sway::ViewSwayState;
 use crate::occupancy::remote_body::RemotePlayer;
 use crate::occupancy::third_person::{
-    death_watch_camera, presented_is_third_person, remote_missile_camera,
+    linked_weapon_camera, presented_is_third_person, remote_missile_camera, third_person_camera,
 };
 use render_scene::{FlyCamera, FpvLens, SimCamera, transform_from_iw_view};
 use render_scene::{WorldCameraPose, WorldScriptModelInstance};
@@ -114,7 +114,7 @@ pub struct SessionViewKick {
 
     pub seeded_this_frame: u32,
 
-    last_weapon_pos_frac: f32,
+    pub(super) last_weapon_pos_frac: f32,
 
     pub b_position_to_ads: bool,
 }
@@ -312,8 +312,14 @@ pub fn sync_camera_from_presented(
         kick.horiz_fov_deg = horiz;
         return;
     }
-    if presented_is_third_person(&presented, local.0, view.in_killcam()) {
-        let Some(pose) = death_watch_camera(&presented, local.0, death_cam_clip.0.as_deref())
+    if presented_is_third_person(
+        &presented,
+        local.0,
+        view.in_killcam(),
+        settings.third_person,
+    ) {
+        let Some(pose) = linked_weapon_camera(&presented, local.0)
+            .or_else(|| third_person_camera(&presented, local.0, death_cam_clip.0.as_deref()))
         else {
             return;
         };
@@ -323,7 +329,9 @@ pub fn sync_camera_from_presented(
             transform.translation = eye.translation;
             transform.rotation = eye.rotation;
         }
-        apply_fpv_lens_fov(
+        kick.refdef_vieworg = pose.origin;
+        kick.refdef_view_angles = pose.angles;
+        kick.horiz_fov_deg = apply_fpv_lens_fov(
             &mut lenses,
             settings.fov,
             ps.pm_type,
@@ -334,7 +342,8 @@ pub fn sync_camera_from_presented(
             weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
             false,
             actions.as_deref_mut(),
-        );
+        )
+        .unwrap_or(settings.fov);
         return;
     }
     let offset = presented.view_offset();

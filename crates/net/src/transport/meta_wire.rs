@@ -456,6 +456,10 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u32(request_id);
             out.put_f32(speed);
         }
+        ClientAction::ToggleGod { request_id } => {
+            out.put_u8(22);
+            out.put_u32(request_id);
+        }
         ClientAction::DebugDamage { request_id, amount } => {
             out.put_u8(10);
             out.put_u32(request_id);
@@ -495,6 +499,18 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u8(5);
             out.put_u32(request_id);
             out.put_u8(phase_tag(phase));
+        }
+        ClientAction::SetProfile {
+            request_id,
+            profile,
+        } => {
+            out.put_u8(21);
+            out.put_u32(request_id);
+            out.put_u32(profile.title);
+            out.put_u32(profile.emblem);
+            for row in profile.killstreaks {
+                out.put_u32(row);
+            }
         }
         ClientAction::SetName { request_id, name } => {
             out.put_u8(11);
@@ -601,6 +617,14 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
             input.get_bytes(&mut name)?;
             Ok(ClientAction::SetName { request_id, name })
         }
+        21 => Ok(ClientAction::SetProfile {
+            request_id: input.get_u32()?,
+            profile: sim::PlayerProfile {
+                title: input.get_u32()?,
+                emblem: input.get_u32()?,
+                killstreaks: [input.get_u32()?, input.get_u32()?, input.get_u32()?],
+            },
+        }),
         13 => Ok(ClientAction::UseCopycat {
             request_id: input.get_u32()?,
         }),
@@ -624,6 +648,9 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
                 response,
             })
         }
+        22 => Ok(ClientAction::ToggleGod {
+            request_id: input.get_u32()?,
+        }),
         20 => Ok(ClientAction::ResupplyAmmo {
             request_id: input.get_u32()?,
         }),
@@ -1261,6 +1288,16 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
             out.put_i32(remote.unlink_at_ms.unwrap_or(i32::MIN));
         }
     }
+    match meta.linked_weapon_view {
+        None => out.put_u8(0),
+        Some(view) => {
+            out.put_u8(1);
+            out.put_i32(view.entity_num);
+            for value in view.origin.into_iter().chain(view.angles) {
+                out.put_f32(value);
+            }
+        }
+    }
     match &meta.loadout {
         None => out.put_u8(0),
         Some(loadout) => {
@@ -1286,6 +1323,7 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
     out.put_u8(
         u8::from(meta.rechamber_pending) | (u8::from(meta.rechamber_pending_secondary) << 1),
     );
+    out.put_u8(u8::from(meta.god_mode));
     match meta.dead_since_tick {
         None => out.put_u8(0),
         Some(tick) => {
@@ -1462,6 +1500,15 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         }
         _ => return Err(WireError::Malformed("bad remote missile tag")),
     };
+    let linked_weapon_view = match input.get_u8()? {
+        0 => None,
+        1 => Some(sim::LinkedWeaponView {
+            entity_num: input.get_i32()?,
+            origin: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
+            angles: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
+        }),
+        _ => return Err(WireError::Malformed("bad linked weapon view tag")),
+    };
     let loadout = match input.get_u8()? {
         0 => None,
         1 => Some(decode_loadout(input)?),
@@ -1487,6 +1534,11 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     let rechamber_pending_hands = input.get_u8()?;
     let rechamber_pending = rechamber_pending_hands & 1 != 0;
     let rechamber_pending_secondary = rechamber_pending_hands & 2 != 0;
+    let god_mode = match input.get_u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(WireError::Malformed("bad god mode tag")),
+    };
     let dead_since_tick = match input.get_u8()? {
         0 => None,
         1 => Some(input.get_u32()?),
@@ -1614,6 +1666,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         acquire_started_at: input.get_i32()?,
     };
     Ok(ClientSnapshotMeta {
+        god_mode,
         controls,
         weapon_lock,
         killcam_hud,
@@ -1630,6 +1683,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         kill_streak,
         radar,
         remote_missile,
+        linked_weapon_view,
         ammo_by_weapon,
         taped_mag_spent,
         weapon_shot_count,
@@ -1687,10 +1741,12 @@ fn encode_shock(out: &mut WireWriter, shock: Option<&hud_iw4::ShockParams>) {
         out.put_u8(0);
         return;
     };
-    out.put_u8(2);
+    out.put_u8(3);
     out.put_i32(shock.screen_type);
     out.put_i32(shock.white_fade_ms);
     out.put_i32(shock.shot_fade_ms);
+    out.put_i32(shock.blur_blend_ms);
+    out.put_i32(shock.blur_fade_ms);
     out.put_u8(u8::from(shock.look.affect));
     out.put_i32(shock.look.fade_ms);
     out.put_f32(shock.look.mouse_sensitivity);
@@ -1719,13 +1775,15 @@ fn decode_shock(input: &mut WireReader<'_>) -> Result<Option<hud_iw4::ShockParam
     if tag == 0 {
         return Ok(None);
     }
-    if tag != 1 && tag != 2 {
+    if tag != 1 && tag != 2 && tag != 3 {
         return Err(WireError::Malformed("bad shellshock tag"));
     }
     let mut shock = hud_iw4::ShockParams {
         screen_type: input.get_i32()?,
         white_fade_ms: input.get_i32()?,
         shot_fade_ms: input.get_i32()?,
+        blur_blend_ms: if tag == 3 { input.get_i32()? } else { 0 },
+        blur_fade_ms: if tag == 3 { input.get_i32()? } else { 0 },
         look: hud_iw4::ShellshockLookParms {
             affect: input.get_u8()? != 0,
             fade_ms: input.get_i32()?,
@@ -1742,7 +1800,10 @@ fn decode_shock(input: &mut WireReader<'_>) -> Result<Option<hud_iw4::ShockParam
         },
         movement: input.get_u8()? != 0,
     };
-    if tag == 2 {
+    if shock.blur_blend_ms < 0 || shock.blur_fade_ms < 0 {
+        return Err(WireError::Malformed("negative shellshock blur time"));
+    }
+    if tag >= 2 {
         match input.get_u8()? {
             0 => {}
             1 => {
@@ -3136,6 +3197,15 @@ fn encode_objectives(out: &mut WireWriter, state: &sim::ObjectiveMatch) {
         out.put_i32(*index);
         put_text(out, name);
     }
+    put_text(out, &state.thermal_body_material);
+    debug_assert!(state.vehicle_targets.len() <= 8);
+    out.put_u8(state.vehicle_targets.len() as u8);
+    for target in &state.vehicle_targets {
+        out.put_u8(target.slot);
+        out.put_u16(target.entity);
+        out.put_u32(target.model.to_wire());
+        out.put_u32(target.owner.0);
+    }
 }
 
 fn decode_objectives(input: &mut WireReader<'_>) -> Result<sim::ObjectiveMatch, WireError> {
@@ -3251,6 +3321,28 @@ fn decode_objectives(input: &mut WireReader<'_>) -> Result<sim::ObjectiveMatch, 
             return Err(WireError::Malformed("invalid rumble alias"));
         }
         state.rumble_aliases.push((index, name));
+    }
+    state.thermal_body_material = get_text(input)?;
+    let count = input.get_u8()?;
+    if count > 8 {
+        return Err(WireError::Malformed("too many vehicle targets"));
+    }
+    for _ in 0..count {
+        let target = sim::VehicleHudTarget {
+            slot: input.get_u8()?,
+            entity: input.get_u16()?,
+            model: sim::ScriptModelId::from_wire(input.get_u32()?),
+            owner: sim::ClientId(input.get_u32()?),
+        };
+        if target.slot >= 8
+            || i32::from(target.entity) >= playerstate_iw4::ENTITYNUM_NONE
+            || state.vehicle_targets.iter().any(|old| {
+                old.slot == target.slot || old.entity == target.entity || old.model == target.model
+            })
+        {
+            return Err(WireError::Malformed("invalid vehicle target"));
+        }
+        state.vehicle_targets.push(target);
     }
     Ok(state)
 }

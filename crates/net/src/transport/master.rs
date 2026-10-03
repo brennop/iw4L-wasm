@@ -164,7 +164,18 @@ pub enum MasterLifecycleFact {
 struct MasterTarget {
     address: String,
     server_name: String,
-    ca_cert: Option<PathBuf>,
+    ca_pem: String,
+}
+
+fn master_target() -> Result<Option<MasterTarget>> {
+    if let Some(community) = updater::selected() {
+        return Ok(Some(MasterTarget {
+            address: community.master.address.clone(),
+            server_name: community.master.server_name.clone(),
+            ca_pem: community.updates.ca_pem.clone(),
+        }));
+    }
+    Ok(None)
 }
 
 #[derive(Clone, Debug)]
@@ -228,17 +239,11 @@ impl MasterLaunchIntent {
 
     #[cfg(online)]
     pub fn browser_from_env(have: ContentFlags) -> Result<Self> {
-        let Ok(address) = std::env::var("IW4L_MASTER_ADDR") else {
+        let Some(target) = master_target()? else {
             return Ok(Self::disabled());
         };
-        let server_name = std::env::var("IW4L_MASTER_SERVER_NAME")
-            .map_err(|_| "IW4L_MASTER_ADDR requires IW4L_MASTER_SERVER_NAME")?;
         Ok(Self(MasterLaunchMode::Browser(BrowserConfig {
-            target: MasterTarget {
-                address,
-                server_name,
-                ca_cert: std::env::var_os("IW4L_MASTER_CA_CERT").map(PathBuf::from),
-            },
+            target,
             have,
         })))
     }
@@ -249,15 +254,8 @@ impl MasterLaunchIntent {
         if let Some(intent) = web_config::join_from_query(map, have)? {
             return Ok(intent);
         }
-        let Ok(address) = std::env::var("IW4L_MASTER_ADDR") else {
-            return Ok(Self(MasterLaunchMode::Disabled));
-        };
-        let server_name = std::env::var("IW4L_MASTER_SERVER_NAME")
-            .map_err(|_| "IW4L_MASTER_ADDR requires IW4L_MASTER_SERVER_NAME")?;
-        let target = MasterTarget {
-            address,
-            server_name,
-            ca_cert: std::env::var_os("IW4L_MASTER_CA_CERT").map(PathBuf::from),
+        let Some(target) = master_target()? else {
+            return Ok(Self::disabled());
         };
         let host = std::env::var("IW4L_MASTER_HOST_NAME").ok();
         let join = std::env::var("IW4L_MASTER_JOIN").ok();
@@ -286,7 +284,7 @@ impl MasterLaunchIntent {
             (Some(_), Some(_)) => {
                 Err("set only one of IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into())
             }
-            _ => Err("IW4L_MASTER_ADDR requires IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into()),
+            _ => Err("community master requires IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into()),
         }
     }
 

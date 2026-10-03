@@ -396,6 +396,9 @@ impl Iw5SoundCapture {
             vol_max: s
                 .f32_at(row, s.layout(sz::SND_ALIAS_VOL_MAX_OFF, 56))
                 .unwrap_or(0.0),
+            vol_mod_index: s
+                .u32_at(row, s.layout(sz::SND_ALIAS_VOL_MOD_INDEX_OFF, 60))
+                .ok(),
             pitch_min: s
                 .f32_at(row, s.layout(sz::SND_ALIAS_PITCH_MIN_OFF, 64))
                 .unwrap_or(0.0),

@@ -97,6 +97,10 @@ pub struct WeaponBodyFacts {
 
     pub aim_down_sight: bool,
 
+    pub thermal_scope: bool,
+
+    pub silenced: bool,
+
     pub ads_zoom_fov: f32,
 
     pub ads_dof: Option<[f32; 2]>,
@@ -559,6 +563,7 @@ pub struct Iw5ScopeRow {
     pub view_models: [Option<String>; fastfile_iw5::size::ATTACH_MODEL_COUNT],
     pub world_models: [Option<String>; fastfile_iw5::size::ATTACH_MODEL_COUNT],
     pub reticle_models: [Option<String>; fastfile_iw5::size::ATTACH_RETICLE_COUNT],
+    pub overlay_reticle: i32,
     pub thermal: bool,
     pub width: f32,
     pub height: f32,
@@ -1212,6 +1217,7 @@ impl WeaponCatalog {
                 reticle_models: geometry
                     .reticle_model_names
                     .map(|ptr| ptr.and_then(|p| leftover_cstr_iw5(stream, p))),
+                overlay_reticle: geometry.overlay_reticle,
                 thermal: geometry.thermal,
                 width: geometry.overlay_width,
                 height: geometry.overlay_height,
@@ -1604,6 +1610,10 @@ impl WeaponCatalog {
                 ads_spread: geometry.ads_spread,
                 can_hold_breath: geometry.overlay_reticle != 0 && geometry.weap_class != 11,
                 aim_down_sight: geometry.aim_down_sight,
+                thermal_scope: geometry.thermal_scope,
+                silenced: geometry.weap_def.is_some_and(|body| {
+                    stream.u8_at(body, stream.layout(0x670, 2168)).unwrap_or(0) != 0
+                }),
                 ads_zoom_fov: geometry.ads_zoom_fov,
                 ads_dof: Some(geometry.ads_dof),
                 ads_zoom_in_frac: geometry.ads_zoom_in_frac,
@@ -1765,6 +1775,9 @@ impl WeaponCatalog {
             }
             if let Some(slot) = entry.overlay_material_slot {
                 if let Some((name, image)) = names_of(slot) {
+                    if ns == crate::AssetNamespace::T5 {
+                        entry.facts.thermal_scope = name.contains("_ir");
+                    }
                     entry.overlay_material = Some(name);
                     entry.overlay_image = image;
                 }
@@ -2178,8 +2191,12 @@ impl WeaponCatalog {
             gun_xmodel,
             hand_xmodel,
             world_model,
-            projectile_model: None,
-            rocket_model: None,
+            projectile_model: geometry
+                .projectile_model_name
+                .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
+            rocket_model: geometry
+                .rocket_model_name
+                .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
             knife_xmodel: geometry
                 .knife_xmodel_name
                 .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
@@ -2257,7 +2274,20 @@ impl WeaponCatalog {
                 .and_then(|ptr| stream.cstr(ptr).ok())
                 .filter(|name| !name.is_empty())
                 .map(str::to_owned),
-            reticle: leftover_t5_reticle(stream, geometry.weap_def),
+            reticle: {
+                let mut reticle = leftover_t5_reticle(stream, geometry.weap_def);
+                reticle.center_material = geometry
+                    .reticle_center_name
+                    .and_then(|p| stream.cstr(p).ok())
+                    .map(str::to_owned)
+                    .or(reticle.center_material);
+                reticle.side_material = geometry
+                    .reticle_side_name
+                    .and_then(|p| stream.cstr(p).ok())
+                    .map(str::to_owned)
+                    .or(reticle.side_material);
+                reticle
+            },
             hud_material_edges: WeaponHudMaterialEdges::default(),
             overlay_material: leftover_t5_overlay_name(stream, &geometry),
             overlay_image: None,
@@ -2838,12 +2868,24 @@ fn leftover_t5_overlay_pick(
 ) -> Option<(Option<String>, Option<Ptr>)> {
     let variant = geometry.variant?;
     use fastfile_t5::size as sz;
-    let hi = leftover_t5_material_name(stream, variant, sz::WEAPON_VARIANT_OVERLAY_SHADER_OFF);
-    let lo = leftover_t5_material_name(
-        stream,
-        variant,
-        sz::WEAPON_VARIANT_OVERLAY_SHADER_LOWRES_OFF,
-    );
+    let hi = geometry
+        .overlay_material_name
+        .and_then(|p| stream.cstr(p).ok())
+        .map(str::to_owned)
+        .or_else(|| {
+            leftover_t5_material_name(stream, variant, sz::WEAPON_VARIANT_OVERLAY_SHADER_OFF)
+        });
+    let lo = geometry
+        .overlay_material_lowres_name
+        .and_then(|p| stream.cstr(p).ok())
+        .map(str::to_owned)
+        .or_else(|| {
+            leftover_t5_material_name(
+                stream,
+                variant,
+                sz::WEAPON_VARIANT_OVERLAY_SHADER_LOWRES_OFF,
+            )
+        });
     let hi_slot =
         leftover_t5_asset_slot(stream, Some(variant), sz::WEAPON_VARIANT_OVERLAY_SHADER_OFF);
     let lo_slot = leftover_t5_asset_slot(
@@ -3050,7 +3092,13 @@ fn capture_t5_body_facts(
         facts.kill_icon_ratio = i32_at_t5(stream, body, sz::WEAPON_DEF_KILL_ICON_RATIO_OFF);
         facts.flip_kill_icon = u8_at_t5(stream, body, sz::WEAPON_DEF_FLIP_KILL_ICON_OFF) != 0;
     }
+    facts.thermal_scope =
+        leftover_t5_overlay_name(stream, geometry).is_some_and(|name| name.contains("_ir"));
     if let Some(variant) = geometry.variant {
+        facts.silenced = u8_at_t5(stream, variant, sz::WEAPON_VARIANT_SILENCED_OFF) != 0;
+        if u8_at_t5(stream, variant, sz::WEAPON_VARIANT_RAPID_FIRE_OFF) != 0 {
+            facts.fire_time_ms = (facts.fire_time_ms as f32 * 0.75) as i32;
+        }
         facts.reload_time_ms = i32_at_t5(stream, variant, sz::WEAPON_VARIANT_RELOAD_TIME_OFF);
         facts.reload_empty_time_ms =
             i32_at_t5(stream, variant, sz::WEAPON_VARIANT_RELOAD_EMPTY_TIME_OFF);
@@ -3100,11 +3148,15 @@ fn capture_t5_body_facts(
         i32_at_t5(stream, body, sz::WEAPON_DEF_PROJECTILE_ACTIVATE_DIST_OFF);
     facts.projectile_explosion_type =
         i32_at_t5(stream, body, sz::WEAPON_DEF_PROJ_EXPLOSION_TYPE_OFF);
+    facts.missile_guidance = i32_at_t5(stream, body, sz::WEAPON_DEF_MISSILE_GUIDANCE_OFF);
+    facts.ignition_delay_ms = i32_at_t5(stream, body, sz::WEAPON_DEF_IGNITION_DELAY_OFF);
     facts.proj_impact_explode = u8_at_t5(stream, body, sz::WEAPON_DEF_PROJ_IMPACT_EXPLODE_OFF) != 0;
     facts.offhand_class =
         leftover_t5_offhand_class(i32_at_t5(stream, body, sz::WEAPON_DEF_OFFHAND_CLASS_OFF));
     facts.hold_fire_time_ms = i32_at_t5(stream, body, sz::WEAPON_DEF_HOLD_FIRE_TIME_OFF);
     facts.fuse_time_ms = i32_at_t5(stream, body, sz::WEAPON_DEF_FUSE_TIME_OFF);
+    facts.require_lock_to_fire =
+        u8_at_t5(stream, body, sz::WEAPON_DEF_REQUIRE_LOCK_TO_FIRE_OFF) != 0;
     facts.stickiness = i32_at_t5(stream, body, sz::WEAPON_DEF_STICKINESS_OFF);
     facts.stick_to_players = matches!(facts.stickiness, 1 | 5);
     facts.has_detonator = u8_at_t5(stream, body, sz::WEAPON_DEF_HAS_DETONATOR_OFF) != 0;
@@ -3344,6 +3396,7 @@ fn capture_iw5_body_facts(
         return facts;
     };
     facts.kill_icon_ratio = i32_at_iw5(stream, body, sz::WEAPON_DEF_KILL_ICON_RATIO_OFF, 1588);
+    facts.silenced = u8_at_iw5(stream, body, sz::WEAPON_DEF_SILENCED_OFF, 2459) != 0;
     facts.flip_kill_icon = u8_at_iw5(stream, body, sz::WEAPON_DEF_FLIP_KILL_ICON_OFF, 2455) != 0;
     facts.ads_aim_pitch = f32_at_iw5(stream, body, 1400, 1816);
     facts.ads_crosshair_in_frac = f32_at_iw5(stream, body, 1404, 1820);
@@ -3684,12 +3737,21 @@ fn leftover_iw5_overlay_name(
     stream: &fastfile_iw5::ZoneStream<'_>,
     geometry: &fastfile_iw5::WeaponGeometry,
 ) -> Option<String> {
-    if let Some(name) = leftover_iw5_material_name(
-        stream,
-        geometry.weap_def,
-        fastfile_iw5::size::WEAPON_DEF_OVERLAY_SHADER_OFF,
-        1352,
-    ) {
+    if let Some(name) = geometry
+        .overlay_material_names
+        .iter()
+        .flatten()
+        .filter_map(|&p| leftover_cstr_iw5(stream, p))
+        .find(|name| overlay_name_is_hud_iris(name))
+        .or_else(|| {
+            leftover_iw5_material_name(
+                stream,
+                geometry.weap_def,
+                fastfile_iw5::size::WEAPON_DEF_OVERLAY_SHADER_OFF,
+                1352,
+            )
+        })
+    {
         if overlay_name_is_hud_iris(&name) {
             return Some(name);
         }
@@ -5338,6 +5400,12 @@ impl WeaponBuild {
 
     pub fn resolve_hud_material_edges(&mut self, materials: &crate::MaterialDefinitions) {
         for row in &mut self.registry.rows {
+            if row.namespace == crate::AssetNamespace::T5 {
+                row.facts.thermal_scope = row
+                    .overlay_material
+                    .as_deref()
+                    .is_some_and(|name| name.contains("_ir"));
+            }
             if row.overlay_image.is_none()
                 && let Some(name) = row.overlay_material.as_deref()
                 && let Some(index) = materials.material_index_by_ns(row.namespace, name)
@@ -5574,8 +5642,19 @@ impl WeaponBuild {
                 .map(|entry| entry.skel.name.as_str());
             row.fpv_hands = std::array::from_fn(|side| {
                 let kit = bodies.kits().kit(side == 1);
-                let choice =
+                let mut choice =
                     asset_model::FpvHands::resolve(fpv, map_ns, kit, hand_name, row.namespace);
+                if row.secondary_gun_xmodel.is_some()
+                    && fpv.get_hands(&choice).is_some_and(|entry| {
+                        !entry
+                            .skel
+                            .bone_names
+                            .iter()
+                            .any(|bone| bone == "tag_weapon1")
+                    })
+                {
+                    choice = asset_model::FpvHands::game_default(row.namespace);
+                }
                 let (ns, name) = choice.key()?;
                 let index = fpv.index_by_name(ns, name)?;
                 let skel = &fpv.get_at(index)?.skel;
@@ -6469,6 +6548,7 @@ impl WeaponRegistry {
             row.overlay_material = None;
             row.overlay_image = None;
             row.overlay_material_from_slot = false;
+            row.facts.thermal_scope = false;
             row.facts.overlay_reticle = 0;
             row.facts.overlay_interface = 0;
             row.facts.ads_overlay_width = 0.0;
@@ -6483,6 +6563,8 @@ impl WeaponRegistry {
                 row.overlay_material = Some(overlay.to_owned());
                 row.overlay_image = None;
                 row.overlay_material_from_slot = true;
+                row.facts.overlay_reticle = scope.overlay_reticle;
+                row.facts.thermal_scope = scope.thermal;
                 row.facts.ads_overlay_width = scope.width;
                 row.facts.ads_overlay_height = scope.height;
             }
@@ -7655,6 +7737,7 @@ fn apply_iw5_parameter_blocks(facts: &mut WeaponBodyFacts, assets: &[&Iw5ScopeRo
     }
     if let Some(add_ons) = iw5_first_block(assets, |a| a.add_ons) {
         facts.motion_tracker = add_ons.motion_tracker;
+        facts.silenced = add_ons.silenced;
     }
     if let Some(general) = iw5_first_block(assets, |a| a.general) {
         facts.bolt_action = general.bolt_action;

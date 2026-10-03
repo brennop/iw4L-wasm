@@ -2,16 +2,14 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use web_time::{SystemTime, UNIX_EPOCH};
 
-use bevy::prelude::*;
-use frame::{LaunchIdentity, RuntimeRole};
-use net::{
-    AuthorityClock, AuthorityInputGate, AuthorityWorld, PresentedSnapshot,
-};
-use render_frontend::prepare::scene::camera::SimCamera;
 use ::replay::{
     CLIP_DEMO_FILE, CLIP_DUMP_FILE, CLIP_MANIFEST_FILE, CLIP_MS, ClipRing, MatchRecordIdentity,
     Recording, ReplaySession,
 };
+use bevy::prelude::*;
+use frame::{LaunchIdentity, RuntimeRole};
+use net::{AuthorityClock, AuthorityInputGate, AuthorityWorld, PresentedSnapshot};
+use render_frontend::prepare::scene::camera::SimCamera;
 
 use crate::{ConsoleCommand, ConsoleDispatch, ConsoleLine, ConsoleSettings, ConsoleState};
 
@@ -258,7 +256,6 @@ pub(crate) fn route_replay_commands(
     }
 }
 
-
 fn parse_clip_args(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         Ok(())
@@ -356,4 +353,3 @@ fn save_clip_package(
     }
     result
 }
-

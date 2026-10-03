@@ -27,6 +27,7 @@ pub mod sun_shadow;
 mod sun_shadow_clip;
 mod t5_fog;
 pub mod tess;
+mod thermal_body;
 mod wgsl_disk_cache;
 
 pub use command_context::*;

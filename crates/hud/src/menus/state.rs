@@ -11,6 +11,7 @@ pub(crate) struct ItemState {
 #[derive(Clone, Debug)]
 pub(crate) struct OpenMenu {
     pub(crate) name: String,
+    pub(crate) captures_input: bool,
     pub(crate) focus: Option<usize>,
     pub(crate) hover: Option<usize>,
     pub(crate) items: Vec<ItemState>,
@@ -43,7 +44,11 @@ pub struct ScriptMenus {
 
 impl ScriptMenus {
     pub fn captures_input(&self) -> bool {
-        !self.stack.is_empty()
+        self.input_menu().is_some()
+    }
+
+    pub(crate) fn input_menu(&self) -> Option<&OpenMenu> {
+        self.stack.iter().rev().find(|menu| menu.captures_input)
     }
 
     pub fn open_names(&self) -> Vec<String> {
@@ -51,7 +56,7 @@ impl ScriptMenus {
     }
 
     pub fn focused_item(&self) -> Option<(&str, usize)> {
-        let menu = self.stack.last()?;
+        let menu = self.input_menu()?;
         Some((&menu.name, menu.focus?))
     }
 

@@ -54,6 +54,16 @@ impl DrawBlendComponent {
     }
 
     fn to_wgpu(self) -> BlendComponent {
+        if matches!(
+            self.operation,
+            DrawBlendOperation::Min | DrawBlendOperation::Max
+        ) {
+            return BlendComponent {
+                src_factor: WgpuBlendFactor::One,
+                dst_factor: WgpuBlendFactor::One,
+                operation: self.operation.to_wgpu().unwrap(),
+            };
+        }
         BlendComponent {
             src_factor: d3d_blend_to_wgpu(self.src)
                 .expect("unsupported D3D9 source blend factor reached the GPU adapter"),

@@ -250,15 +250,9 @@ pub fn prepare_model_materials(
             let Some(entry) = projectiles.0.get_at(index) else {
                 continue;
             };
-            let key =
-                projectiles
-                    .0
-                    .key_at(index)
-                    .cloned()
-                    .unwrap_or(asset_model::ProjectileMeshKey::new(
-                        entry.namespace,
-                        &entry.skel.name,
-                    ));
+            let key = projectiles.0.key_at(index).cloned().unwrap_or(
+                asset_model::ProjectileMeshKey::new(entry.namespace, &entry.skel.name),
+            );
             for surface in 0..entry.material_edges.len() {
                 let Some(authored) = entry.material_index(surface) else {
                     continue;

@@ -427,6 +427,8 @@ pub struct JoinLinkWatch {
 }
 
 pub fn receive_ticks(
+    mut account: Option<ResMut<crate::LocalAccount>>,
+    receipt: Option<Res<crate::AccountSaveReceipt>>,
     mut link: Option<ResMut<crate::transport::udp_session::UdpClientLink>>,
     loopback: Option<ResMut<ListenLoopback>>,
     mut received: ResMut<ReceivedTicks>,
@@ -451,6 +453,17 @@ pub fn receive_ticks(
                     diag::warn!(Net, "udp recv: {e}");
                 }
             }
+        }
+        if let Err(error) = link.poll_accounts(
+            reliable
+                .bridge
+                .as_ref()
+                .map(|bridge| bridge.state().identity()),
+            account.as_deref_mut(),
+            prediction.0.world().persistent_data().schemas(),
+            receipt.as_deref(),
+        ) {
+            reliable.fail(&error);
         }
         for payload in link.take_controls() {
             reliable.apply(link.assigned_client.unwrap_or(local.0), &payload);

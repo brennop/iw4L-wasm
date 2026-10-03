@@ -1131,6 +1131,8 @@ pub struct WeaponGeometry {
 
     pub aim_down_sight: bool,
 
+    pub thermal_scope: bool,
+
     pub no_ads_when_mag_empty: bool,
 
     pub inherits_perks: bool,
@@ -1422,6 +1424,7 @@ pub struct ZoneStream<'a> {
     technique_graph: TechniqueGraphGeometry,
     technique_graph_seen: bool,
     latest_shader: Option<ShaderGeometry>,
+    structured_data_def_set: Option<Ptr>,
     latest_vertex_decl: Option<VertexDeclGeometry>,
     latest_sound_name: Option<Ptr>,
     image_serial: u64,
@@ -1525,6 +1528,7 @@ impl<'a> ZoneStream<'a> {
             technique_graph: TechniqueGraphGeometry::default(),
             technique_graph_seen: false,
             latest_shader: None,
+            structured_data_def_set: None,
             latest_vertex_decl: None,
             latest_sound_name: None,
             image_serial: 0,
@@ -2186,6 +2190,14 @@ impl<'a> ZoneStream<'a> {
 
     pub fn latest_technique_graph(&self) -> Option<&TechniqueGraphGeometry> {
         self.technique_graph_seen.then_some(&self.technique_graph)
+    }
+
+    pub(crate) fn record_structured_data_def_set(&mut self, header: Ptr) {
+        self.structured_data_def_set = Some(header);
+    }
+
+    pub fn structured_data_def_set(&self) -> Option<Ptr> {
+        self.structured_data_def_set
     }
 
     pub(crate) fn record_shader(&mut self, shader: ShaderGeometry) {
