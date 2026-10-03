@@ -32,6 +32,7 @@ const REPO_TOOLS: &[&str] = &[
     "web-pack [--root GAMES_ROOT] [--cache-record FILE] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
     "duo",
+    "dedicated [--hosts N] [--name NAME] [--map MAP] [--bind IP] [--pack PATH] [--certs DIR] [--run-dir DIR] [--public-url URL] [--no-build] (--help)",
 ];
 
 /// Everything that leaves this machine. These read `.env` for the host, the
@@ -113,6 +114,7 @@ fn main() -> ExitCode {
 fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
     let root = repo_root();
     match cmd {
+        "dedicated" => Some(Env::load(&root).and_then(|env| xtask::dedicated::run(&root, &env, rest))),
         "duo" => Some(xtask::duo::run(&root)),
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),

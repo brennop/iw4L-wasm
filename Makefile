@@ -12,7 +12,7 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
 .PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
 .PHONY: build-windows setup-windows release publish provision
-.PHONY: mr publish-check approved duo web web-serve
+.PHONY: mr publish-check approved duo web web-serve dedicated
 .PHONY: $(ARGS)
 
 $(ARGS):
@@ -318,6 +318,13 @@ web-serve:
 	@echo "http://127.0.0.1:$(WEB_PORT)/"
 	@cd $(ROOT)/dist/web && python3 $(ROOT)/scripts/web_serve.py $(WEB_PORT)
 
+# The master (serving the page, the pack and ws on :4436) plus dedicated hosts,
+# on the LAN. Options go in DEDICATED_ARGS, e.g.
+#   make dedicated DEDICATED_ARGS="--hosts 2 --bind 127.0.0.1"
+# `cargo xtask dedicated --help` lists them.
+dedicated:
+	@$(XTASK) dedicated $(DEDICATED_ARGS)
+
 # Workspace Rust footprint: per-crate files / lines / bytes, group totals,
 # and the heaviest source files. Counts only crates/ + xtask.
 loc:
@@ -386,6 +393,7 @@ help:
 	@echo "make web          browser build into dist/web/ (wasm-bindgen matched to Cargo.lock,"
 	@echo "                  wasm-opt when on PATH); PROFILE=play unless set; prints sizes"
 	@echo "make web-serve    serve dist/web on http://127.0.0.1:8080/ (WEB_PORT=)"
+	@echo "make dedicated    master + dedicated hosts on the LAN (DEDICATED_ARGS='--hosts 2 ...')"
 	@echo "make loc          Rust LOC / file counts / sizes per crate"
 	@echo "make clean        wipe target/debug (keep play + release); no rebuild"
 	@echo "IW4L_GAMES=$(IW4L_GAMES)"
