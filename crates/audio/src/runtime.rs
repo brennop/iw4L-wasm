@@ -400,82 +400,9 @@ impl Drop for AudioRuntime {
     }
 }
 
-/// Everything the control owner keeps between passes: the audio-control thread
-/// natively, the browser frame (web_output.rs) on wasm32.
-pub(crate) struct ControlState {
-    pub(crate) shared: Arc<RenderShared>,
-    cue_rx: Receiver<CueRequest>,
-    sources: Arc<SourceInbox>,
-    listener: Arc<ListenerState>,
-    event_context: Arc<crate::event::EventContextState>,
-    next_id: Arc<AtomicU64>,
-    rejections: Arc<[AtomicU64; 6]>,
-    cue_budget: crate::pending::PendingBudget,
-    resolver: CueResolver,
-    events: crate::event::EventJournal,
-    pending_cues: VecDeque<CueWork>,
-    device_was_active: bool,
-    null_anchor: Instant,
-    null_frame: u64,
-    instances: Vec<LogicalInstance>,
-    next_voice: u64,
-    desired: SourceScene,
-    present_sources: HashSet<(SourceKey, u64)>,
-    source_cues: HashMap<(SourceKey, u64), Arc<crate::cue::CueState>>,
-    silence: [[f32; 2]; QUANTUM],
-}
-
-impl ControlState {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        shared: Arc<RenderShared>,
-        cue_rx: Receiver<CueRequest>,
-        sources: Arc<SourceInbox>,
-        listener: Arc<ListenerState>,
-        event_context: Arc<crate::event::EventContextState>,
-        next_id: Arc<AtomicU64>,
-        rejections: Arc<[AtomicU64; 6]>,
-        cue_budget: crate::pending::PendingBudget,
-    ) -> Self {
-        Self {
-            shared,
-            cue_rx,
-            sources,
-            listener,
-            event_context,
-            next_id,
-            rejections,
-            cue_budget,
-            resolver: CueResolver::new(),
-            events: crate::event::EventJournal::new(),
-            pending_cues: VecDeque::with_capacity(LOGICAL_INSTANCES),
-            device_was_active: false,
-            null_anchor: Instant::now(),
-            null_frame: 0,
-            instances: Vec::with_capacity(LOGICAL_INSTANCES),
-            next_voice: 1,
-            desired: SourceScene {
-                revision: 0,
-                sources: Vec::new(),
-                asserted: Vec::new(),
-            },
-            present_sources: HashSet::with_capacity(LOGICAL_INSTANCES),
-            source_cues: HashMap::with_capacity(crate::sources::SOURCE_HISTORY),
-            silence: [[0.0; 2]; QUANTUM],
-        }
-    }
-
-    /// Logical instances and how many of them render now (browser stats).
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    pub(crate) fn voices(&self) -> (usize, usize) {
-        let started = self
-            .instances
-            .iter()
-            .filter(|logical| logical.request.instance.status() == InstanceStatus::Started)
-            .count();
-        (self.instances.len(), started)
-    }
-}
+#[path = "control_state.rs"]
+mod control_state;
+pub(crate) use control_state::ControlState;
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn control(mut state: ControlState, shutdown: Arc<AtomicBool>, device_enabled: bool) {
