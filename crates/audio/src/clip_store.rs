@@ -12,6 +12,10 @@ use bevy::prelude::*;
 use crate::media::PcmBuffer;
 use crate::pcm::decode_audio_bytes;
 
+#[cfg(target_arch = "wasm32")]
+#[path = "inline_decode.rs"]
+pub(crate) mod inline_decode;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ClipKey {
     Loaded(usize),
@@ -479,6 +483,10 @@ impl MediaService {
             }
         }
         WORKERS.fetch_add(handles.len() as u64, Ordering::Relaxed);
+        #[cfg(target_arch = "wasm32")]
+        if handles.is_empty() {
+            inline_decode::adopt(&rx, &bank, iwd.as_ref(), &outcomes, &requests, clip_cache.as_ref(), common_profile_id);
+        }
         Self(Arc::new(MediaServiceInner {
             bank,
             tx,

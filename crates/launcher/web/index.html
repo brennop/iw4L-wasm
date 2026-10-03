@@ -59,14 +59,14 @@ if (window.AudioContext) {
 }
 armAudio();
 
-// The worklet mixer module (audio crate, worklet.rs); the build adds a version tag to the URL.
+// The worklet ring-buffer player (audio crate, web_output.rs); the build adds a version tag to the URL.
 window.iw4lMixerUrl = './iw4l-mixer.js';
 window.iw4l = {
   audio() {
     return audioContexts.map((ctx) => ({ state: ctx.state, sampleRate: ctx.sampleRate }));
   },
-  // Worklet mixer counters: { clips, voices, workletVoices, messages, messagesPerSec, pending,
-  // ready, failed, state, baseLatency, outputLatency }, refreshed about once a second.
+  // Browser output counters (web_output.rs publish_stats): consumed frames, bufferedMs,
+  // underruns, peak/rms, blocks rendered per frame, control/render/decode ms, refreshed every 30 frames.
   mixer() {
     return window.iw4lMixerStats;
   },

@@ -14,5 +14,7 @@ impl Plugin for AudioPlugin {
         crate::rumble::register(app);
         crate::script_music::register(app);
         crate::script_mix::register(app);
+        #[cfg(target_arch = "wasm32")]
+        crate::web_output::register(app);
     }
 }

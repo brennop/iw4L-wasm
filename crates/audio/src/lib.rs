@@ -76,4 +76,6 @@ mod spatial;
 
 mod cue_execution;
 mod event;
+#[cfg(target_arch = "wasm32")]
+mod web_output;
 pub use event::{AnimationMarkerId, AudioEvent, AudioEventId, AudioOccurrence};
