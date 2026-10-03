@@ -236,6 +236,12 @@ lto = "fat"
 codegen-units = 1
 incremental = false
 
+# Iterating on the browser build (`xtask web --fast`, `xtask dedicated --fast`):
+# play's settings again, so an edit relinks in seconds-to-minutes, not the fat-LTO
+# link. The wasm is bigger and slower than `web`'s; never ship it.
+[profile.web-dev]
+inherits = "play"
+
 # The binary a sampler can read (`make bench-perf`). Same code as
 # [profile.play] — opt-level and codegen-units unchanged, so the frame times it
 # samples are the frame times `make bench-live` reports — plus the two things

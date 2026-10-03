@@ -46,6 +46,8 @@ options:
                      E:\\iw4l\\dedicated\\<timestamp> on Windows, else target/dedicated/<timestamp>)
   --public-url URL   https origin of a tunnel in front of the ws port (or $IW4L_PUBLIC_URL)
   --no-build         skip the cargo builds; use what is already built
+  --fast             build the wasm with the quick web-dev profile (bigger, not for release)
+  --no-web           skip only the wasm build; reuse dist/web as it is
   --exit-after SECS  test hook: shut down after SECS seconds, as if by Ctrl-C
   -h, --help         this text
 ";
@@ -61,6 +63,8 @@ struct Args {
     run_dir: Option<PathBuf>,
     public_url: Option<String>,
     build: bool,
+    web: bool,
+    fast_web: bool,
     exit_after: Option<Duration>,
 }
 
@@ -76,6 +80,8 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
         run_dir: None,
         public_url: env.get("IW4L_PUBLIC_URL"),
         build: true,
+        web: true,
+        fast_web: false,
         exit_after: None,
     };
     let mut iter = args.iter();
@@ -109,6 +115,8 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
             "--run-dir" => out.run_dir = Some(PathBuf::from(value("a directory")?)),
             "--public-url" => out.public_url = Some(value("an https URL")?),
             "--no-build" => out.build = false,
+            "--no-web" => out.web = false,
+            "--fast" => out.fast_web = true,
             "--exit-after" => {
                 let secs: u64 = value("seconds")?
                     .parse()
@@ -380,7 +388,7 @@ fn lan_addresses() -> Vec<Ipv4Addr> {
     found
 }
 
-fn build(root: &Path) -> Res<()> {
+fn build(root: &Path, args: &Args) -> Res<()> {
     shell::require_tools(&["cargo"])?;
     let step = Step::start("dedicated.build", "iw4l-master (debug)");
     shell::run(
@@ -398,7 +406,15 @@ fn build(root: &Path) -> Res<()> {
         "launcher",
     ]))?;
     step.done("");
-    crate::web::run(root, &["--no-opt".to_string()])
+    if !args.web {
+        println!("web build: skipped (--no-web), reusing dist/web");
+        return Ok(());
+    }
+    let mut web_args = vec!["--no-opt".to_string()];
+    if args.fast_web {
+        web_args.push("--fast".to_string());
+    }
+    crate::web::run(root, &web_args)
 }
 
 fn exe(dir: &Path, name: &str) -> PathBuf {
@@ -415,7 +431,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         .get("IW4L_MASTER_SERVER_NAME")
         .unwrap_or_else(|| Channel::Prod.server_name().to_string());
     if args.build {
-        build(root)?;
+        build(root, &args)?;
     }
     let master_src = exe(&root.join("target/debug"), "iw4l-master");
     let host_dir = root.join("target/play");

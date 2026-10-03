@@ -1,4 +1,5 @@
-//! `web [--profile NAME] [--features LIST] [--no-opt]`: build the browser entry into `dist/web/`.
+//! `web [--profile NAME | --fast] [--features LIST] [--no-opt]`: build the browser entry into `dist/web/`.
+//! `--fast` is `--profile web-dev`: a quick, larger wasm for iterating.
 //! `--features` goes to the launcher build (e.g. `bevy-debug` for system names in panics).
 //!
 //! cargo build (wasm32, `launcher`'s `iw4l` bin, `[profile.web]` by default) ->
@@ -42,9 +43,10 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
                 features = Some(iter.next().ok_or("--features needs a value")?.clone());
             }
             "--no-opt" => optimise = false,
+            "--fast" => profile = "web-dev".to_owned(),
             other => {
                 return Err(format!(
-                    "usage: web [--profile NAME] [--features LIST] [--no-opt] (got {other})"
+                    "usage: web [--profile NAME | --fast] [--features LIST] [--no-opt] (got {other})"
                 ));
             }
         }
