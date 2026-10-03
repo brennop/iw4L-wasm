@@ -46,6 +46,11 @@ pub(crate) fn apply_window_settings(
     let Ok(mut window) = windows.single_mut() else {
         return;
     };
+    // Web: the canvas size is driven by its parent element (Window::
+    // fit_canvas_to_parent, see bootstrap launch + web/index.html). Forcing a
+    // physical resolution here would fight that and desync pointer
+    // coordinates, so only mode/present-mode apply on wasm32.
+    #[cfg(not(target_arch = "wasm32"))]
     window
         .resolution
         .set_physical_resolution(settings.resolution.width, settings.resolution.height);

@@ -263,6 +263,11 @@ fn run_menu(games: asset_transport::GamesRoot, artifacts: PathBuf) {
             primary_window: Some(Window {
                 title: "iw4l".into(),
                 resolution: (1280, 720).into(),
+                // Web: size the canvas from its parent (see web/index.html) so the
+                // render surface and pointer coordinates follow the browser
+                // window. CSS-only stretching leaves Bevy at 1280x720, which is
+                // the stale-coordinates bug. No-op on native (per Bevy docs).
+                fit_canvas_to_parent: true,
                 ..default()
             }),
             ..default()
@@ -471,6 +476,9 @@ fn run_map(
                 },
                 resolution: (ACCEPTANCE_WIDTH, ACCEPTANCE_HEIGHT).into(),
                 present_mode,
+                // Web: see run_menu — parent-driven canvas sizing keeps input
+                // coordinates in sync when filling the browser window.
+                fit_canvas_to_parent: true,
                 ..default()
             }),
             ..default()

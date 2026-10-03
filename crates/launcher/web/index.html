@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>iw4l</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ddd; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; color: #ddd; }
+  /* The canvas size is owned by Bevy/winit (Window::fit_canvas_to_parent:
+     canvas fills its parent and resize events drive the render surface and
+     input coordinates). Do not size the canvas here: CSS-only stretching
+     leaves Bevy at its startup resolution, so clicks map to the old small
+     canvas. Sizing only the parent avoids that and the feedback loop warned
+     about in the Bevy docs. */
   canvas { display: block; outline: none; }
   #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
     justify-content: center; gap: 12px; font: 14px system-ui, sans-serif; z-index: 10; background: #000; }
