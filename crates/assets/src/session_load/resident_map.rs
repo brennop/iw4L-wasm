@@ -36,6 +36,15 @@ fn resident_copy(zone: &ZoneStamp, key: &CommonKey) -> Option<PreparedMatch> {
         .then(|| resident.prepared.clone())
 }
 
+/// Takes the kept copy of the last map (memory census).
+pub(super) fn take_resident() -> Option<PreparedMatch> {
+    RESIDENT_MAP
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .take()
+        .map(|kept| kept.prepared)
+}
+
 /// The kept copy doubles the map's memory. The browser loads once and has no
 /// room for it; `IW4L_NO_RESIDENT_MAP=1` turns it off natively for measuring.
 pub(super) fn keeps_resident_map() -> bool {

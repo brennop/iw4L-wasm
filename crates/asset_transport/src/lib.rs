@@ -30,6 +30,7 @@ pub use progress::{
 };
 pub use steam::{MW2_SHORTCUT, SteamCandidate, SteamProbe, link_steam_games};
 pub use zone::{
-    Iw4WireFormat, Iw5ZoneMemory, T5ZoneMemory, ZoneImage, ZoneMemory, ZoneOpenError, open_zone,
-    open_zone_shared, parse_zone_image, xfile_arena_row, zone_share_counts,
+    Iw4WireFormat, Iw5ZoneMemory, T5ZoneMemory, ZoneImage, ZoneMemory, ZoneOpenError,
+    live_zone_images, open_zone, open_zone_shared, parse_zone_image, xfile_arena_row,
+    zone_share_counts,
 };

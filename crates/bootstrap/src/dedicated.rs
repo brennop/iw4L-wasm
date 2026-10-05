@@ -50,6 +50,7 @@ impl Plugin for DedicatedPlugin {
                 unfocused_mode: mode,
             });
         }
+        app.add_plugins(crate::mem_census::MemCensusPlugin);
         app.add_systems(Update, exit_on_master_loss);
     }
 }

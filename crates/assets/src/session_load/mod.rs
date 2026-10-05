@@ -43,6 +43,8 @@ pub use common_walks::{
     load_match_material_seed,
 };
 pub use resident_map::load_prepared_match;
+mod mem_census;
+pub use mem_census::drop_statics as census_drop_statics;
 
 static PROCESS_CPUS: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
 

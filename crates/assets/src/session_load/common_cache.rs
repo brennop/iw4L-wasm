@@ -112,7 +112,7 @@ pub struct CommonSet {
     pub(super) id: u64,
     pub(super) key: CommonKey,
     /// Taken, not cloned, when no next map will reuse the set.
-    products: std::sync::Mutex<Option<CommonProducts>>,
+    pub(super) products: std::sync::Mutex<Option<CommonProducts>>,
     donor_images: async_lock::OnceCell<Vec<KeptImages>>,
     pub(super) fpv_plan: Option<ImageDemandPlan>,
     pub(super) retained: std::sync::Mutex<asset_material::material_images::PayloadRetention>,
@@ -188,12 +188,12 @@ impl CommonSet {
     }
 }
 
-struct CommonFlight {
+pub(super) struct CommonFlight {
     pub(super) key: CommonKey,
-    set: async_lock::OnceCell<Option<Arc<CommonSet>>>,
+    pub(super) set: async_lock::OnceCell<Option<Arc<CommonSet>>>,
 }
 
-static COMMON: std::sync::Mutex<Option<Arc<CommonFlight>>> = std::sync::Mutex::new(None);
+pub(super) static COMMON: std::sync::Mutex<Option<Arc<CommonFlight>>> = std::sync::Mutex::new(None);
 
 struct FlightGuard(Option<Arc<CommonFlight>>);
 

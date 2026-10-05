@@ -184,6 +184,16 @@ pub fn zone_share_counts() -> (u64, u64) {
     )
 }
 
+/// Zones still alive through `open_zone_shared`: path and image bytes (memory census).
+pub fn live_zone_images() -> Vec<(std::path::PathBuf, usize)> {
+    let map = shared_map()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    map.iter()
+        .filter_map(|(key, weak)| Some((key.0.clone(), weak.upgrade()?.bytes.capacity())))
+        .collect()
+}
+
 static SHARED_HIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SHARED_MISS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
