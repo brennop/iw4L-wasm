@@ -532,8 +532,7 @@ fn run_map(
     app.insert_resource(master_intent);
     let dedicated = config.role == Role::Dedicated;
     if dedicated {
-        app.insert_resource(bevy::winit::WinitSettings::continuous())
-            .insert_resource(frame::Headless)
+        app.insert_resource(frame::Headless)
             .add_plugins(crate::dedicated::DedicatedPlugin);
     }
     app.add_plugins(crate::plugins::default_plugins_with_quiet_log(

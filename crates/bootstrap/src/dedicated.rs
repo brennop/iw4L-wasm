@@ -16,18 +16,41 @@ use net::{MasterBridge, MasterBridgeState, MasterLaunchIntent};
 pub const EXIT_BRIDGE_LOST: u8 = 2;
 
 /// The authority runs in `FixedUpdate` and needs `Update` at 20 Hz or more.
+/// (The renderer-less path caps at 60 Hz in `plugins::default_plugins_renderless`.)
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+
+/// `IW4L_DEDICATED_GPU=1` keeps the old path (wgpu renderer + winit) for A/B runs.
+pub fn renderless() -> bool {
+    !std::env::var("IW4L_DEDICATED_GPU").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+static RENDERLESS_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True once `DedicatedPlugin` was added on the renderer-less path; read by
+/// `plugins::default_plugins_with_quiet_log`, which is added right after it.
+pub fn renderless_active() -> bool {
+    RENDERLESS_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 pub struct DedicatedPlugin;
 
 impl Plugin for DedicatedPlugin {
     fn build(&self, app: &mut App) {
-        let mode = UpdateMode::reactive(FRAME_INTERVAL);
-        app.insert_resource(WinitSettings {
-            focused_mode: mode,
-            unfocused_mode: mode,
-        })
-        .add_systems(Update, exit_on_master_loss);
+        if renderless() {
+            RENDERLESS_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+            // With no wgpu backend RenderPlugin skips ExtractPlugin, and with it
+            // SyncWorldPlugin, but the `on_remove` hooks of synced components still
+            // read `PendingSyncEntity` the first time one of them is despawned.
+            app.add_plugins(bevy::render::sync_world::SyncWorldPlugin);
+        } else {
+            // Old path: winit drives the loop; cap it.
+            let mode = UpdateMode::reactive(FRAME_INTERVAL);
+            app.insert_resource(WinitSettings {
+                focused_mode: mode,
+                unfocused_mode: mode,
+            });
+        }
+        app.add_systems(Update, exit_on_master_loss);
     }
 }
 

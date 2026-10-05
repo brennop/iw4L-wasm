@@ -34,7 +34,9 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
     app.insert_resource(audio::AudioRuntime::new(
-        role != RuntimeRole::Dedicated && !audio::AudioSilent::active(),
+        role != RuntimeRole::Dedicated
+            && !audio::AudioSilent::active()
+            && !app.world().contains_resource::<frame::Headless>(),
     ));
     app.add_plugins(AssetPlugin)
         .add_plugins(UiPlugin)
@@ -92,11 +94,18 @@ pub fn assemble_listen_app() -> App {
     app
 }
 
+/// With IW4L_DEDICATED_GPU unset, a dedicated host (DedicatedPlugin ran first) gets no wgpu
+/// backend, no winit (it needs a display on Linux), no gilrs, and a 60 Hz
+/// ScheduleRunnerPlugin loop in place of the window runner.
 pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::PluginGroupBuilder {
+    let renderless = crate::dedicated::renderless_active();
     if let Some(primary) = window.primary_window.as_mut() {
         primary.desired_maximum_frame_latency = core::num::NonZeroU32::new(frame_latency());
     }
     let mut wgpu = WgpuSettings::default();
+    if renderless {
+        wgpu.backends = None;
+    }
     if render::web_profile() {
         // What a desktop browser's WebGPU offers: default limits, BC textures and filterable
         // R32Float (the shadow maps and floatz are sampled through filtering samplers).
@@ -122,6 +131,18 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
             render_creation: RenderCreation::Automatic(Box::new(wgpu)),
             ..default()
         });
+    #[cfg(not(target_arch = "wasm32"))]
+    let plugins = if renderless {
+        plugins
+            .disable::<bevy::winit::WinitPlugin>()
+            .disable::<bevy::gilrs::GilrsPlugin>()
+            .add(bevy::app::ScheduleRunnerPlugin::run_loop(
+                core::time::Duration::from_secs_f64(1.0 / 60.0),
+            ))
+            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
+    } else {
+        plugins
+    };
     // Bevy has no pipelined rendering on wasm32. The web entry installs its own panic
     // hook (console + on-page overlay), which Bevy's would replace.
     #[cfg(target_arch = "wasm32")]
