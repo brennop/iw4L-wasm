@@ -33,6 +33,7 @@ const REPO_TOOLS: &[&str] = &[
     "web-pack [--root GAMES_ROOT] [--cache-record FILE] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
     "dedicated [--hosts N] [--name NAME] [--map MAP] [--bind IP] [--pack PATH] [--certs DIR] [--run-dir DIR] [--public-url URL] [--no-build] (--help)",
+    "mem-census [--map MAP] [--gpu] [--secs N] [--out DIR] [--no-build] | --compare DIR_A DIR_B (--help)",
 ];
 
 /// Everything that leaves this machine. These read `.env` for the host, the
@@ -117,6 +118,7 @@ fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
         "dedicated" => {
             Some(Env::load(&root).and_then(|env| xtask::dedicated::run(&root, &env, rest)))
         }
+        "mem-census" => Some(xtask::mem_census::run_cli(&root, rest)),
         "licenses" => Some(xtask::licenses::run_cli(&root)),
         "mr" => Some(xtask::mrs::run_cli(&root, rest)),
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),

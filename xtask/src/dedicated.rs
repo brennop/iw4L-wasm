@@ -48,6 +48,8 @@ options:
   --fast             build the wasm with the quick web-dev profile (bigger, not for release)
   --no-web           skip only the wasm build; reuse dist/web as it is
   --exit-after SECS  test hook: shut down after SECS seconds, as if by Ctrl-C
+  --stop-file PATH   test hook: shut down once PATH exists (cargo xtask mem-census uses it)
+  --host-exe PATH    run this iw4l binary as the host (default target/play/iw4l)
   -h, --help         this text
 ";
 
@@ -64,6 +66,8 @@ struct Args {
     web: bool,
     fast_web: bool,
     exit_after: Option<Duration>,
+    stop_file: Option<PathBuf>,
+    host_exe: Option<PathBuf>,
 }
 
 fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
@@ -80,6 +84,8 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
         web: true,
         fast_web: false,
         exit_after: None,
+        stop_file: None,
+        host_exe: None,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -115,6 +121,8 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
                     .map_err(|_| "--exit-after needs seconds".to_string())?;
                 out.exit_after = Some(Duration::from_secs(secs));
             }
+            "--stop-file" => out.stop_file = Some(PathBuf::from(value("a path")?)),
+            "--host-exe" => out.host_exe = Some(PathBuf::from(value("a path")?)),
             other => return Err(format!("unknown option {other}; see --help")),
         }
     }
@@ -252,7 +260,7 @@ fn base_dir(root: &Path) -> PathBuf {
 }
 
 /// `YYYYMMDD-HHMMSS` in UTC, from the system clock (no date crate here).
-fn timestamp() -> String {
+pub fn timestamp() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -427,7 +435,10 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     }
     let master_src = exe(&root.join("target/debug"), "iw4l-master");
     let host_dir = root.join("target/play");
-    let host_exe = exe(&host_dir, "iw4l");
+    let host_exe = args
+        .host_exe
+        .clone()
+        .unwrap_or_else(|| exe(&host_dir, "iw4l"));
     let web_src = root.join("dist/web");
     for (what, path) in [
         ("master binary", &master_src),
@@ -531,7 +542,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         .enumerate()
         .any(|(i, room)| room.is_none() && fleet.alive(i + 1))
     {
-        if STOP.load(Ordering::SeqCst) || deadline(READY_TIMEOUT) {
+        if STOP.load(Ordering::SeqCst) || stop_requested(&args) || deadline(READY_TIMEOUT) {
             break;
         }
         if args.exit_after.is_some_and(&deadline) {
@@ -565,7 +576,10 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         "dedicated: running; Ctrl-C stops everything. Logs: {}",
         run_dir.display()
     );
-    while !STOP.load(Ordering::SeqCst) && !args.exit_after.is_some_and(&deadline) {
+    while !STOP.load(Ordering::SeqCst)
+        && !stop_requested(&args)
+        && !args.exit_after.is_some_and(&deadline)
+    {
         fleet.reap();
         if !fleet.alive(0) {
             println!("dedicated: master exited; stopping");
@@ -576,6 +590,10 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     println!("dedicated: shutting down");
     fleet.stop_all();
     Ok(())
+}
+
+fn stop_requested(args: &Args) -> bool {
+    args.stop_file.as_deref().is_some_and(Path::exists)
 }
 
 fn print_ready(args: &Args, statuses: &[(String, PathBuf)], rooms: &[Option<String>]) {

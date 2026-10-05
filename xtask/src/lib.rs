@@ -9,6 +9,7 @@ pub mod licenses;
 pub mod live;
 pub mod loc;
 pub mod master;
+pub mod mem_census;
 pub mod mrs;
 pub mod net_feel;
 pub mod perf_overhead;

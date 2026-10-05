@@ -12,7 +12,7 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
 .PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
 .PHONY: build-windows setup-windows release publish provision
-.PHONY: mr publish-check approved web web-serve dedicated
+.PHONY: mr publish-check approved web web-serve dedicated mem-census
 .PHONY: $(ARGS)
 
 $(ARGS):
@@ -317,6 +317,14 @@ web-serve:
 dedicated:
 	@$(XTASK) dedicated $(DEDICATED_ARGS)
 
+# Where the dedicated host's memory goes: one run, summary.md + summary.csv under
+# E:\iw4l\mem\<timestamp>. Options go in MEM_CENSUS_ARGS, e.g.
+#   make mem-census MEM_CENSUS_ARGS="--gpu --secs 60"
+#   make mem-census MEM_CENSUS_ARGS="--compare E:/iw4l/mem/A E:/iw4l/mem/B"
+# `cargo xtask mem-census --help` lists them.
+mem-census:
+	@$(XTASK) mem-census $(MEM_CENSUS_ARGS)
+
 # Workspace Rust footprint: per-crate files / lines / bytes, group totals,
 # and the heaviest source files. Counts only crates/ + xtask.
 loc:
@@ -385,6 +393,7 @@ help:
 	@echo "                  wasm-opt when on PATH); PROFILE=play unless set; prints sizes"
 	@echo "make web-serve    serve dist/web on http://127.0.0.1:8080/ (WEB_PORT=)"
 	@echo "make dedicated    master + dedicated hosts on the LAN (DEDICATED_ARGS='--hosts 2 ...')"
+	@echo "make mem-census   where the dedicated host's memory goes (MEM_CENSUS_ARGS='--gpu --secs 60')"
 	@echo "make loc          Rust LOC / file counts / sizes per crate"
 	@echo "make clean        wipe target/debug (keep play + release); no rebuild"
 	@echo "IW4L_GAMES=$(IW4L_GAMES)"
