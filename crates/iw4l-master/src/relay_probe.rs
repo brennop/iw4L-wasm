@@ -187,13 +187,15 @@ pub fn watch(connection_id: u64, connection: &PeerConnection) {
             let stats = quic.stats();
             let _ = writeln!(
                 std::io::stderr(),
-                "quic stats: conn={conn} kind={kind} rtt_ms={} cwnd={} lost_packets={} congestion_events={} sent_datagrams={} recv_datagrams={}",
+                "quic stats: conn={conn} kind={kind} rtt_ms={} cwnd={} lost_packets={} congestion_events={} sent_datagrams={} recv_datagrams={} ack_frames_sent={} ack_frames_recv={}",
                 stats.path.rtt.as_millis(),
                 stats.path.cwnd,
                 stats.path.lost_packets,
                 stats.path.congestion_events,
                 stats.frame_tx.datagram,
-                stats.frame_rx.datagram
+                stats.frame_rx.datagram,
+                stats.frame_tx.acks,
+                stats.frame_rx.acks
             );
         }
     });
