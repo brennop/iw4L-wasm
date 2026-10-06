@@ -32,7 +32,7 @@ const REPO_TOOLS: &[&str] = &[
     "licenses",
     "web-pack [--root GAMES_ROOT] [--cache-record FILE] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
-    "dedicated [--hosts N] [--name NAME] [--map MAP] [--bind IP] [--pack PATH] [--certs DIR] [--run-dir DIR] [--public-url URL] [--no-build] (--help)",
+    "dedicated [--hosts N] [--name NAME] [--map MAP] [--bind IP] [--pack PATH] [--certs DIR] [--run-dir DIR] [--public-url URL] [--wt-host HOST] [--no-build] (--help)",
     "mem-census [--map MAP] [--gpu] [--secs N] [--out DIR] [--no-build] | --compare DIR_A DIR_B (--help)",
 ];
 

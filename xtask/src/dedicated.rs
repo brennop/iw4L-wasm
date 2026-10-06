@@ -44,6 +44,11 @@ options:
   --run-dir DIR      logs, status files, web root (default $IW4L_RUN_DIR, else
                      E:\\iw4l\\dedicated\\<timestamp> on Windows, else target/dedicated/<timestamp>)
   --public-url URL   https origin of a tunnel in front of the ws port (or $IW4L_PUBLIC_URL)
+  --wt-host HOST     DNS-only name (or IP) that reaches this machine's UDP 4435, for a
+                     --public-url tunnel (or $IW4L_WT_HOST): /master.json tells pages to
+                     dial https://HOST:4435/ (WebTransport) while the page stays on the
+                     tunnel. Binds the WebTransport listener on 0.0.0.0 whatever --bind is
+                     and adds HOST to its certificate. The share URL then has no transport=ws.
   --no-build         skip the cargo builds; use what is already built
   --fast             build the wasm with the quick web-dev profile (bigger, not for release)
   --no-web           skip only the wasm build; reuse dist/web as it is
@@ -62,6 +67,7 @@ struct Args {
     certs: Option<PathBuf>,
     run_dir: Option<PathBuf>,
     public_url: Option<String>,
+    wt_host: Option<String>,
     build: bool,
     web: bool,
     fast_web: bool,
@@ -80,6 +86,7 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
         certs: None,
         run_dir: None,
         public_url: env.get("IW4L_PUBLIC_URL"),
+        wt_host: env.get("IW4L_WT_HOST"),
         build: true,
         web: true,
         fast_web: false,
@@ -112,6 +119,7 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
             "--certs" => out.certs = Some(PathBuf::from(value("a directory")?)),
             "--run-dir" => out.run_dir = Some(PathBuf::from(value("a directory")?)),
             "--public-url" => out.public_url = Some(value("an https URL")?),
+            "--wt-host" => out.wt_host = Some(value("a host name")?),
             "--no-build" => out.build = false,
             "--no-web" => out.web = false,
             "--fast" => out.fast_web = true,
@@ -138,6 +146,15 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
             return Err(format!("--public-url must start with https:// (got {url})"));
         }
         *url = trimmed;
+    }
+    if let Some(host) = &out.wt_host {
+        let host = host.trim();
+        if host.is_empty() || host.contains(['/', ':', ' ', '"']) {
+            return Err(format!(
+                "--wt-host must be a bare host name or IP, no scheme or port (got {host})"
+            ));
+        }
+        out.wt_host = Some(host.to_string());
     }
     Ok(Some(out))
 }
@@ -488,24 +505,35 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         children: Vec::new(),
     };
     let bind = args.bind;
-    fleet.spawn(
-        "master",
-        Command::new(&master_exe)
-            .current_dir(&run_dir)
-            .arg("serve")
-            .args(["--bind", &format!("{bind}:{QUIC_PORT}")])
-            .arg("--cert")
-            .arg(ca.server_cert())
-            .arg("--key")
-            .arg(ca.server_key())
-            .args(["--webtransport-bind", &format!("{bind}:{WT_PORT}")])
-            .arg("--webtransport-dir")
-            .arg(&wt_dir)
-            .args(["--ws-bind", &format!("{bind}:{WS_PORT}")])
-            .arg("--web-root")
-            .arg(&web),
-        &run_dir.join("master"),
-    )?;
+    // `--wt-host` means browsers reach the WebTransport port from the internet,
+    // so that one listener is wide open even when `--bind` keeps the rest local.
+    let wt_bind = if args.wt_host.is_some() {
+        Ipv4Addr::UNSPECIFIED
+    } else {
+        bind
+    };
+    let mut master = Command::new(&master_exe);
+    master
+        .current_dir(&run_dir)
+        .arg("serve")
+        .args(["--bind", &format!("{bind}:{QUIC_PORT}")])
+        .arg("--cert")
+        .arg(ca.server_cert())
+        .arg("--key")
+        .arg(ca.server_key())
+        .args(["--webtransport-bind", &format!("{wt_bind}:{WT_PORT}")])
+        .arg("--webtransport-dir")
+        .arg(&wt_dir)
+        .args(["--ws-bind", &format!("{bind}:{WS_PORT}")])
+        .arg("--web-root")
+        .arg(&web);
+    if let Some(host) = &args.wt_host {
+        master
+            .args(["--webtransport-public-host", host])
+            .args(["--webtransport-san", host]);
+    }
+    println!("master command: {}", describe(&master));
+    fleet.spawn("master", &mut master, &run_dir.join("master"))?;
 
     let ca_cert = std::path::absolute(ca.ca_cert()).map_err(|e| e.to_string())?;
     let mut statuses = Vec::new();
@@ -592,6 +620,15 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     Ok(())
 }
 
+/// The program and arguments of `cmd`, for the log.
+fn describe(cmd: &Command) -> String {
+    std::iter::once(cmd.get_program())
+        .chain(cmd.get_args())
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn stop_requested(args: &Args) -> bool {
     args.stop_file.as_deref().is_some_and(Path::exists)
 }
@@ -613,9 +650,23 @@ fn print_ready(args: &Args, statuses: &[(String, PathBuf)], rooms: &[Option<Stri
     println!();
     if let Some(public) = &args.public_url {
         println!("share this URL:");
-        println!("  {public}{query}");
+        if let Some(wt_host) = &args.wt_host {
+            // Bare link: the page follows /master.json to wtw at wt_host.
+            println!("  {public}/?map={}", args.map);
+            println!(
+                "  (an https origin: WebGPU works with no Chrome flag; the page loads through the tunnel, WebTransport goes direct to {wt_host}:{WT_PORT}/udp)"
+            );
+        } else {
+            println!("  {public}{query}");
+            println!(
+                "  (an https origin: WebGPU works with no Chrome flag; the page's ws origin becomes wss://; transport=ws is explicit as a tunnel cannot reach WebTransport)"
+            );
+        }
+        println!();
+    }
+    if let Some(wt_host) = &args.wt_host {
         println!(
-            "  (an https origin: WebGPU works with no Chrome flag; the page's ws origin becomes wss://; transport=ws is explicit as a tunnel cannot reach WebTransport)"
+            "owner steps: router forwards UDP {WT_PORT} to this machine; Windows Firewall inbound UDP {WT_PORT} rule for iw4l-master.exe; DNS-only (not proxied) record {wt_host} -> home IP"
         );
         println!();
     }

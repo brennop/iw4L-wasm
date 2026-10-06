@@ -24,10 +24,37 @@ pub const HEAD_DEADLINE: Duration = Duration::from_secs(10);
 /// connections and the per-address cap of 32 is meant for players.
 pub const MAX_HTTP_CONNECTIONS: usize = 256;
 
-/// The WebTransport listener's port and certificate hash, for `/master.json`.
+/// The WebTransport listener's port and certificate hash, for `/master.json`,
+/// plus the public host browsers should dial when it is not the page's own.
 pub struct WtInfo {
     pub port: u16,
     pub hash_hex: String,
+    /// `--webtransport-public-host`: published as `"host"`. Without it the page
+    /// uses its own hostname (the master serves the page and WebTransport from
+    /// one machine).
+    pub host: Option<String>,
+}
+
+/// `HOST` or `HOST:PORT` of `--webtransport-public-host`. A bracketed IPv6
+/// literal (`[::1]:4435`) keeps its brackets in the host, as a URL needs them.
+pub fn parse_public_host(value: &str) -> Result<(String, Option<u16>), String> {
+    let (host, port) = match value.rsplit_once(':') {
+        Some((host, port))
+            if !host.ends_with(':') && (!host.contains(':') || host.ends_with(']')) =>
+        {
+            let port: u16 = port
+                .parse()
+                .map_err(|_| format!("--webtransport-public-host port `{port}` is not a port"))?;
+            (host, Some(port))
+        }
+        _ => (value, None),
+    };
+    if host.is_empty() || host.contains(['/', ' ', '"', '\\']) {
+        return Err(format!(
+            "--webtransport-public-host `{value}` is not a host"
+        ));
+    }
+    Ok((host.to_owned(), port))
 }
 
 impl WtInfo {
@@ -53,7 +80,25 @@ impl WtInfo {
                 .parse()
                 .map_err(|_| "webtransport.json port is not a number".to_owned())?,
             hash_hex: field("hash_hex")?,
+            host: None,
         })
+    }
+
+    /// The `webtransport` value of `/master.json`.
+    fn json(wt: Option<&Self>) -> String {
+        match wt {
+            Some(wt) => {
+                let host = wt
+                    .host
+                    .as_ref()
+                    .map_or_else(String::new, |host| format!(",\"host\":\"{host}\""));
+                format!(
+                    "{{\"port\":{},\"hash_hex\":\"{}\"{host}}}",
+                    wt.port, wt.hash_hex
+                )
+            }
+            None => "null".to_owned(),
+        }
     }
 }
 
@@ -221,13 +266,7 @@ async fn master_json(config: &WebConfig, state: &Mutex<ServiceState>) -> String 
     };
     adverts.sort_by_key(|advert| advert.id);
     let mut out = String::from("{\"ws\":\"/\",\"webtransport\":");
-    match &config.wt {
-        Some(wt) => out.push_str(&format!(
-            "{{\"port\":{},\"hash_hex\":\"{}\"}}",
-            wt.port, wt.hash_hex
-        )),
-        None => out.push_str("null"),
-    }
+    out.push_str(&WtInfo::json(config.wt.as_ref()));
     out.push_str(",\"rooms\":[");
     for (index, advert) in adverts.iter().enumerate() {
         if index > 0 {
@@ -449,6 +488,44 @@ mod tests {
         )
         .unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn master_json_advertises_the_public_host_only_when_set() {
+        let mut wt = WtInfo {
+            port: 4435,
+            hash_hex: "ab".into(),
+            host: None,
+        };
+        assert_eq!(
+            WtInfo::json(Some(&wt)),
+            "{\"port\":4435,\"hash_hex\":\"ab\"}"
+        );
+        wt.host = Some("wt.example.org".into());
+        wt.port = 5000;
+        assert_eq!(
+            WtInfo::json(Some(&wt)),
+            "{\"port\":5000,\"hash_hex\":\"ab\",\"host\":\"wt.example.org\"}"
+        );
+        assert_eq!(WtInfo::json(None), "null");
+    }
+
+    #[test]
+    fn parses_the_public_host_flag() {
+        assert_eq!(parse_public_host("wt.a.b"), Ok(("wt.a.b".into(), None)));
+        assert_eq!(
+            parse_public_host("wt.a.b:4444"),
+            Ok(("wt.a.b".into(), Some(4444)))
+        );
+        assert_eq!(
+            parse_public_host("1.2.3.4:9"),
+            Ok(("1.2.3.4".into(), Some(9)))
+        );
+        assert_eq!(parse_public_host("[::1]:7"), Ok(("[::1]".into(), Some(7))));
+        assert_eq!(parse_public_host("[::1]"), Ok(("[::1]".into(), None)));
+        assert!(parse_public_host("").is_err());
+        assert!(parse_public_host("h:x").is_err());
+        assert!(parse_public_host("h/x").is_err());
     }
 
     #[test]

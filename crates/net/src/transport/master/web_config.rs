@@ -102,6 +102,9 @@ fn fetch_master_json() -> std::result::Result<MasterJson, String> {
         (Some(port), Some(hash_hex)) if (1.0..=65535.0).contains(&port) => Some(WtInfo {
             port: port as u16,
             hash_hex,
+            host: field(&webtransport, "host")
+                .as_string()
+                .filter(|host| !host.is_empty()),
         }),
         _ => None,
     };
@@ -126,12 +129,14 @@ fn master_json_wt() -> Option<WtInfo> {
     master_json().ok()?.wt.clone()
 }
 
-/// `https://<page hostname>:<port>/`, the master's WebTransport listener from
-/// `/master.json` (it is on the page's host, whatever the page's own port).
+/// `https://<host>:<port>/`, the master's WebTransport listener from
+/// `/master.json`: `webtransport.host` when the master publishes one (a page
+/// behind a tunnel, whose hostname cannot carry UDP), else the page's own
+/// hostname, whatever the page's own port.
 fn master_json_wt_url() -> Option<String> {
     let wt = master_json_wt()?;
     let host = web_sys::window()?.location().hostname().ok()?;
-    Some(format!("https://{host}:{}/", wt.port))
+    Some(wt.url(&host))
 }
 /// D3a: the page's own origin as a ws URL, for a page the master serves.
 fn origin_ws_url() -> Option<String> {

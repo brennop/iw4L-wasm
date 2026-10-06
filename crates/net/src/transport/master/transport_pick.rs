@@ -19,6 +19,18 @@ pub(super) enum Transport {
 pub(super) struct WtInfo {
     pub(super) port: u16,
     pub(super) hash_hex: String,
+    /// `webtransport.host`: a public host to dial instead of the page's own
+    /// (the page is behind a tunnel that cannot carry UDP).
+    pub(super) host: Option<String>,
+}
+
+impl WtInfo {
+    /// `https://<host>:<port>/`: the published host when there is one, else
+    /// the page's own hostname.
+    pub(super) fn url(&self, page_host: &str) -> String {
+        let host = self.host.as_deref().unwrap_or(page_host);
+        format!("https://{host}:{}/", self.port)
+    }
 }
 
 /// The choice and, when it is a fallback or a mistake, one line saying why.
@@ -75,7 +87,18 @@ mod tests {
         Ok(Some(WtInfo {
             port: 4435,
             hash_hex: "ab".repeat(32),
+            host: None,
         }))
+    }
+
+    #[test]
+    fn wt_url_uses_the_published_host_else_the_page_host() {
+        let mut info = wt().unwrap().unwrap();
+        assert_eq!(info.url("127.0.0.1"), "https://127.0.0.1:4435/");
+        info.host = Some("wt.cod.example".into());
+        assert_eq!(info.url("cod.example"), "https://wt.cod.example:4435/");
+        info.port = 5000;
+        assert_eq!(info.url("x"), "https://wt.cod.example:5000/");
     }
 
     fn pick(

@@ -101,6 +101,9 @@ enum Command {
         key: PathBuf,
         updates: PathBuf,
         webtransport: Option<WebTransportConfig>,
+        /// `--webtransport-public-host HOST[:PORT]`: the host (and port) the
+        /// page's WebTransport URL uses, published in `/master.json`.
+        wt_public: Option<(String, Option<u16>)>,
         /// O16: `--ws-bind`, plain WebSocket listener for browsers.
         websocket: Option<SocketAddr>,
         /// D3a: serve this directory over HTTP on the ws port.
@@ -411,11 +414,12 @@ async fn main() -> Result<()> {
             key,
             updates,
             webtransport,
+            wt_public,
             websocket,
             web_root,
         } => {
             tokio::select! {
-                result = serve(bind, &cert, &key, webtransport, websocket, web_root) => result,
+                result = serve(bind, &cert, &key, webtransport, wt_public, websocket, web_root) => result,
                 result = updates::serve(bind, cert.clone(), key.clone(), updates) => result,
             }
         }
@@ -448,6 +452,7 @@ fn parse_args() -> Result<Command> {
     let mut webtransport_bind = None;
     let mut webtransport_dir = None;
     let mut webtransport_sans = Vec::new();
+    let mut wt_public = None;
     let mut ws_bind = None;
     let mut web_root = None;
     while let Some(flag) = args.next() {
@@ -469,6 +474,9 @@ fn parse_args() -> Result<Command> {
             "--webtransport-bind" => webtransport_bind = Some(value.parse()?),
             "--webtransport-dir" => webtransport_dir = Some(PathBuf::from(value)),
             "--webtransport-san" => webtransport_sans.push(value),
+            "--webtransport-public-host" => {
+                wt_public = Some(web_static::parse_public_host(&value)?);
+            }
             "--ws-bind" => ws_bind = Some(value.parse()?),
             "--web-root" => web_root = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown option {flag}").into()),
@@ -479,6 +487,9 @@ fn parse_args() -> Result<Command> {
             let cert = cert.ok_or("serve requires --cert PATH")?;
             if web_root.is_some() && ws_bind.is_none() {
                 return Err("--web-root requires --ws-bind".into());
+            }
+            if wt_public.is_some() && webtransport_bind.is_none() {
+                return Err("--webtransport-public-host requires --webtransport-bind".into());
             }
             let webtransport = webtransport_bind.map(|bind| WebTransportConfig {
                 bind,
@@ -494,6 +505,7 @@ fn parse_args() -> Result<Command> {
                 key: key.ok_or("serve requires --key PATH")?,
                 updates,
                 webtransport,
+                wt_public,
                 websocket: ws_bind,
                 web_root,
             })
@@ -574,6 +586,7 @@ async fn serve(
     cert_path: &Path,
     key_path: &Path,
     webtransport: Option<WebTransportConfig>,
+    wt_public: Option<(String, Option<u16>)>,
     websocket: Option<SocketAddr>,
     web_root: Option<PathBuf>,
 ) -> Result<()> {
@@ -629,11 +642,20 @@ async fn serve(
                     .canonicalize()
                     .map_err(|error| format!("--web-root {}: {error}", root.display()))?;
                 // `/master.json` reports the WebTransport port and cert hash
-                // from the file the wt listener just wrote.
+                // from the file the wt listener just wrote; with
+                // `--webtransport-public-host` also the host (and port) the
+                // browser dials instead of the page's own.
                 let wt = match &webtransport {
                     Some(config) => {
                         let json = std::fs::read_to_string(config.dir.join("webtransport.json"))?;
-                        Some(web_static::WtInfo::from_json(&json)?)
+                        let mut info = web_static::WtInfo::from_json(&json)?;
+                        if let Some((host, port)) = wt_public {
+                            info.host = Some(host);
+                            if let Some(port) = port {
+                                info.port = port;
+                            }
+                        }
+                        Some(info)
                     }
                     None => None,
                 };
