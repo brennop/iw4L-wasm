@@ -29,6 +29,8 @@ mod conn_ws;
 mod online;
 #[cfg(online)]
 mod rt;
+#[cfg(all(online, any(target_arch = "wasm32", test)))]
+mod transport_pick;
 #[cfg(all(online, target_arch = "wasm32"))]
 mod rt_web;
 #[cfg(all(online, target_arch = "wasm32"))]

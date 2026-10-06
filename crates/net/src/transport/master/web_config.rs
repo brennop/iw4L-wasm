@@ -5,7 +5,8 @@
 //! `MasterTarget`.
 //!
 //! `?map=mp_rust&master=127.0.0.1:4435&master_hash=<hash_hex>&join=<room id>`
-//! plus optional `master_password=` and `gametype=` (default `dm`).
+//! (WebTransport in a worker, O19; add `transport=ws&master_ws=ws://host:port/`
+//! for WebSocket) plus optional `master_password=` and `gametype=` (default `dm`).
 //! `master` is `host:port` or a full `https://` URL; `master_hash` is
 //! `hash_hex` from the master's `webtransport.json`; `join` is the room id
 //! (`iw4l-master` logs it; `wt_smoke list` prints it).
@@ -29,33 +30,109 @@ pub(super) fn query_param(name: &str) -> Option<String> {
     query().and_then(|query| param(&query, name))
 }
 
-/// The browser's master transport.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Transport {
-    /// WebSocket (`conn_ws.rs`).
-    Ws,
-    /// WebTransport on the page's main thread (`conn_web.rs`).
-    Wt,
-    /// O19: WebTransport in a dedicated worker (`iw4l-wt-worker.js`), behind
-    /// the ws backend's frames.
-    WtWorker,
-}
+pub(super) use super::transport_pick::Transport;
+use super::transport_pick::{WtInfo, pick_transport};
 
-/// O16: WebSocket is the browser default; `?transport=wt` opts into
-/// WebTransport for diagnostics, `?transport=wtw` (O19) into WebTransport in
-/// a worker.
+/// O19: WebTransport in a worker (`wtw`) is the default; WebSocket is the
+/// fallback. An explicit `?transport=ws|wt|wtw` always wins. Without it, a
+/// `master=` WebTransport address means `wtw`, `master_ws=` alone means `ws`,
+/// and a bare link on a page the master serves follows its `/master.json`
+/// (`wtw` when it publishes a WebTransport port, else `ws`). Decided once.
 pub(super) fn transport() -> Transport {
-    match query_param("transport").as_deref() {
-        None | Some("ws") => Transport::Ws,
-        Some("wt") => Transport::Wt,
-        Some("wtw") => Transport::WtWorker,
-        Some(other) => {
-            diag::warn!(Net, "transport={other} is not ws|wt|wtw; using wt");
-            Transport::Wt
-        }
+    thread_local! {
+        static PICK: Transport = {
+            let pick = pick_transport(
+                query_param("transport").as_deref(),
+                query_param("master").is_some(),
+                query_param("master_ws").is_some(),
+                || master_json().map(|json| json.wt.clone()),
+            );
+            match &pick.note {
+                Some(note) if query_param("transport").is_some() => diag::warn!(Net, "{note}"),
+                Some(note) => diag::info!(Net, "{note}"),
+                None => {}
+            }
+            pick.transport
+        };
     }
+    PICK.with(|pick| *pick)
 }
 
+/// What the page's `/master.json` says, read once (a synchronous request:
+/// launch intent is built synchronously, and the file is a few hundred bytes
+/// from the page's own server).
+struct MasterJson {
+    wt: Option<WtInfo>,
+    first_open_room: Option<String>,
+}
+
+fn master_json() -> std::result::Result<&'static MasterJson, String> {
+    thread_local! {
+        static JSON: &'static std::result::Result<MasterJson, String> =
+            Box::leak(Box::new(fetch_master_json()));
+    }
+    JSON.with(|json| json.as_ref().map_err(Clone::clone))
+}
+
+fn fetch_master_json() -> std::result::Result<MasterJson, String> {
+    use js_sys::{Array, Reflect};
+    let js = |error: wasm_bindgen::JsValue| format!("{error:?}");
+    let request = web_sys::XmlHttpRequest::new().map_err(js)?;
+    request
+        .open_with_async("GET", "/master.json", false)
+        .map_err(js)?;
+    request.send().map_err(js)?;
+    let status = request.status().map_err(js)?;
+    if status != 200 {
+        return Err(format!("/master.json status {status}"));
+    }
+    let text = request
+        .response_text()
+        .map_err(js)?
+        .ok_or("master.json: empty")?;
+    let json = js_sys::JSON::parse(&text).map_err(js)?;
+    let field = |value: &wasm_bindgen::JsValue, name: &str| {
+        Reflect::get(value, &name.into()).unwrap_or(wasm_bindgen::JsValue::UNDEFINED)
+    };
+    let webtransport = field(&json, "webtransport");
+    let wt = match (
+        field(&webtransport, "port").as_f64(),
+        field(&webtransport, "hash_hex").as_string(),
+    ) {
+        (Some(port), Some(hash_hex)) if (1.0..=65535.0).contains(&port) => Some(WtInfo {
+            port: port as u16,
+            hash_hex,
+        }),
+        _ => None,
+    };
+    let rooms = Array::from(&field(&json, "rooms"));
+    let first_open_room = rooms.iter().find_map(|room| {
+        let open = field(&room, "locked").as_bool() == Some(false)
+            && field(&room, "players").as_f64() < field(&room, "max_players").as_f64();
+        open.then(|| field(&room, "id").as_string()).flatten()
+    });
+    Ok(MasterJson {
+        wt,
+        first_open_room,
+    })
+}
+
+/// The WebTransport settings of `/master.json` when the page's WebTransport
+/// address comes from there (no `?master=`, and the transport is `wt`/`wtw`).
+fn master_json_wt() -> Option<WtInfo> {
+    if query_param("master").is_some() || transport() == Transport::Ws {
+        return None;
+    }
+    master_json().ok()?.wt.clone()
+}
+
+/// `https://<page hostname>:<port>/`, the master's WebTransport listener from
+/// `/master.json` (it is on the page's host, whatever the page's own port).
+fn master_json_wt_url() -> Option<String> {
+    let wt = master_json_wt()?;
+    let host = web_sys::window()?.location().hostname().ok()?;
+    Some(format!("https://{host}:{}/", wt.port))
+}
 /// D3a: the page's own origin as a ws URL, for a page the master serves.
 fn origin_ws_url() -> Option<String> {
     let location = web_sys::window()?.location();
@@ -74,36 +151,12 @@ pub(super) fn master_ws_url() -> Option<String> {
 }
 
 /// D3a: the first room of the origin's `/master.json` that is neither locked
-/// nor full (a synchronous request: launch intent is built synchronously, and
-/// the file is a few hundred bytes from the page's own server).
+/// nor full.
 fn first_open_room() -> Result<String> {
-    use js_sys::{Array, Reflect};
-    let js = |error: wasm_bindgen::JsValue| format!("master.json: {error:?}");
-    let request = web_sys::XmlHttpRequest::new().map_err(js)?;
-    request
-        .open_with_async("GET", "/master.json", false)
-        .map_err(js)?;
-    request.send().map_err(js)?;
-    if request.status().map_err(js)? != 200 {
-        return Err("no ?join= and /master.json is not served here".into());
-    }
-    let text = request
-        .response_text()
-        .map_err(js)?
-        .ok_or("master.json: empty")?;
-    let json = js_sys::JSON::parse(&text).map_err(js)?;
-    let rooms = Array::from(&Reflect::get(&json, &"rooms".into()).map_err(js)?);
-    let field = |room: &wasm_bindgen::JsValue, name: &str| {
-        Reflect::get(room, &name.into()).unwrap_or(wasm_bindgen::JsValue::UNDEFINED)
-    };
-    for room in rooms.iter() {
-        let open = field(&room, "locked").as_bool() == Some(false)
-            && field(&room, "players").as_f64() < field(&room, "max_players").as_f64();
-        if let (true, Some(id)) = (open, field(&room, "id").as_string()) {
-            return Ok(id);
-        }
-    }
-    Err("no ?join= and /master.json lists no open room".into())
+    let json = master_json().map_err(|error| format!("no ?join= and master.json: {error}"))?;
+    json.first_open_room
+        .clone()
+        .ok_or_else(|| "no ?join= and /master.json lists no open room".into())
 }
 
 /// The WebTransport URL for a `master` parameter.
@@ -123,21 +176,21 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
     };
     // O16: a `?transport=ws` page may give only `master_ws` (the WebTransport
     // URL below is then unused).
-    // D3a: with `?transport=ws` both may be left out on a page the master
-    // serves: `master_ws` defaults to the page origin and `join` to the first
-    // open room of its `/master.json`. (`wt` stays explicit: it needs the
-    // port and certificate hash, which `/master.json` also has but this does
-    // not read.)
+    // D3a/O19: on a page the master serves, both `master`/`master_ws` and
+    // `join` may be left out: ws defaults to the page origin, wt/wtw to the
+    // WebTransport listener `/master.json` publishes (see `transport`), and
+    // `join` to the first open room of that file.
     let ws = transport() == Transport::Ws;
     let master = param(&query, "master")
-        .or_else(|| param(&query, "master_ws"))
-        .or_else(|| ws.then(origin_ws_url).flatten());
+        .or_else(|| ws.then(|| param(&query, "master_ws")).flatten())
+        .or_else(|| ws.then(origin_ws_url).flatten())
+        .or_else(|| (!ws).then(master_json_wt_url).flatten());
     let Some(master) = master else {
         return Ok(None);
     };
     let join = match param(&query, "join") {
         Some(join) => join,
-        None if ws => first_open_room()?,
+        None if ws || master_json_wt().is_some() => first_open_room()?,
         None => return Ok(None),
     };
     if cert_hash()?.is_none() {
@@ -166,7 +219,12 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
 /// `master_hash` as 32 bytes (SHA-256 of the master's WebTransport
 /// certificate), for `serverCertificateHashes`.
 pub(super) fn cert_hash() -> Result<Option<[u8; 32]>> {
-    let Some(hex) = query().and_then(|query| param(&query, "master_hash")) else {
+    // `master_hash=` wins; else the hash `/master.json` publishes, when the
+    // WebTransport address came from there.
+    let Some(hex) = query()
+        .and_then(|query| param(&query, "master_hash"))
+        .or_else(|| master_json_wt().map(|wt| wt.hash_hex))
+    else {
         return Ok(None);
     };
     let hex: String = hex.chars().filter(|c| !matches!(c, ':' | ' ')).collect();

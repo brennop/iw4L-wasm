@@ -1,5 +1,8 @@
 //! O16: browser WebSocket backend of the master connection, chosen with
-//! `?transport=ws&master_ws=ws://host:port/` (the master's `--ws-bind`).
+//! `?transport=ws&master_ws=ws://host:port/` (the master's `--ws-bind`). Since
+//! O19 it is the fallback: the default is `wtw` below, and ws is used when the
+//! URL says so (`master_ws=` alone, `transport=ws`) or the master serving the
+//! page has no WebTransport listener.
 //! WebSocket uses Chrome's TCP path and none of its QUIC code, so a session on
 //! it is the same-machine A/B for the WebTransport send-queue holds, and a
 //! fallback for browsers without WebTransport.

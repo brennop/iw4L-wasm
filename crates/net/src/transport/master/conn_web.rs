@@ -635,8 +635,9 @@ impl MasterRecvStream for WtRecv {
     }
 }
 
-/// O16: the connection behind `conn::Conn` in the browser. WebTransport is the
-/// default; `?transport=wt` selects the WebTransport backend (`conn_web.rs`).
+/// O16: the connection behind `conn::Conn` in the browser. O19: WebTransport in
+/// a worker (`wtw`) is the default and ws the fallback (`web_config::transport`);
+/// `?transport=wt` selects the main-thread WebTransport backend (`conn_web.rs`).
 #[derive(Clone)]
 pub(super) enum WebConn {
     Wt(WtConn),

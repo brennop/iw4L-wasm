@@ -607,13 +607,15 @@ fn print_ready(args: &Args, statuses: &[(String, PathBuf)], rooms: &[Option<Stri
             ),
         }
     }
+    // Explicit ws: the browser default is now WebTransport in a worker (O19),
+    // which needs a secure context and the master's UDP port; ws works anywhere.
     let query = format!("/?map={}&transport=ws", args.map);
     println!();
     if let Some(public) = &args.public_url {
         println!("share this URL:");
         println!("  {public}{query}");
         println!(
-            "  (an https origin: WebGPU works with no Chrome flag; the page's ws default becomes wss://)"
+            "  (an https origin: WebGPU works with no Chrome flag; the page's ws origin becomes wss://; transport=ws is explicit as a tunnel cannot reach WebTransport)"
         );
         println!();
     }
