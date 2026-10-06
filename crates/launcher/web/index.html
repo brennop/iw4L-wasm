@@ -149,9 +149,25 @@ function tracked(response, key) {
   });
   return new Response(response.body.pipeThrough(counter), response);
 }
+// ?frame_busy=<ms> (diagnostics only, off when absent): one extra requestAnimationFrame callback that
+// spins on the main thread for that long every frame, from the moment the canvas appears. It loads the
+// main thread the way O18's page did, to compare WebTransport on it (transport=wt) with a worker (wtw).
+const frameBusyMs = Number(new URLSearchParams(location.search).get('frame_busy'));
+if (frameBusyMs > 0) {
+  console.info(`frame_busy: ON, spinning ${frameBusyMs} ms per animation frame once the canvas exists (diagnostics only)`);
+}
+function startFrameBusy() {
+  const spin = () => {
+    const end = performance.now() + frameBusyMs;
+    while (performance.now() < end) { /* busy on purpose */ }
+    requestAnimationFrame(spin);
+  };
+  requestAnimationFrame(spin);
+}
 new MutationObserver((_, observer) => {
   if (!document.querySelector('canvas')) return;
   document.getElementById('loading')?.remove();
+  if (frameBusyMs > 0) startFrameBusy();
   observer.disconnect();
 }).observe(document.body, { childList: true, subtree: true });
 
