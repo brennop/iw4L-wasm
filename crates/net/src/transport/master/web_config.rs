@@ -29,15 +29,29 @@ pub(super) fn query_param(name: &str) -> Option<String> {
     query().and_then(|query| param(&query, name))
 }
 
+/// The browser's master transport.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Transport {
+    /// WebSocket (`conn_ws.rs`).
+    Ws,
+    /// WebTransport on the page's main thread (`conn_web.rs`).
+    Wt,
+    /// O19: WebTransport in a dedicated worker (`iw4l-wt-worker.js`), behind
+    /// the ws backend's frames.
+    WtWorker,
+}
+
 /// O16: WebSocket is the browser default; `?transport=wt` opts into
-/// WebTransport for diagnostics.
-pub(super) fn transport_is_ws() -> bool {
+/// WebTransport for diagnostics, `?transport=wtw` (O19) into WebTransport in
+/// a worker.
+pub(super) fn transport() -> Transport {
     match query_param("transport").as_deref() {
-        None | Some("ws") => true,
-        Some("wt") => false,
+        None | Some("ws") => Transport::Ws,
+        Some("wt") => Transport::Wt,
+        Some("wtw") => Transport::WtWorker,
         Some(other) => {
-            diag::warn!(Net, "transport={other} is not wt|ws; using wt");
-            false
+            diag::warn!(Net, "transport={other} is not ws|wt|wtw; using wt");
+            Transport::Wt
         }
     }
 }
@@ -114,7 +128,7 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
     // open room of its `/master.json`. (`wt` stays explicit: it needs the
     // port and certificate hash, which `/master.json` also has but this does
     // not read.)
-    let ws = transport_is_ws();
+    let ws = transport() == Transport::Ws;
     let master = param(&query, "master")
         .or_else(|| param(&query, "master_ws"))
         .or_else(|| ws.then(origin_ws_url).flatten());

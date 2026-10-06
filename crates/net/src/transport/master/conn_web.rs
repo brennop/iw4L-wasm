@@ -74,11 +74,11 @@ pub(super) fn conn_error(value: JsValue) -> ConnError {
     ConnError::from_display(js_error(&value))
 }
 
-fn get(object: &JsValue, key: &str) -> JsValue {
+pub(super) fn get(object: &JsValue, key: &str) -> JsValue {
     Reflect::get(object, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED)
 }
 
-fn set(object: &JsValue, key: &str, value: &JsValue) {
+pub(super) fn set(object: &JsValue, key: &str, value: &JsValue) {
     let _ = Reflect::set(object, &JsValue::from_str(key), value);
 }
 
@@ -189,6 +189,24 @@ impl WtRecv {
     }
 }
 
+/// The WebTransport settings the page URL gives, shared by the main-thread
+/// backend and the worker one (O19) so both open the same session.
+pub(super) struct WtParams {
+    /// `?master_hash=` as `serverCertificateHashes`.
+    pub(super) hash: Option<[u8; 32]>,
+    /// O14: `?wt_cc=low-latency|throughput|default` as `congestionControl`.
+    pub(super) cc: Option<String>,
+}
+
+impl WtParams {
+    pub(super) fn from_query() -> Result<Self> {
+        Ok(Self {
+            hash: web_config::cert_hash()?,
+            cc: web_config::query_param("wt_cc"),
+        })
+    }
+}
+
 /// Opens the WebTransport session. The certificate hash comes from the page
 /// URL for now (`web_config.rs`, O5 moves it into `MasterTarget`). The first
 /// value stands in for native's `quinn::Endpoint`.
@@ -199,7 +217,10 @@ async fn connect_wt(target: &MasterTarget, cancel: &CancellationToken) -> Result
             "master CA ignored: a browser trusts a certificate hash or the Web PKI"
         );
     }
-    let hash = web_config::cert_hash()?;
+    let WtParams {
+        hash,
+        cc: cc_requested,
+    } = WtParams::from_query()?;
     let options = Object::new();
     if let Some(hash) = hash {
         let entry = Object::new();
@@ -207,8 +228,6 @@ async fn connect_wt(target: &MasterTarget, cancel: &CancellationToken) -> Result
         set(&entry, "value", &Uint8Array::from(&hash[..]));
         set(&options, "serverCertificateHashes", &Array::of1(&entry));
     }
-    // O14: `?wt_cc=low-latency|throughput|default` as `congestionControl`.
-    let cc_requested = web_config::query_param("wt_cc");
     if let Some(cc) = &cc_requested {
         set(&options, "congestionControl", &JsValue::from_str(cc));
     }
@@ -405,7 +424,7 @@ impl WtConn {
 
 /// O14 `?up_drop=` mode: whether the page drops on backpressure and the
 /// `outgoingMaxAge` to set, if any.
-fn up_drop_mode() -> (&'static str, bool, Option<f64>) {
+pub(super) fn up_drop_mode() -> (&'static str, bool, Option<f64>) {
     let mode = web_config::query_param("up_drop").unwrap_or_default();
     let (name, bp, age) = match mode.as_str() {
         "" | "off" => ("off", false, false),
@@ -640,14 +659,22 @@ pub(super) async fn connect(
     target: &MasterTarget,
     cancel: &CancellationToken,
 ) -> Result<((), WebConn)> {
-    if web_config::transport_is_ws() {
-        diag::info!(Net, "master transport=ws");
-        let (endpoint, conn) = conn_ws::connect(target, cancel).await?;
-        Ok((endpoint, WebConn::Ws(conn)))
-    } else {
-        diag::info!(Net, "master transport=wt");
-        let (endpoint, conn) = connect_wt(target, cancel).await?;
-        Ok((endpoint, WebConn::Wt(conn)))
+    match web_config::transport() {
+        web_config::Transport::Ws => {
+            diag::info!(Net, "master transport=ws");
+            let (endpoint, conn) = conn_ws::connect(target, cancel).await?;
+            Ok((endpoint, WebConn::Ws(conn)))
+        }
+        web_config::Transport::Wt => {
+            diag::info!(Net, "master transport=wt");
+            let (endpoint, conn) = connect_wt(target, cancel).await?;
+            Ok((endpoint, WebConn::Wt(conn)))
+        }
+        web_config::Transport::WtWorker => {
+            diag::info!(Net, "master transport=wtw");
+            let (endpoint, conn) = conn_ws::connect_worker(target, cancel).await?;
+            Ok((endpoint, WebConn::Ws(conn)))
+        }
     }
 }
 

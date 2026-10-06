@@ -170,9 +170,39 @@ pub(crate) fn upstream_droppable(datagram: &[u8]) -> bool {
         && matches!(fragment[16], 2 | 3)
 }
 
+/// O19: page -> worker envelope of `?transport=wtw` (`iw4l-wt-worker.js`): one
+/// prefix byte, then (probe only) the 8-byte LE probe hash, then the
+/// `ws_frame` bytes. Bit 0 of the prefix: the datagram is droppable
+/// ([`upstream_droppable`]); bit 1: probe, a hash follows.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn worker_envelope(frame: &[u8], droppable: bool, probe_hash: Option<u64>) -> Vec<u8> {
+    let flags = u8::from(droppable) | (u8::from(probe_hash.is_some()) << 1);
+    let mut out = Vec::with_capacity(9 + frame.len());
+    out.push(flags);
+    if let Some(hash) = probe_hash {
+        out.extend_from_slice(&hash.to_le_bytes());
+    }
+    out.extend_from_slice(frame);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_envelope_layout() {
+        assert_eq!(worker_envelope(&[0, 7], false, None), [0, 0, 7]);
+        assert_eq!(worker_envelope(&[0, 7], true, None), [1, 0, 7]);
+        assert_eq!(
+            worker_envelope(&[0, 7], false, Some(0x0102_0304_0506_0708)),
+            [2, 8, 7, 6, 5, 4, 3, 2, 1, 0, 7]
+        );
+        assert_eq!(
+            worker_envelope(&[], true, Some(1)),
+            [3, 1, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
 
     fn relay_of(packet: &crate::transport::protocol::ClientPacket) -> Vec<Vec<u8>> {
         use crate::transport::fragment::Fragmenter;

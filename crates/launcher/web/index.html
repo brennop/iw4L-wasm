@@ -67,6 +67,8 @@ armAudio();
 
 // The worklet ring-buffer player (audio crate, web_output.rs); the build adds a version tag to the URL.
 window.iw4lMixerUrl = './iw4l-mixer.js';
+// O19: the WebTransport worker of ?transport=wtw (net crate, conn_ws.rs); versioned the same way.
+window.IW4L_WT_WORKER = './iw4l-wt-worker.js';
 window.iw4l = {
   audio() {
     return audioContexts.map((ctx) => ({ state: ctx.state, sampleRate: ctx.sampleRate }));
