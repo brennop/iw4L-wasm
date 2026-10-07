@@ -39,6 +39,10 @@ pub(crate) const COMMAND_TIME_STEP_MS: i32 = 200;
 
 pub const MAX_COMMAND_STALL_MS: i32 = 1000;
 
+/// A queued head whose seq is past the expected one (datagrams lost) is skipped
+/// after this long, well before `MAX_COMMAND_STALL_MS` would kick the client.
+pub const COMMAND_GAP_SKIP_MS: i32 = 250;
+
 pub const MAX_COMMANDS_PER_PEER_PER_FRAME: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,9 +254,48 @@ impl ClientCommandInbox {
         ids
     }
 
+    /// Commands lost in transit leave a seq gap the client cannot fill (acks are
+    /// cumulative, so it only resends what is still pending past the gap). Once
+    /// the head has been blocked for `COMMAND_GAP_SKIP_MS`, resume at its seq.
+    fn skip_lost_commands(&mut self, id: ClientId, time_ms: i32) {
+        let Some(head) = self
+            .queued
+            .get(&id)
+            .and_then(|queue| queue.iter().find_map(|(seq, _, _)| *seq))
+        else {
+            return;
+        };
+        let last = self.last_acked_seq.get(&id).copied().unwrap_or(0);
+        let expected = last.wrapping_add(1);
+        // Wrapping distance: a head "ahead" of expected by less than half the space.
+        let ahead = head.0.wrapping_sub(expected);
+        if ahead == 0 || ahead >= u32::MAX / 2 {
+            return;
+        }
+        let blocked_since = match self.blocked_head.get(&id) {
+            Some(&(blocked, since)) if blocked == head => since,
+            _ => return,
+        };
+        if time_ms.saturating_sub(blocked_since) < COMMAND_GAP_SKIP_MS {
+            return;
+        }
+        diag::warn!(
+            Net,
+            "client {}: skipped lost commands seq {}..={}",
+            id.0,
+            expected,
+            head.0.wrapping_sub(1)
+        );
+        self.last_acked_seq.insert(id, head.0.wrapping_sub(1));
+    }
+
     pub fn take_for_tick(&mut self, time_ms: i32) -> GatheredCommands {
         let mut out = GatheredCommands::default();
         for id in self.known_clients() {
+            // Record the blocked head first (backlog_fault owns that bookkeeping),
+            // then skip a real gap before NoProgress can fire on it.
+            let _ = self.backlog_fault(id, time_ms);
+            self.skip_lost_commands(id, time_ms);
             // A datagram burst can contain more than one frame of runnable work.
             // Consume the bounded frame budget before measuring remaining debt.
             // Count and blocked-head limits still apply before any simulation.
