@@ -565,19 +565,26 @@ fn run_map(
             request_id: 0,
         });
     }
-    let ui_games_root = asset_game::ui_games_root(&games).ok().map(|root| root.0);
-    app.insert_resource(launch_identity(&config))
-        .insert_resource(cheats)
-        .insert_resource(probe)
-        .insert_resource(menus)
-        .insert_resource(MatchLoadRequest {
+    // A client join always discards this load (session follow_master_match aborts it and loads the
+    // master's map again). In the browser it blocks the main thread for ~5 s and raises the wasm
+    // peak by ~390 MiB (L2), so skip it there. Native is unchanged.
+    if cfg!(target_arch = "wasm32") && config.role == Role::Client {
+        diag::info!(Launch, "launch: browser join, no pre-join load");
+    } else {
+        app.insert_resource(MatchLoadRequest {
             request_id: 0,
             load_key: Default::default(),
             zone: zone.clone(),
             zone_ff,
             common_mp,
             progress: progress.clone(),
-        })
+        });
+    }
+    let ui_games_root = asset_game::ui_games_root(&games).ok().map(|root| root.0);
+    app.insert_resource(launch_identity(&config))
+        .insert_resource(cheats)
+        .insert_resource(probe)
+        .insert_resource(menus)
         .insert_resource(LoadingScreen::new(
             progress.clone(),
             loading_title,

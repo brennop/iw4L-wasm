@@ -502,6 +502,17 @@ pub(super) async fn connect_worker(
     Ok(((), WsConn(inner)))
 }
 
+/// Page-clock seconds of a worker wall-clock stamp (epoch ms), or -1 if absent.
+fn page_seconds(epoch_ms: Option<f64>) -> f64 {
+    let origin = Reflect::get(&js_sys::global(), &JsValue::from_str("performance"))
+        .ok()
+        .and_then(|perf| get(&perf, "timeOrigin").as_f64());
+    match (epoch_ms, origin) {
+        (Some(at), Some(origin)) => (at - origin).round() / 1000.0,
+        _ => -1.0,
+    }
+}
+
 /// `window.IW4L_WT_WORKER` (set by `index.html`, versioned by `xtask web`), or
 /// the unversioned name.
 fn worker_url() -> String {
@@ -543,7 +554,10 @@ fn on_control(state: &Rc<RefCell<State>>, message: &JsValue) {
         "ready" => {
             let mut state = state.borrow_mut();
             state.worker_ready = format!(
-                "max_datagram_size={} congestion_control={:?}",
+                "worker_script_at={}s worker_connect_at={}s worker_ready_at={}s max_datagram_size={} congestion_control={:?}",
+                page_seconds(number("scriptAt")),
+                page_seconds(number("connectAt")),
+                page_seconds(number("readyAt")),
                 number("maxDatagramSize").unwrap_or(0.0),
                 get(message, "congestionControl")
             );

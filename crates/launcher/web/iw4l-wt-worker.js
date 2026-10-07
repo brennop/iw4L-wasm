@@ -22,6 +22,10 @@
 // stream id for the stream kinds, then the payload; Close is a u32 LE code and the reason bytes.
 'use strict';
 
+// L2: wall-clock stamps (epoch ms) so the page can place the worker on its own clock.
+const scriptAt = performance.timeOrigin + performance.now();
+let connectAt = 0;
+
 const KIND_DATAGRAM = 0;
 const KIND_OPEN_BI = 1;
 const KIND_OPEN_UNI = 2;
@@ -112,6 +116,7 @@ function postStats() {
 }
 
 async function connect(message) {
+  connectAt = performance.timeOrigin + performance.now();
   const options = {};
   if (message.certHash) {
     options.serverCertificateHashes = [{ algorithm: 'sha-256', value: message.certHash }];
@@ -152,6 +157,9 @@ async function connect(message) {
   statsTimer = setInterval(postStats, STATS_INTERVAL_MS);
   self.postMessage({
     type: 'ready',
+    scriptAt,
+    connectAt,
+    readyAt: performance.timeOrigin + performance.now(),
     maxDatagramSize,
     congestionControl: transport.congestionControl,
   });
