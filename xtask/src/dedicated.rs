@@ -50,7 +50,9 @@ options:
                      tunnel. Binds the WebTransport listener on 0.0.0.0 whatever --bind is
                      and adds HOST to its certificate. The share URL then has no transport=ws.
   --no-build         skip the cargo builds; use what is already built
-  --fast             build the wasm with the quick web-dev profile (bigger, not for release)
+  --release-web      build the wasm with the slow fat-LTO web profile (small, ~10 min); the
+                     default is the quick web-dev profile (bigger, not for release)
+  --fast             accepted, does nothing: the quick web-dev wasm is the default
   --no-web           skip only the wasm build; reuse dist/web as it is
   --exit-after SECS  test hook: shut down after SECS seconds, as if by Ctrl-C
   --stop-file PATH   test hook: shut down once PATH exists (cargo xtask mem-census uses it)
@@ -70,7 +72,7 @@ struct Args {
     wt_host: Option<String>,
     build: bool,
     web: bool,
-    fast_web: bool,
+    release_web: bool,
     exit_after: Option<Duration>,
     stop_file: Option<PathBuf>,
     host_exe: Option<PathBuf>,
@@ -89,7 +91,7 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
         wt_host: env.get("IW4L_WT_HOST"),
         build: true,
         web: true,
-        fast_web: false,
+        release_web: false,
         exit_after: None,
         stop_file: None,
         host_exe: None,
@@ -122,7 +124,8 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
             "--wt-host" => out.wt_host = Some(value("a host name")?),
             "--no-build" => out.build = false,
             "--no-web" => out.web = false,
-            "--fast" => out.fast_web = true,
+            "--release-web" => out.release_web = true,
+            "--fast" => {}
             "--exit-after" => {
                 let secs: u64 = value("seconds")?
                     .parse()
@@ -428,8 +431,8 @@ fn build(root: &Path, args: &Args) -> Res<()> {
         return Ok(());
     }
     let mut web_args = vec!["--no-opt".to_string()];
-    if args.fast_web {
-        web_args.push("--fast".to_string());
+    if args.release_web {
+        web_args.push("--release".to_string());
     }
     crate::web::run(root, &web_args)
 }

@@ -299,7 +299,8 @@ mr:
 	@$(XTASK) mr $(ARGS) $(FILES)
 
 # Browser build: cargo (wasm32) -> wasm-bindgen -> optional wasm-opt -> dist/web/.
-# Builds with [profile.web] (fat LTO); PROFILE= overrides it. Serve it with
+# Builds with the quick [profile.web-dev]; PROFILE=web gives the small fat-LTO
+# build to ship (~10 min), any other PROFILE= overrides it. Serve it with
 # web-serve (scripts/web_serve.py: http.server + the pre-compressed .wasm.gz).
 WEB_PORT ?= 8080
 web:

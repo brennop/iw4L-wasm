@@ -1,8 +1,10 @@
-//! `web [--profile NAME | --fast] [--features LIST] [--no-opt]`: build the browser entry into `dist/web/`.
-//! `--fast` is `--profile web-dev`: a quick, larger wasm for iterating.
+//! `web [--release | --profile NAME] [--features LIST] [--no-opt]`: build the browser entry into `dist/web/`.
+//! The default is `--profile web-dev`: a quick, larger wasm for iterating (`--fast` is
+//! accepted and means the same). `--release` is `--profile web`: the small fat-LTO wasm
+//! to ship, ~10 min after any edit.
 //! `--features` goes to the launcher build (e.g. `bevy-debug` for system names in panics).
 //!
-//! cargo build (wasm32, `launcher`'s `iw4l` bin, `[profile.web]` by default) ->
+//! cargo build (wasm32, `launcher`'s `iw4l` bin, `[profile.web-dev]` by default) ->
 //! wasm-bindgen -> optional wasm-opt -> `iw4l_bg.wasm.gz` -> `index.html` next to
 //! the glue, its URLs tagged with the wasm's hash. The `wasm-bindgen` CLI has to
 //! match the crate version in `Cargo.lock` exactly, so that version is read
@@ -30,7 +32,7 @@ const WASM_OPT_FLAGS: [&str; 7] = [
 ];
 
 pub fn run(root: &Path, args: &[String]) -> Res<()> {
-    let mut profile = "web".to_owned();
+    let mut profile = "web-dev".to_owned();
     let mut optimise = true;
     let mut features = None;
     let mut iter = args.iter();
@@ -43,10 +45,11 @@ pub fn run(root: &Path, args: &[String]) -> Res<()> {
                 features = Some(iter.next().ok_or("--features needs a value")?.clone());
             }
             "--no-opt" => optimise = false,
+            "--release" => profile = "web".to_owned(),
             "--fast" => profile = "web-dev".to_owned(),
             other => {
                 return Err(format!(
-                    "usage: web [--profile NAME | --fast] [--features LIST] [--no-opt] (got {other})"
+                    "usage: web [--release | --profile NAME] [--features LIST] [--no-opt] (got {other})"
                 ));
             }
         }

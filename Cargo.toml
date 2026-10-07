@@ -227,18 +227,20 @@ codegen-units = 16
 incremental = true
 strip = "symbols"
 
-# The browser build (`make web` / `xtask web`). Play's settings buy a fast
-# native link; the wasm is downloaded and compiled by every visitor, so its
-# size is worth the slow link: fat LTO, one codegen unit, no incremental.
+# The shipping browser build, opt-in: `xtask web --release` / `xtask dedicated
+# --release-web` (the default is `web-dev`). Play's settings buy a fast native
+# link; the wasm is downloaded and compiled by every visitor, so its size is
+# worth the slow link: fat LTO, one codegen unit, no incremental.
 [profile.web]
 inherits = "play"
 lto = "fat"
 codegen-units = 1
 incremental = false
 
-# Iterating on the browser build (`xtask web --fast`, `xtask dedicated --fast`):
+# The default browser build (`make web`, `xtask web`, `xtask dedicated`):
 # play's settings again, so an edit relinks in seconds-to-minutes, not the fat-LTO
-# link. The wasm is bigger and slower than `web`'s; never ship it.
+# link. The wasm is bigger and slower than `web`'s; never ship it (use
+# `--release` / `--release-web` for that).
 [profile.web-dev]
 inherits = "play"
 
