@@ -38,10 +38,12 @@ use crate::transport::bootstrap::{
 };
 use crate::transport::fragment::{Fragmenter, Reassembler};
 use crate::transport::protocol::{ContentFingerprint, HandshakeHello, MatchDescriptor};
-use crate::transport::udp_session::{RelayMailbox, UdpAuthorityHub, UdpClientLink};
+use crate::transport::udp_session::{InboundPush, RelayMailbox, UdpAuthorityHub, UdpClientLink};
 
 const RELAY_PACKET_BYTES: usize = crate::transport::protocol::MAX_PACKET_BYTES as usize;
+/// Outbound/control cap, and the per-member cap on the shared inbound queue.
 const HOST_DATA_CAP: usize = 64;
+const HOST_INBOUND_TOTAL_CAP: usize = 1024;
 const HOST_CONTROL_CAP: usize = 32;
 
 const BOOTSTRAP_PRIORITY: i32 = -32;
@@ -577,7 +579,7 @@ fn spawn_worker(role: &'static str, kind: SessionKind, player_name: String) -> M
     let commands = Arc::new(Mutex::new(Vec::new()));
     let installed_load = Arc::new(Mutex::new(None));
     let bootstrap = BootstrapLane::new();
-    let mailbox = RelayMailbox::new(HOST_DATA_CAP);
+    let mailbox = RelayMailbox::new_with_member_cap(HOST_DATA_CAP, HOST_INBOUND_TOTAL_CAP, HOST_DATA_CAP);
     let cancel = CancellationToken::new();
     let close = CancellationToken::new();
     let facts = Arc::new(Mutex::new(Vec::new()));
@@ -2303,8 +2305,18 @@ async fn datagram_ingress(
                 let reassembler = reassemblers.entry(member).or_insert_with(relay_reassembler);
                 match reassembler.push(payload) {
                     Ok(Some(packet)) => {
-                        if let Err(error) = mailbox.push_inbound(member, packet) {
-                            diag::warn!(Net, "master {role} inbound mailbox: {error}");
+                        match mailbox.push_inbound(member, packet) {
+                            Ok(InboundPush::Queued) => {}
+                            Ok(InboundPush::DroppedOldest) => {
+                                diag::warn!(
+                                    Net,
+                                    "master {role} inbound mailbox: {} (member {member:?})",
+                                    InboundPush::OVER_CAP_NOTE
+                                );
+                            }
+                            Err(error) => {
+                                diag::warn!(Net, "master {role} inbound mailbox: {error}");
+                            }
                         }
                     }
                     Ok(None) => {}

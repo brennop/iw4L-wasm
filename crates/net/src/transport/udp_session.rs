@@ -39,10 +39,31 @@ pub struct RelayMailbox {
     control_inbound_drained: Arc<tokio::sync::Notify>,
     control_outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     cap: usize,
+    inbound_cap: usize,
+    inbound_member_cap: usize,
+}
+
+/// Outcome of an accepted inbound push.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InboundPush {
+    Queued,
+    /// The member was at its cap: its oldest queued datagram was dropped.
+    DroppedOldest,
+}
+
+impl InboundPush {
+    pub const OVER_CAP_NOTE: &'static str = "relay mailbox: member over cap, dropped oldest";
 }
 
 impl RelayMailbox {
     pub fn new(cap: usize) -> Self {
+        Self::new_with_member_cap(cap, cap, cap)
+    }
+
+    /// cap bounds outbound and control queues; the inbound queue holds at most
+    /// inbound_cap datagrams overall and member_cap per member, so one noisy
+    /// member cannot starve the others.
+    pub fn new_with_member_cap(cap: usize, inbound_cap: usize, member_cap: usize) -> Self {
         Self {
             inbound: Arc::new(Mutex::new(Vec::new())),
             outbound: Arc::new(Mutex::new(Vec::new())),
@@ -51,6 +72,8 @@ impl RelayMailbox {
             control_inbound_drained: Arc::new(tokio::sync::Notify::new()),
             control_outbound: Arc::new(Mutex::new(Vec::new())),
             cap,
+            inbound_cap,
+            inbound_member_cap: member_cap,
         }
     }
 
@@ -101,8 +124,26 @@ impl RelayMailbox {
         Self::new(RELAY_MAIL_CAP)
     }
 
-    pub fn push_inbound(&self, member: MemberId, bytes: Vec<u8>) -> Result<(), &'static str> {
-        push_mail(&self.inbound, self.cap, member, bytes)
+    /// A member at its cap loses its OLDEST queued datagram: the newest one
+    /// carries the freshest commands and the resend of the oldest unacked one.
+    /// Only a full queue (other members' datagrams) refuses the new datagram.
+    pub fn push_inbound(
+        &self,
+        member: MemberId,
+        bytes: Vec<u8>,
+    ) -> Result<InboundPush, &'static str> {
+        let mut queue = self.inbound.lock().expect("relay mailbox poisoned");
+        let mut outcome = InboundPush::Queued;
+        if queue.iter().filter(|(m, _)| *m == member).count() >= self.inbound_member_cap {
+            if let Some(oldest) = queue.iter().position(|(m, _)| *m == member) {
+                queue.remove(oldest);
+            }
+            outcome = InboundPush::DroppedOldest;
+        } else if queue.len() >= self.inbound_cap {
+            return Err("relay mailbox full");
+        }
+        queue.push((member, bytes));
+        Ok(outcome)
     }
 
     pub fn take_inbound(&self) -> Vec<(MemberId, Vec<u8>)> {
