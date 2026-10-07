@@ -37,7 +37,7 @@ options:
   --map MAP          map each host serves (default mp_rust)
   --bind IP          master listen address (default 0.0.0.0, the LAN; 127.0.0.1 = local only)
   --pack PATH        game pack, linked or copied to <web>/game.pack
-                     (default on Windows: E:\\iw4l\\packs\\mp_rust_cap512_merge2.pack)
+                     (default on Windows: E:\\iw4l\\packs\\mp_rust_cap512_1007.pack)
   --certs DIR        dir holding iw4l-ca.pem, server-cert.pem, server-key.pem
                      (default: E:\\iw4l\\o1-duo\\certs if complete, else minted with openssl
                      under the run base dir)
@@ -332,7 +332,7 @@ fn resolve_certs(base: &Path, explicit: Option<&Path>) -> Res<Ca> {
 fn resolve_pack(explicit: Option<PathBuf>) -> Res<PathBuf> {
     let pack = match explicit {
         Some(path) => path,
-        None if is_windows() => PathBuf::from(r"E:\iw4l\packs\mp_rust_cap512_merge2.pack"),
+        None if is_windows() => PathBuf::from(r"E:\iw4l\packs\mp_rust_cap512_1007.pack"),
         None => {
             return Err("pass --pack PATH (a game.pack built by `cargo xtask web-pack`)".into());
         }
