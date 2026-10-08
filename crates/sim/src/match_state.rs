@@ -94,6 +94,8 @@ pub struct ClientMatchState {
 
     pub item_use_spawn_ms: i32,
     pub item_use_entity: Option<crate::EntityRef>,
+    /// When the use press on `item_use_entity` began.
+    pub item_use_press_ms: i32,
 
     pub(crate) ammo_clip: i32,
 
@@ -222,6 +224,7 @@ impl ClientMatchState {
             life_sequence: self.life_sequence,
             item_use_spawn_ms: self.item_use_spawn_ms,
             item_use_entity: self.item_use_entity,
+            item_use_press_ms: self.item_use_press_ms,
             ammo_clip: self.ammo_clip,
             ammo_stock: self.ammo_stock,
             score: self.score,
@@ -280,6 +283,7 @@ impl ClientMatchState {
         self.life_sequence = meta.life_sequence;
         self.item_use_spawn_ms = meta.item_use_spawn_ms;
         self.item_use_entity = meta.item_use_entity;
+        self.item_use_press_ms = meta.item_use_press_ms;
         self.ammo_clip = meta.ammo_clip;
         self.ammo_stock = meta.ammo_stock;
         self.score = meta.score;

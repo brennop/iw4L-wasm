@@ -18,6 +18,7 @@ pub mod identities;
 pub mod input;
 mod item;
 mod local_profile;
+pub use item::ITEM_USE_HOLD_MS;
 pub use local_profile::LocalPlayerProfile;
 mod mantle_xanim;
 pub mod match_state;

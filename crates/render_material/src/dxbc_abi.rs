@@ -242,6 +242,14 @@ pub fn build_dxbc_pass_abi(
                 square_rgb: false,
                 rgb_scale: core::f32::consts::FRAC_1_SQRT_2 / 2.0,
             }),
+            // T6 probes are HDR (rgb / alpha), but the probes bound here come from
+            // IW4/IW5/T5 maps, whose alpha is not a scale: dividing by it blows out.
+            SamplerSource::SurfaceReflectionProbe => Some(SampleAdapter {
+                slot,
+                opaque_alpha: true,
+                square_rgb: false,
+                rgb_scale: 1.0,
+            }),
             _ => None,
         })
         .collect();

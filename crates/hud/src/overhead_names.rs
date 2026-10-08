@@ -296,6 +296,16 @@ fn update_overhead_names(
         if meta.lifecycle != sim::ClientLifecycle::Alive {
             continue;
         }
+        let enemy = local_meta.client_state_team == 0
+            || local_meta.client_state_team != meta.client_state_team;
+        if enemy
+            && snapshot
+                .players
+                .iter()
+                .any(|(id, ps)| *id == client && ps.perks[1] & playerstate_iw4::PERK1_SPYGAME != 0)
+        {
+            continue;
+        }
         let Some(name) = entity_iw4::client_state_name(&meta.name) else {
             continue;
         };

@@ -15,6 +15,8 @@ pub struct Pml {
     pub jump_animations: [Option<(crate::JumpAnimation, bool)>; 4],
     pub mantle_movetype: Option<u8>,
     pub landing_animation: bool,
+    /// Damage this step's landing deals, carried by its landing-pain event.
+    pub fall_damage: i32,
 }
 
 impl Pml {

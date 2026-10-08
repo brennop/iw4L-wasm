@@ -4,7 +4,7 @@ use asset_game::MenuCatalog;
 use assets::{PreparedLocalizedStrings, PreparedWeapons};
 use bevy::prelude::*;
 use net::{LocalPresentClient, PresentedSnapshot};
-use playerstate_iw4::{BREATH_HOLD_TIME_MS, weap_flags};
+use playerstate_iw4::{breath_hold_time_ms, weap_flags};
 
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate_fonts};
 use crate::gpu_list::{HudTessPass, TessJob};
@@ -75,7 +75,7 @@ pub(crate) fn update(
     let text = if ps.weap_flags & weap_flags::HOLD_BREATH != 0 {
         format!(
             "Holding breath  {:.1}s",
-            (BREATH_HOLD_TIME_MS - ps.hold_breath_timer).max(0) as f32 * 0.001
+            (breath_hold_time_ms(ps) - ps.hold_breath_timer).max(0) as f32 * 0.001
         )
     } else if ps.hold_breath_timer > 0 {
         format!(

@@ -1343,6 +1343,7 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
     out.put_u32(meta.life_sequence.0);
     out.put_i32(meta.item_use_spawn_ms);
     encode_optional_entity_ref(out, meta.item_use_entity);
+    out.put_i32(meta.item_use_press_ms);
     out.put_i32(meta.ammo_clip);
     out.put_i32(meta.ammo_stock);
     out.put_i32(meta.score);
@@ -1564,6 +1565,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     let life_sequence = LifeSequence(input.get_u32()?);
     let item_use_spawn_ms = input.get_i32()?;
     let item_use_entity = decode_optional_entity_ref(input)?;
+    let item_use_press_ms = input.get_i32()?;
     let ammo_clip = input.get_i32()?;
     let ammo_stock = input.get_i32()?;
     let score = input.get_i32()?;
@@ -1781,6 +1783,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         life_sequence,
         item_use_spawn_ms,
         item_use_entity,
+        item_use_press_ms,
         ammo_clip,
         ammo_stock,
         score,

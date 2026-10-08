@@ -437,6 +437,7 @@ fn run_players_system(ecs: &mut World) {
                 jump_animations,
                 force_movement_anim,
                 landing_animation,
+                fall_damage,
             ) = {
                 let ps = world
                     .player_mut(*id)
@@ -478,6 +479,7 @@ fn run_players_system(ecs: &mut World) {
                     pml.jump_animations,
                     pml.mantle_movetype.is_some(),
                     pml.landing_animation,
+                    pml.fall_damage,
                 )
             };
             world
@@ -499,6 +501,9 @@ fn run_players_system(ecs: &mut World) {
             }
             if landing_animation {
                 crate::combat::apply_player_anim_event(&mut world, *id, 5);
+            }
+            if fall_damage > 0 && world.publishes_snapshot() {
+                apply_fall_damage(&mut world, tick, *id, fall_damage, moved_to);
             }
             if let Some(movetype) = anim_movetype {
                 let view_facts = world.combat_facts_for(view_w);
@@ -588,6 +593,24 @@ fn run_players_system(ecs: &mut World) {
         request.input.cmds = consumed;
     }
     request.fire_results = fire_results;
+}
+
+/// A landing-pain event's damage, dealt by the world as `MOD_FALLING` so the
+/// game scripts see it as IW4's do (Commando's immunity is theirs).
+fn apply_fall_damage(world: &mut FrameWorld, tick: Tick, id: ClientId, amount: i32, at: [f32; 3]) {
+    let hit = crate::script::ScriptHit {
+        piece: None,
+        target: crate::script::HitTarget::Player(id),
+        amount,
+        origin: at,
+        attacker: None,
+        inflictor: None,
+        means: "MOD_FALLING",
+        weapon: 0,
+        flags: 0,
+        hitloc: 0,
+    };
+    crate::damage::apply_script_hit(world, tick, &hit);
 }
 
 fn record_collision_state_system(ecs: &mut World) {

@@ -1,7 +1,7 @@
 use asset_core::AssetNamespace;
 use bevy::prelude::*;
 use net::{LocalPresentClient, PresentedSnapshot};
-use playerstate_iw4::{BREATH_HOLD_TIME_MS, weap_flags};
+use playerstate_iw4::{breath_hold_time_ms, weap_flags};
 
 use crate::sources::{DesiredSource, SourceCueRequest, SourceKey};
 use crate::{AliasCommand, PlayAlias};
@@ -112,7 +112,7 @@ pub(crate) fn update(
             });
         }
         if let Some(ps) = ps {
-            let alias = if ps.hold_breath_timer > BREATH_HOLD_TIME_MS {
+            let alias = if ps.hold_breath_timer > breath_hold_time_ms(ps) {
                 cues.gasp
             } else {
                 cues.exhale

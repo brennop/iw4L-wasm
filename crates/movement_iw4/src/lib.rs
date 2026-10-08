@@ -43,7 +43,7 @@ pub use check_prone::{PRONE_CHECK_HEIGHT, PRONE_FEET_DIST, check_prone, player_p
 pub use cmdscale::{CmdScaleWalkContext, cmd_scale_walk};
 pub use collision::CollisionBackend;
 pub use correct_solid::{CorrectSolidOutcome, correct_solid};
-pub use crash::{crash_land, crash_land_fall_height};
+pub use crash::{crash_land, crash_land_fall_height, fall_damage};
 pub use dmgtimer::{
     ANIM_MT_FLINCH_FORWARD, PLAYER_DMGTIMER_FLINCH_TIME_MS, PLAYER_DMGTIMER_MAX_TIME,
     PLAYER_DMGTIMER_MIN_SCALE, PLAYER_DMGTIMER_STUMBLE_TIME_MS, PLAYER_DMGTIMER_TIME_PER_POINT,

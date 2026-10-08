@@ -309,7 +309,9 @@ struct PhysicalInputState {
 }
 
 fn publish_client_action_input(
-    time: Res<Time>,
+    // The clock `sample_client_input` reads: a press and the samples that
+    // time its hold must agree.
+    time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut motion: MessageReader<MouseMotion>,

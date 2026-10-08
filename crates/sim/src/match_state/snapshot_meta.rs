@@ -24,6 +24,7 @@ pub struct ClientSnapshotMeta {
 
     pub item_use_spawn_ms: i32,
     pub item_use_entity: Option<crate::EntityRef>,
+    pub item_use_press_ms: i32,
 
     pub ammo_clip: i32,
 

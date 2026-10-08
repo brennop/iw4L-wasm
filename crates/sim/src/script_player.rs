@@ -716,7 +716,7 @@ pub(crate) fn give_start_ammo(world: &mut FrameWorld, id: ClientId, weapon: u32)
     set_ammo_stock(world, id, weapon, stock);
 }
 
-fn perk_bits(name: &str) -> (u32, u32) {
+fn perk_bits(name: &str) -> ([u32; 2], u32) {
     let perk = match name {
         "specialty_fastreload" => weapon_iw4::PERK_FASTRELOAD,
         "specialty_coldblooded" => playerstate_iw4::PERK_COLDBLOODED,
@@ -728,23 +728,34 @@ fn perk_bits(name: &str) -> (u32, u32) {
         "specialty_bulletaccuracy" => weapon_iw4::PERK_BULLETACCURACY,
         "specialty_pistoldeath" => playerstate_iw4::PERK_PISTOLDEATH,
         "specialty_fastmantle" => playerstate_iw4::PERK_FASTMANTLE,
+        "specialty_quickdraw" => playerstate_iw4::PERK_QUICKDRAW,
+        "specialty_holdbreath" => playerstate_iw4::PERK_HOLDBREATH,
+        _ => 0,
+    };
+    let perk1 = match name {
+        "specialty_spygame" => playerstate_iw4::PERK1_SPYGAME,
         _ => 0,
     };
     let e_flags = match name {
         "specialty_localjammer" => playerstate_iw4::eflags::RADAR_JAM,
         _ => 0,
     };
-    (perk, e_flags)
+    ([perk, perk1], e_flags)
 }
 
 pub(crate) fn set_perk(world: &mut FrameWorld, id: ClientId, name: &str, on: bool) {
-    let (perk, e_flags) = perk_bits(name);
+    let (perks, e_flags) = perk_bits(name);
     if let Some(ps) = world.player_mut(id) {
+        for (word, perk) in ps.perks.iter_mut().zip(perks) {
+            if on {
+                *word |= perk;
+            } else {
+                *word &= !perk;
+            }
+        }
         if on {
-            ps.perks[0] |= perk;
             ps.e_flags |= e_flags;
         } else {
-            ps.perks[0] &= !perk;
             ps.e_flags &= !e_flags;
         }
     }

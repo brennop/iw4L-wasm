@@ -749,6 +749,36 @@ fn apply_weapon_switch_requests(
     }
 }
 
+/// Use+reload reloads, except over an item: there a hold is the item's
+/// (`sim::ITEM_USE_HOLD_MS`, the authority takes it) and a tap still reloads,
+/// sent once it is released, if the item is still the one it began on.
+fn use_reload_as_reload(
+    actions: &mut ClientActionInput,
+    cmd: &mut playerstate_iw4::UserCmd,
+    ps: Option<&playerstate_iw4::PlayerState>,
+) {
+    use playerstate_iw4::buttons::{RELOAD, USE_RELOAD};
+    let down = cmd.buttons & USE_RELOAD != 0;
+    let now = actions.now_msec;
+    let item = ps
+        .filter(|ps| ps.cursor_hint != 0)
+        .map(|ps| ps.cursor_hint_ent_index);
+    if down {
+        if !actions.use_reload_down {
+            actions.use_reload_over_item = item.map(|ent| (now, ent));
+        }
+        if actions.use_reload_over_item.is_none() && item.is_none() {
+            cmd.buttons |= RELOAD;
+        }
+    } else if let Some((since, ent)) = actions.use_reload_over_item.take()
+        && now.wrapping_sub(since) < sim::ITEM_USE_HOLD_MS
+        && item == Some(ent)
+    {
+        cmd.buttons |= RELOAD;
+    }
+    actions.use_reload_down = down;
+}
+
 pub fn sample_client_input(
     time: Res<Time<Real>>,
     mut actions: ResMut<ClientActionInput>,
@@ -1060,12 +1090,10 @@ pub fn sample_client_input(
             );
         }
     }
+    actions.client.airborne =
+        ps.is_some_and(|ps| ps.ground_entity_num == playerstate_iw4::ENTITYNUM_NONE);
     let mut cmd = build_usercmd(&mut actions, &look, 0);
-    if cmd.buttons & playerstate_iw4::buttons::USE_RELOAD != 0
-        && ps.is_some_and(|ps| ps.cursor_hint == 0)
-    {
-        cmd.buttons |= playerstate_iw4::buttons::RELOAD;
-    }
+    use_reload_as_reload(&mut actions, &mut cmd, ps);
     look.angles = cmd.angles;
     if !frozen
         && aim.live
