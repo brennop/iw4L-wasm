@@ -39,7 +39,14 @@ silence.
 Installing it is `session::match_apply`. Preflight builds a `MatchInstallPlan` — mode, doors, objectives, scene conversion, drawable world —
 and publishes nothing until it hands one over. Commit publishes it, boots the
 sim and writes `MatchInstalled`. The authority then prepares bot navigation on
-`load_pool()` from a world snapshot; admission waits for `BotNavigationReady`.
+`load_pool()` from a world snapshot; it reports `BotNavigationReady` with the
+world generation. Session owns readiness policy: dedicated advancement needs
+navigation; listen advancement also needs rendering unless headless. Graphical
+presentation and admission require generation-matched rendering and audio;
+headless policy bypasses those presentation services.
+Explicit silent audio satisfies that policy; missing or failed audio does not.
+Old completion reports cannot release a newer world, and renderer systems do
+not write the authority hold. Session also owns the local input predicate.
 The walk graph is cached (`nav`), keyed by the content digest with the bake's
 schema and hull, so the second start of a map reads it back instead of walking
 the grid again; a match teardown drops the in-memory copy, not the file.

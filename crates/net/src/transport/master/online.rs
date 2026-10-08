@@ -2196,11 +2196,11 @@ fn pump_local_queues(
                 // not reported its map, so reaching here means the readiness
                 // was dropped between the two — the peer would otherwise wait
                 // out the whole match with nothing said.
-                diag::warn!(
-                    Net,
-                    "bootstrap offer dropped for a peer that is not map-ready ({} bytes)",
-                    bytes.len()
-                );
+                return Err(TransportFault::new(
+                    "bootstrap_readiness",
+                    role,
+                    "queued bootstrap lost map readiness",
+                ));
             }
             continue;
         }

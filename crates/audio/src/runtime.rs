@@ -87,6 +87,7 @@ pub struct AudioRuntime {
     sources: Arc<SourceInbox>,
     listener: Arc<ListenerState>,
     event_context: Arc<crate::event::EventContextState>,
+    fire_verdicts: Arc<Mutex<net::FireVerdictState>>,
     source_publisher: Mutex<SourcePublisher>,
     rejections: Arc<[AtomicU64; 7]>,
     shutdown: Arc<AtomicBool>,
@@ -115,6 +116,8 @@ impl AudioRuntime {
         let control_listener = listener.clone();
         let event_context = Arc::new(crate::event::EventContextState::default());
         let control_event_context = event_context.clone();
+        let fire_verdicts = Arc::new(Mutex::new(net::FireVerdictState::default()));
+        let control_fire_verdicts = fire_verdicts.clone();
         let control_ids = Arc::new(AtomicU64::new(1));
         let rejections = Arc::new(std::array::from_fn(|_| AtomicU64::new(0)));
         let control_rejections = rejections.clone();
@@ -126,6 +129,7 @@ impl AudioRuntime {
             control_sources,
             control_listener,
             control_event_context,
+            control_fire_verdicts,
             control_ids,
             control_rejections,
             control_budget,
@@ -155,10 +159,21 @@ impl AudioRuntime {
             sources,
             listener,
             event_context,
+            fire_verdicts,
             source_publisher: Mutex::new(SourcePublisher::new()),
             rejections,
             shutdown,
             worker,
+        }
+    }
+
+    pub fn set_fire_verdicts(&self, verdicts: net::FireVerdictState) {
+        *self
+            .fire_verdicts
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = verdicts;
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
         }
     }
 
@@ -474,6 +489,7 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
         sources,
         listener,
         event_context,
+        fire_verdicts,
         next_id,
         rejections,
         cue_budget,
@@ -548,6 +564,16 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 .as_ref()
                 .is_some_and(CueLease::cancelled)
                 || !events.current(logical.request.event)
+                || (!logical
+                    .request
+                    .instance
+                    .has_reached(InstanceStatus::Started)
+                    && crate::event::EventJournal::fire_refused(
+                        logical.request.event,
+                        &fire_verdicts
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    ))
             {
                 logical
                     .request
@@ -703,6 +729,13 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 && request.epoch != shared.match_epoch.load(Ordering::Acquire)
             {
                 request.reject(CueFailure::StaleScope);
+            } else if crate::event::EventJournal::fire_refused(
+                request.execution.event,
+                &fire_verdicts
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()),
+            ) {
+                request.reject(CueFailure::FireRefused);
             } else if let Err(reason) = events.accept(request.execution.event) {
                 if crate::diagnostics::enabled() {
                     crate::diagnostics::emit(format!(
@@ -734,11 +767,43 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 ));
                 continue;
             }
+            if crate::event::EventJournal::fire_refused(
+                work.request.execution.event,
+                &fire_verdicts
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()),
+            ) {
+                work.complete(crate::StartOutcome::Failed(
+                    crate::StartFailure::CueRefused(CueFailure::FireRefused),
+                ));
+                continue;
+            }
             if !events.current(work.request.execution.event) {
                 work.complete(crate::StartOutcome::Failed(
                     crate::StartFailure::CueRefused(CueFailure::StaleEvent),
                 ));
                 continue;
+            }
+            match events.claim_fire(
+                work.request.execution.event,
+                &work.request.state,
+                work.request.execution.depth,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if Instant::now() >= work.request.execution.deadline {
+                        work.complete(crate::StartOutcome::Failed(crate::StartFailure::Expired));
+                    } else {
+                        pending_cues.push_back(work);
+                    }
+                    continue;
+                }
+                Err(reason) => {
+                    work.complete(crate::StartOutcome::Failed(
+                        crate::StartFailure::CueRefused(reason),
+                    ));
+                    continue;
+                }
             }
             if let Some((key, version)) = work.source {
                 let current = desired
@@ -1177,6 +1242,7 @@ fn refused_cue(
         namespace,
         alias: alias.into(),
         variant: None,
+        loaded_binding_origin: None,
         outcome: crate::StartOutcome::Failed(crate::StartFailure::CueRefused(reason)),
         secondary: None,
         detail: None,

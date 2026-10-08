@@ -1229,12 +1229,13 @@ pub fn decode_zone_image_rgba(
 
 pub type ZoneUiRgba = (u32, u32, Arc<Vec<u8>>);
 
-static ZONE_UI_IMAGES: RwLock<Vec<((asset_core::AssetNamespace, String), ZoneUiRgba)>> =
-    RwLock::new(Vec::new());
+static ZONE_UI_IMAGES: RwLock<Vec<(ZoneUiKey, Arc<[u8]>)>> = RwLock::new(Vec::new());
+
+type ZoneUiKey = (asset_core::AssetNamespace, String);
 
 pub fn store_zone_ui_images(
     namespace: asset_core::AssetNamespace,
-    images: impl IntoIterator<Item = (String, ZoneUiRgba)>,
+    images: impl IntoIterator<Item = (String, Arc<[u8]>)>,
 ) {
     let mut store = ZONE_UI_IMAGES
         .write()
@@ -1247,14 +1248,29 @@ pub fn store_zone_ui_images(
     );
 }
 
-pub fn zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> Option<ZoneUiRgba> {
+fn zone_ui_iwi(namespace: asset_core::AssetNamespace, material: &str) -> Option<Arc<[u8]>> {
     let name = crate::AssetRef::bare_name(material).to_ascii_lowercase();
     ZONE_UI_IMAGES
         .read()
         .unwrap_or_else(|poison| poison.into_inner())
         .iter()
         .find(|((ns, stored), _)| *ns == namespace && *stored == name)
-        .map(|(_, image)| image.clone())
+        .map(|(_, iwi)| Arc::clone(iwi))
+}
+
+pub fn has_zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> bool {
+    zone_ui_iwi(namespace, material).is_some()
+}
+
+pub fn zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> Option<ZoneUiRgba> {
+    let iwi = zone_ui_iwi(namespace, material)?;
+    match decode_iwi_rgba(&iwi) {
+        Ok((width, height, rgba)) => Some((width, height, Arc::new(rgba))),
+        Err(error) => {
+            diag::warn!(Zone, "zone UI image {material}: {error}");
+            None
+        }
+    }
 }
 
 pub fn decode_iwi_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {

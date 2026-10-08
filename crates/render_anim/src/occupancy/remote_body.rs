@@ -1017,13 +1017,13 @@ fn skel_camera_lod(
     smodel_camera_lod(skel.lod, origin, 1.0, eye, ramp)
 }
 
-fn surface_material_name(
+fn surface_material_key(
     surface_index: usize,
     keys: &[Option<asset_core::MaterialKey>],
     edges: &[assets::AssetEdge<assets::MaterialSpace>],
-) -> Option<String> {
+) -> Option<asset_core::MaterialKey> {
     match edges.get(surface_index) {
-        Some(assets::AssetEdge::Bound(_)) => Some(keys.get(surface_index)?.as_ref()?.name.clone()),
+        Some(assets::AssetEdge::Bound(_)) => Some(keys.get(surface_index)?.as_ref()?.clone()),
         _ => None,
     }
 }
@@ -1068,7 +1068,7 @@ fn skin_slot_into(
             geom.surfaces.push(CpuSurfMeta {
                 index_start: 0,
                 index_count: 0,
-                name: surface_material_name(surf.surface_index, keys, edges),
+                material: surface_material_key(surf.surface_index, keys, edges),
             });
             continue;
         }
@@ -1083,7 +1083,7 @@ fn skin_slot_into(
         geom.surfaces.push(CpuSurfMeta {
             index_start,
             index_count: surf.index_count,
-            name: surface_material_name(surf.surface_index, keys, edges),
+            material: surface_material_key(surf.surface_index, keys, edges),
         });
     }
     geom.decoded_n = geom.packed.len();
@@ -1219,9 +1219,9 @@ fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> 
             if let Some((_, to)) = camo
                 .materials
                 .iter()
-                .find(|(from, _)| surface.name.as_deref() == Some(from.name.as_str()))
+                .find(|(from, _)| surface.material.as_ref() == Some(from))
             {
-                surface.name = Some(to.name.clone());
+                surface.material = Some(to.clone());
             }
         }
     }
@@ -1361,7 +1361,7 @@ fn submit_remote_bodies(
     plan.indices.reserve(idx_n);
     let mut session = take_body_packed_session(&mut plan);
     session.reserve_packed(vert_n);
-    let mut mat_by_name: HashMap<String, u32> = HashMap::new();
+    let mut mat_by_key: HashMap<asset_core::MaterialKey, u32> = HashMap::new();
     let mut submitted_verts = 0usize;
     let mut any_missing_material = false;
     for (item, handle, scene_light, probe) in seated {
@@ -1375,26 +1375,26 @@ fn submit_remote_bodies(
         );
         let index_base = appended.map(|(_, index_base)| index_base);
         for surface in item.geom.surfaces.iter() {
-            let Some(name) = surface.name.as_deref() else {
+            let Some(key) = surface.material.as_ref() else {
                 any_missing_material = true;
                 last_cause = Some(RenderGapCause::RemoteBodyMaterialMissing {
                     name: String::new(),
                 });
                 continue;
             };
-            let mat_idx = if let Some(&idx) = mat_by_name.get(name) {
+            let mat_idx = if let Some(&idx) = mat_by_key.get(key) {
                 idx
             } else {
-                let Some(material) = model_materials.material(&tess.catalog, name).cloned() else {
+                let Some(material) = model_materials.material(&tess.catalog, key).cloned() else {
                     any_missing_material = true;
                     last_cause = Some(RenderGapCause::RemoteBodyMaterialMissing {
-                        name: name.to_owned(),
+                        name: format!("{}:{}", key.namespace.as_str(), key.name),
                     });
                     continue;
                 };
                 let idx = plan.materials.len() as u32;
                 plan.materials.push(material);
-                mat_by_name.insert(name.to_owned(), idx);
+                mat_by_key.insert(key.clone(), idx);
                 idx
             };
             if let Some(index_base) = index_base {

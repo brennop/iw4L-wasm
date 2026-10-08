@@ -45,9 +45,10 @@ pub use packet::{
     SRC_XMODEL_RIGID_PTR,
 };
 pub use products::{
-    FrameProduct, FrameProductKind, FrameProductStatus, FrameProductsSnapshot, MissingProductCause,
-    PACKED_SEGMENT_OWNERS, PackedSegment, PackedSegments, ProductTarget, RenderFocusFrame,
-    SourceRevisions, SpotShadowFrameSlot, publish_rows,
+    FrameMaterialRefusal, FrameProduct, FrameProductKind, FrameProductStatus,
+    FrameProductsSnapshot, MissingProductCause, PACKED_SEGMENT_OWNERS, PackedSegment,
+    PackedSegments, ProductTarget, RenderFocusFrame, SourceRevisions, SpotShadowFrameSlot,
+    publish_rows,
 };
 pub use retained::{
     BspCameraLane, LightAttenuationBind, RENDER_FX_DEPTH_HACK, RetainedDrawItem, RetainedDrawKind,

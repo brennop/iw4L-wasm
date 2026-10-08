@@ -64,6 +64,7 @@ pub(crate) fn magic_bullet(
         .life_sequence;
     let shot = AcceptedShot {
         shot_id: crate::ShotId(0),
+        fire_cause: None,
         attacker: owner,
         attacker_life,
         hand: 0,

@@ -11,8 +11,8 @@ use crate::authority::runtime::ClientShotSamples;
 use crate::client::predict::CmdSeq;
 use crate::transport::acked_baseline::AckedBaselineTable;
 use crate::transport::bootstrap::{
-    BootstrapAck, BootstrapLane, BootstrapMessage, BootstrapTransaction, decode_bootstrap,
-    encode_bootstrap, epoch_applies,
+    BootstrapAck, BootstrapLane, BootstrapMessage, BootstrapTransaction, QueuedBootstrap,
+    decode_bootstrap, encode_bootstrap, epoch_applies,
 };
 use crate::transport::delta::{SnapshotDecoder, SnapshotEncoder};
 use crate::transport::frame::{Frame, FrameParts, FrameSegments, FrameTail, WireMeta};
@@ -225,21 +225,8 @@ struct PeerAccount {
 #[derive(Debug)]
 enum PeerAdmission {
     Uncommitted,
-    Pending {
-        bootstrap_id: u32,
-        snapshot_seq: u32,
-        epoch: u32,
-
-        #[allow(dead_code)]
-        tick_b: u32,
-
-        #[allow(dead_code)]
-        offer_bytes: Vec<u8>,
-    },
-    Committed {
-        bootstrap_id: u32,
-        epoch: u32,
-    },
+    Pending(QueuedBootstrap),
+    Committed { bootstrap_id: u32, epoch: u32 },
 }
 
 impl PeerReplicationState {
@@ -854,12 +841,9 @@ impl UdpAuthorityHub {
             return;
         };
         let pending = match &peer.admission {
-            PeerAdmission::Pending {
-                bootstrap_id,
-                snapshot_seq,
-                epoch,
-                ..
-            } => Some((*bootstrap_id, *snapshot_seq, *epoch)),
+            PeerAdmission::Pending(offer) => {
+                Some((offer.bootstrap_id, offer.snapshot_seq, offer.epoch))
+            }
             _ => None,
         };
         let committed = match &peer.admission {
@@ -943,6 +927,11 @@ impl UdpAuthorityHub {
                 .replication
                 .entry(conn)
                 .or_insert_with(PeerReplicationState::new);
+            if let (Some(lane), PeerAdmission::Pending(offer)) = (&self.bootstrap, &peer.admission)
+                && offer.epoch == lane.epoch()
+            {
+                continue;
+            }
             if peer.admits_gameplay(self.bootstrap.is_some()) {
                 if let Some(reliable) = reliable {
                     if let Err(error) = peer.queue_control(
@@ -1040,6 +1029,18 @@ impl UdpAuthorityHub {
                 &world_objects_wire,
                 &tail,
             );
+            if parts
+                .segments()
+                .iter()
+                .map(|segment| segment.len())
+                .sum::<usize>()
+                > segment_delta::MAX_RECONSTRUCTED_FRAME_BYTES
+            {
+                return Err(UdpSendError::Oversized {
+                    encoded_len: parts.segments().iter().map(|segment| segment.len()).sum(),
+                    max_packet_bytes: segment_delta::MAX_RECONSTRUCTED_FRAME_BYTES,
+                });
+            }
             let payload = match peer.baseline.baseline_parts_for_encode() {
                 Some(baseline) if baseline_seq != 0 => {
                     let delta = segment_delta::encode(&parts, baseline, &mut meta_patches);
@@ -1068,14 +1069,6 @@ impl UdpAuthorityHub {
                     continue;
                 };
                 let epoch = lane.epoch();
-                if let PeerAdmission::Pending {
-                    epoch: pending_epoch,
-                    ..
-                } = &peer.admission
-                    && *pending_epoch == epoch
-                {
-                    continue;
-                }
                 let bootstrap_id = {
                     let id = self.next_bootstrap_id.entry(conn).or_insert(1);
                     let current = *id;
@@ -1093,25 +1086,26 @@ impl UdpAuthorityHub {
                     packet_bytes,
                 ) {
                     Ok(txn) => {
-                        peer.admission = PeerAdmission::Pending {
-                            bootstrap_id,
-                            snapshot_seq,
-                            epoch,
-                            tick_b,
-                            offer_bytes: txn.offer_bytes.clone(),
+                        let offer_len = txn.offer_bytes.len();
+                        let queued = match txn.enqueue(lane, target) {
+                            Ok(queued) => queued,
+                            Err(error) => {
+                                diag::warn!(
+                                    Net,
+                                    "bootstrap offer deferred for {target:?}: {error}"
+                                );
+                                continue;
+                            }
                         };
+                        peer.admission = PeerAdmission::Pending(queued);
                         diag::info!(
                             Net,
                             "bootstrap-io session=host event=bootstrap offer encoded peer={target:?} epoch={epoch} bootstrap_id={bootstrap_id} snapshot_seq={snapshot_seq} bytes={}",
-                            txn.offer_bytes.len()
+                            offer_len
                         );
-                        if let Err(error) = lane.push_to_worker(Some(target), txn.offer_bytes) {
-                            diag::warn!(Net, "bootstrap offer dropped for {target:?}: {error}");
-                        } else {
-                            peer.sent_ticks.push_back(snapshot.tick);
-                            while peer.sent_ticks.len() > 32 {
-                                peer.sent_ticks.pop_front();
-                            }
+                        peer.sent_ticks.push_back(snapshot.tick);
+                        while peer.sent_ticks.len() > 32 {
+                            peer.sent_ticks.pop_front();
                         }
                     }
                     Err(error) => {

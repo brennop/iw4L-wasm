@@ -255,6 +255,7 @@ pub struct OwnedMaterialPass {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnedTechnique {
+    pub source_selection: Option<render_material::SourceTechniqueSelection>,
     pub flags: u16,
     pub passes: Vec<OwnedMaterialPass>,
     pub body_scanned: bool,
@@ -1673,6 +1674,7 @@ impl MaterialCatalog {
             let scanned = geometry.technique_slots_scanned & (1u64 << tech_slot) != 0;
             let technique = if scanned {
                 Some(OwnedTechnique {
+                    source_selection: None,
                     flags: geometry.technique_flags_by_slot[tech_slot],
                     passes,
                     body_scanned: true,
@@ -1970,6 +1972,30 @@ fn read_state_bits(mut word: impl FnMut(usize) -> Option<u32>, count: usize) -> 
             break;
         };
         table.push([low, high]);
+    }
+    table
+}
+
+fn t5_colour_keeps_prepass_depth(
+    entry: Option<&[u8; fastfile_t5::TECHNIQUE_SLOT_COUNT]>,
+    mut table: Vec<[u32; 2]>,
+) -> Vec<[u32; 2]> {
+    const DEPTH_PREPASS: usize = 0;
+    let prepass_writes_depth = entry
+        .map(|entry| usize::from(entry[DEPTH_PREPASS]))
+        .and_then(|row| table.get(row))
+        .is_some_and(|bits| bits[1] & asset_iw4::GFXS1_DEPTHWRITE != 0);
+    if !prepass_writes_depth {
+        return table;
+    }
+    for bits in &mut table {
+        let unblended = matches!(
+            crate::MaterialDrawMode::from_state_bits(*bits),
+            crate::MaterialDrawMode::Opaque | crate::MaterialDrawMode::AlphaTest { .. }
+        );
+        if unblended && bits[1] & asset_iw4::GFXS1_DEPTHTEST_DISABLE == 0 {
+            bits[1] |= asset_iw4::GFXS1_DEPTHWRITE;
+        }
     }
     table
 }
@@ -2510,9 +2536,12 @@ impl MaterialCatalog {
                 t5_layered_surface_types: Some(geometry.layered_surface_types),
                 state_flags: geometry.state_flags,
                 camera_region: geometry.camera_region,
-                state_bits: read_state_bits(
-                    |offset| s.u32_at(geometry.state_bits?, offset).ok(),
-                    geometry.state_bits_count,
+                state_bits: t5_colour_keeps_prepass_depth(
+                    geometry.state_bits_entry.as_ref(),
+                    read_state_bits(
+                        |offset| s.u32_at(geometry.state_bits?, offset).ok(),
+                        geometry.state_bits_count,
+                    ),
                 ),
 
                 state_bits_entry: geometry
@@ -2652,6 +2681,7 @@ impl MaterialCatalog {
             let t5_slot = crate::t5_tech_map::iw4_slot_to_t5(iw4_slot);
             let technique = if scanned {
                 Some(OwnedTechnique {
+                    source_selection: None,
                     flags: flags_by_slot[iw4_slot],
                     passes,
                     body_scanned: true,
@@ -2972,6 +3002,7 @@ impl MaterialCatalog {
             let iw5_slot = crate::iw5_tech_map::iw4_slot_to_iw5(iw4_slot);
             let technique = if scanned {
                 Some(OwnedTechnique {
+                    source_selection: None,
                     flags: flags_by_slot[iw4_slot],
                     passes,
                     body_scanned: true,

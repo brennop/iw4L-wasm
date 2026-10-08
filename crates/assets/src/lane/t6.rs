@@ -30,8 +30,7 @@ pub struct T6NativeMaterial {
     pub technique_set: String,
     pub textures: Vec<asset_material::t6_techset::T6Texture>,
     pub constants: Vec<asset_material::MaterialConstant>,
-    pub lit_state: Option<u32>,
-    pub emissive_state: Option<u32>,
+    pub state: asset_material::t6_techset::T6MaterialState,
 }
 
 #[derive(Default)]
@@ -194,8 +193,12 @@ fn capture_sounds(
     let (banks, mut report) = asset_audio::t6_sound_banks(path);
     let foley = foley_zone(path, &mut report);
     let loads: Vec<&fastfile_t6::ZoneLoad> = std::iter::once(load).chain(&foley).collect();
-    let (catalog, filled, gaps) =
-        asset_audio::capture_t6_sounds(path, &loads, &banks, names.iter().map(String::as_str));
+    let (catalog, filled, gaps) = asset_audio::capture_t6_sounds_for_iw4_compatibility(
+        path,
+        &loads,
+        &banks,
+        names.iter().map(String::as_str),
+    );
     report.push(format!(
         "t6 sounds: {} of {} weapon aliases read (+{} secondary layers, {} audio assets) from {} sound banks; {} gaps",
         filled.iter().filter(|name| names.contains(*name)).count(),
@@ -646,21 +649,26 @@ fn capture_native(
         }
     }
     let header = &material.header;
-    let state = |technique: usize| {
-        header
-            .get(MATERIAL_STATE_BITS_ENTRY + technique)
-            .filter(|&&entry| entry != 0xff)
-            .and_then(|&entry| {
-                let table = decode_ptr(header_u32(header, MATERIAL_STATE_BITS_TABLE)?)?;
-                let bytes = load
-                    .blocks
-                    .bytes(table.at(u32::from(entry) * MATERIAL_STATE_BITS), 4)
-                    .ok()?;
-                header_u32(bytes, 0)
-            })
-    };
-    let lit_state = state(asset_material::t6_techset::T6_TECHNIQUE_LIT);
-    let emissive_state = state(asset_material::t6_techset::T6_TECHNIQUE_EMISSIVE);
+    let entries = header
+        .get(MATERIAL_STATE_BITS_ENTRY..MATERIAL_STATE_BITS_ENTRY + 36)?
+        .try_into()
+        .ok()?;
+    let count = usize::from(*header.get(86)?);
+    let mut rows = Vec::with_capacity(count);
+    if count > 0 {
+        let table = decode_ptr(header_u32(header, MATERIAL_STATE_BITS_TABLE)?)?;
+        for row in 0..count {
+            let bytes = load
+                .blocks
+                .bytes(table.at(u32::try_from(row).ok()? * MATERIAL_STATE_BITS), 8)
+                .ok()?;
+            rows.push([header_u32(bytes, 0)?, header_u32(bytes, 4)?]);
+        }
+    }
+    let state = asset_material::t6_techset::T6MaterialState { entries, rows };
+    let lit_state = state
+        .first_bits(asset_material::t6_techset::T6_TECHNIQUE_LIT)
+        .map(|bits| bits[0]);
     let opaque = lit_state.is_some_and(|bits| {
         asset_material::MaterialDrawMode::from_state_bits([bits, 0])
             == asset_material::MaterialDrawMode::Opaque
@@ -761,8 +769,7 @@ fn capture_native(
         technique_set,
         textures,
         constants,
-        lit_state,
-        emissive_state,
+        state,
     })
 }
 
@@ -880,7 +887,7 @@ fn capture_weapon_icons(
     loads: &[&fastfile_t6::ZoneLoad],
     ipaks: &[asset_transport::IPak],
     report: &mut Vec<String>,
-) -> Vec<(String, asset_material::ZoneUiRgba)> {
+) -> Vec<(String, Arc<[u8]>)> {
     let mut wanted = std::collections::BTreeSet::new();
     for load in loads {
         for asset in &load.assets {
@@ -955,7 +962,7 @@ fn capture_weapon_icons(
                 continue;
             }
             match capture_icon(load, asset, &all, ipaks) {
-                Ok((width, height, rgba)) => icons.push((name, (width, height, Arc::new(rgba)))),
+                Ok(iwi) => icons.push((name, iwi)),
                 Err(error) => failed.push(format!("{name}: {error}")),
             }
         }
@@ -971,12 +978,12 @@ fn capture_weapon_icons(
             else {
                 continue;
             };
-            let decoded = read_streamed_image(load, asset, ipaks)
-                .and_then(|(_, bytes)| asset_material::decode_iwi_rgba(&bytes));
+            let decoded =
+                read_streamed_image(load, asset, ipaks).and_then(|(_, bytes)| checked_iwi(bytes));
             match decoded {
-                Ok((width, height, rgba)) => {
+                Ok(iwi) => {
                     wanted.remove(&name);
-                    icons.push((name, (width, height, Arc::new(rgba))));
+                    icons.push((name, iwi));
                 }
                 Err(error) => failed.push(format!("{name}: {error}")),
             }
@@ -996,7 +1003,7 @@ fn capture_icon(
     material: &fastfile_t6::LoadedAsset,
     zones: &[&fastfile_t6::ZoneLoad],
     ipaks: &[asset_transport::IPak],
-) -> Result<(u32, u32, Vec<u8>), String> {
+) -> Result<Arc<[u8]>, String> {
     let header = &material.header;
     let count = u32::from(*header.get(MATERIAL_TEXTURE_COUNT).ok_or("short material")?);
     let raw = header_u32(header, MATERIAL_TEXTURE_TABLE).ok_or("short material")?;
@@ -1033,9 +1040,14 @@ fn capture_icon(
                 })
                 .ok_or(error)?,
         };
-        return asset_material::decode_iwi_rgba(&bytes).map_err(|e| format!("{name}: {e}"));
+        return checked_iwi(bytes).map_err(|e| format!("{name}: {e}"));
     }
     Err("no colour map".to_owned())
+}
+
+fn checked_iwi(bytes: Vec<u8>) -> Result<Arc<[u8]>, String> {
+    asset_material::decode_iwi_rgba(&bytes)?;
+    Ok(bytes.into())
 }
 
 fn attachment_rest(offset: [f32; 3], angles: [f32; 3]) -> (bevy::math::Quat, bevy::math::Vec3) {
@@ -1389,25 +1401,9 @@ fn native_material_seed(
     technique_set: &str,
     is_sky: bool,
     materials: &mut asset_material::MaterialCatalog,
-    load: &fastfile_t6::ZoneLoad,
 ) -> Result<usize, String> {
     use asset_world::world_t6::Reader;
     let h = &material.header;
-    let mut states = Vec::new();
-    if h[86] > 0 {
-        let table = Reader::ptr(h, 104)?;
-        for i in 0..h[86] {
-            let b = load
-                .blocks
-                .bytes(table.at(u32::from(i) * 20), 8)
-                .map_err(|e| format!("T6 material states: {e:?}"))?;
-            states.push([Reader::word(b, 0)?, Reader::word(b, 4)?]);
-        }
-    }
-    let state_bits_entry = asset_material::t6_techset::remap_t6_state_bits_entry(
-        h[48..84].try_into().unwrap(),
-        &mut states,
-    );
     let seed = materials.link_material(asset_material::AuthoredMaterial {
         name: asset_core::AssetRef::Real(name.to_owned()),
         namespace: asset_core::AssetNamespace::T6,
@@ -1431,8 +1427,8 @@ fn native_material_seed(
         } else {
             h[88]
         },
-        state_bits: states,
-        state_bits_entry: Some(state_bits_entry),
+        state_bits: Vec::new(),
+        state_bits_entry: None,
         t5_state_bits_entry: None,
         iw5_state_bits_entry: None,
         technique_table: None,
@@ -1528,15 +1524,8 @@ fn capture_bodies(
             .ok_or_else(|| format!("T6 body material {material_name}: native capture failed"))?;
             let set = &techsets[&native.technique_set];
             materials.link_t6_technique_set(set, T6Draw::Lit, report);
-            let seed = native_material_seed(
-                path,
-                material_name,
-                material,
-                &set.name,
-                false,
-                materials,
-                material_load,
-            )?;
+            let seed =
+                native_material_seed(path, material_name, material, &set.name, false, materials)?;
             let row = materials
                 .t6_material(
                     seed,
@@ -1544,8 +1533,9 @@ fn capture_bodies(
                     set,
                     &native.textures,
                     native.constants,
-                    native.lit_state,
+                    &native.state,
                     T6Draw::Lit,
+                    report,
                 )
                 .ok_or("T6 body material link failed")?;
             let row = WalkLocalMaterialIndex::from_walk(row);
@@ -1853,7 +1843,6 @@ impl ZoneLane for T6Lane {
                         &set.name,
                         is_sky,
                         &mut materials,
-                        &load,
                     )?;
                     let row = materials
                         .t6_material(
@@ -1862,8 +1851,9 @@ impl ZoneLane for T6Lane {
                             set,
                             &native.textures,
                             native.constants,
-                            native.lit_state,
+                            &native.state,
                             T6Draw::Lit,
+                            &mut report,
                         )
                         .ok_or("T6 material link failed")?;
                     layer_formats.insert(row, set.world_vert_format);

@@ -76,9 +76,7 @@ impl T6Draw {
     }
 }
 
-const T6_COLOUR_OUTPUT: u32 = 0x47ff_3fff;
 const GFXS0_COLORWRITE_RGB: u32 = 0x0800_0000;
-const GFXS1_DEPTHWRITE: u32 = 0x1;
 
 pub const T6_TECHNIQUE_TYPE_NAMES: [&str; 36] = [
     "depth prepass",
@@ -141,6 +139,157 @@ fn t6_techniques_for_iw4_slot(iw4: &str) -> Vec<usize> {
         .iter()
         .filter_map(|name| T6_TECHNIQUE_TYPE_NAMES.iter().position(|t6| t6 == name))
         .collect()
+}
+
+fn select_t6_technique(
+    set: &T6TechniqueSet,
+    draw: T6Draw,
+    requested: &str,
+) -> Option<render_material::SourceTechniqueSelection> {
+    use render_material::TechniqueSelectionPolicy as Policy;
+    let candidates = match draw {
+        T6Draw::Lit => t6_techniques_for_iw4_slot(requested),
+        T6Draw::Emissive if requested.starts_with("depth") || requested.starts_with("build") => {
+            Vec::new()
+        }
+        T6Draw::Emissive => vec![T6_TECHNIQUE_EMISSIVE],
+    };
+    let slot = candidates.into_iter().find(|&slot| {
+        set.techniques
+            .get(slot)
+            .and_then(Option::as_ref)
+            .is_some_and(|technique| {
+                !technique.passes.is_empty() && technique.passes.len() <= usize::from(u8::MAX)
+            })
+    })?;
+    let source = T6_TECHNIQUE_TYPE_NAMES[slot];
+    let without_fog = requested.strip_suffix(" dfog").unwrap_or(requested);
+    let policy = if source == requested {
+        Policy::Exact
+    } else if source == without_fog {
+        Policy::DfogCompatibility
+    } else if without_fog == "build shadowmap color" && source == "build shadowmap depth" {
+        Policy::DepthToColourCompatibility
+    } else if draw == T6Draw::Emissive {
+        Policy::EmissiveCompatibility
+    } else if without_fog.strip_suffix(" shadow") == Some(source) {
+        Policy::UnshadowedCompatibility
+    } else {
+        Policy::LitFallbackCompatibility
+    };
+    Some(render_material::SourceTechniqueSelection {
+        namespace: crate::AssetNamespace::T6,
+        slot: u8::try_from(slot).ok()?,
+        policy,
+    })
+}
+
+#[derive(Clone, Debug)]
+pub struct T6MaterialState {
+    pub entries: [u8; 36],
+    pub rows: Vec<[u32; 2]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum T6StateRefusal {
+    MissingSourceSelection {
+        target_slot: usize,
+    },
+    MissingEntry {
+        target_slot: usize,
+        source_slot: u8,
+    },
+    IncompleteRows {
+        target_slot: usize,
+        source_slot: u8,
+        base: u8,
+        passes: usize,
+    },
+    AdaptedTableCapacity {
+        target_slot: usize,
+    },
+}
+
+pub struct T6StateBindings {
+    pub entries: [u8; IW4_TECHNIQUE_TYPE_COUNT],
+    pub rows: Vec<[u32; 2]>,
+    pub refusals: Vec<T6StateRefusal>,
+}
+
+impl T6MaterialState {
+    pub fn first_bits(&self, source_slot: usize) -> Option<[u32; 2]> {
+        let &base = self.entries.get(source_slot)?;
+        (base != u8::MAX)
+            .then(|| self.rows.get(usize::from(base)).copied())
+            .flatten()
+    }
+
+    pub fn bind_techniques(&self, graph: &OwnedTechniqueGraph) -> T6StateBindings {
+        use render_material::TechniqueSelectionPolicy;
+        let mut entries = [u8::MAX; IW4_TECHNIQUE_TYPE_COUNT];
+        let mut rows = self.rows.clone();
+        let mut refusals = Vec::new();
+        for (target_slot, technique) in graph.slots.iter().enumerate().take(entries.len()) {
+            let Some(technique) = technique else { continue };
+            let Some(selection) = technique
+                .source_selection
+                .filter(|selection| selection.namespace == crate::AssetNamespace::T6)
+            else {
+                refusals.push(T6StateRefusal::MissingSourceSelection { target_slot });
+                continue;
+            };
+            let base = self
+                .entries
+                .get(usize::from(selection.slot))
+                .copied()
+                .unwrap_or(u8::MAX);
+            if base == u8::MAX {
+                refusals.push(T6StateRefusal::MissingEntry {
+                    target_slot,
+                    source_slot: selection.slot,
+                });
+                continue;
+            }
+            let passes = technique.passes.len();
+            let end = usize::from(base)
+                .checked_add(passes)
+                .filter(|&end| passes > 0 && end <= self.rows.len());
+            let Some(end) = end else {
+                refusals.push(T6StateRefusal::IncompleteRows {
+                    target_slot,
+                    source_slot: selection.slot,
+                    base,
+                    passes,
+                });
+                continue;
+            };
+            if selection.policy == TechniqueSelectionPolicy::DepthToColourCompatibility {
+                let Ok(adapted_base) = u8::try_from(rows.len()) else {
+                    refusals.push(T6StateRefusal::AdaptedTableCapacity { target_slot });
+                    continue;
+                };
+                if adapted_base == u8::MAX
+                    || rows.len().checked_add(passes).is_none_or(|end| end > 256)
+                {
+                    refusals.push(T6StateRefusal::AdaptedTableCapacity { target_slot });
+                    continue;
+                }
+                rows.extend(
+                    self.rows[usize::from(base)..end]
+                        .iter()
+                        .map(|&[bits, more]| [bits | GFXS0_COLORWRITE_RGB, more]),
+                );
+                entries[target_slot] = adapted_base;
+            } else {
+                entries[target_slot] = base;
+            }
+        }
+        T6StateBindings {
+            entries,
+            rows,
+            refusals,
+        }
+    }
 }
 
 pub const CODE_T6_HDR_CONTROL_0: u16 = 0x300;
@@ -288,7 +437,7 @@ fn packed_row_hash(arguments: &[&T6Argument]) -> Option<u32> {
     let packed = arguments.len() > 1 || arguments.iter().any(|a| a.offset % 16 != 0 || a.size < 16);
     packed.then(|| {
         arguments.iter().fold(FNV_OFFSET, |hash, a| {
-            [a.def, u32::from(a.offset % 16)]
+            [a.def, u32::from(a.offset % 16), u32::from(a.size)]
                 .into_iter()
                 .flat_map(u32::to_le_bytes)
                 .fold(hash, |hash, byte| {
@@ -627,21 +776,12 @@ impl MaterialCatalog {
         let mut slots = vec![None; IW4_TECHNIQUE_TYPE_COUNT];
         let mut table = TechniqueTable::default();
         for (iw4_slot, iw4_name) in IW4_TECHNIQUE_TYPE_NAMES.iter().enumerate() {
-            let candidates = match draw {
-                T6Draw::Lit => t6_techniques_for_iw4_slot(iw4_name),
-                T6Draw::Emissive
-                    if iw4_name.starts_with("depth") || iw4_name.starts_with("build") =>
-                {
-                    Vec::new()
-                }
-                T6Draw::Emissive => vec![T6_TECHNIQUE_EMISSIVE],
-            };
-            let Some(technique) = candidates
-                .into_iter()
-                .find_map(|t6| set.techniques.get(t6)?.as_ref())
-            else {
+            let Some(selection) = select_t6_technique(set, draw, iw4_name) else {
                 continue;
             };
+            let technique = set.techniques[usize::from(selection.slot)]
+                .as_ref()
+                .unwrap();
             let passes: Result<Vec<_>, String> = (0u8..)
                 .zip(&technique.passes)
                 .map(|(index, pass)| {
@@ -661,6 +801,7 @@ impl MaterialCatalog {
                     table.pass_count_by_slot[iw4_slot] = passes.len() as u8;
                     table.max_pass_count = table.max_pass_count.max(passes.len() as u16);
                     slots[iw4_slot] = Some(OwnedTechnique {
+                        source_selection: Some(selection),
                         flags: if layered {
                             asset_iw4::vertex_decl::TECHNIQUE_FLAG_VERTEX_TYPE_FROM_SURFACE
                         } else {
@@ -748,23 +889,48 @@ impl MaterialCatalog {
         set: &T6TechniqueSet,
         textures: &[T6Texture],
         constants: Vec<crate::MaterialConstant>,
-        lit_state: Option<u32>,
+        state: &T6MaterialState,
         draw: T6Draw,
+        report: &mut Vec<String>,
     ) -> Option<usize> {
         let technique_set = draw.technique_set_name(&set.name);
         let technique_set = technique_set.as_str();
-        let sampled: BTreeSet<u32> = set
-            .techniques
+        let graph = self
+            .technique_set_facts()
             .iter()
-            .flatten()
+            .find(|facts| {
+                facts.namespace == crate::AssetNamespace::T6 && facts.name.as_str() == technique_set
+            })?
+            .table
+            .as_ref()?
+            .graph
+            .as_ref()?;
+        let bindings = state.bind_techniques(graph);
+        let selected_sources: BTreeSet<_> = graph
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, technique)| {
+                (bindings.entries[slot] != u8::MAX)
+                    .then_some(technique.as_ref()?.source_selection?.slot)
+            })
+            .collect();
+        let selected_techniques: Vec<_> = selected_sources
+            .into_iter()
+            .filter_map(|slot| set.techniques.get(usize::from(slot))?.as_ref())
+            .collect();
+        for refusal in bindings.refusals {
+            report.push(format!("t6 material {name}: {refusal:?}"));
+        }
+        let sampled: BTreeSet<u32> = selected_techniques
+            .iter()
             .flat_map(|technique| &technique.passes)
             .flat_map(|pass| &pass.arguments)
             .filter(|a| a.kind == argument_type::MATERIAL_PIXEL_SAMPLER)
             .map(|a| a.def)
             .chain(
-                set.techniques
+                selected_techniques
                     .iter()
-                    .flatten()
                     .flat_map(|technique| &technique.passes)
                     .any(reads_float_z)
                     .then_some(FLOAT_Z_HASH),
@@ -809,10 +975,8 @@ impl MaterialCatalog {
                 constant.literal[1] *= T6_SPECULAR_SCALE;
             }
         }
-        for pass in set
-            .techniques
+        for pass in selected_techniques
             .iter()
-            .flatten()
             .flat_map(|technique| &technique.passes)
         {
             for kind in [
@@ -860,15 +1024,10 @@ impl MaterialCatalog {
         if draw == T6Draw::Emissive {
             material.sort_key = material.sort_key.saturating_add(1);
         }
-        if let Some(lit) = lit_state {
-            let blends = !matches!((lit >> 4) & 0xf, 0 | 1);
-            for bits in &mut material.state_bits {
-                bits[0] = (bits[0] & !T6_COLOUR_OUTPUT) | (lit & T6_COLOUR_OUTPUT);
-                if blends {
-                    bits[1] &= !GFXS1_DEPTHWRITE;
-                }
-            }
-        }
+        material.state_bits = bindings.rows;
+        material.state_bits_entry = Some(bindings.entries);
+        material.t5_state_bits_entry = None;
+        material.iw5_state_bits_entry = None;
         let namespace = material.namespace;
         material.textures = textures
             .into_iter()
@@ -905,33 +1064,4 @@ impl MaterialCatalog {
             .collect();
         Some(self.link_material(material))
     }
-}
-
-pub fn remap_t6_state_bits_entry(
-    entries: &[u8; 36],
-    states: &mut Vec<[u32; 2]>,
-) -> [u8; asset_iw4::size::TECHNIQUE_SLOT_COUNT] {
-    let mut mapped = [0xff; asset_iw4::size::TECHNIQUE_SLOT_COUNT];
-    for (index, name) in IW4_TECHNIQUE_TYPE_NAMES.iter().enumerate() {
-        if let Some(entry) = t6_techniques_for_iw4_slot(name)
-            .into_iter()
-            .filter_map(|slot| entries.get(slot))
-            .find(|&&entry| entry != 0xff)
-        {
-            mapped[index] = *entry;
-        }
-    }
-    let caster = IW4_TECHNIQUE_TYPE_NAMES
-        .iter()
-        .position(|name| *name == "build shadowmap color")
-        .unwrap();
-    if let (Some(&[bits, more]), Ok(entry)) = (
-        states.get(usize::from(mapped[caster])),
-        u8::try_from(states.len()),
-    ) && entry != 0xff
-    {
-        states.push([bits | GFXS0_COLORWRITE_RGB, more]);
-        mapped[caster] = entry;
-    }
-    mapped
 }

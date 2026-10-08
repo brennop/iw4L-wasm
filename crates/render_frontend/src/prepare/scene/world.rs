@@ -148,6 +148,7 @@ pub const SMODEL_LIGHTING_MAX_CLIENT_VIEWS: u32 = 1;
 
 #[derive(Resource, Default)]
 pub struct WorldScene {
+    pub readiness: frame::WorldReadiness,
     pub sky_model: Option<WorldStaticModelMesh>,
     pub batches: Vec<WorldBatchGeometry>,
 
@@ -760,6 +761,7 @@ impl WorldScene {
             exact_ifc_n: None,
             exact_opcode: None,
             spawned: false,
+            readiness: frame::WorldReadiness::default(),
             asset_ref: asset_material::AssetRefDumpCensus::default(),
         }
     }
@@ -856,6 +858,7 @@ impl WorldScene {
             exact_ifc_n: None,
             exact_opcode: None,
             spawned: false,
+            readiness: frame::WorldReadiness::default(),
             asset_ref: asset_material::AssetRefDumpCensus::default(),
         };
         let batch_count = scene.batches.len() as u32;

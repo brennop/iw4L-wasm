@@ -291,7 +291,11 @@ impl WorldImageUpload {
         self.upload_stage.take()
     }
 
-    pub fn arm(&mut self, scene: &mut WorldScene, progress: Option<&asset_transport::LoadProgress>) {
+    pub fn arm(
+        &mut self,
+        scene: &mut WorldScene,
+        progress: Option<&asset_transport::LoadProgress>,
+    ) {
         self.pipeline_world_materials = Arc::new(
             scene
                 .batches
@@ -400,8 +404,10 @@ impl WorldImageUpload {
             stage.cancel();
         }
         if let Some(progress) = progress {
-            self.upload_stage =
-                Some(progress.begin(asset_transport::StageId::WorldImages, Some(u64::from(self.total))));
+            self.upload_stage = Some(progress.begin(
+                asset_transport::StageId::WorldImages,
+                Some(u64::from(self.total)),
+            ));
         }
     }
 

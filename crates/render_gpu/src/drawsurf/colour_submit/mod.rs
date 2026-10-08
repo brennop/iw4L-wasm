@@ -3458,6 +3458,12 @@ fn sun_flush_owner<'a>(
     let Some(&draw_index) = draw_indices.first() else {
         return Err(missing.into());
     };
+    for &owner in draw_indices {
+        let index = (owner as usize).saturating_add(draw_offset);
+        if draws.get(index).is_none() || techs.get(index).is_none() {
+            return Err(missing.into());
+        }
+    }
     let draw_index = (draw_index as usize).saturating_add(draw_offset);
     let Some(item) = draws.get(draw_index) else {
         return Err(missing.into());
@@ -4511,7 +4517,7 @@ fn prepare_shadowmap_spot(
         MaterialExecView::camera(catalog, prepared_table, &extracted.frame.exec_frame)
     });
     let spot = products.0.product(FrameProductKind::SpotShadow);
-    if spot.ordered_draws.is_empty() || spot.spot_slots.is_empty() {
+    if spot.spot_slots.is_empty() {
         return PreparedSpotWork::default();
     }
     ensure_shadowmap_spot_targets(shadowmap, device);
@@ -4591,6 +4597,13 @@ fn prepare_shadowmap_spot(
         };
 
         let mut flushes = Vec::<ShadowmapSunFlushGpu>::new();
+        // Receivers sample every emitted slot, so a slot whose casters all
+        // compacted away still clears its target to fully lit.
+        let work = if spot.ordered_draws.is_empty() {
+            &Default::default()
+        } else {
+            work
+        };
         for flush in &work.world_flushes {
             let (start, count) = prim_args_u32_index_span(prim_args_from_world_flush(*flush));
             let Some((start, count)) =
@@ -4791,7 +4804,7 @@ fn prepare_shadowmap_spot(
             }
         }
         let end = all_prepared.len();
-        if start == end {
+        if start == end && !envelope.cleared {
             continue;
         }
         let smodel_index_epochs =
@@ -4844,7 +4857,7 @@ fn record_shadowmap_spot(
     smodel_skinned_vertex: Option<&Buffer>,
     smodel_skinned_index: Option<&Buffer>,
 ) -> SpotShadowSubmit {
-    if work.all_prepared.is_empty() {
+    if work.prepared_slots.is_empty() {
         return SpotShadowSubmit {
             miss: work.miss,
             cause: rank_count_map(&work.miss_rows, 1),

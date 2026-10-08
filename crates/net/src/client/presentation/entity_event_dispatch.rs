@@ -4,6 +4,8 @@ use entity_iw4::{
     entity_event_action, packet_entity_uses_event_ring,
 };
 use sim::{EntityEventPayload, EventSequence, Tick};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use crate as net;
 use crate::CEntity;
@@ -27,6 +29,7 @@ pub enum EntityEventDomain {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DispatchedEntityEvent {
+    pub world: frame::WorldGeneration,
     pub domain: EntityEventDomain,
     pub timeline: u64,
     pub sequence: EventSequence,
@@ -135,6 +138,25 @@ pub struct EntityMeleeBlood {
     pub event: DispatchedEntityEvent,
 }
 
+const TARGET_RETRY_CAPACITY: usize = 8192;
+const TARGET_RETRY_WORK: usize = 256;
+const TARGET_RETRY_WAIT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug)]
+struct DeferredTarget {
+    world: frame::WorldGeneration,
+    timeline: u64,
+    client: sim::ClientId,
+    life: sim::LifeSequence,
+    deadline: Instant,
+}
+
+#[derive(Debug)]
+struct DeferredEntityEvent {
+    record: sim::EntityEventRecord,
+    target: DeferredTarget,
+}
+
 #[derive(Resource, Default, Debug)]
 pub struct EntityEventCursor {
     seen_through: u32,
@@ -144,6 +166,7 @@ pub struct EntityEventCursor {
     timeline: u64,
     predicted_shots: u32,
     authority_shots: u32,
+    deferred: VecDeque<DeferredEntityEvent>,
 }
 
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,12 +291,11 @@ fn dispatch_entity_events(
     mut pending: ResMut<PendingPresentedEntityEvents>,
     local: Res<LocalPresentClient>,
     slots: Res<CEntitySlots>,
+    generation: Res<frame::WorldGeneration>,
     mut cursor: ResMut<EntityEventCursor>,
     mut walk: ResMut<AppliedEntityEventWalk>,
     mut unsupported: ResMut<UnsupportedEntityEvents>,
     mut target_gaps: ResMut<NetIdentityGaps>,
-    prediction: Res<ClientPredictionState>,
-    role: Res<frame::RuntimeRole>,
     mut runtimes: Query<(Entity, &CEntity, &mut CEntityRuntime)>,
 ) {
     walk.walked = 0;
@@ -283,7 +305,7 @@ fn dispatch_entity_events(
     walk.last_event = 0;
     walk.last_number = 0;
     walk.seen_through = cursor.seen_through;
-    if !adopted.applied_this_frame {
+    if !adopted.applied_this_frame && cursor.deferred.is_empty() {
         return;
     }
     let tick = adopted
@@ -291,7 +313,6 @@ fn dispatch_entity_events(
         .map(|snapshot| snapshot.tick)
         .unwrap_or(Tick(0));
     let local_number = i32::try_from(local.0.0).unwrap_or(-1);
-    let owner_predicted = *role != frame::RuntimeRole::Replay && prediction.0.presents_owner_fire();
     let killcam_transition = pending.in_killcam != cursor.in_killcam;
     if killcam_transition {
         cursor.timeline = cursor.timeline.wrapping_add(1);
@@ -319,15 +340,13 @@ fn dispatch_entity_events(
         consume_entity_events(&next_state, &mut cursor, |ev| {
             walk.occupancy_fired = walk.occupancy_fired.saturating_add(1);
             let number = i32::from(identity.number());
-            if owner_predicted && number == local_number && is_owner_predicted(ev.event) {
-                return;
-            }
             dispatch_classified(
                 &mut commands,
                 local_number,
                 number,
                 entity,
                 DispatchedEntityEvent {
+                    world: *generation,
                     domain: EntityEventDomain::Ring,
                     timeline,
                     sequence: EventSequence(u32::try_from(ev.sequence).unwrap_or(0)),
@@ -352,39 +371,77 @@ fn dispatch_entity_events(
         runtime.previous_event_sequence = cursor;
     }
     let pending = &mut *pending;
-    let records = pending
-        .live
-        .iter()
-        .map(|record| (false, record))
-        .chain(pending.archived.iter().map(|record| (true, record)));
-    for (archived, record) in records {
+    let count = cursor.deferred.len().min(TARGET_RETRY_WORK);
+    let remaining = cursor.deferred.split_off(count);
+    let retry = std::mem::replace(&mut cursor.deferred, remaining);
+    let records = retry
+        .into_iter()
+        .map(|retry| (false, retry.record, Some(retry.target)))
+        .chain(pending.live.drain(..).map(|record| (false, record, None)))
+        .chain(
+            pending
+                .archived
+                .drain(..)
+                .map(|record| (true, record, None)),
+        );
+    let now = Instant::now();
+    for (archived, record, retry) in records {
         walk.walked = walk.walked.saturating_add(1);
-        let accepted = if archived {
-            cursor.accepts_archived(record, local.0)
+        if let Some(target) = retry {
+            if !record.audience.projects_to(local.0) {
+                continue;
+            }
+            let number = record.payload.number;
+            if target.world != *generation || target.timeline != cursor.timeline {
+                target_gaps.raise(NetGapCause::EventRetryScopeChanged {
+                    number,
+                    sequence: record.sequence,
+                });
+                continue;
+            }
+            if now >= target.deadline {
+                target_gaps.raise(NetGapCause::EventRetryExpired {
+                    number,
+                    sequence: record.sequence,
+                });
+                continue;
+            }
+            let life = adopted
+                .next()
+                .and_then(|snapshot| snapshot.meta.for_client(target.client))
+                .map(|meta| meta.life_sequence);
+            if life != Some(target.life) {
+                target_gaps.raise(NetGapCause::EventTargetLifeChanged {
+                    number,
+                    expected: target.life,
+                    current: life,
+                });
+                continue;
+            }
+        }
+        let accepted = if retry.is_some() {
+            true
+        } else if archived {
+            cursor.accepts_archived(&record, local.0)
         } else {
-            cursor.accepts(record, local.0)
+            cursor.accepts(&record, local.0)
         };
         if !accepted {
             continue;
         }
         if !archived
+            && retry.is_none()
             && record.payload.number == local_number
             && entity_event_action(record.event) == Ok(EntityEventAction::WeaponFire)
         {
             cursor.authority_shots = cursor.authority_shots.wrapping_add(1);
             perf::owner_shot("authority", cursor.authority_shots, record.tick.0);
         }
-        if owner_predicted
-            && !archived
-            && record.payload.number == local_number
-            && is_owner_predicted(record.event)
-        {
-            continue;
-        }
         walk.last_event = record.event.0;
         walk.last_number = record.payload.number;
 
         let dispatched = DispatchedEntityEvent {
+            world: *generation,
             domain: EntityEventDomain::Snapshot,
             timeline: cursor.timeline,
             sequence: record.sequence,
@@ -393,6 +450,23 @@ fn dispatch_entity_events(
             payload: record.payload,
         };
         let number = record.payload.number;
+        if !archived
+            && let Some(cause) = record.payload.fire_cause
+            && i32::try_from(cause.client.0).ok() == Some(number)
+        {
+            let life = adopted
+                .next()
+                .and_then(|snapshot| snapshot.meta.for_client(cause.client))
+                .map(|meta| meta.life_sequence);
+            if life.is_some_and(|life| life != cause.life) {
+                target_gaps.raise(NetGapCause::EventTargetLifeChanged {
+                    number,
+                    expected: cause.life,
+                    current: life,
+                });
+                continue;
+            }
+        }
         let resolved = match u16::try_from(number) {
             Ok(number) => slots.entity_for_number(number),
             Err(_) => {
@@ -405,6 +479,31 @@ fn dispatch_entity_events(
             Some(entity) => entity,
             None => {
                 target_gaps.raise(NetGapCause::EventNumberHasNoEntity { number });
+                if !archived {
+                    let target = retry.or_else(|| {
+                        let client = sim::ClientId(u32::try_from(number).ok()?);
+                        let life = adopted.next()?.meta.for_client(client)?.life_sequence;
+                        Some(DeferredTarget {
+                            world: *generation,
+                            timeline: cursor.timeline,
+                            client,
+                            life,
+                            deadline: now + TARGET_RETRY_WAIT,
+                        })
+                    });
+                    if let Some(target) = target {
+                        if cursor.deferred.len() == TARGET_RETRY_CAPACITY {
+                            target_gaps.raise(NetGapCause::EventRetryBudget {
+                                number,
+                                sequence: record.sequence,
+                            });
+                        } else {
+                            cursor
+                                .deferred
+                                .push_back(DeferredEntityEvent { record, target });
+                        }
+                    }
+                }
                 continue;
             }
         };
@@ -419,36 +518,39 @@ fn dispatch_entity_events(
             &mut unsupported,
         );
     }
-    pending.live.clear();
-    pending.archived.clear();
     walk.seen_through = cursor.seen_through;
-}
-
-fn is_owner_predicted(event: EntityEventKind) -> bool {
-    matches!(
-        entity_event_action(event),
-        Ok(EntityEventAction::WeaponFire | EntityEventAction::EjectBrass)
-    )
 }
 
 fn dispatch_owner_events(
     mut commands: Commands,
     mut prediction: ResMut<ClientPredictionState>,
-    local: Res<LocalPresentClient>,
+    (local, generation): (Res<LocalPresentClient>, Res<frame::WorldGeneration>),
     slots: Res<CEntitySlots>,
+    verdicts: Res<crate::FireVerdictState>,
     mut cursor: ResMut<EntityEventCursor>,
     mut walk: ResMut<AppliedEntityEventWalk>,
     mut unsupported: ResMut<UnsupportedEntityEvents>,
 ) {
-    let events = prediction.0.take_owner_events();
     let local_number = i32::try_from(local.0.0).unwrap_or(-1);
+    if cursor.in_killcam {
+        prediction.0.take_owner_events();
+        return;
+    }
     let Some(entity) = u16::try_from(local_number)
         .ok()
         .and_then(|number| slots.entity_for_number(number))
     else {
         return;
     };
-    for record in events {
+    let life = prediction.0.local_life();
+    for record in prediction.0.take_owner_events() {
+        if record.payload.fire_cause.is_some_and(|cause| {
+            cause.client != local.0
+                || Some(cause.life) != life
+                || verdicts.status(*generation, cause) == crate::PredictedFireStatus::Refused
+        }) {
+            continue;
+        }
         if entity_event_action(record.event) == Ok(EntityEventAction::WeaponFire) {
             cursor.predicted_shots = cursor.predicted_shots.wrapping_add(1);
             perf::owner_shot("predicted", cursor.predicted_shots, record.tick.0);
@@ -459,6 +561,7 @@ fn dispatch_owner_events(
             local_number,
             entity,
             DispatchedEntityEvent {
+                world: *generation,
                 domain: EntityEventDomain::Predicted,
                 timeline: cursor.timeline,
                 sequence: record.sequence,
@@ -608,6 +711,7 @@ fn set_ads_from_reset(
 
 pub fn register_entity_event_dispatch(app: &mut App) {
     app.init_resource::<EntityEventCursor>()
+        .init_resource::<frame::WorldGeneration>()
         .init_resource::<AppliedEntityEventWalk>()
         .init_resource::<UnsupportedEntityEvents>()
         .init_resource::<NetIdentityGaps>()

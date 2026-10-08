@@ -607,11 +607,8 @@ impl ZoneLane for T5Lane {
                 && sink.world_weapons.get(namespace, name).is_none()
                 && let Some(entry) = sink.projectile_meshes.get(namespace, name)
             {
-                sink.world_weapons.insert_in(
-                    namespace,
-                    (*entry.skel).clone(),
-                    Some(&sink.materials),
-                );
+                sink.world_weapons
+                    .insert_in(namespace, entry.skel.clone(), Some(&sink.materials));
             }
         }
         sink.projectile_meshes.keep_referenced(&projectile_keys);

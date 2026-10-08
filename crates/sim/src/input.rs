@@ -149,22 +149,57 @@ pub enum SpawnPick {
     At { origin: [f32; 3], yaw: f32 },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CommandSequence(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayerCommand {
+    pub client: ClientId,
+    pub command: UserCmd,
+    pub sequence: Option<CommandSequence>,
+}
+
+impl PlayerCommand {
+    pub fn unsequenced(client: ClientId, command: UserCmd) -> Self {
+        Self {
+            client,
+            command,
+            sequence: None,
+        }
+    }
+
+    pub fn sequenced(client: ClientId, command: UserCmd, sequence: CommandSequence) -> Self {
+        Self {
+            client,
+            command,
+            sequence: Some(sequence),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TickInput {
-    pub cmds: Vec<(ClientId, UserCmd)>,
+    pub cmds: Vec<PlayerCommand>,
     pub actions: Vec<(ClientId, ClientAction)>,
+    pub shot_samples: Vec<((ClientId, i32), crate::ShotSampleProvenance)>,
 }
 
 impl TickInput {
     pub fn from_cmds(cmds: Vec<(ClientId, UserCmd)>) -> Self {
         Self {
-            cmds,
+            cmds: cmds
+                .into_iter()
+                .map(|(client, command)| PlayerCommand::unsequenced(client, command))
+                .collect(),
             actions: Vec::new(),
+            shot_samples: Vec::new(),
         }
     }
 
     pub fn canonicalize(&mut self) {
-        self.cmds.sort_by_key(|(id, _)| id.0);
+        self.cmds.sort_by_key(|input| input.client.0);
+        self.shot_samples
+            .sort_by_key(|((id, time), _)| (id.0, *time));
 
         self.actions
             .sort_by_key(|(id, action)| (id.0, action_request_id(action)));

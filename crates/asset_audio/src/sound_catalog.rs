@@ -71,6 +71,8 @@ pub struct LoadedSoundPcm {
     pub zone: ZoneOwner,
 
     pub seek_table: Vec<u32>,
+
+    pub sab_media: Option<crate::SabMediaSource>,
 }
 
 impl LoadedSoundPcm {
@@ -94,19 +96,33 @@ impl LoadedSoundPcm {
             pcm: pcm.into(),
             zone: ZoneOwner::default(),
             seek_table,
+            sab_media: None,
+        }
+    }
+
+    pub fn from_sab(source: crate::SabMediaSource, game: ZoneGame, zone: ZoneOwner) -> Self {
+        Self {
+            name: format!("t6/{:08x}", source.entry.id),
+            game,
+            format: i32::from(source.entry.format),
+            rate: source.entry.frame_rate().unwrap_or(0),
+            bits: 16,
+            channels: i32::from(source.entry.channels),
+            samples: source.entry.frame_count,
+            sab_media: Some(source),
+            zone,
+            ..Default::default()
         }
     }
 
     pub fn t5_adpcm_bytes(&self) -> Option<&[u8]> {
-        (self.format == 6).then_some(self.pcm.bytes())
+        (self.sab_media.is_none() && self.format == 6).then_some(self.pcm.bytes())
     }
 
     pub fn channels(&self) -> i32 {
         self.channels
     }
 
-    /// Source bytes are immutable. Decoded samples and failures belong to the
-    /// runtime ClipStore, never to this shared catalog entry.
     pub fn encoded_bytes(&self) -> &[u8] {
         self.pcm.bytes()
     }
@@ -128,7 +144,7 @@ impl LoadedSoundPcm {
     }
 
     pub fn is_t5_xwma(&self) -> bool {
-        self.format == crate::sound_wma_t5::T5_WMA
+        self.sab_media.is_none() && self.format == crate::sound_wma_t5::T5_WMA
     }
 }
 
@@ -153,6 +169,7 @@ pub struct CapturedAlias {
     pub loaded_name: Option<String>,
 
     pub loaded: LoadedSoundEdge,
+    pub loaded_binding_origin: crate::LoadedBindingOrigin,
 
     pub streamed: Option<(String, String)>,
 
@@ -208,6 +225,8 @@ pub struct CapturedAlias {
     pub envelop_percentage: f32,
 
     pub speaker_map: Option<String>,
+
+    pub stereo_speaker_gains: Option<[[f32; 2]; 2]>,
 
     pub limit_count: Option<u8>,
 
@@ -355,20 +374,10 @@ impl CapturedSound {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct PickLoadedOutcome<'a> {
-    pub variant_index: usize,
-    pub picked: Option<PickedSound<'a>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct PickedSound<'a> {
-    pub sound: &'a LoadedSoundPcm,
-    pub variant_index: usize,
-    pub volume: f32,
-    pub pitch: f32,
-
-    pub layer: Option<String>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChannelKey {
+    pub namespace: AssetNamespace,
+    pub id: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -376,13 +385,14 @@ pub struct SoundCatalog {
     pub sounds: Vec<CapturedSound>,
     pub loaded: Vec<LoadedSoundPcm>,
 
-    pub curves: HashMap<String, CapturedSndCurve>,
+    pub curves: HashMap<(AssetNamespace, String), CapturedSndCurve>,
 
     pub rawfiles: HashMap<(AssetNamespace, String), Vec<u8>>,
 
-    pub ent_channels: Vec<EntChannel>,
+    pub ent_channels: HashMap<AssetNamespace, Vec<EntChannel>>,
 
-    group_volumes: HashMap<AssetNamespace, Vec<f32>>,
+    group_volumes: HashMap<AssetNamespace, Vec<std::result::Result<f32, crate::MixerGroupError>>>,
+    mixer_groups: HashMap<AssetNamespace, Vec<crate::MixerGroup>>,
     by_alias: HashMap<(AssetNamespace, String), usize>,
 
     by_alias_ci: HashMap<(AssetNamespace, String), usize>,
@@ -406,6 +416,8 @@ pub struct SoundCatalog {
     capture_zone: ZoneOwner,
 
     revision: u64,
+    playback: Vec<Vec<crate::AliasPlaybackPolicy>>,
+    selection_weights: Vec<Vec<f32>>,
 }
 
 impl SoundCatalog {
@@ -424,11 +436,21 @@ impl SoundCatalog {
         for (key, data) in other.rawfiles {
             self.rawfiles.entry(key).or_insert(data);
         }
-        if self.ent_channels.is_empty() && !other.ent_channels.is_empty() {
-            self.ent_channels = other.ent_channels;
+        for (namespace, channels) in other.ent_channels {
+            self.ent_channels
+                .entry(namespace)
+                .and_modify(|existing| {
+                    if existing.is_empty() {
+                        *existing = channels.clone();
+                    }
+                })
+                .or_insert(channels);
         }
         for (ns, volumes) in other.group_volumes {
             self.group_volumes.entry(ns).or_insert(volumes);
+        }
+        for (ns, groups) in other.mixer_groups {
+            self.mixer_groups.entry(ns).or_insert(groups);
         }
         for (name, curve) in other.curves {
             match self.curves.get_mut(&name) {
@@ -464,9 +486,7 @@ impl SoundCatalog {
 
     pub fn absorb_missing_aliases(&mut self, other: SoundCatalog) {
         self.absorb_missing_aliases_unresolved(other);
-        self.resolve_loaded_edges();
-        self.resolve_curve_knots();
-        self.publish();
+        self.finalize();
     }
 
     pub fn absorb_missing_aliases_unresolved(&mut self, other: SoundCatalog) {
@@ -486,11 +506,21 @@ impl SoundCatalog {
         for (key, data) in other.rawfiles {
             self.rawfiles.entry(key).or_insert(data);
         }
-        if self.ent_channels.is_empty() && !other.ent_channels.is_empty() {
-            self.ent_channels = other.ent_channels;
+        for (namespace, channels) in other.ent_channels {
+            self.ent_channels
+                .entry(namespace)
+                .and_modify(|existing| {
+                    if existing.is_empty() {
+                        *existing = channels.clone();
+                    }
+                })
+                .or_insert(channels);
         }
         for (ns, volumes) in other.group_volumes {
             self.group_volumes.entry(ns).or_insert(volumes);
+        }
+        for (ns, groups) in other.mixer_groups {
+            self.mixer_groups.entry(ns).or_insert(groups);
         }
         for (name, curve) in other.curves {
             match self.curves.get_mut(&name) {
@@ -524,37 +554,79 @@ impl SoundCatalog {
                 if name.is_empty() || name.starts_with('#') {
                     return None;
                 }
-                Some(fields.next()?.parse::<f32>().unwrap_or(1.0))
+                Some(fields.next().and_then(|value| value.parse::<f32>().ok()))
+            })
+            .enumerate()
+            .map(|(group, value)| match value {
+                Some(gain) if gain.is_finite() && gain >= 0.0 => Ok(gain),
+                _ => Err(crate::MixerGroupError::InvalidAttenuation { group }),
             })
             .collect();
         self.group_volumes.insert(AssetNamespace::Iw5, volumes);
     }
 
-    pub(crate) fn set_group_volumes(&mut self, namespace: AssetNamespace, volumes: Vec<f32>) {
-        self.group_volumes.insert(namespace, volumes);
+    pub fn ingest_mixer_groups(
+        &mut self,
+        namespace: AssetNamespace,
+        groups: Vec<crate::MixerGroup>,
+    ) {
+        self.mixer_groups.insert(namespace, groups);
+        self.group_volumes.remove(&namespace);
+        self.playback.clear();
+        self.selection_weights.clear();
     }
 
-    pub fn alias_volume(&self, namespace: AssetNamespace, row: &CapturedAlias, t: f32) -> f32 {
-        let volume = if namespace != AssetNamespace::T5 && row.vol_min == 0.0 && row.vol_max == 0.0
-        {
-            1.0
-        } else {
-            lerp_range(row.vol_min, row.vol_max, t)
-        };
-        let group = match namespace {
-            AssetNamespace::Iw5 => row.vol_mod_index,
-            AssetNamespace::T5 => row.flags.map(|flags| (flags >> 16) & 0x3f),
-            _ => None,
-        };
-        let scale = group
-            .zip(self.group_volumes.get(&namespace))
-            .and_then(|(group, volumes)| volumes.get(group as usize))
-            .copied()
-            .unwrap_or(1.0);
-        volume * scale
+    pub fn playback_policy(
+        &self,
+        index: usize,
+        variant: usize,
+    ) -> Option<&crate::AliasPlaybackPolicy> {
+        self.playback.get(index)?.get(variant)
     }
 
     pub fn publish(&mut self) {
+        for (&namespace, groups) in &self.mixer_groups {
+            self.group_volumes
+                .insert(namespace, crate::compile_mixer_groups(groups));
+        }
+        self.playback = self
+            .sounds
+            .iter()
+            .map(|sound| {
+                let namespace = ns_of(sound.game);
+                sound
+                    .aliases
+                    .iter()
+                    .enumerate()
+                    .map(|(variant, row)| {
+                        crate::AliasPlaybackPolicy::compile(
+                            sound,
+                            variant,
+                            row,
+                            self.ent_channels.get(&namespace).map(Vec::as_slice),
+                            self.group_volumes.get(&namespace).map(Vec::as_slice),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        self.selection_weights = self
+            .sounds
+            .iter()
+            .map(|sound| {
+                sound
+                    .aliases
+                    .iter()
+                    .map(|row| {
+                        if row.probability > 0.0 {
+                            row.probability
+                        } else {
+                            1.0
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
         self.revision = mint_revision();
     }
 
@@ -593,10 +665,12 @@ impl SoundCatalog {
     }
 
     pub(crate) fn ingest_curve(&mut self, curve: CapturedSndCurve) {
-        self.insert_curve(curve);
+        self.insert_curve(ns_of(self.capture_game), curve);
     }
 
     pub fn resolve_loaded_edges(&mut self) {
+        self.playback.clear();
+        self.selection_weights.clear();
         for i in 0..self.sounds.len() {
             let ns = ns_of(self.sounds[i].game);
             let alias_name = self.sounds[i].name.clone();
@@ -605,12 +679,25 @@ impl SoundCatalog {
                 let kind = self.sounds[i].aliases[j].file_kind();
                 let hint = self.sounds[i].aliases[j].loaded_name.clone();
                 let edge = self.sounds[i].aliases[j].loaded;
+                self.sounds[i].aliases[j].loaded_binding_origin =
+                    crate::LoadedBindingOrigin::Unresolved;
                 if null_file {
-                    if let Some(idx) = self.conventional_loaded_index(ns, &alias_name) {
-                        self.sounds[i].aliases[j].loaded =
-                            AssetEdge::bind_order(idx, self.zone_of_loaded(idx));
-                    } else {
-                        self.sounds[i].aliases[j].loaded = AssetEdge::Absent;
+                    match self.conventional_loaded_index(ns, &alias_name) {
+                        Ok(Some((idx, origin))) => {
+                            self.sounds[i].aliases[j].loaded =
+                                AssetEdge::bind_order(idx, self.zone_of_loaded(idx));
+                            self.sounds[i].aliases[j].loaded_binding_origin = origin;
+                        }
+                        Ok(None) => {
+                            self.sounds[i].aliases[j].loaded = AssetEdge::Absent;
+                            self.sounds[i].aliases[j].loaded_binding_origin =
+                                crate::LoadedBindingOrigin::MissingConvention;
+                        }
+                        Err(matches) => {
+                            self.sounds[i].aliases[j].loaded = AssetEdge::Absent;
+                            self.sounds[i].aliases[j].loaded_binding_origin =
+                                crate::LoadedBindingOrigin::AmbiguousConvention { matches };
+                        }
                     }
                     continue;
                 }
@@ -620,6 +707,10 @@ impl SoundCatalog {
                     AssetEdge::Unresolved(AssetEdgeReason::TempFieldNotAliasable)
                 ) {
                     continue;
+                }
+                if hint.as_deref().is_some_and(|name| !name.is_empty()) {
+                    self.sounds[i].aliases[j].loaded_binding_origin =
+                        crate::LoadedBindingOrigin::AuthoredName;
                 }
                 if let Some(idx) = hint
                     .as_deref()
@@ -632,6 +723,8 @@ impl SoundCatalog {
                 }
                 if kind == "streamed" || kind == "primed" {
                     self.sounds[i].aliases[j].loaded = AssetEdge::Absent;
+                    self.sounds[i].aliases[j].loaded_binding_origin =
+                        crate::LoadedBindingOrigin::NotLoaded;
                     continue;
                 }
                 if self.sounds[i].aliases[j].loaded.is_bound() {
@@ -698,6 +791,8 @@ impl SoundCatalog {
         if sound.name.is_empty() {
             return;
         }
+        self.playback.clear();
+        self.selection_weights.clear();
         let ns = ns_of(sound.game);
         let idx = self.sounds.len();
         self.by_alias.insert((ns, sound.name.clone()), idx);
@@ -745,7 +840,7 @@ impl SoundCatalog {
 
     pub fn index_unique(&self, alias: &str) -> Option<usize> {
         let mut found = None;
-        for ns in [AssetNamespace::Iw4, AssetNamespace::T5, AssetNamespace::Iw5] {
+        for ns in AssetNamespace::ALL {
             if let Some(i) = self.index_in(ns, alias) {
                 if found.is_some() {
                     return None;
@@ -773,14 +868,36 @@ impl SoundCatalog {
         self.by_loaded.get(&(ns, bare.to_owned())).copied()
     }
 
-    fn conventional_loaded_index(&self, ns: AssetNamespace, alias: &str) -> Option<usize> {
+    fn conventional_loaded_index(
+        &self,
+        ns: AssetNamespace,
+        alias: &str,
+    ) -> std::result::Result<Option<(usize, crate::LoadedBindingOrigin)>, usize> {
         if let Some(idx) = self.loaded_index_in(ns, alias) {
-            return Some(idx);
+            return Ok(Some((
+                idx,
+                crate::LoadedBindingOrigin::NullAliasExactCompatibility,
+            )));
         }
         let wav = format!("/{alias}.wav");
-        self.loaded.iter().enumerate().find_map(|(idx, loaded)| {
-            (ns_of(loaded.game) == ns && loaded.name.ends_with(&wav)).then_some(idx)
-        })
+        let mut found = None;
+        let mut matches = 0;
+        for ((namespace, name), &index) in &self.by_loaded {
+            if *namespace == ns && name.ends_with(&wav) {
+                found = Some(index);
+                matches += 1;
+            }
+        }
+        match matches {
+            0 => Ok(None),
+            1 => Ok(found.map(|index| {
+                (
+                    index,
+                    crate::LoadedBindingOrigin::NullAliasSuffixCompatibility,
+                )
+            })),
+            _ => Err(matches),
+        }
     }
 
     pub fn name_at(&self, index: usize) -> Option<&str> {
@@ -809,23 +926,25 @@ impl SoundCatalog {
             })
     }
 
-    fn curve_with_knots(&self, key: &str) -> Option<&CapturedSndCurve> {
-        self.curves.get(key).filter(|c| !c.knots.is_empty())
+    fn curve_with_knots(&self, namespace: AssetNamespace, key: &str) -> Option<&CapturedSndCurve> {
+        self.curves
+            .get(&(namespace, key.to_owned()))
+            .filter(|c| !c.knots.is_empty())
     }
 
-    fn curve_lookup(&self, name: &str) -> Option<CapturedSndCurve> {
-        if let Some(curve) = self.curve_with_knots(name) {
+    fn curve_lookup(&self, namespace: AssetNamespace, name: &str) -> Option<CapturedSndCurve> {
+        if let Some(curve) = self.curve_with_knots(namespace, name) {
             return Some(curve.clone());
         }
         let bare = crate::AssetRef::bare_name(name);
-        if let Some(curve) = self.curve_with_knots(bare) {
+        if let Some(curve) = self.curve_with_knots(namespace, bare) {
             let mut out = curve.clone();
             out.name = name.to_owned();
             return Some(out);
         }
 
         if bare == "$default" {
-            if let Some(curve) = self.curve_with_knots(SND_CURVE_DEFAULT_ASSET_NAME) {
+            if let Some(curve) = self.curve_with_knots(namespace, SND_CURVE_DEFAULT_ASSET_NAME) {
                 let mut out = curve.clone();
                 out.name = name.to_owned();
                 return Some(out);
@@ -834,58 +953,69 @@ impl SoundCatalog {
         None
     }
 
-    pub fn ent_channel(&self, channel: u32) -> Option<&EntChannel> {
-        self.ent_channels.get(channel as usize)
+    pub fn ent_channel(&self, key: ChannelKey) -> Option<&EntChannel> {
+        self.ent_channels.get(&key.namespace)?.get(key.id as usize)
     }
 
     pub fn resolve_ent_channels(&mut self) {
-        if !self.ent_channels.is_empty() {
-            return;
-        }
-        let Some(bytes) = self.rawfile_named(SND_ENTCHANNEL_FILE) else {
-            return;
-        };
-        let Ok(text) = std::str::from_utf8(bytes) else {
-            return;
-        };
-        match parse_ent_channel_file(text) {
-            Ok(rows) => self.ent_channels = rows,
-            Err(e) => diag::warn!(Zone, "entchannel parse: {e}"),
-        }
-    }
-
-    fn rawfile_named(&self, want: &str) -> Option<&[u8]> {
-        for ns in [AssetNamespace::Iw4, AssetNamespace::T5, AssetNamespace::Iw5] {
-            if let Some(data) = self.rawfiles.get(&(ns, want.to_owned())) {
-                return Some(data.as_slice());
+        for namespace in AssetNamespace::ALL {
+            if self.ent_channels.contains_key(&namespace) {
+                continue;
+            }
+            let Some(bytes) = self.rawfile_named(namespace, SND_ENTCHANNEL_FILE) else {
+                continue;
+            };
+            let Ok(text) = std::str::from_utf8(bytes) else {
+                continue;
+            };
+            match parse_ent_channel_file(text) {
+                Ok(rows) => {
+                    self.ent_channels.insert(namespace, rows);
+                }
+                Err(error) => {
+                    diag::warn!(Zone, "entchannel parse namespace={namespace:?}: {error}")
+                }
             }
         }
-        self.rawfiles.iter().find_map(|((_, name), data)| {
-            let n = name.replace('\\', "/");
-            n.eq_ignore_ascii_case(want)
-                .then_some(data.as_slice())
-                .or_else(|| {
-                    n.rsplit('/')
-                        .next()
-                        .is_some_and(|leaf| leaf.eq_ignore_ascii_case("channels.def"))
-                        .then_some(data.as_slice())
-                })
-        })
     }
 
-    fn insert_curve(&mut self, curve: CapturedSndCurve) {
+    fn rawfile_named(&self, namespace: AssetNamespace, want: &str) -> Option<&[u8]> {
+        if let Some(data) = self.rawfiles.get(&(namespace, want.to_owned())) {
+            return Some(data);
+        }
+        let mut candidates = self.rawfiles.iter().filter(|((ns, name), _)| {
+            let normalized = name.replace('\\', "/");
+            *ns == namespace
+                && (normalized.eq_ignore_ascii_case(want)
+                    || normalized
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|leaf| leaf.eq_ignore_ascii_case("channels.def")))
+        });
+        let (_, data) = candidates.next()?;
+        if candidates.any(|(_, other)| other != data) {
+            diag::warn!(Zone, "ambiguous channel definition namespace={namespace:?}");
+            return None;
+        }
+        Some(data)
+    }
+
+    fn insert_curve(&mut self, namespace: AssetNamespace, curve: CapturedSndCurve) {
         if curve.knots.is_empty() {
             let bare = crate::AssetRef::bare_name(&curve.name);
-            if self.curves.get(bare).is_some_and(|c| !c.knots.is_empty())
+            if self
+                .curves
+                .get(&(namespace, bare.to_owned()))
+                .is_some_and(|c| !c.knots.is_empty())
                 || self
                     .curves
-                    .get(&curve.name)
+                    .get(&(namespace, curve.name.clone()))
                     .is_some_and(|c| !c.knots.is_empty())
             {
                 return;
             }
         }
-        self.curves.insert(curve.name.clone(), curve);
+        self.curves.insert((namespace, curve.name.clone()), curve);
     }
 
     fn curve_name_for_offset(&self, s: &ZoneStream<'_>, p: Ptr) -> Option<String> {
@@ -900,7 +1030,7 @@ impl SoundCatalog {
         let field = row.at(s.layout(SND_ALIAS_VOLUME_FALLOFF_CURVE, 104));
         let named = self.curve_by_ptr.get(&file_key(field)).cloned();
         if let Some(name) = named.as_deref()
-            && let Some(curve) = self.curve_lookup(name)
+            && let Some(curve) = self.curve_lookup(ns_of(self.capture_game), name)
         {
             return Some(curve);
         }
@@ -912,14 +1042,17 @@ impl SoundCatalog {
             Some(ZonePtr::Offset(p)) => {
                 let header = s.resolve_alias(p);
                 if let Some(curve) = read_curve_header(s, header) {
-                    if let Some(filled) = self.curve_lookup(&curve.name) {
+                    if let Some(filled) = self.curve_lookup(ns_of(self.capture_game), &curve.name) {
                         return Some(filled);
                     }
-                    self.insert_curve(curve.clone());
+                    self.insert_curve(ns_of(self.capture_game), curve.clone());
                     return Some(curve);
                 }
                 let name = self.curve_name_for_offset(s, p).or(named);
-                match name.as_deref().and_then(|n| self.curve_lookup(n)) {
+                match name
+                    .as_deref()
+                    .and_then(|n| self.curve_lookup(ns_of(self.capture_game), n))
+                {
                     Some(curve) => Some(curve),
                     None => name.map(|name| CapturedSndCurve {
                         name,
@@ -937,12 +1070,13 @@ impl SoundCatalog {
     pub fn resolve_curve_knots(&mut self) {
         let mut remaining = 0usize;
         for i in 0..self.sounds.len() {
+            let namespace = ns_of(self.sounds[i].game);
             for j in 0..self.sounds[i].aliases.len() {
                 if self.sounds[i].aliases[j].volume_falloff.is_none()
                     && let Some([dry, near]) = self.sounds[i].aliases[j].t5_distance_curves
                 {
-                    let dry = self.curves.get(&format!("t5/curve/{dry}"));
-                    let near = self.curves.get(&format!("t5/curve/{near}"));
+                    let dry = self.curves.get(&(namespace, format!("t5/curve/{dry}")));
+                    let near = self.curves.get(&(namespace, format!("t5/curve/{near}")));
 
                     if let (Some(dry), Some(near)) = (dry, near) {
                         self.sounds[i].aliases[j].near_falloff = Some(near.clone());
@@ -957,7 +1091,7 @@ impl SoundCatalog {
                 if !cur.knots.is_empty() {
                     continue;
                 }
-                match self.curve_lookup(&cur.name) {
+                match self.curve_lookup(namespace, &cur.name) {
                     Some(filled) => {
                         self.sounds[i].aliases[j].volume_falloff = Some(filled);
                     }
@@ -971,42 +1105,6 @@ impl SoundCatalog {
     fn offset_deref_kind(s: &ZoneStream<'_>, p: Ptr) -> Option<&'static str> {
         let v = s.u32_at(p, 0).ok()?;
         zone_ptr_kind(Some(ZonePtr::decode(v)))
-    }
-
-    pub fn loaded_for_alias(&self, ns: AssetNamespace, alias: &str) -> Option<&LoadedSoundPcm> {
-        self.loaded_for_alias_depth(ns, alias, 0)
-    }
-
-    fn loaded_for_alias_depth(
-        &self,
-        ns: AssetNamespace,
-        alias: &str,
-        depth: u8,
-    ) -> Option<&LoadedSoundPcm> {
-        let sound = self.sound_in(ns, alias)?;
-        for row in &sound.aliases {
-            if let Some(pcm) = row
-                .loaded
-                .bound_index()
-                .and_then(|index| self.pcm_at(index))
-            {
-                return Some(pcm);
-            }
-        }
-        if depth < 2 {
-            for row in &sound.aliases {
-                if let Some(sec) = &row.secondary
-                    && !sec.is_empty()
-                    && sec != alias
-                {
-                    if let Some(pcm) = self.loaded_for_alias_depth(ns, sec, depth + 1) {
-                        return Some(pcm);
-                    }
-                }
-            }
-        }
-
-        None
     }
 
     pub fn pcm_for_variant(
@@ -1071,41 +1169,6 @@ impl SoundCatalog {
         Some((ns, dir.clone(), name.clone()))
     }
 
-    pub fn streamed_sound_for_alias(
-        &self,
-        ns: AssetNamespace,
-        alias: &str,
-    ) -> Option<(AssetNamespace, String, String)> {
-        self.streamed_sound_for_alias_depth(ns, alias, 0)
-    }
-
-    fn streamed_sound_for_alias_depth(
-        &self,
-        ns: AssetNamespace,
-        alias: &str,
-        depth: u8,
-    ) -> Option<(AssetNamespace, String, String)> {
-        let sound = self.sound_in(ns, alias)?;
-        for row in &sound.aliases {
-            if let Some(path) = self.streamed_from_row(ns, row) {
-                return Some(path);
-            }
-        }
-        if depth < 2 {
-            for row in &sound.aliases {
-                if let Some(sec) = &row.secondary
-                    && !sec.is_empty()
-                    && sec != alias
-                {
-                    if let Some(path) = self.streamed_sound_for_alias_depth(ns, sec, depth + 1) {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-        None
-    }
-
     fn rawfile_text_in(&self, ns: AssetNamespace, name: &str) -> Option<&str> {
         let data = self.rawfiles.get(&(ns, name.to_owned()))?;
         std::str::from_utf8(data).ok()
@@ -1113,7 +1176,7 @@ impl SoundCatalog {
 
     fn rawfile_text_unique(&self, name: &str) -> Option<&str> {
         let mut found = None;
-        for ns in [AssetNamespace::Iw4, AssetNamespace::T5, AssetNamespace::Iw5] {
+        for ns in AssetNamespace::ALL {
             if let Some(text) = self.rawfile_text_in(ns, name) {
                 if found.is_some() {
                     return None;
@@ -1192,104 +1255,17 @@ impl SoundCatalog {
         shots
     }
 
-    pub fn pick_loaded_outcome<'a>(
-        &'a self,
-        ns: AssetNamespace,
-        alias: &str,
-        rng: &mut u32,
-        avoid: Option<usize>,
-    ) -> Option<PickLoadedOutcome<'a>> {
-        self.pick_loaded_outcome_depth(ns, alias, rng, avoid, 0)
-    }
-
-    pub fn pick_loaded_outcome_at<'a>(
-        &'a self,
+    pub fn pick_variant_at(
+        &self,
         index: usize,
         rng: &mut u32,
         avoid: Option<usize>,
-    ) -> Option<PickLoadedOutcome<'a>> {
-        let sound = self.sounds.get(index)?;
-        self.pick_from_sound(ns_of(sound.game), sound, rng, avoid, 0)
-    }
-
-    fn pick_loaded_outcome_depth<'a>(
-        &'a self,
-        ns: AssetNamespace,
-        alias: &str,
-        rng: &mut u32,
-        avoid: Option<usize>,
-        depth: u8,
-    ) -> Option<PickLoadedOutcome<'a>> {
-        let sound = self.sound_in(ns, alias)?;
-        self.pick_from_sound(ns, sound, rng, avoid, depth)
-    }
-
-    fn pick_from_sound<'a>(
-        &'a self,
-        ns: AssetNamespace,
-        sound: &'a CapturedSound,
-        rng: &mut u32,
-        avoid: Option<usize>,
-        depth: u8,
-    ) -> Option<PickLoadedOutcome<'a>> {
-        if sound.aliases.is_empty() {
-            return Some(PickLoadedOutcome {
-                variant_index: 0,
-                picked: None,
-            });
-        }
-        let weights: Vec<f32> = sound
-            .aliases
-            .iter()
-            .map(|a| {
-                if a.probability > 0.0 {
-                    a.probability
-                } else {
-                    1.0
-                }
-            })
-            .collect();
-        let index = pick_weighted_variant_index(&weights, rng, avoid);
-        let row = &sound.aliases[index];
-        let own_pcm = row
-            .loaded
-            .bound_index()
-            .and_then(|index| self.pcm_at(index));
-        let layer = own_pcm.is_some().then(|| row.secondary.clone()).flatten();
-        let pcm = own_pcm.or_else(|| {
-            if ns == AssetNamespace::T5 || depth >= 10 {
-                return None;
-            }
-            row.secondary.as_deref().and_then(|sec| {
-                self.pick_loaded_outcome_depth(ns, sec, rng, None, depth + 1)
-                    .and_then(|outcome| outcome.picked)
-                    .map(|picked| picked.sound)
-            })
-        });
-        let Some(pcm) = pcm else {
-            return Some(PickLoadedOutcome {
-                variant_index: index,
-                picked: None,
-            });
-        };
-        let t_vol = unit_random(rng);
-        let t_pitch = unit_random(rng);
-        let volume = self.alias_volume(ns, row, t_vol);
-        let pitch = if row.pitch_min == 0.0 && row.pitch_max == 0.0 {
-            1.0
-        } else {
-            lerp_range(row.pitch_min, row.pitch_max, t_pitch)
-        };
-        Some(PickLoadedOutcome {
-            variant_index: index,
-            picked: Some(PickedSound {
-                sound: pcm,
-                variant_index: index,
-                volume,
-                pitch,
-                layer,
-            }),
-        })
+    ) -> Option<usize> {
+        let weights = self
+            .selection_weights
+            .get(index)
+            .filter(|weights| !weights.is_empty())?;
+        Some(pick_weighted_variant_index(weights, rng, avoid))
     }
 }
 
@@ -1389,6 +1365,86 @@ fn speaker_map_name(s: &ZoneStream<'_>, row: Ptr) -> Option<String> {
         ZonePtr::Offset(p) => optional_name(s, s.resolve_alias(p), s.layout(4, 8)),
         _ => None,
     }
+}
+
+fn stereo_speaker_gains(s: &ZoneStream<'_>, row: Ptr) -> Option<[[f32; 2]; 2]> {
+    let ZonePtr::Offset(map) = s.ptr_at(row, s.layout(SND_ALIAS_SPEAKER_MAP, 128)).ok()? else {
+        return None;
+    };
+    let map = s.resolve_alias(map);
+    match s.wire_format() {
+        fastfile_iw4::Iw4WireFormat::X86 => {
+            capture_stereo_speaker_gains(|offset| s.u32_at(map, offset).ok())
+        }
+        fastfile_iw4::Iw4WireFormat::X64 => {
+            let mut gains = [[0.0; 2]; 2];
+            for (source, outputs) in gains.iter_mut().enumerate() {
+                let channels = 16 + source * 32;
+                let count = usize::from(s.u8_at(map, channels).ok()?);
+                if count == 0 || count > (source + 1) * 2 {
+                    return None;
+                }
+                let ZonePtr::Offset(entries) = s.ptr_at(map, channels + 8).ok()? else {
+                    return None;
+                };
+                let entries = s.resolve_alias(entries);
+                let mut seen = [[false; 2]; 2];
+                for route in 0..count {
+                    let entry = route * 8;
+                    let input = usize::from(s.u8_at(entries, entry).ok()?);
+                    let output = usize::from(s.u8_at(entries, entry + 1).ok()?);
+                    let gain = s.f32_at(entries, entry + 4).ok()?;
+                    if input > source
+                        || output >= 2
+                        || seen[input][output]
+                        || !gain.is_finite()
+                        || gain < 0.0
+                    {
+                        return None;
+                    }
+                    seen[input][output] = true;
+                    if source == 0 || input == output {
+                        outputs[output] = gain;
+                    } else if gain != 0.0 {
+                        return None;
+                    }
+                }
+            }
+            Some(gains)
+        }
+    }
+}
+
+pub(crate) fn capture_stereo_speaker_gains(
+    mut word: impl FnMut(usize) -> Option<u32>,
+) -> Option<[[f32; 2]; 2]> {
+    let mut gains = [[0.0; 2]; 2];
+    for (source, outputs) in gains.iter_mut().enumerate() {
+        let channels = 8 + source * 200;
+        if word(channels)? != 2 {
+            return None;
+        }
+        let mut seen = [false; 2];
+        for speaker in 0..2 {
+            let entry = channels + 4 + speaker * 16;
+            let output = usize::try_from(word(entry)?).ok()?;
+            if output >= 2 || seen[output] {
+                return None;
+            }
+            let levels = word(entry + 4)?;
+            if !(1..=2).contains(&levels) {
+                return None;
+            }
+            let left = f32::from_bits(word(entry + 8)?);
+            let right = f32::from_bits(word(entry + 12)?);
+            if !left.is_finite() || !right.is_finite() || left < 0.0 || right < 0.0 {
+                return None;
+            }
+            outputs[output] = left.max(right);
+            seen[output] = true;
+        }
+    }
+    Some(gains)
 }
 
 fn read_curve_header(s: &ZoneStream<'_>, header: Ptr) -> Option<CapturedSndCurve> {
@@ -1543,7 +1599,7 @@ impl AssetLinkSink for SoundCatalog {
         }
         self.last_curve_name = Some(name.clone());
         self.curve_by_ptr.insert(file_key(header), name.clone());
-        self.insert_curve(CapturedSndCurve { name, knots });
+        self.insert_curve(ns_of(self.capture_game), CapturedSndCurve { name, knots });
         Ok(())
     }
 
@@ -1663,6 +1719,7 @@ impl AssetLinkSink for SoundCatalog {
                 mixer_group,
                 loaded_name,
                 loaded,
+                loaded_binding_origin: crate::LoadedBindingOrigin::Unresolved,
                 streamed,
                 file_type,
                 file_exists,
@@ -1724,6 +1781,7 @@ impl AssetLinkSink for SoundCatalog {
                     .f32_at(row, s.layout(SND_ALIAS_ENVELOP_PERCENTAGE, 120))
                     .unwrap_or(0.0),
                 speaker_map: speaker_map_name(s, row),
+                stereo_speaker_gains: stereo_speaker_gains(s, row),
                 limit_count: None,
                 entity_limit_count: None,
             });

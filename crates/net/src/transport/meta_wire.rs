@@ -1116,6 +1116,42 @@ fn decode_sound_alias_cs(input: &mut WireReader<'_>) -> Result<Vec<(u8, String)>
     Ok(occupied)
 }
 
+pub(super) fn encode_fire_cause(out: &mut WireWriter, cause: Option<sim::FireCause>) {
+    match cause {
+        None => out.put_u8(0),
+        Some(cause) => {
+            out.put_u8(1);
+            out.put_u32(cause.client.0);
+            out.put_u32(cause.life.0);
+            out.put_u32(cause.command.0);
+            out.put_u16(cause.ordinal);
+            out.put_u8(cause.hand);
+        }
+    }
+}
+
+pub(super) fn decode_fire_cause(
+    input: &mut WireReader<'_>,
+) -> Result<Option<sim::FireCause>, WireError> {
+    match input.get_u8()? {
+        0 => Ok(None),
+        1 => {
+            let cause = sim::FireCause {
+                client: ClientId(input.get_u32()?),
+                life: sim::LifeSequence(input.get_u32()?),
+                command: sim::CommandSequence(input.get_u32()?),
+                ordinal: input.get_u16()?,
+                hand: input.get_u8()?,
+            };
+            if cause.hand > 1 {
+                return Err(WireError::Malformed("invalid fire cause hand"));
+            }
+            Ok(Some(cause))
+        }
+        _ => Err(WireError::Malformed("invalid fire cause tag")),
+    }
+}
+
 fn encode_entity_event_record(out: &mut WireWriter, record: &EntityEventRecord) {
     out.put_u32(record.sequence.0);
     out.put_u32(record.tick.0);
@@ -1128,6 +1164,7 @@ fn encode_entity_event_record(out: &mut WireWriter, record: &EntityEventRecord) 
     out.put_i32(payload.event_parm);
     out.put_u32(payload.weapon);
     out.put_u32(payload.correlation);
+    encode_fire_cause(out, payload.fire_cause);
     out.put_u16(payload.pellet);
     out.put_u8(payload.hand);
     for value in payload.origin {
@@ -1167,6 +1204,7 @@ fn decode_entity_event_record(input: &mut WireReader<'_>) -> Result<EntityEventR
             event_parm: input.get_i32()?,
             weapon: input.get_u32()?,
             correlation: input.get_u32()?,
+            fire_cause: decode_fire_cause(input)?,
             pellet: input.get_u16()?,
             hand: input.get_u8()?,
             origin: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
@@ -1365,6 +1403,18 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
     out.put_u8(
         u8::from(meta.rechamber_pending) | (u8::from(meta.rechamber_pending_secondary) << 1),
     );
+    for pending in meta.pending_brass {
+        match pending {
+            None => out.put_u8(0),
+            Some(pending) => {
+                out.put_u8(1);
+                encode_fire_cause(out, pending.cause);
+                out.put_u32(pending.life.0);
+                out.put_u32(pending.shot.0);
+                out.put_u32(pending.weapon);
+            }
+        }
+    }
     out.put_u8(u8::from(meta.god_mode));
     match meta.dead_since_tick {
         None => out.put_u8(0),
@@ -1577,6 +1627,19 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     let rechamber_pending_hands = input.get_u8()?;
     let rechamber_pending = rechamber_pending_hands & 1 != 0;
     let rechamber_pending_secondary = rechamber_pending_hands & 2 != 0;
+    let mut pending_brass = [None; 2];
+    for pending in &mut pending_brass {
+        *pending = match input.get_u8()? {
+            0 => None,
+            1 => Some(sim::PendingBrass {
+                cause: decode_fire_cause(input)?,
+                life: sim::LifeSequence(input.get_u32()?),
+                shot: sim::ShotId(input.get_u32()?),
+                weapon: input.get_u32()?,
+            }),
+            _ => return Err(WireError::Malformed("invalid pending brass tag")),
+        };
+    }
     let god_mode = match input.get_u8()? {
         0 => false,
         1 => true,
@@ -1735,6 +1798,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         burst_latch_secondary,
         rechamber_pending,
         rechamber_pending_secondary,
+        pending_brass,
         dead_since_tick,
         shield,
         shield_collision,

@@ -358,6 +358,8 @@ fn sort_fx_draw_lane(lane: &mut FxDrawLane, eye: [f32; 3], glass: Option<&GfxGla
 
 pub(crate) fn mix_draw_membership(id: &mut u64, item: &RetainedDrawItem) {
     super::list::mix_content_id(id, item.key);
+    super::list::mix_content_id(id, u64::from(item.material_rank));
+    super::list::mix_content_id(id, item.material_id.map_or(0, |id| u64::from(id.0) + 1));
     let encode = |value: Option<u8>| value.map_or(0, |value| u64::from(value) + 1);
     super::list::mix_content_id(
         id,

@@ -1823,9 +1823,6 @@ impl WeaponCatalog {
             }
             if let Some(slot) = entry.overlay_material_slot {
                 if let Some((name, image)) = names_of(slot) {
-                    if ns == crate::AssetNamespace::T5 {
-                        entry.facts.thermal_scope = name.contains("_ir");
-                    }
                     entry.overlay_material = Some(name);
                     entry.overlay_image = image;
                 }
@@ -3361,8 +3358,6 @@ fn capture_t5_body_facts(
         facts.kill_icon_ratio = i32_at_t5(stream, body, sz::WEAPON_DEF_KILL_ICON_RATIO_OFF);
         facts.flip_kill_icon = u8_at_t5(stream, body, sz::WEAPON_DEF_FLIP_KILL_ICON_OFF) != 0;
     }
-    facts.thermal_scope =
-        leftover_t5_overlay_name(stream, geometry).is_some_and(|name| name.contains("_ir"));
     if let Some(variant) = geometry.variant {
         facts.silenced = u8_at_t5(stream, variant, sz::WEAPON_VARIANT_SILENCED_OFF) != 0;
         if u8_at_t5(stream, variant, sz::WEAPON_VARIANT_RAPID_FIRE_OFF) != 0 {
@@ -5785,6 +5780,7 @@ struct WeaponRow {
     namespace: crate::AssetNamespace,
 
     facts: WeaponBodyFacts,
+    semantics: Option<crate::WeaponSemanticPolicy>,
 
     gun_xmodel: Option<String>,
 
@@ -5914,6 +5910,7 @@ impl Default for WeaponRow {
             alternate_index: 0,
             namespace: crate::AssetNamespace::Iw4,
             facts: WeaponBodyFacts::default(),
+            semantics: None,
             gun_xmodel: None,
             hand_xmodel: None,
             dual_wield_weapon: None,
@@ -6217,6 +6214,32 @@ impl WeaponBuild {
     pub fn publish(self) -> WeaponRegistry {
         let mut registry = self.registry;
         registry.families = crate::WeaponFamilies::build(&self.family_tables, &registry);
+        let t5_knife = registry
+            .rows
+            .iter()
+            .position(|row| {
+                row.namespace == crate::AssetNamespace::T5
+                    && row.name.strip_suffix("_mp").unwrap_or(&row.name) == "knife"
+            })
+            .map(|index| index as u32);
+        for row in &mut registry.rows {
+            let melee_weapon =
+                if row.namespace == crate::AssetNamespace::T5 && !row.facts.use_as_melee {
+                    t5_knife.map_or(crate::MeleeWeaponPolicy::Own, |weapon| {
+                        crate::MeleeWeaponPolicy::T5KnifeCompatibility { weapon }
+                    })
+                } else {
+                    crate::MeleeWeaponPolicy::Own
+                };
+            let policy = crate::WeaponSemanticPolicy::compile(
+                row.namespace,
+                row.facts.thermal_scope,
+                row.overlay_material.as_deref(),
+                melee_weapon,
+            );
+            row.facts.thermal_scope = policy.thermal_scope.enabled();
+            row.semantics = Some(policy);
+        }
         registry
     }
 
@@ -6789,12 +6812,6 @@ impl WeaponBuild {
 
     pub fn resolve_hud_material_edges(&mut self, materials: &crate::MaterialDefinitions) {
         for row in &mut self.registry.rows {
-            if row.namespace == crate::AssetNamespace::T5 {
-                row.facts.thermal_scope = row
-                    .overlay_material
-                    .as_deref()
-                    .is_some_and(|name| name.contains("_ir"));
-            }
             if row.overlay_image.is_none()
                 && let Some(name) = row.overlay_material.as_deref()
                 && let Some(index) = materials.material_index_by_ns(row.namespace.content(), name)
@@ -7141,6 +7158,7 @@ impl WeaponBuild {
     ) -> FpvAssemblyCensus {
         let mut shared: HashMap<crate::FpvAssemblyKey, Result<Arc<crate::FpvAssembly>, String>> =
             HashMap::new();
+        let mut skeletons = crate::FpvSkeletons::default();
         let mut tracks = crate::FpvClipTracks::default();
         let mut census = FpvAssemblyCensus::default();
         self.registry.alternate_fpv.clear();
@@ -7220,7 +7238,16 @@ impl WeaponBuild {
                     .or_insert_with(|| {
                         census.built += 1;
                         crate::FpvAssembly::build(
-                            fpv, hands, mounts, rocket, knife, ads, &hide_tags, hide_mode, jammed,
+                            fpv,
+                            hands,
+                            mounts,
+                            rocket,
+                            knife,
+                            ads,
+                            &hide_tags,
+                            hide_mode,
+                            jammed,
+                            &mut skeletons,
                         )
                         .map(Arc::new)
                         .map_err(|error| error.to_string())
@@ -7718,6 +7745,7 @@ impl WeaponBuild {
                 alternate_index: 0,
                 namespace: crate::AssetNamespace::Iw4,
                 facts: entry.facts,
+                semantics: None,
                 gun_xmodel: entry.gun_xmodel,
                 hand_xmodel: entry.hand_xmodel,
                 dual_wield_weapon: entry.dual_wield_weapon,
@@ -8759,7 +8787,7 @@ impl WeaponRegistry {
         slot: WeaponSoundSlot,
         catalog: &'a crate::SoundCatalog,
     ) -> Option<(crate::AssetNamespace, &'a str)> {
-        let ns = self.namespace_of(index).unwrap_or_default();
+        let ns = self.semantic_policy_of(index)?.cue_namespace.namespace();
         sound_alias_in_bank(self.authored_weapon_sound(index, slot), ns, catalog)
     }
 
@@ -8769,7 +8797,7 @@ impl WeaponRegistry {
         surf: usize,
         catalog: &'a crate::SoundCatalog,
     ) -> Option<&'a str> {
-        let ns = self.namespace_of(index).unwrap_or_default();
+        let ns = self.semantic_policy_of(index)?.cue_namespace.namespace();
         sound_alias_in_bank(self.bounce_sound_of(index, surf), ns, catalog).map(|(_, alias)| alias)
     }
 
@@ -8798,20 +8826,39 @@ impl WeaponRegistry {
         self.rows.get(index as usize).map(|row| row.facts)
     }
 
+    pub fn semantic_policy_of(&self, index: u32) -> Option<&crate::WeaponSemanticPolicy> {
+        self.rows.get(index as usize)?.semantics.as_ref()
+    }
+
     pub fn melee_weapon_of(&self, index: u32) -> u32 {
-        let Some(row) = self.rows.get(index as usize) else {
-            return index;
+        self.semantic_policy_of(index)
+            .map_or(index, |policy| policy.melee_weapon.weapon(index))
+    }
+
+    pub fn melee_impact_sound_key<'a>(
+        &self,
+        index: u32,
+        knife: bool,
+        impact: crate::MeleeImpact,
+        catalog: &'a crate::SoundCatalog,
+    ) -> Option<(crate::AssetNamespace, &'a str)> {
+        let row = self.rows.get(index as usize)?;
+        let semantics = row.semantics.as_ref()?;
+        let policy = semantics.melee_cues;
+        let namespace = semantics.cue_namespace.namespace();
+        let slot = match impact {
+            crate::MeleeImpact::Hit => WeaponSoundSlot::MeleeHit,
+            crate::MeleeImpact::Miss => WeaponSoundSlot::MeleeMiss,
         };
-        if row.namespace != crate::AssetNamespace::T5 || row.facts.use_as_melee {
-            return index;
+        let own = || self.weapon_sound_key(index, slot, catalog);
+        let generic =
+            |knife| sound_alias_in_bank(Some(policy.generic(knife, impact)), namespace, catalog);
+        let knife_alias = || knife.then(|| generic(true)).flatten();
+        match policy.precedence {
+            crate::MeleeCuePrecedence::T5AuthoredFirstCompatibility => own().or_else(knife_alias),
+            crate::MeleeCuePrecedence::KnifeFirstCompatibility => knife_alias().or_else(own),
         }
-        self.rows
-            .iter()
-            .position(|r| {
-                r.namespace == crate::AssetNamespace::T5
-                    && r.name.strip_suffix("_mp").unwrap_or(&r.name) == "knife"
-            })
-            .map_or(index, |i| i as u32)
+        .or_else(|| generic(false))
     }
 
     pub fn alternate_of(&self, index: u32) -> u32 {

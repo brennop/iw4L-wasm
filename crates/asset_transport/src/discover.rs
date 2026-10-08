@@ -140,6 +140,19 @@ pub fn find_game_install(root: &Path, game: crate::ZoneGame) -> Option<PathBuf> 
 }
 
 pub fn search_roots(root: &Path) -> Vec<PathBuf> {
+    let roots = configured_search_roots(root);
+    #[cfg(not(windows))]
+    let mut roots = roots;
+    #[cfg(not(windows))]
+    for installed in crate::steam::installed_game_roots(&roots) {
+        if !roots.contains(&installed) {
+            roots.push(installed);
+        }
+    }
+    roots
+}
+
+pub(crate) fn configured_search_roots(root: &Path) -> Vec<PathBuf> {
     let mut roots = vec![root.to_path_buf()];
     for folder in GAME_FOLDERS
         .read()
@@ -156,12 +169,6 @@ pub fn search_roots(root: &Path) -> Vec<PathBuf> {
             if sibling != root && sibling.join("zone").is_dir() && !roots.contains(&sibling) {
                 roots.push(sibling);
             }
-        }
-    }
-    #[cfg(not(windows))]
-    for installed in crate::steam::installed_game_roots(&roots) {
-        if !roots.contains(&installed) {
-            roots.push(installed);
         }
     }
     #[cfg(windows)]

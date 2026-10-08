@@ -18,7 +18,8 @@ pub use catalog::{
     RuntimeImageId, RuntimeMaterial, RuntimeMaterialCatalog, RuntimePass, RuntimeProgramIdentity,
     RuntimeShaderPair, RuntimeShaderProgram, RuntimeShaderProgramId, RuntimeSortedMaterialTable,
     RuntimeTechnique, RuntimeTechniqueSet, RuntimeTechniqueSetId, RuntimeTextureBinding,
-    SortedMaterialOrdinal, TECHNIQUE_SLOT_COUNT, sort_band, sort_pass_args,
+    SortedMaterialOrdinal, SourceTechniqueSelection, TECHNIQUE_SLOT_COUNT,
+    TechniqueSelectionPolicy, sort_band, sort_pass_args,
 };
 pub use code_sources::{CodeSourceError, CodeSourceLookup, LayeredCodeSources, RuntimeCodeSources};
 pub use dxbc_abi::{

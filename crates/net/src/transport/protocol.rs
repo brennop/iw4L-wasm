@@ -284,10 +284,13 @@ pub enum SnapshotPayload {
 impl SnapshotPayload {
     pub fn against_baseline(delta: &[u8], raw: impl FnOnce() -> Vec<u8>) -> Self {
         match segment_delta::compress(delta) {
-            Ok(compressed) => Self::AgainstBaseline {
-                decoded_len: delta.len() as u32,
-                compressed,
-            },
+            Ok(compressed) if compressed.len() <= MAX_PACKET_BYTES as usize => {
+                Self::AgainstBaseline {
+                    decoded_len: delta.len() as u32,
+                    compressed,
+                }
+            }
+            Ok(_) => Self::Plain(raw()),
             Err(error) => {
                 diag::warn!(Net, "snapshot baseline compression failed: {error}");
                 Self::Plain(raw())
@@ -297,7 +300,9 @@ impl SnapshotPayload {
 
     pub fn decode(self, baseline: Option<(&[u8], &FrameSegments)>) -> Option<Vec<u8>> {
         match self {
-            Self::Plain(payload) => Some(payload),
+            Self::Plain(payload) => {
+                (payload.len() <= segment_delta::MAX_RECONSTRUCTED_FRAME_BYTES).then_some(payload)
+            }
             Self::AgainstBaseline {
                 decoded_len,
                 compressed,
@@ -609,35 +614,6 @@ fn compress_snapshot(_payload: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-#[cfg(all(online, not(target_arch = "wasm32")))]
-fn decompress_snapshot(payload: &[u8], decoded_len: usize) -> Result<Vec<u8>, WireError> {
-    zstd::bulk::decompress(payload, decoded_len)
-        .map_err(|_| WireError::Malformed("invalid compressed snapshot"))
-}
-
-#[cfg(all(online, target_arch = "wasm32"))]
-fn decompress_snapshot(payload: &[u8], decoded_len: usize) -> Result<Vec<u8>, WireError> {
-    use std::io::Read;
-    const MALFORMED: WireError = WireError::Malformed("invalid compressed snapshot");
-    let decoder = ruzstd::decoding::StreamingDecoder::new(payload).map_err(|_| MALFORMED)?;
-    let mut out = Vec::with_capacity(decoded_len);
-    decoder
-        .take(decoded_len as u64 + 1)
-        .read_to_end(&mut out)
-        .map_err(|_| MALFORMED)?;
-    if out.len() > decoded_len {
-        return Err(MALFORMED);
-    }
-    Ok(out)
-}
-
-#[cfg(not(online))]
-fn decompress_snapshot(_payload: &[u8], _decoded_len: usize) -> Result<Vec<u8>, WireError> {
-    Err(WireError::Malformed(
-        "compressed snapshot needs the online build",
-    ))
-}
-
 impl ServerPacket {
     pub fn encode(&self, out: &mut WireWriter) {
         match self {
@@ -734,7 +710,7 @@ impl ServerPacket {
                     return Err(WireError::Malformed("snapshot exceeds decoded size limit"));
                 }
                 let len = input.get_u32()? as usize;
-                if len > input.remaining() {
+                if len > MAX_PACKET_BYTES as usize || len > input.remaining() {
                     return Err(WireError::Malformed("invalid snapshot payload length"));
                 }
                 let mut compressed = vec![0u8; len];
@@ -769,7 +745,8 @@ impl ServerPacket {
                 let mut payload = vec![0u8; payload_len];
                 input.get_bytes(&mut payload)?;
                 if let Some(decoded_len) = decoded_len {
-                    payload = decompress_snapshot(&payload, decoded_len)?;
+                    payload = segment_delta::decompress(&payload, decoded_len)
+                        .map_err(|_| WireError::Malformed("invalid compressed snapshot"))?;
                     if payload.len() != decoded_len {
                         return Err(WireError::Malformed("snapshot decoded length mismatch"));
                     }

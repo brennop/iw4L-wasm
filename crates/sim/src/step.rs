@@ -20,6 +20,7 @@ use crate::world::{
     clip_move_to_model_brushes, clip_trace, give_weapon_to_ps_akimbo, gsc_give_weapon_is_akimbo,
     inventory_add_weapon,
 };
+use crate::{ActionOutcome, ActionResult, TickEffects, TickResult};
 use playerstate_iw4::PlayerState;
 use playerstate_iw4::buttons;
 
@@ -29,7 +30,9 @@ pub(crate) struct StepRequest {
     pub(crate) input: TickInput,
     msec: i32,
     pub(crate) reason: crate::StepReason,
-    output: Option<Snapshot>,
+    action_results: Vec<ActionResult>,
+    fire_results: Vec<crate::FireCommandResult>,
+    output: Option<TickResult>,
 }
 
 pub(crate) fn schedule() -> Schedule {
@@ -70,7 +73,7 @@ pub(crate) fn run_schedule(
     input: &TickInput,
     msec: i32,
     reason: crate::StepReason,
-) -> Result<Snapshot, crate::script::Fault> {
+) -> Result<TickResult, crate::script::Fault> {
     crate::script::preflight(ecs, tick, reason)?;
     assert!(
         !ecs.contains_resource::<StepRequest>(),
@@ -81,6 +84,8 @@ pub(crate) fn run_schedule(
         input: input.clone(),
         msec: msec.clamp(1, 200),
         reason,
+        action_results: Vec::new(),
+        fire_results: Vec::new(),
         output: None,
     });
     schedule.run(ecs);
@@ -219,6 +224,8 @@ fn stuck_row(ps: &PlayerState) -> gamemode_iw4::StuckClient {
 }
 
 fn advance_time_system(world: &mut World) {
+    let samples = world.resource::<StepRequest>().input.shot_samples.clone();
+    frame_world(world).set_lagcomp_commands(samples);
     let tick;
     {
         let mut request = world.resource_mut::<StepRequest>();
@@ -251,7 +258,9 @@ fn apply_actions_system(world: &mut World) {
     }
 
     frame.enter_kernel_phase(crate::gentity::KernelPhase::ApplyActions);
-    apply_actions(&mut frame, tick, &actions);
+    let results = apply_actions(&mut frame, tick, &actions);
+    drop(frame);
+    world.resource_mut::<StepRequest>().action_results = results;
 }
 
 fn run_players_system(ecs: &mut World) {
@@ -272,10 +281,36 @@ fn run_players_system(ecs: &mut World) {
     let original_buttons = world.old_buttons_mut().clone();
     let original_angles = world.old_cmd_angles_mut().clone();
     let mut consumed = Vec::new();
+    let mut fire_results: Vec<_> = input
+        .cmds
+        .iter()
+        .filter_map(|command| {
+            command.sequence.map(|sequence| crate::FireCommandResult {
+                client: command.client,
+                life: world
+                    .client_meta(command.client)
+                    .map(|meta| meta.life_sequence),
+                command: sequence,
+                outcome: crate::FireCommandOutcome::NotRun(
+                    crate::FireCommandRefusal::MatchInactive,
+                ),
+            })
+        })
+        .collect();
+    let mut next_fire_result = 0;
     if allow_move {
         phase_materialize_entity_dobjs(&mut world);
         let model_brushes = world.model_movement_brushes();
-        for (id, cmd) in &input.cmds {
+        for command in &input.cmds {
+            let result_index = command.sequence.map(|_| {
+                let index = next_fire_result;
+                next_fire_result += 1;
+                fire_results[index].outcome =
+                    crate::FireCommandOutcome::NotRun(crate::FireCommandRefusal::NotAlive);
+                index
+            });
+            let id = &command.client;
+            let cmd = &command.command;
             world.select_lagcomp_command(*id, cmd.server_time);
             if !world
                 .client_meta(*id)
@@ -283,12 +318,20 @@ fn run_players_system(ecs: &mut World) {
             {
                 continue;
             }
+            if let Some(index) = result_index {
+                fire_results[index].outcome =
+                    crate::FireCommandOutcome::NotRun(crate::FireCommandRefusal::MissingPlayer);
+            }
             let Some(ps) = world.player(*id) else {
                 continue;
             };
 
             let delta = cmd.server_time.wrapping_sub(ps.command_time);
             if delta <= 0 {
+                if let Some(index) = result_index {
+                    fire_results[index].outcome =
+                        crate::FireCommandOutcome::NotRun(crate::FireCommandRefusal::StaleCommand);
+                }
                 continue;
             }
 
@@ -484,7 +527,25 @@ fn run_players_system(ecs: &mut World) {
             world.set_pmove_walking(*id, walking);
             world.link_player_area(*id, linked_bounds);
 
-            let shots = advance_weapon_command(&mut world, tick, *id, cmd, delta.min(200));
+            let shots = advance_weapon_command(
+                &mut world,
+                tick,
+                *id,
+                cmd,
+                delta.min(200),
+                command.sequence,
+            );
+            if let Some(index) = result_index {
+                assert!(
+                    shots.len() <= 2,
+                    "accepted firing exceeded weapon hand count"
+                );
+                fire_results[index].outcome = crate::FireCommandOutcome::Executed {
+                    accepted: std::array::from_fn(|hand| {
+                        shots.get(hand).and_then(|shot| shot.fire_cause)
+                    }),
+                };
+            }
             for shot in shots {
                 crate::missile::fire_accepted_shot(&mut world, tick, &shot);
 
@@ -503,7 +564,10 @@ fn run_players_system(ecs: &mut World) {
             }
             crate::equipment::phase_offhand(&mut world, tick, &[(*id, cmd)]);
             world.set_old_cmd(*id, cmd.buttons, cmd.angles);
-            consumed.push((*id, cmd));
+            consumed.push(crate::PlayerCommand {
+                command: cmd,
+                ..*command
+            });
         }
     }
 
@@ -523,6 +587,7 @@ fn run_players_system(ecs: &mut World) {
     if allow_move {
         request.input.cmds = consumed;
     }
+    request.fire_results = fire_results;
 }
 
 fn record_collision_state_system(ecs: &mut World) {
@@ -533,7 +598,7 @@ fn record_collision_state_system(ecs: &mut World) {
         .input
         .cmds
         .iter()
-        .map(|(id, _)| *id)
+        .map(|command| command.client)
         .collect();
     let mut world = frame_world(ecs);
     world.enter_kernel_phase(crate::gentity::KernelPhase::RecordCollisionState);
@@ -584,9 +649,13 @@ fn dispatch_touches_system(ecs: &mut World) {
     let command_buttons: Vec<_> = input
         .cmds
         .iter()
-        .map(|(id, cmd)| (id.0, cmd.buttons))
+        .map(|command| (command.client.0, command.command.buttons))
         .collect();
-    let latest: std::collections::BTreeMap<_, _> = input.cmds.iter().copied().collect();
+    let latest: std::collections::BTreeMap<_, _> = input
+        .cmds
+        .iter()
+        .map(|command| (command.client, command.command))
+        .collect();
     let latest_cmds: Vec<_> = latest.into_iter().collect();
     let cmds: Vec<_> = latest_cmds
         .iter()
@@ -609,7 +678,8 @@ fn finalize_system(ecs: &mut World) {
     let input = ecs.resource::<StepRequest>().input.clone();
     let mut world = frame_world(ecs);
     world.enter_kernel_phase(crate::gentity::KernelPhase::Finalize);
-    for &(id, cmd) in &input.cmds {
+    for command in &input.cmds {
+        let (id, cmd) = (command.client, command.command);
         emit_attack_events(&mut world, tick, &[(id, cmd)]);
         if world.client_meta(id).is_some() {
             world.set_old_cmd(id, cmd.buttons, cmd.angles);
@@ -643,7 +713,39 @@ fn publish_snapshot_system(ecs: &mut World) {
         Snapshot::unpublished(tick)
     };
     drop(world);
-    ecs.resource_mut::<StepRequest>().output = Some(snapshot);
+    let mut world = frame_world(ecs);
+    let weapon_script_names = world.weapon_script_names();
+    let pending_final_kill = world.take_pending_final_kill();
+    let mut effects = TickEffects {
+        prints: world.take_pending_prints(),
+        local_sounds: world.take_pending_local_sounds(),
+        player_cards: world.take_pending_player_cards(),
+        script_audio: world.take_pending_script_audio(),
+        kicks: Vec::new(),
+    };
+    drop(world);
+    let script_seats = crate::script::script_seats(ecs);
+    let mut runtime = ecs.resource_mut::<crate::script::Runtime>();
+    let script_exit_level = std::mem::take(&mut runtime.exit_level);
+    effects.kicks = std::mem::take(&mut runtime.kicks)
+        .into_iter()
+        .map(|(client, reason)| (ClientId(client), reason))
+        .collect();
+    drop(runtime);
+    let mut request = ecs.resource_mut::<StepRequest>();
+    let action_results = std::mem::take(&mut request.action_results);
+    let fire_results = std::mem::take(&mut request.fire_results);
+    request.output = Some(TickResult {
+        input: request.input.clone(),
+        snapshot,
+        action_results,
+        fire_results,
+        effects,
+        weapon_script_names,
+        pending_final_kill,
+        script_seats,
+        script_exit_level,
+    });
 }
 
 fn emit_player_ticks(world: &FrameWorld, tick: Tick) {
@@ -780,213 +882,279 @@ fn action_needs_player_row(action: &ClientAction) -> bool {
     )
 }
 
-fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, ClientAction)]) {
-    for (id, action) in actions {
-        match *action {
-            ClientAction::JoinMatch { request_id: _ } => {
-                let meta = world.client_meta_mut(*id);
-                if meta.lifecycle == ClientLifecycle::Connecting {
-                    meta.lifecycle = ClientLifecycle::ChoosingClass;
+fn apply_actions(
+    world: &mut FrameWorld,
+    tick: Tick,
+    actions: &[(ClientId, ClientAction)],
+) -> Vec<ActionResult> {
+    actions
+        .iter()
+        .map(|(client, action)| ActionResult {
+            client: *client,
+            action: *action,
+            outcome: apply_action(world, tick, *client, action),
+        })
+        .collect()
+}
+
+fn apply_action(
+    world: &mut FrameWorld,
+    tick: Tick,
+    id: ClientId,
+    action: &ClientAction,
+) -> ActionOutcome {
+    match *action {
+        ClientAction::JoinMatch { request_id: _ } => {
+            let meta = world.client_meta_mut(id);
+            if meta.lifecycle == ClientLifecycle::Connecting {
+                meta.lifecycle = ClientLifecycle::ChoosingClass;
+            }
+
+            ActionOutcome::Applied
+        }
+        ClientAction::ChooseDefaultClass {
+            request_id: _,
+            index,
+        } => {
+            crate::script::answer_join(world.ecs(), id.0);
+            choose_bot_class(world, id, index);
+
+            ActionOutcome::Accepted
+        }
+        ClientAction::MenuResponse {
+            request_id: _,
+            menu,
+            response,
+        } => {
+            let menu = crate::menu_response_text(&menu);
+            let response = crate::menu_response_text(&response);
+            crate::script::note_team_answer(world.ecs(), id.0, menu);
+            if let Some(outcome) = answer_custom_class(world, id, menu, response) {
+                return outcome;
+            } else {
+                crate::script::answer_menu(world.ecs(), id.0, menu, response);
+            }
+
+            ActionOutcome::Accepted
+        }
+        ClientAction::LeaveMatch { request_id: _ } => {
+            world.retire_client(id);
+
+            ActionOutcome::Applied
+        }
+        ClientAction::SetName {
+            request_id: _,
+            name,
+        } => {
+            world.client_meta_mut(id).name = name;
+
+            ActionOutcome::Applied
+        }
+        ClientAction::UseCopycat { .. } | ClientAction::SpawnClient { .. } => {
+            ActionOutcome::Refused
+        }
+        ClientAction::ActionSlot {
+            request_id: _,
+            slot,
+        } => {
+            crate::script::action_slot_command(world.ecs(), id.0, slot);
+
+            ActionOutcome::Accepted
+        }
+        ClientAction::SelectClass {
+            request_id,
+            class_id,
+            revision,
+            loadout,
+        } => {
+            return apply_select_class(world, tick, id, request_id, class_id, revision, loadout);
+        }
+        ClientAction::GiveWeapon {
+            request_id,
+            weapon,
+            model,
+        } => {
+            if !world.bootstrap_ref().allow_debug_actions {
+                return ActionOutcome::Refused;
+            }
+            let outcome = apply_give_weapon(world, tick, id, request_id, weapon);
+            if outcome != ActionOutcome::Applied {
+                return outcome;
+            }
+            if let Some(ps) = world.player_mut(id) {
+                weapon_iw4::set_weapon_model_for_held(
+                    &ps.weapons,
+                    &mut ps.weapon_data,
+                    weapon,
+                    model,
+                );
+            }
+
+            ActionOutcome::Applied
+        }
+        ClientAction::ChangeWeaponConfiguration {
+            request_id,
+            from,
+            to,
+        } => {
+            if !world.bootstrap_ref().allow_debug_actions {
+                return ActionOutcome::Refused;
+            }
+            return apply_configuration_change(world, tick, id, request_id, from, to);
+        }
+        ClientAction::ForceSpawn {
+            request_id: _,
+            pick,
+        } => {
+            if !world.bootstrap_ref().allow_debug_actions {
+                return ActionOutcome::Refused;
+            }
+            apply_force_spawn(world, id, pick)
+        }
+        ClientAction::SpawnIntermission { request_id: _ } => apply_spawn_intermission(world, id),
+        ClientAction::ResupplyAmmo { .. } => {
+            if !world.bootstrap_ref().allow_debug_actions
+                || !world
+                    .client_meta(id)
+                    .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+            {
+                return ActionOutcome::Refused;
+            }
+            for weapon in
+                crate::script_player::weapons(world, id, crate::script_player::WeaponList::All)
+            {
+                crate::script_player::give_max_ammo(world, id, weapon);
+            }
+
+            ActionOutcome::Applied
+        }
+        ClientAction::SetProfile { profile, .. } => {
+            if crate::script::set_profile(world.ecs(), id.0, profile) {
+                ActionOutcome::Applied
+            } else {
+                ActionOutcome::Refused
+            }
+        }
+        ClientAction::GiveKillstreak {
+            request_id: _,
+            name,
+        } => {
+            if !world.bootstrap_ref().allow_debug_actions
+                || !world
+                    .client_meta(id)
+                    .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+            {
+                return ActionOutcome::Refused;
+            }
+            let name = crate::menu_response_text(&name);
+            if crate::script::give_killstreak(world.ecs(), id.0, name) {
+                ActionOutcome::Accepted
+            } else {
+                ActionOutcome::Refused
+            }
+        }
+        ClientAction::ForceDeath { request_id: _ } => {
+            if !world.bootstrap_ref().allow_debug_actions
+                || !world
+                    .client_meta(id)
+                    .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+            {
+                return ActionOutcome::Refused;
+            }
+            crate::script::force_death(world.ecs(), tick, id.0);
+
+            ActionOutcome::Applied
+        }
+        ClientAction::SetMatchPhase {
+            request_id: _,
+            phase,
+        } => {
+            if !world.bootstrap_ref().allow_debug_actions {
+                return ActionOutcome::Refused;
+            }
+            if phase == MatchPhase::Playing && world.phase() == MatchPhase::Warmup {
+                if crate::script::host::iw4_gametype::force_match_start(world.ecs(), tick) {
+                    return ActionOutcome::Accepted;
                 }
+                crate::score::finish_prematch(world);
+            } else {
+                world.set_phase(phase);
             }
-            ClientAction::ChooseDefaultClass {
-                request_id: _,
-                index,
-            } => {
-                crate::script::answer_join(world.ecs(), id.0);
-                choose_bot_class(world, *id, index);
+
+            ActionOutcome::Applied
+        }
+        ClientAction::Move {
+            request_id: _,
+            origin,
+            angles,
+        } => {
+            return apply_debug_move(world, id, origin, angles);
+        }
+        ClientAction::BeginScriptMoverRotateVelocity {
+            request_id: _,
+            speed,
+        } => {
+            if !world.bootstrap_ref().allow_debug_actions || !speed.is_finite() {
+                return ActionOutcome::Refused;
             }
-            ClientAction::MenuResponse {
-                request_id: _,
-                menu,
-                response,
-            } => {
-                let menu = crate::menu_response_text(&menu);
-                let response = crate::menu_response_text(&response);
-                crate::script::note_team_answer(world.ecs(), id.0, menu);
-                if !answer_custom_class(world, *id, menu, response) {
-                    crate::script::answer_menu(world.ecs(), id.0, menu, response);
-                }
-            }
-            ClientAction::LeaveMatch { request_id: _ } => {
-                world.retire_client(*id);
-            }
-            ClientAction::SetName {
-                request_id: _,
-                name,
-            } => {
-                world.client_meta_mut(*id).name = name;
-            }
-            ClientAction::UseCopycat { .. } | ClientAction::SpawnClient { .. } => {}
-            ClientAction::ActionSlot {
-                request_id: _,
-                slot,
-            } => {
-                crate::script::action_slot_command(world.ecs(), id.0, slot);
-            }
-            ClientAction::SelectClass {
-                request_id,
-                class_id,
-                revision,
-                loadout,
-            } => {
-                apply_select_class(world, tick, *id, request_id, class_id, revision, loadout);
-            }
-            ClientAction::GiveWeapon {
-                request_id,
-                weapon,
-                model,
-            } => {
-                if !world.bootstrap_ref().allow_debug_actions {
-                    continue;
-                }
-                apply_give_weapon(world, tick, *id, request_id, weapon);
-                if let Some(ps) = world.player_mut(*id) {
-                    weapon_iw4::set_weapon_model_for_held(
-                        &ps.weapons,
-                        &mut ps.weapon_data,
-                        weapon,
-                        model,
-                    );
-                }
-            }
-            ClientAction::ChangeWeaponConfiguration {
-                request_id,
-                from,
-                to,
-            } => {
-                if !world.bootstrap_ref().allow_debug_actions {
-                    continue;
-                }
-                apply_configuration_change(world, tick, *id, request_id, from, to);
-            }
-            ClientAction::ForceSpawn {
-                request_id: _,
-                pick,
-            } => {
-                if !world.bootstrap_ref().allow_debug_actions {
-                    continue;
-                }
-                apply_force_spawn(world, *id, pick);
-            }
-            ClientAction::SpawnIntermission { request_id: _ } => {
-                apply_spawn_intermission(world, *id);
-            }
-            ClientAction::ResupplyAmmo { .. } => {
-                if !world.bootstrap_ref().allow_debug_actions
-                    || !world
-                        .client_meta(*id)
-                        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
-                {
-                    continue;
-                }
-                for weapon in
-                    crate::script_player::weapons(world, *id, crate::script_player::WeaponList::All)
-                {
-                    crate::script_player::give_max_ammo(world, *id, weapon);
-                }
-            }
-            ClientAction::SetProfile { profile, .. } => {
-                crate::script::set_profile(world.ecs(), id.0, profile);
-            }
-            ClientAction::GiveKillstreak {
-                request_id: _,
-                name,
-            } => {
-                if !world.bootstrap_ref().allow_debug_actions
-                    || !world
-                        .client_meta(*id)
-                        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
-                {
-                    continue;
-                }
-                let name = crate::menu_response_text(&name);
-                crate::script::give_killstreak(world.ecs(), id.0, name);
-            }
-            ClientAction::ForceDeath { request_id: _ } => {
-                if !world.bootstrap_ref().allow_debug_actions {
-                    continue;
-                }
-                crate::script::force_death(world.ecs(), tick, id.0);
-            }
-            ClientAction::SetMatchPhase {
-                request_id: _,
-                phase,
-            } => {
-                if !world.bootstrap_ref().allow_debug_actions {
-                    continue;
-                }
-                if phase == MatchPhase::Playing && world.phase() == MatchPhase::Warmup {
-                    if !crate::script::host::iw4_gametype::force_match_start(world.ecs(), tick) {
-                        crate::score::finish_prematch(world);
-                    }
-                } else {
-                    world.set_phase(phase);
-                }
-            }
-            ClientAction::Move {
-                request_id: _,
-                origin,
-                angles,
-            } => {
-                apply_debug_move(world, *id, origin, angles);
-            }
-            ClientAction::BeginScriptMoverRotateVelocity {
-                request_id: _,
+            world.begin_script_movers_rotate_velocity_supplied(
                 speed,
-            } => {
-                if !world.bootstrap_ref().allow_debug_actions {
-                    continue;
-                }
-                world.begin_script_movers_rotate_velocity_supplied(
-                    speed,
-                    crate::corpse::level_time_ms(tick),
-                );
+                crate::corpse::level_time_ms(tick),
+            );
+
+            ActionOutcome::Applied
+        }
+        ClientAction::ToggleGod { .. } => {
+            if !world.bootstrap_ref().allow_debug_actions
+                || !world
+                    .client_meta(id)
+                    .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+            {
+                return ActionOutcome::Refused;
             }
-            ClientAction::ToggleGod { .. } => {
-                if !world.bootstrap_ref().allow_debug_actions
-                    || !world
-                        .client_meta(*id)
-                        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
-                {
-                    continue;
-                }
-                let meta = world.client_meta_mut(*id);
-                meta.god_mode = !meta.god_mode;
-                diag::info!(
-                    Sim,
-                    "god: client={} {}",
-                    id.0,
-                    if meta.god_mode { "on" } else { "off" }
-                );
-            }
-            ClientAction::DebugDamage {
-                request_id: _,
-                amount,
-            } => {
-                apply_debug_damage(world, tick, *id, amount);
-            }
+            let meta = world.client_meta_mut(id);
+            meta.god_mode = !meta.god_mode;
+            diag::info!(
+                Sim,
+                "god: client={} {}",
+                id.0,
+                if meta.god_mode { "on" } else { "off" }
+            );
+
+            ActionOutcome::Applied
+        }
+        ClientAction::DebugDamage {
+            request_id: _,
+            amount,
+        } => {
+            return apply_debug_damage(world, tick, id, amount);
         }
     }
 }
 
-fn apply_force_spawn(world: &mut FrameWorld, id: ClientId, pick: crate::SpawnPick) {
+fn apply_force_spawn(
+    world: &mut FrameWorld,
+    id: ClientId,
+    pick: crate::SpawnPick,
+) -> ActionOutcome {
     if world
         .client_meta(id)
         .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
     {
         crate::script_player::move_to_forced_spawn(world, id, pick);
+        ActionOutcome::Applied
     } else {
         world.client_meta_mut(id).forced_spawn = Some(pick);
+        ActionOutcome::Accepted
     }
 }
 
-fn apply_spawn_intermission(world: &mut FrameWorld, id: ClientId) {
-    if world
-        .client_meta(id)
-        .is_none_or(|m| m.lifecycle == ClientLifecycle::Intermission)
-    {
-        return;
+fn apply_spawn_intermission(world: &mut FrameWorld, id: ClientId) -> ActionOutcome {
+    let Some(meta) = world.client_meta(id) else {
+        return ActionOutcome::Refused;
+    };
+    if meta.lifecycle == ClientLifecycle::Intermission {
+        return ActionOutcome::Applied;
     }
     let view = world.bootstrap_ref().intermission_view.clone();
     {
@@ -996,34 +1164,40 @@ fn apply_spawn_intermission(world: &mut FrameWorld, id: ClientId) {
     }
     world.unlink_player_area(id);
     let Some(view) = view else {
-        return;
+        return ActionOutcome::Applied;
     };
     let Some(ps) = world.player_mut(id) else {
-        return;
+        return ActionOutcome::Applied;
     };
     ps.origin = view.origin;
     ps.velocity = [0.0, 0.0, 0.0];
     ps.viewangles = view.angles;
     ps.delta_angles = packed_look_delta(view.angles);
     ps.e_flags ^= playerstate_iw4::eflags::TELEPORT;
+    ActionOutcome::Applied
 }
 
-fn apply_debug_move(world: &mut FrameWorld, id: ClientId, origin: [f32; 3], angles: [f32; 3]) {
+fn apply_debug_move(
+    world: &mut FrameWorld,
+    id: ClientId,
+    origin: [f32; 3],
+    angles: [f32; 3],
+) -> ActionOutcome {
     if !world.bootstrap_ref().allow_debug_actions {
-        return;
+        return ActionOutcome::Refused;
     }
     if !world
         .client_meta(id)
         .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
     {
-        return;
+        return ActionOutcome::Refused;
     }
     if !origin.iter().chain(angles.iter()).all(|v| v.is_finite()) {
-        return;
+        return ActionOutcome::Refused;
     }
     let old_origin = {
         let Some(ps) = world.player_mut(id) else {
-            return;
+            return ActionOutcome::Refused;
         };
         let old_origin = ps.origin;
         ps.origin = origin;
@@ -1042,6 +1216,7 @@ fn apply_debug_move(world: &mut FrameWorld, id: ClientId, origin: [f32; 3], angl
             origin[2] - old_origin[2],
         ],
     );
+    ActionOutcome::Applied
 }
 
 fn packed_look_delta(viewangles: [f32; 3]) -> [f32; 3] {
@@ -1074,20 +1249,26 @@ fn restamp_debug_move_look(world: &mut FrameWorld, actions: &[(ClientId, ClientA
     }
 }
 
-fn apply_debug_damage(world: &mut FrameWorld, tick: Tick, id: ClientId, amount: i32) {
+fn apply_debug_damage(
+    world: &mut FrameWorld,
+    tick: Tick,
+    id: ClientId,
+    amount: i32,
+) -> ActionOutcome {
     if !world.bootstrap_ref().allow_debug_actions {
-        return;
+        return ActionOutcome::Refused;
     }
     if amount <= 0 {
-        return;
+        return ActionOutcome::Refused;
     }
     if !world
         .client_meta(id)
         .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
     {
-        return;
+        return ActionOutcome::Refused;
     }
     crate::script_player::debug_damage(world, tick, id, amount);
+    ActionOutcome::Applied
 }
 
 fn configuration_change_ammo(
@@ -1119,7 +1300,7 @@ fn apply_configuration_change(
     request_id: u32,
     from: u32,
     to: u32,
-) {
+) -> ActionOutcome {
     let reject = |world: &mut FrameWorld, reason: crate::ConfigurationChangeRejectReason| {
         world.push_event(
             tick,
@@ -1131,37 +1312,32 @@ fn apply_configuration_change(
                 reason,
             },
         );
+        ActionOutcome::Refused
     };
     use crate::ConfigurationChangeRejectReason as Reason;
     if !world
         .client_meta(id)
         .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
     {
-        reject(world, Reason::NotAlive);
-        return;
+        return reject(world, Reason::NotAlive);
     }
     let Some(ps) = world.player(id).copied() else {
-        reject(world, Reason::NotAlive);
-        return;
+        return reject(world, Reason::NotAlive);
     };
     if ps.weapon != from {
-        reject(world, Reason::StaleSource);
-        return;
+        return reject(world, Reason::StaleSource);
     }
     if !world.can_transition_weapon(from, to) {
-        reject(world, Reason::DifferentFamily);
-        return;
+        return reject(world, Reason::DifferentFamily);
     }
     let (Some(old), Some(new)) = (world.combat_facts_for(from), world.combat_facts_for(to)) else {
-        reject(world, Reason::InvalidTarget);
-        return;
+        return reject(world, Reason::InvalidTarget);
     };
     if world
         .equipment_facts_for(to)
         .is_some_and(|eq| eq.is_offhand())
     {
-        reject(world, Reason::InvalidTarget);
-        return;
+        return reject(world, Reason::InvalidTarget);
     }
     if ps.weaponstate_primary != weapon_iw4::WeaponState::Ready as i32
         || ps.weapon_time > 0
@@ -1170,16 +1346,13 @@ fn apply_configuration_change(
                 || ps.weapon_time_secondary > 0))
         || ps.weap_flags & playerstate_iw4::weap_flags::OFFHAND_VIEW != 0
     {
-        reject(world, Reason::Busy);
-        return;
+        return reject(world, Reason::Busy);
     }
     let Some(slot) = ps.weapons.iter().position(|&weapon| weapon == from as i32) else {
-        reject(world, Reason::NoInventorySlot);
-        return;
+        return reject(world, Reason::NoInventorySlot);
     };
     if ps.weapons.contains(&(to as i32)) {
-        reject(world, Reason::InvalidTarget);
-        return;
+        return reject(world, Reason::InvalidTarget);
     }
     let old_ammo_key = weapon_iw4::ammo_table_key(old.ammo_index, from);
     let old_clip_key = weapon_iw4::clip_table_key(old.clip_index, from);
@@ -1224,8 +1397,7 @@ fn apply_configuration_change(
             && (next_clip0 != clip0 || next_clip1 != raw_clip1)
             && another_owns(old_clip_key, true))
     {
-        reject(world, Reason::SharedAmmoConflict);
-        return;
+        return reject(world, Reason::SharedAmmoConflict);
     }
     let mut next = ps;
     next.weapons[slot] = to as i32;
@@ -1252,8 +1424,7 @@ fn apply_configuration_change(
         || !weapon_iw4::set_clip_for_hand(&mut next.ammoclip, new_clip_key, 0, next_clip0)
         || !weapon_iw4::set_clip_for_hand(&mut next.ammoclip, new_clip_key, 1, next_clip1)
     {
-        reject(world, Reason::AmmoTableFull);
-        return;
+        return reject(world, Reason::AmmoTableFull);
     }
     let alternate_ammo = match (
         world.combat_facts_for(old.alternate_weapon),
@@ -1295,8 +1466,7 @@ fn apply_configuration_change(
                         })
                     });
                 if shared {
-                    reject(world, Reason::SharedAmmoConflict);
-                    return;
+                    return reject(world, Reason::SharedAmmoConflict);
                 }
                 let (clip, _, stock) = configuration_change_ammo(
                     weapon_iw4::get_clip_for_hand(&ps.ammoclip, old_clip, 0),
@@ -1323,8 +1493,7 @@ fn apply_configuration_change(
                 if !weapon_iw4::set_ammo_not_in_clip(&mut next.ammo, new_key, stock)
                     || !weapon_iw4::set_clip_for_hand(&mut next.ammoclip, new_clip, 0, clip)
                 {
-                    reject(world, Reason::AmmoTableFull);
-                    return;
+                    return reject(world, Reason::AmmoTableFull);
                 }
                 Some((new.alternate_weapon, clip, stock))
             } else {
@@ -1365,6 +1534,7 @@ fn apply_configuration_change(
     meta.burst_latch_secondary = false;
     meta.rechamber_pending = false;
     meta.rechamber_pending_secondary = false;
+    meta.pending_brass = [None; 2];
     world.push_event(
         tick,
         EventAudience::Client(id),
@@ -1374,6 +1544,7 @@ fn apply_configuration_change(
             to,
         },
     );
+    ActionOutcome::Applied
 }
 
 fn apply_give_weapon(
@@ -1382,7 +1553,7 @@ fn apply_give_weapon(
     id: ClientId,
     request_id: u32,
     weapon: u32,
-) {
+) -> ActionOutcome {
     let reject = |world: &mut FrameWorld, reason: crate::GiveRejectReason| {
         world.push_event(
             tick,
@@ -1393,53 +1564,45 @@ fn apply_give_weapon(
                 reason,
             },
         );
+        ActionOutcome::Refused
     };
 
     if !world
         .client_meta(id)
         .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
     {
-        reject(world, crate::GiveRejectReason::NotAlive);
-        return;
+        return reject(world, crate::GiveRejectReason::NotAlive);
     }
     if weapon == 0 {
-        reject(world, crate::GiveRejectReason::InvalidWeapon);
-        return;
+        return reject(world, crate::GiveRejectReason::InvalidWeapon);
     }
     let table_len = world.weapon_combat_len();
     if (weapon as usize) >= table_len {
-        reject(world, crate::GiveRejectReason::UnknownWeaponId);
-        return;
+        return reject(world, crate::GiveRejectReason::UnknownWeaponId);
     }
     if !world.weapon_runnable(weapon) {
-        reject(world, crate::GiveRejectReason::UnsupportedWeapon);
-        return;
+        return reject(world, crate::GiveRejectReason::UnsupportedWeapon);
     }
     let Some(facts) = world.combat_facts_for(weapon) else {
-        reject(world, crate::GiveRejectReason::UnknownWeaponId);
-        return;
+        return reject(world, crate::GiveRejectReason::UnknownWeaponId);
     };
     if world
         .equipment_facts_for(weapon)
         .is_some_and(|eq| eq.is_offhand())
     {
-        apply_give_offhand(world, tick, id, request_id, weapon, &facts);
-        return;
+        return apply_give_offhand(world, tick, id, request_id, weapon, &facts);
     }
     if facts.fire_time_ms <= 0 && facts.raise_time_ms <= 0 {
-        reject(world, crate::GiveRejectReason::EmptyCombatProfile);
-        return;
+        return reject(world, crate::GiveRejectReason::EmptyCombatProfile);
     }
 
     if world.weapon_script_name(weapon).starts_with("killstreak_") {
         let Some(ps) = world.player_mut(id) else {
-            reject(world, crate::GiveRejectReason::NotAlive);
-            return;
+            return reject(world, crate::GiveRejectReason::NotAlive);
         };
         inventory_add_weapon(ps, weapon, false);
         if !ps.weapons.contains(&(weapon as i32)) {
-            reject(world, crate::GiveRejectReason::InvalidWeapon);
-            return;
+            return reject(world, crate::GiveRejectReason::InvalidWeapon);
         }
         let (clip, clip_alt, stock) = weapon_iw4::spawn_clip_stock(&facts, 0);
         seed_ps_ammo_tables(ps, weapon, &facts, clip, clip_alt, false, stock);
@@ -1449,15 +1612,14 @@ fn apply_give_weapon(
             EventAudience::Client(id),
             SimEvent::GiveAccepted { request_id, weapon },
         );
-        return;
+        return ActionOutcome::Applied;
     }
     let akimbo = world
         .combat_facts_for(weapon)
         .is_some_and(|facts| facts.dual_wield)
         || gsc_give_weapon_is_akimbo(world.weapon_script_name(weapon));
     let Some(mut next) = world.player(id).copied() else {
-        reject(world, crate::GiveRejectReason::NotAlive);
-        return;
+        return reject(world, crate::GiveRejectReason::NotAlive);
     };
 
     let outgoing = if world
@@ -1533,11 +1695,13 @@ fn apply_give_weapon(
     meta.burst_latch_secondary = false;
     meta.rechamber_pending = false;
     meta.rechamber_pending_secondary = false;
+    meta.pending_brass = [None; 2];
     world.push_event(
         tick,
         EventAudience::Client(id),
         SimEvent::GiveAccepted { request_id, weapon },
     );
+    ActionOutcome::Applied
 }
 
 fn apply_give_offhand(
@@ -1547,7 +1711,7 @@ fn apply_give_offhand(
     request_id: u32,
     weapon: u32,
     facts: &weapon_iw4::WeaponCombatFacts,
-) {
+) -> ActionOutcome {
     let reject = |world: &mut FrameWorld, reason: crate::GiveRejectReason| {
         world.push_event(
             tick,
@@ -1558,14 +1722,13 @@ fn apply_give_offhand(
                 reason,
             },
         );
+        ActionOutcome::Refused
     };
     let Some(eq) = world.equipment_facts_for(weapon) else {
-        reject(world, crate::GiveRejectReason::InvalidWeapon);
-        return;
+        return reject(world, crate::GiveRejectReason::InvalidWeapon);
     };
     let Some(mut next) = world.player(id).copied() else {
-        reject(world, crate::GiveRejectReason::NotAlive);
-        return;
+        return reject(world, crate::GiveRejectReason::NotAlive);
     };
     for slot in &mut next.weapons {
         if *slot > 0 && *slot != weapon as i32 {
@@ -1584,8 +1747,7 @@ fn apply_give_offhand(
     }
     inventory_add_weapon(&mut next, weapon, false);
     if !next.weapons.contains(&(weapon as i32)) {
-        reject(world, crate::GiveRejectReason::InvalidWeapon);
-        return;
+        return reject(world, crate::GiveRejectReason::InvalidWeapon);
     }
     match eq.offhand_class {
         1 | 4 | 5 => next.offhand_primary = eq.offhand_class,
@@ -1613,6 +1775,7 @@ fn apply_give_offhand(
         EventAudience::Client(id),
         SimEvent::GiveAccepted { request_id, weapon },
     );
+    ActionOutcome::Applied
 }
 
 fn choose_bot_class(world: &mut FrameWorld, id: ClientId, index: u8) {
@@ -1627,25 +1790,30 @@ fn choose_bot_class(world: &mut FrameWorld, id: ClientId, index: u8) {
     }
 }
 
-fn answer_custom_class(world: &mut FrameWorld, id: ClientId, menu: &str, response: &str) -> bool {
+fn answer_custom_class(
+    world: &mut FrameWorld,
+    id: ClientId,
+    menu: &str,
+    response: &str,
+) -> Option<ActionOutcome> {
     if !menu.eq_ignore_ascii_case("changeclass") {
-        return false;
+        return None;
     }
     let Some(slot) = response
         .strip_prefix("custom")
         .and_then(|n| n.parse::<u32>().ok())
         .and_then(|n| n.checked_sub(1))
     else {
-        return false;
+        return None;
     };
     let Some(def) = crate::script::personal_class(world.ecs(), id.0, crate::ClassId(slot)) else {
-        return true;
+        return Some(ActionOutcome::Refused);
     };
     if validate_class_content(world, &def).is_err() {
-        return true;
+        return Some(ActionOutcome::Refused);
     }
     crate::script::choose_class(world.ecs(), id.0, &def);
-    true
+    Some(ActionOutcome::Accepted)
 }
 
 fn apply_select_class(
@@ -1656,7 +1824,7 @@ fn apply_select_class(
     class_id: crate::ClassId,
     revision: u32,
     loadout: crate::PersonalClass,
-) {
+) -> ActionOutcome {
     let accepted = (class_id.0 < crate::match_state::PERSONAL_CLASS_SLOTS as u32)
         .then(|| loadout.definition(class_id, revision))
         .flatten();
@@ -1678,7 +1846,7 @@ fn apply_select_class(
                 reason: crate::ClassRejectReason::UnknownOrStaleClass,
             },
         );
-        return;
+        return ActionOutcome::Refused;
     };
 
     if let Err(reason) = validate_class_content(world, &def) {
@@ -1700,7 +1868,7 @@ fn apply_select_class(
                 reason,
             },
         );
-        return;
+        return ActionOutcome::Refused;
     }
 
     crate::script::answer_join(world.ecs(), id.0);
@@ -1714,6 +1882,7 @@ fn apply_select_class(
             revision,
         },
     );
+    ActionOutcome::Accepted
 }
 
 fn validate_class_content(

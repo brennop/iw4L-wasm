@@ -18,18 +18,18 @@ use fx_iw4::{
     laser_from_tag_orientation, tail_anchor_origin, tail_sprite_axes, tail_sprite_full_extent,
 };
 use net::{
-    AuthorityLoadHold, CEntity, CEntitySlots, ClientPredictionState, ClientSet, GameActive,
-    LastAdoptedSnapshot, LocalPresentClient, PendingPelletFx, PlayerDrawGate, PresentedSnapshot,
-    WeaponFirePing, WeaponFirePingBus,
+    CEntity, CEntitySlots, ClientPredictionState, ClientSet, GameActive, LastAdoptedSnapshot,
+    LocalPresentClient, PendingPelletFx, PlayerDrawGate, PresentedSnapshot, WeaponFirePing,
+    WeaponFirePingBus,
 };
 
 use render_fx::{
-    CombatFxDump, EntityMarks, FxCameraOrigin, FxDumpRequest, FxFrameOutcome, FxGeneratedFrame,
-    FxJournalCursor, FxMarkDvars, FxUnavailableCause, FxWorldColorImages, HostFxDlights,
-    HostFxPostLights, HostFxSystem, LaserDvars, PreparedFxCatalog, PreparedFxElemInfos,
-    PreparedFxModels, PreparedImpactFx, PreparedTracers, PresentedVehicleFx, PresentedVehicleFxRow,
-    TracerDrawGate, TracerWorld, clear_fx_owned_plans, publish_empty_fx_owned_plans,
-    tick_tracer_beams,
+    CombatFxDump, EntityMarks, FireFxOccurrence, FxCameraOrigin, FxDumpRequest, FxFrameOutcome,
+    FxGeneratedFrame, FxJournalCursor, FxMarkDvars, FxUnavailableCause, FxWorldColorImages,
+    HostFxDlights, HostFxPostLights, HostFxSystem, LaserDvars, PreparedFxCatalog,
+    PreparedFxElemInfos, PreparedFxModels, PreparedImpactFx, PreparedTracers, PresentedFireFx,
+    PresentedVehicleFx, PresentedVehicleFxRow, TracerDrawGate, TracerWorld, clear_fx_owned_plans,
+    publish_empty_fx_owned_plans, tick_tracer_beams,
 };
 
 use render_fx::combat::{
@@ -103,10 +103,10 @@ impl FxSceneAccess<'_> {
 pub(crate) fn register_combat_fx_systems(app: &mut App) {
     app.add_message::<BulletHitFx>()
         .add_message::<WeaponFireFx>()
+        .init_resource::<PresentedFireFx>()
         .init_resource::<render_fx::FxModelStaging>()
         .init_resource::<crate::assemble::drawsurf::GfxGlassMeshPlan>()
         .init_resource::<crate::assemble::drawsurf::GlassTable>()
-        .add_systems(Update, latch_authority_load_hold.in_set(ClientSet::Load))
         .add_systems(
             Update,
             (
@@ -266,19 +266,6 @@ fn queue_tag_lasers(
         if let Some(target) = bolts.laser {
             push(post_lights, target, dvars.range);
         }
-    }
-}
-
-fn latch_authority_load_hold(
-    navigation: Option<Res<frame::BotNavigationReady>>,
-    scene: Option<Res<WorldScene>>,
-    mut hold: Option<ResMut<AuthorityLoadHold>>,
-    headless: Option<Res<frame::Headless>>,
-) {
-    if let Some(hold) = hold.as_mut() {
-        let presenting = headless.is_none() && scene.is_some();
-        hold.0 = (presenting && !scene.as_ref().is_some_and(|scene| scene.spawned))
-            || navigation.is_some_and(|ready| !ready.0);
     }
 }
 
@@ -2189,7 +2176,13 @@ fn drain_weapon_fire_fx(
         &crate::adapters::anim::remote_body::RemoteFxBolts,
     )>,
     fpv_bolts: Res<crate::adapters::anim::fpv_present::FpvBoltTargets>,
-    local: Res<LocalPresentClient>,
+    (local, generation, timeline, mut occurrences, verdicts): (
+        Res<LocalPresentClient>,
+        Res<frame::WorldGeneration>,
+        Res<net::EntityEventCursor>,
+        ResMut<PresentedFireFx>,
+        Res<net::FireVerdictState>,
+    ),
     presented: Res<PresentedSnapshot>,
     view_settings: (Res<ViewSubject>, Res<frame::GameSettings>),
     (weapons, catalog): (Option<Res<PreparedWeapons>>, Option<Res<PreparedFxCatalog>>),
@@ -2261,36 +2254,65 @@ fn drain_weapon_fire_fx(
             let mut muzzle_played = cursor.muzzle_played;
             let mut muzzle_gap = cursor.muzzle_gap;
 
-            if try_play_weapon_fx_bolted(
-                &mut host.0,
-                &catalog.0,
-                &mut elem_infos.0,
-                muzzle_name,
-                flash_target,
-                &mut muzzle_played,
-                fx_world.view().as_ref().map(|s| s as &dyn FxScene),
+            if occurrences.may_present(
+                *generation,
+                timeline.timeline(),
+                &fire.event,
+                FireFxOccurrence::Muzzle,
+                msec,
+                &verdicts,
             ) {
-                cursor.muzzle_bolted = cursor.muzzle_bolted.saturating_add(1);
-            } else {
-                muzzle_gap = muzzle_gap.saturating_add(1);
+                if try_play_weapon_fx_bolted(
+                    &mut host.0,
+                    &catalog.0,
+                    &mut elem_infos.0,
+                    muzzle_name,
+                    flash_target,
+                    &mut muzzle_played,
+                    fx_world.view().as_ref().map(|s| s as &dyn FxScene),
+                ) {
+                    occurrences.presented(&fire.event, FireFxOccurrence::Muzzle, msec);
+                    cursor.muzzle_bolted = cursor.muzzle_bolted.saturating_add(1);
+                } else {
+                    muzzle_gap = muzzle_gap.saturating_add(1);
+                }
+                if muzzle_played > cursor.muzzle_played {
+                    combat.muzzle_msec = Some(msec);
+                }
+                cursor.muzzle_played = muzzle_played;
+                cursor.muzzle_gap = muzzle_gap;
             }
-            if muzzle_played > cursor.muzzle_played {
-                combat.muzzle_msec = Some(msec);
+            let delayed_brass = weapons
+                .as_deref()
+                .and_then(|weapons| weapons.0.facts_of(fire.event.payload.weapon))
+                .is_some_and(|facts| facts.bolt_action);
+            if !delayed_brass
+                && occurrences.may_present(
+                    *generation,
+                    timeline.timeline(),
+                    &fire.event,
+                    FireFxOccurrence::Brass,
+                    msec,
+                    &verdicts,
+                )
+            {
+                let before = cursor.brass_played;
+                play_shell_eject(
+                    &mut host.0,
+                    &catalog.0,
+                    &mut elem_infos.0,
+                    combat_fx,
+                    player_view,
+                    last_shot,
+                    brass_target,
+                    &mut cursor,
+                    &mut combat,
+                    fx_world.view().as_ref().map(|s| s as &dyn FxScene),
+                );
+                if cursor.brass_played != before {
+                    occurrences.presented(&fire.event, FireFxOccurrence::Brass, msec);
+                }
             }
-            cursor.muzzle_played = muzzle_played;
-            cursor.muzzle_gap = muzzle_gap;
-            play_shell_eject(
-                &mut host.0,
-                &catalog.0,
-                &mut elem_infos.0,
-                combat_fx,
-                player_view,
-                last_shot,
-                brass_target,
-                &mut cursor,
-                &mut combat,
-                fx_world.view().as_ref().map(|s| s as &dyn FxScene),
-            );
         } else {
             cursor.muzzle_gap = cursor.muzzle_gap.saturating_add(1);
             cursor.brass_gap = cursor.brass_gap.saturating_add(1);
@@ -2335,6 +2357,12 @@ fn eject_brass(
         Res<ViewSubject>,
         Res<frame::GameSettings>,
     ),
+    (generation, timeline, mut occurrences, verdicts): (
+        Res<frame::WorldGeneration>,
+        Res<net::EntityEventCursor>,
+        ResMut<PresentedFireFx>,
+        Res<net::FireVerdictState>,
+    ),
     weapons: Option<Res<PreparedWeapons>>,
     catalog: Option<Res<PreparedFxCatalog>>,
     mut elem_infos: ResMut<PreparedFxElemInfos>,
@@ -2344,6 +2372,18 @@ fn eject_brass(
     fx_world: FxSceneAccess,
 ) {
     let (local, presented, view, settings) = local_view;
+    let msec = host.0.msec_now;
+    if !occurrences.may_present(
+        *generation,
+        timeline.timeline(),
+        &brass.event,
+        FireFxOccurrence::Brass,
+        msec,
+        &verdicts,
+    ) {
+        return;
+    }
+    let before = cursor.brass_played;
     let third_person = crate::adapters::anim::third_person::presented_is_third_person(
         &presented,
         local.0,
@@ -2384,6 +2424,9 @@ fn eject_brass(
         );
     } else {
         cursor.brass_gap = cursor.brass_gap.saturating_add(1);
+    }
+    if cursor.brass_played != before {
+        occurrences.presented(&brass.event, FireFxOccurrence::Brass, msec);
     }
     log_combat_fx_gaps(&mut cursor, &combat);
     sync_combat_dump(&cursor, &mut combat);

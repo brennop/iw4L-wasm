@@ -924,7 +924,8 @@ pub fn capture_iw5_light_defs(
                 .or_else(|| {
                     def.attenuation_image_name
                         .and_then(|p| s.cstr(p).ok().map(str::to_owned))
-                });
+                })
+                .filter(|image| !image.is_empty());
             Some(CapturedLightDef {
                 namespace: crate::AssetNamespace::Iw5,
                 name,

@@ -1,75 +1,50 @@
 # Client audio
 
-Bevy supplies cue intentions, listener snapshots and desired source scenes.
-Control selects cues, waits for media, admits layers and updates spatial gain.
-CueFeedback observes decisions; persistent sources wait for media in control.
-
-```text
-presentation / immutable bank requests
-                  ↓
-       bounded cue intake queue
-                  ↓
-      AudioControl (audio-control thread)
-        → AudioRender (render_core.rs) → CPAL device / null / offline
-```
+Bevy publishes cue intentions, listener snapshots and desired source scenes.
+`AudioRuntime` control resolves cues and media; `render_core` mixes prepared
+PCM into CPAL, null or offline output. The callback reads fixed slots and
+atomic gains; retirement threads free payloads and join media workers.
 
 The internal rate is 48 kHz, the quantum 128 stereo frames and the physical
-pool 128 slots. Control stores 2048 logical instances and processes at most
-64 cue intakes and 64 pending cue steps per pass. Pools refuse work;
-physical saturation keeps loops virtual and rejects new one-shots. Cancellation
-and epoch invalidation bypass queues; 4096 versioned cue keys preserve Stop/Play.
+pool 128 slots. Control caps logical instances at 2048, processes 64 intakes
+and 64 pending steps per pass, virtualizes saturated loops and rejects excess
+one-shots. Cancellation and epoch invalidation bypass queues. Weapon attacks
+preserve their first 20 ms during replacement; explicit Stop cancels them.
 
-Cue slots/selectors cap at 2048; media caps 4096 keys/256 jobs, prefetch submits 64/pass.
-Entity occurrences and animation marker instances retain distinct identities;
-control dedups 8192 identities within 100 ticks; local life invalidates marker cues.
-Loaded keys use content/conversion identity; PCM pins 256 MiB; Symphonia/ADPCM scratch reserves 64 MiB.
-Control checks all rules and physical reservations before stopping victims.
-Weapon one-shots preserve their first 20 ms when replaced by another shot, so
-batched rapid-fire events reach output before their tails are cut. Protected
-attacks still count toward the physical pool; explicit Stop/epoch cancellation
-bypasses this protection.
-Cues retain media/deadlines; diagnostics separate pending source layers and voices.
+Catalog publication compiles each variant's looping, spatial, channel, voice
+limits, gain, pitch, composition and loaded-media policy. Namespaces survive
+admission and mixing. Missing policies, ambiguous media bindings, unsupported
+features and invalid mixer graphs produce typed refusals. Compatibility rules
+retain named sources; unknown looping stays unknown. T5 layers activate on
+resolution; other families wait for primary preparation. Layers share deadline,
+cancellation and lifetime, with independent pitch and failure. Killcam worlds
+retain the live sound registry for round-result commands.
 
-Loops publish desired cue scenes keyed by scope/epoch/object/slot and version.
-Sources use model/map/menu/local-life slots and versions, retain virtual cursors and stop
-on desired absence. Control ranks eight map voices with a 0.002 gain floor.
-Shellshock and heartbeat follow client/life state. Scenes cap at 2048 execution
-keys and 4096 assertions/version records; exclusion preserves virtual cues.
-Removed versions cannot resurrect; excess keys/refused updates are counted.
+Weapon publication compiles thermal scopes, cue namespaces, melee precedence,
+knife substitution and breath aliases. Prediction identifies fire occurrences;
+authority verdicts suppress refused shots and duplicate effects. Entity and
+animation identities stay distinct. `EventJournal` deduplicates 8192 identities
+within 100 ticks; local life invalidates animation cues.
 
-The callback reads prepared PCM/slots, resamples and sums fixed blocks. Control
-frees retired payloads; media joins run on retirement threads. Stereo gain/pan is atomic;
-listener snapshots stay in control; master volume is applied once after mixing.
+Media caps 4096 keys and 256 queued jobs, including at most 192 prewarm jobs.
+Urgent requests promote queued work; two to four workers publish clips as
+completed, with one reserved for urgent work. PCM pins at most 256 MiB;
+decode scratch reserves 64 MiB. Geometry and partial frames are validated.
+Native T5 WMA2 emits budget-owned cached s16 chunks for mono 44.1 kHz and
+stereo 48 kHz profiles. T6 capture retains SAB locators; workers reserve output,
+input and FLAC scratch before reading and validate channel/rate/frame metadata.
+Descriptor-only SAB entries bypass cross-bank caching. T6 world spatial policy,
+IW5 pointer-based speaker maps, cross-channel routes and multichannel output
+remain unsupported; WMA seek/tail semantics need corpus validation.
 
-`audio-device` owns streams/recovery and counts recoverable underruns. It
-requests 48 kHz and a 256-frame callback where supported, watches callback
-progress and immediately reopens established streams. Failed opens and rapidly
-failing streams use bounded exponential backoff. Audio threads use the original
-process CPU allowance rather than inheriting the frame owner's narrow mask.
-Control uses null while output is unavailable. Device-backed one-shots wait for
-output and preserve PCM during short recovery, with start deadlines and
-cancellation preventing stale attacks; intentional silent/offline transport
-continues to render normally. Virtualization hands the cursor back to
-control. Source/device resampling uses linear interpolation. Match/channel ramps
-and cue fades/releases use AudioFrame. Match gain preserves cues; mix tokens remain unfinished.
-`OfflineRenderer` shares the kernel, with scheduled PCM, status and cursor.
-Canonical action identities, cue groups, streaming, DSP buses/tails and
-acoustic propagation remain unfinished, as do media budgets and time mappings.
+Desired loops use scope/epoch/object/slot versions and retain virtual cursors.
+Control ranks eight map voices with a 0.002 gain floor. Device recovery uses
+bounded backoff; one-shots preserve PCM during short outages until their start
+deadlines expire. Master volume is applied once. `OfflineRenderer` shares the
+mixing kernel. Streaming, DSP buses/tails and acoustic propagation are unfinished.
 
-T5 XWMA (BO1's mono 44.1 kHz and stereo 48 kHz profiles) decodes through the
-native WMA2 decoder in `asset_audio` into cached s16 PCM.
-
-`IW4L_AUDIO_DIAG=1` enables fire producer identities, cue decisions and request
-latency, media preparation timings, slow control stages, thread affinity and
-per-instance device/null frame counts. `IW4L_AUDIO_DIAG_PATH=/path/audio.log`
-writes them to a separate buffered file. A bounded queue drops diagnostics
-instead of waiting for file I/O; its dropped count is flushed at exit. Device
-frames mean mixed into output callbacks, not confirmed hardware playback.
-`dump` and `clip` include audio readiness, recent decisions and transport totals.
-Weapon audio is published with the fire event and submitted in Predict after
-owner events, ahead of pose preparation and FX. Cue arrivals wake control
-immediately. Prediction occurrences age against the owner command clock;
-authoritative and animation occurrences use the snapshot clock. Replay presents
-recorded owner fire events; live owner fire remains predicted, with authoritative
-duplicates suppressed. Hit sound and HUD rewards stay on the server path.
-First-device timings measure mixing into the callback, before device latency.
+`IW4L_AUDIO_DIAG=1` enables cue identities/decisions, request/preparation timings,
+slow control stages, affinity and device/null frame counts. Set
+`IW4L_AUDIO_DIAG_PATH` for a buffered file; the bounded queue counts dropped
+records. `dump` and `clip` include readiness and recent decisions. Device frames
+measure mixing into callbacks, before device latency or hardware playback.

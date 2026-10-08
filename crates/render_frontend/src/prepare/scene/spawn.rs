@@ -189,6 +189,9 @@ pub(crate) fn spawn_world(
     ),
 ) {
     let (fpv, model_materials, fx_models) = prepared;
+    if scene.readiness.generation != job.spawn || job.spawn.0.is_none() {
+        return;
+    }
     // Pacing belongs to the load that is still running, not to the screen that
     // happens to be drawing it: a run without an overlay must spawn the world
     // the same way this one does.
@@ -721,7 +724,10 @@ pub(crate) fn spawn_world_finish(
     mut job: ResMut<WorldSpawnJob>,
     mut tess: ResMut<render_scene::TessMaterials>,
 ) {
-    if job.phase != WorldSpawnPhase::WorldTess {
+    if scene.readiness.generation != job.spawn
+        || job.spawn.0.is_none()
+        || job.phase != WorldSpawnPhase::WorldTess
+    {
         return;
     }
     let progress = load
@@ -846,8 +852,12 @@ fn log_load_ledger(
 }
 
 fn finish_world_spawn(scene: &mut WorldScene, job: &mut WorldSpawnJob, commands: &mut Commands) {
+    if scene.readiness.generation != job.spawn || job.spawn.0.is_none() {
+        return;
+    }
     job.phase = WorldSpawnPhase::Done;
     scene.spawned = true;
+    scene.readiness.state = frame::ReadinessState::Ready;
     commands.insert_resource(render_scene::WorldPresentFacts { spawned: true });
     perf::world_ready(1);
 }
@@ -1007,7 +1017,7 @@ fn extract_world_present(
         .unwrap_or(WorldGeneration(None));
     let spawned = main_world
         .get_resource::<WorldScene>()
-        .is_some_and(|scene| scene.spawned);
+        .is_some_and(|scene| scene.spawned && scene.readiness.ready_for(generation));
     extracted.0 = (spawned && generation.0.is_some()).then_some(generation);
 }
 

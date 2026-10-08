@@ -99,7 +99,7 @@ impl CueCancellation {
 pub(crate) struct CueMix {
     pub epoch: u64,
     pub gain: LiveGain,
-    pub channels: [LiveGain; 64],
+    pub channels: Arc<HashMap<asset_audio::ChannelKey, LiveGain>>,
 }
 
 pub(crate) struct CueTrigger {
@@ -134,6 +134,7 @@ pub(crate) struct CueWork {
     pub resolved: Option<ResolvedCue>,
     secondary: Option<(String, StartOutcome)>,
     pub source: Option<(crate::sources::SourceKey, u64)>,
+    ancestry: Vec<usize>,
 }
 
 pub(crate) struct CueStart {
@@ -159,6 +160,7 @@ impl CueWork {
             resolved: None,
             secondary: None,
             source: None,
+            ancestry: Vec::new(),
         }
     }
 
@@ -173,6 +175,10 @@ impl CueWork {
             namespace: self.request.namespace,
             alias: self.request.alias.clone(),
             variant: self.resolved.as_ref().map(|cue| cue.variant),
+            loaded_binding_origin: self
+                .resolved
+                .as_ref()
+                .map(|cue| cue.policy.loaded_binding_origin),
             outcome,
             secondary: self.secondary.clone(),
             detail: crate::diagnostics::enabled().then(|| {
@@ -228,12 +234,12 @@ impl CueWork {
             let _ = crate::diagnostics::slow_stage("cue_resolve", resolve_at);
             match resolved {
                 Ok(cue) => {
-                    self.request.state.resolved(Ok(cue.clone()));
-                    if let (Some(media), Some(clip)) = (&cue.media, &cue.clip) {
-                        let request_at = Instant::now();
-                        media.request(clip.clone());
-                        let _ = crate::diagnostics::slow_stage("cue_media_request", request_at);
+                    if self.ancestry.contains(&cue.alias_index) {
+                        return self.fail(StartFailure::CueRefused(
+                            crate::CueFailure::CompositionCycle,
+                        ));
                     }
+                    self.request.state.resolved(Ok(cue.clone()));
                     self.resolved = Some(cue);
                 }
                 Err(reason) => {
@@ -246,10 +252,28 @@ impl CueWork {
                 }
             }
         }
-        if self.request.namespace == AssetNamespace::T5 {
-            self.secondary(children);
-        }
+        self.secondary(asset_audio::SecondaryActivation::OnResolution, children);
         let cue = self.resolved.as_ref().expect("resolved cue");
+        if let asset_audio::LoadedBindingOrigin::AmbiguousConvention { matches } =
+            cue.policy.loaded_binding_origin
+        {
+            return self.fail(StartFailure::CueRefused(
+                crate::CueFailure::AmbiguousMediaBinding { matches },
+            ));
+        }
+        if !cue.policy.composition.unsupported.is_empty() {
+            return self.fail(StartFailure::UnsupportedCueFeatures(
+                cue.policy.composition.unsupported.clone(),
+            ));
+        }
+        let volume = match cue.volume {
+            Ok(volume) => volume,
+            Err(error) => {
+                return self.fail(StartFailure::CueRefused(
+                    crate::CueFailure::InvalidMixerGroup(error),
+                ));
+            }
+        };
         let Some(clip) = &cue.clip else {
             return self.fail(StartFailure::NoPcm);
         };
@@ -258,21 +282,30 @@ impl CueWork {
         };
         let pcm = match service.ready(clip) {
             None => {
+                let request_at = Instant::now();
                 service.request(clip.clone());
+                let _ = crate::diagnostics::slow_stage("cue_media_request", request_at);
                 return CueStep::Waiting;
             }
             Some(Err(error)) => return self.fail(error.into()),
             Some(Ok(pcm)) => pcm,
         };
         let intent = &self.request.execution;
+        let output_gain = cue
+            .policy
+            .stereo_speaker_gains
+            .map(|gains| gains[usize::from(pcm.channels() == 2)]);
         let mut media = RenderMedia::from_buffer(pcm);
+        if let Some(gain) = output_gain {
+            media.output_gain = gain;
+        }
         media.release = Some(self.request.state.release.clone());
         if let Some(mix) = &intent.mix {
             media.gain = Some(mix.gain.clone());
             media.channel_gain = cue
                 .policy
                 .channel
-                .and_then(|channel| mix.channels.get(channel as usize))
+                .and_then(|channel| mix.channels.get(&channel))
                 .cloned();
         }
         let mut priority = cue
@@ -282,16 +315,16 @@ impl CueWork {
             .map_or(0.0, |priority| priority.evaluate(None));
         let (spatial, gain) = match (intent.origin_inches, &cue.policy.spatial) {
             (Some(origin), Some(policy)) => {
+                let policy = match policy {
+                    Ok(policy) => policy,
+                    Err(reason) => return self.fail(reason.clone()),
+                };
                 let Some(listener) = listener else {
                     return if self.source.is_some() {
                         CueStep::Waiting
                     } else {
                         self.fail(StartFailure::NoListener)
                     };
-                };
-                let policy = match policy {
-                    Ok(policy) => policy,
-                    Err(reason) => return self.fail(reason.clone()),
                 };
                 let source = SpatialSource {
                     origin_inches: origin,
@@ -300,7 +333,7 @@ impl CueWork {
                     knots: policy.knots.clone(),
                     near_knots: policy.near_knots.clone(),
                     priority: cue.policy.priority.clone(),
-                    base_volume: cue.volume.max(0.0),
+                    base_volume: volume.max(0.0),
                 };
                 let distance = origin
                     .iter()
@@ -329,7 +362,7 @@ impl CueWork {
                 media.pan = Some(pan);
                 (Some(source), 1.0)
             }
-            _ => (None, cue.volume),
+            _ => (None, volume),
         };
         let start = CueStart {
             looping: self.source.is_some()
@@ -342,9 +375,10 @@ impl CueWork {
             rate: cue.pitch,
             lease: intent.lease.clone(),
         };
-        if self.request.namespace != AssetNamespace::T5 {
-            self.secondary(children);
-        }
+        self.secondary(
+            asset_audio::SecondaryActivation::OnPrimaryPrepared,
+            children,
+        );
         CueStep::Start(start)
     }
 
@@ -360,38 +394,51 @@ impl CueWork {
                 return CueStep::Waiting;
             }
         }
-        self.request.state.resolved(Err(match &outcome {
-            StartOutcome::Failed(StartFailure::MissingAlias) => crate::CueFailure::MissingAlias,
-            _ => crate::CueFailure::NoMedia,
-        }));
         self.complete(outcome);
         CueStep::Finished
     }
 
-    fn secondary(&mut self, children: &mut Vec<CueWork>) {
+    fn secondary(
+        &mut self,
+        activation: asset_audio::SecondaryActivation,
+        children: &mut Vec<CueWork>,
+    ) {
         if self.secondary.is_some() {
             return;
         }
-        let Some(alias) = self
-            .resolved
+        let Some(cue) = self.resolved.as_ref() else {
+            return;
+        };
+        let Some(layer) = cue
+            .policy
+            .composition
+            .secondary
             .as_ref()
-            .and_then(|cue| cue.layer.as_deref())
-            .filter(|alias| !alias.is_empty())
+            .filter(|layer| layer.activation == activation)
         else {
             return;
         };
+        let alias = &layer.alias;
         let intent = &self.request.execution;
-        if intent.depth >= 10 {
-            self.secondary = Some((alias.into(), StartOutcome::Failed(StartFailure::NoPcm)));
+        if intent.depth >= asset_audio::MAX_SECONDARY_DEPTH {
+            self.secondary = Some((
+                alias.clone(),
+                StartOutcome::Failed(StartFailure::CueRefused(
+                    crate::CueFailure::CompositionBudget,
+                )),
+            ));
             return;
         }
+        let asset_audio::LayerLifetime::ParentGroup = layer.lifetime;
+        let asset_audio::LayerFailure::Independent = layer.failure;
+        let asset_audio::LayerPitch::IndependentAuthoredRange = layer.pitch;
         let state = self.request.state.child(alias);
         let mut child = CueWork::new(CueRequest {
             state,
             bank: self.request.bank.clone(),
             media: self.request.media.clone(),
             namespace: self.request.namespace,
-            alias: alias.into(),
+            alias: alias.clone(),
             bound: None,
             scope: self.request.scope,
             epoch: self.request.epoch,
@@ -410,7 +457,9 @@ impl CueWork {
             },
         });
         child.source = self.source;
+        child.ancestry = self.ancestry.clone();
+        child.ancestry.push(cue.alias_index);
         children.push(child);
-        self.secondary = Some((alias.into(), StartOutcome::Pending));
+        self.secondary = Some((alias.clone(), StartOutcome::Pending));
     }
 }

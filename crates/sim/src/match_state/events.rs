@@ -50,6 +50,7 @@ pub struct EntityEventPayload {
     pub weapon: u32,
 
     pub correlation: u32,
+    pub fire_cause: Option<crate::FireCause>,
 
     pub pellet: u16,
     pub hand: u8,

@@ -6,15 +6,14 @@ use crate::anim::fpv_prepared::PreparedFpv;
 use crate::anim::scene_submission::AnimDObjSceneSkels;
 use crate::occupancy::dyn_ent::{DynEntPhysClip, DynEntPhysWorld};
 use crate::occupancy::fpv_present::{
-    FpvHeldLife, FpvHeldSettled, FpvPlacementRoot, FpvPresentCursor, LocalSpawnArmed,
-    PendingFpvSpawn, SessionViewmodel,
+    FpvHeldLife, FpvHeldSettled, FpvPlacementRoot, FpvPresentCursor, PendingFpvSpawn,
+    SessionViewmodel,
 };
 
 pub fn reset_anim_for_match(
     mut commands: Commands,
     mut installed: MessageReader<MatchInstalled>,
     mut torn: MessageReader<MatchTornDown>,
-    mut armed: ResMut<LocalSpawnArmed>,
     mut cursor: ResMut<FpvPresentCursor>,
     mut pending: ResMut<PendingFpvSpawn>,
     mut viewmodel: ResMut<SessionViewmodel>,
@@ -31,7 +30,6 @@ pub fn reset_anim_for_match(
         return;
     }
 
-    armed.0 = false;
     cursor.0.clear();
     pending.0 = None;
     *viewmodel = SessionViewmodel::default();

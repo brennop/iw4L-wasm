@@ -200,6 +200,7 @@ impl CueRelease {
 pub(crate) struct RenderMedia {
     pcm: PcmBuffer,
     pub pan: Option<LivePan>,
+    pub output_gain: [f32; 2],
     pub gain: Option<LiveGain>,
     pub channel_gain: Option<LiveGain>,
     pub release: Option<Arc<CueRelease>>,
@@ -208,6 +209,7 @@ pub(crate) struct RenderMedia {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PcmError {
     UnsupportedChannels,
+    UnsupportedBitDepth,
     InvalidRate,
     Empty,
     PartialFrame,
@@ -228,7 +230,6 @@ pub(crate) const CHUNK_SAMPLES: usize = 1 << 16;
 #[derive(Debug)]
 enum Samples {
     F32(Arc<[f32]>),
-    I16(Arc<[i16]>),
     Chunked(Box<[Box<[i16]>]>),
     Zone { bytes: Arc<[u8]>, wide: bool },
 }
@@ -240,13 +241,18 @@ struct PcmAllocation {
 }
 
 impl PcmBuffer {
-    fn validate_size(samples: usize, channels: u16, rate: u32) -> Result<(), PcmError> {
+    pub(crate) fn validate_geometry(channels: u16, rate: u32) -> Result<(), PcmError> {
         if !(1..=2).contains(&channels) {
             return Err(PcmError::UnsupportedChannels);
         }
         if rate == 0 {
             return Err(PcmError::InvalidRate);
         }
+        Ok(())
+    }
+
+    pub(crate) fn validate_size(samples: usize, channels: u16, rate: u32) -> Result<(), PcmError> {
+        Self::validate_geometry(channels, rate)?;
         if samples == 0 {
             return Err(PcmError::Empty);
         }
@@ -291,20 +297,6 @@ impl PcmBuffer {
         ))
     }
 
-    pub(crate) fn from_i16(samples: Vec<i16>, channels: u16, rate: u32) -> Result<Self, PcmError> {
-        Self::validate_size(samples.len(), channels, rate)?;
-        let reservation =
-            crate::pcm_budget::PcmReservation::reserve(samples.len() * size_of::<i16>())?;
-        let len = samples.len();
-        Ok(Self::with_reservation(
-            Samples::I16(samples.into()),
-            len,
-            channels,
-            rate,
-            reservation,
-        ))
-    }
-
     pub(crate) fn from_chunks(
         chunks: Box<[Box<[i16]>]>,
         len: usize,
@@ -328,13 +320,20 @@ impl PcmBuffer {
         channels: u16,
         rate: u32,
     ) -> Result<Self, PcmError> {
+        Self::validate_geometry(channels, rate)?;
         let wide = match bits {
             8 => false,
             16 => true,
-            _ => return Err(PcmError::Empty),
+            _ => return Err(PcmError::UnsupportedBitDepth),
         };
-        let lanes = usize::from(channels.max(1));
-        let len = bytes.len() / if wide { 2 } else { 1 } / lanes * lanes;
+        let sample_bytes = if wide { 2 } else { 1 };
+        if !bytes
+            .len()
+            .is_multiple_of(sample_bytes * usize::from(channels))
+        {
+            return Err(PcmError::PartialFrame);
+        }
+        let len = bytes.len() / sample_bytes;
         Self::validate_size(len, channels, rate)?;
         let reservation = crate::pcm_budget::PcmReservation::reserve(0)?;
         Ok(Self::with_reservation(
@@ -365,7 +364,6 @@ impl PcmBuffer {
     fn sample(&self, index: usize) -> f32 {
         match &self.allocation.samples {
             Samples::F32(samples) => samples[index],
-            Samples::I16(samples) => f32::from(samples[index]) / 32768.0,
             Samples::Chunked(chunks) => {
                 f32::from(chunks[index / CHUNK_SAMPLES][index % CHUNK_SAMPLES]) / 32768.0
             }
@@ -382,7 +380,6 @@ impl PcmBuffer {
     pub(crate) fn resident_bytes(&self) -> usize {
         match &self.allocation.samples {
             Samples::F32(samples) => samples.len() * size_of::<f32>(),
-            Samples::I16(samples) => samples.len() * size_of::<i16>(),
             Samples::Chunked(chunks) => {
                 chunks.iter().map(|chunk| chunk.len()).sum::<usize>() * size_of::<i16>()
             }
@@ -409,6 +406,7 @@ impl RenderMedia {
         Self {
             pcm,
             pan: None,
+            output_gain: [1.0; 2],
             gain: None,
             channel_gain: None,
             release: None,
@@ -452,7 +450,7 @@ impl RenderMedia {
         } else {
             self.pcm.sample(start + 1)
         };
-        [left, right]
+        [left * self.output_gain[0], right * self.output_gain[1]]
     }
 
     pub fn interpolate(&self, position: f64, looping: bool) -> [f32; 2] {

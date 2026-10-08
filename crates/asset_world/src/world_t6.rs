@@ -107,7 +107,7 @@ pub fn build_world_draw(
                 .vertex(local)
                 .map_err(|e| format!("T6 vertex: {e:?}"))?;
             let layer_at = layer_base.map(|base| base + usize::from(local) * layer_stride);
-            let key = (vertex.stream_offset, layer_at);
+            let key = (vertex.stream_offset, layer_at, layer_uvs, layer_normals);
             let index = if let Some(&index) = physical.get(&key) {
                 index
             } else {

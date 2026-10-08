@@ -80,9 +80,8 @@ impl MapPresentation {
         self.entries
             .get(map)
             .map(|(_, image)| {
-                let loaded = asset_core::AssetKey::parse(image).is_ok_and(|key| {
-                    asset_material::zone_ui_image(key.namespace, &key.name).is_some()
-                });
+                let loaded = asset_core::AssetKey::parse(image)
+                    .is_ok_and(|key| asset_material::has_zone_ui_image(key.namespace, &key.name));
                 if loaded {
                     image.clone()
                 } else {

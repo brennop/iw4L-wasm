@@ -204,6 +204,10 @@ pub const CODE_LEFTOVER_T5_CUSTOMWIND_SPRING: u16 =
     asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
         + asset_material::t5_code_remap::T5_CODE_CUSTOMWIND_SPRING;
 
+pub const CODE_LEFTOVER_T5_CHARACTER_CHARRED_AMOUNT: u16 =
+    asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
+        + asset_material::t5_code_remap::T5_CODE_CHARACTER_CHARRED_AMOUNT;
+
 pub const T5_HDRCONTROL_EXPOSURE_DIVISOR: f32 = 8.0;
 
 pub const T5_HDRCONTROL_HOST_EXPOSURE: f32 = 1.0;
@@ -788,6 +792,13 @@ pub fn produce_leftover_t5_custom_wind_constants(sources: &mut RuntimeCodeSource
     );
 }
 
+pub fn produce_leftover_t5_character_charred_amount(sources: &mut RuntimeCodeSources) {
+    sources.set_constant_rows(
+        CODE_LEFTOVER_T5_CHARACTER_CHARRED_AMOUNT,
+        &[float4_bits([0.0, 0.0, 0.0, 0.0])],
+    );
+}
+
 pub fn produce_leftover_t5_grass_wind_force0(sources: &mut RuntimeCodeSources) {
     sources.set_constant_rows(
         CODE_LEFTOVER_T5_GRASS_WIND_FORCE0,
@@ -1049,6 +1060,7 @@ pub(crate) fn update_command_context_code_sources(
     produce_leftover_t5_wind_shader_constants(&mut mat_frame.code_sources);
     produce_leftover_t5_custom_wind_constants(&mut mat_frame.code_sources);
     produce_leftover_t5_grass_wind_force0(&mut mat_frame.code_sources);
+    produce_leftover_t5_character_charred_amount(&mut mat_frame.code_sources);
     if let Some(scatter) = t5_tree_scatter.as_deref() {
         produce_leftover_t5_treecanopy_parms(
             &mut mat_frame.code_sources,

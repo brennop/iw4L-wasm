@@ -1486,13 +1486,19 @@ pub(crate) fn find_light_def<'a>(
     if want.is_empty() {
         return None;
     }
-    let pick = |defs: &'a [CapturedLightDef]| {
+    let pick = |defs: &'a [CapturedLightDef], imaged: bool| {
+        let named = |def: &&CapturedLightDef| {
+            def.name.as_str() == want && (!imaged || def.attenuation_image_name.is_some())
+        };
         defs.iter()
             .rev()
-            .find(|def| def.name.is_real() && def.name.as_str() == want)
-            .or_else(|| defs.iter().rev().find(|def| def.name.as_str() == want))
+            .find(|def| def.name.is_real() && named(def))
+            .or_else(|| defs.iter().rev().find(named))
     };
-    pick(map_defs).or_else(|| pick(common_defs))
+    pick(map_defs, true)
+        .or_else(|| pick(common_defs, true))
+        .or_else(|| pick(map_defs, false))
+        .or_else(|| pick(common_defs, false))
 }
 
 pub fn resolve_primary_light_attenuation(

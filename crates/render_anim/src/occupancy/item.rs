@@ -493,10 +493,11 @@ fn append_item_draws(
                 .map(|surface| {
                     let entry =
                         catalog.get_at(posed.models.get(usize::from(surface.model))?.order())?;
-                    let present_name = entry.material_present_name(surface.surface_index)?;
-                    model_materials
-                        .material(&tess.catalog, present_name)
-                        .cloned()
+                    if !entry.material_edges.get(surface.surface_index)?.is_bound() {
+                        return None;
+                    }
+                    let key = entry.material_keys.get(surface.surface_index)?.as_ref()?;
+                    model_materials.material(&tess.catalog, key).cloned()
                 })
                 .collect();
             if materials.iter().all(Option::is_none) {

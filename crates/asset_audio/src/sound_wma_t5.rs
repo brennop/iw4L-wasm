@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::fmt;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use web_time::Instant;
 
-use asset_transport::{cache_flight, cache_get, cache_put, fnv1a64, fnv1a64_more};
+use asset_transport::{cache_flight, cache_open, cache_put_with, fnv1a64, fnv1a64_more};
 
 pub const T5_WMA: i32 = 7;
 
@@ -11,11 +11,16 @@ const XWMA_CACHE_FORMAT: u32 = 2;
 const XWMA_CACHE_KIND: &str = "xwma_pcm";
 const XWMA_CACHE_MAGIC: &[u8; 8] = b"IWLXWMA\n";
 const XWMA_CACHE_HEADER: usize = 8 + 4 * 4;
+const MAX_PCM_BYTES: usize = 128 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum XwmaDecodeError {
     Decode(String),
     EmptyPcm,
+    UnsupportedProfile { channels: u32, rate: u32 },
+    MemoryLimit,
+    CacheRead,
+    InvalidSink,
 }
 
 impl fmt::Display for XwmaDecodeError {
@@ -23,16 +28,33 @@ impl fmt::Display for XwmaDecodeError {
         match self {
             Self::Decode(error) => write!(output, "T5 WMA2: {error}"),
             Self::EmptyPcm => output.write_str("T5 WMA2: empty PCM"),
+            Self::UnsupportedProfile { channels, rate } => write!(
+                output,
+                "T5 WMA2: unsupported profile channels={channels} rate={rate}"
+            ),
+            Self::MemoryLimit => output.write_str("T5 WMA2: memory limit"),
+            Self::CacheRead => output.write_str("T5 WMA2: cache read failed"),
+            Self::InvalidSink => output.write_str("T5 WMA2: output must start empty"),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct XwmaClip<'a> {
-    pub packets: &'a [u8],
-    pub seek_table: &'a [u32],
-    pub channels: u32,
-    pub rate: u32,
+impl From<crate::wma_t5::DecodeError> for XwmaDecodeError {
+    fn from(error: crate::wma_t5::DecodeError) -> Self {
+        Self::Decode(error.to_string())
+    }
+}
+
+pub trait XwmaPcmSink {
+    type Workspace;
+
+    fn reserve_workspace(&mut self, bytes: usize) -> Result<Self::Workspace, XwmaDecodeError>;
+    fn extend(&mut self, samples: &[i16]) -> Result<(), XwmaDecodeError>;
+    fn sample_count(&self) -> usize;
+    fn visit_samples(
+        &self,
+        visitor: &mut dyn FnMut(&[i16]) -> std::io::Result<()>,
+    ) -> std::io::Result<()>;
 }
 
 pub fn decode_t5_xwma(
@@ -40,134 +62,111 @@ pub fn decode_t5_xwma(
     seek_table: &[u32],
     channels: u32,
     rate: u32,
-) -> Result<Vec<u8>, XwmaDecodeError> {
-    let clip = XwmaClip {
-        packets,
-        seek_table,
-        channels,
-        rate,
-    };
-    let mut results = decode_t5_xwma_batch(std::slice::from_ref(&clip));
-    debug_assert_eq!(results.len(), 1, "one clip in, one result out");
-    results.pop().unwrap_or(Err(XwmaDecodeError::EmptyPcm))
-}
-
-pub fn decode_t5_xwma_batch(clips: &[XwmaClip<'_>]) -> Vec<Result<Vec<u8>, XwmaDecodeError>> {
-    let key_at = Instant::now();
-    let keys: Vec<String> = clips
-        .iter()
-        .map(|clip| cache_key(clip.packets, clip.seek_table, clip.channels, clip.rate))
-        .collect();
-    KEY_NS.fetch_add(key_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
-
-    let mut out: Vec<Option<Result<Vec<u8>, XwmaDecodeError>>> = vec![None; clips.len()];
-    let mut pending = Vec::new();
-    for (i, clip) in clips.iter().enumerate() {
-        match cached(&keys[i], clip.channels, clip.rate) {
-            Some(pcm) => out[i] = Some(Ok(pcm)),
-            None => pending.push(i),
+    sink: &mut impl XwmaPcmSink,
+) -> Result<(), XwmaDecodeError> {
+    let result = (|| {
+        crate::T5WmaProfile::from_geometry(channels, rate)
+            .ok_or(XwmaDecodeError::UnsupportedProfile { channels, rate })?;
+        if sink.sample_count() != 0 {
+            return Err(XwmaDecodeError::InvalidSink);
         }
-    }
-
-    pending.sort_unstable_by(|a, b| keys[*a].cmp(&keys[*b]));
-    let mut flights = Vec::new();
-    let mut leaders = Vec::new();
-    let mut followers = Vec::new();
-    let mut leader_of: HashMap<&str, usize> = HashMap::new();
-    for &i in &pending {
-        match leader_of.get(keys[i].as_str()) {
-            Some(&leader) => followers.push((i, leader)),
-            None => {
-                leader_of.insert(keys[i].as_str(), i);
-                flights.push(cache_flight(XWMA_CACHE_KIND, &keys[i]));
-                leaders.push(i);
-            }
+        let key_at = Instant::now();
+        let key = cache_key(packets, seek_table, channels, rate);
+        KEY_NS.fetch_add(key_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let _flight = cache_flight(XWMA_CACHE_KIND, &key);
+        if cached(&key, channels, rate, sink)? {
+            return Ok(());
         }
-    }
-
-    for &i in &leaders {
-        if let Some(pcm) = cached(&keys[i], clips[i].channels, clips[i].rate) {
-            out[i] = Some(Ok(pcm));
-            continue;
-        }
-        let clip = clips[i];
         let decode_at = Instant::now();
         NATIVE.fetch_add(1, Ordering::Relaxed);
-        let decoded =
-            crate::wma_t5::decode(clip.packets, clip.seek_table, clip.channels, clip.rate)
-                .map_err(|error| XwmaDecodeError::Decode(error.to_string()));
+        let result = crate::wma_t5::decode(packets, seek_table, channels, rate, sink);
         DECODE_NS.fetch_add(decode_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        if let Ok(pcm) = &decoded {
-            MISS.fetch_add(1, Ordering::Relaxed);
-            PCM_BYTES.fetch_add(pcm.len() as u64, Ordering::Relaxed);
-            store(&keys[i], clip.channels, clip.rate, pcm);
-        }
-        out[i] = Some(decoded);
+        result?;
+        MISS.fetch_add(1, Ordering::Relaxed);
+        PCM_BYTES.fetch_add((sink.sample_count() * 2) as u64, Ordering::Relaxed);
+        store(&key, channels, rate, sink);
+        Ok(())
+    })();
+    if result.is_err() {
+        FAILED.fetch_add(1, Ordering::Relaxed);
     }
+    result
+}
 
-    for (i, leader) in followers {
-        let answer = match &out[leader] {
-            Some(Ok(pcm)) => {
-                HIT.fetch_add(1, Ordering::Relaxed);
-                PCM_BYTES.fetch_add(pcm.len() as u64, Ordering::Relaxed);
-                Ok(pcm.clone())
-            }
-            Some(Err(error)) => Err(error.clone()),
-            None => Err(XwmaDecodeError::EmptyPcm),
+fn cached(
+    key: &str,
+    channels: u32,
+    rate: u32,
+    sink: &mut impl XwmaPcmSink,
+) -> Result<bool, XwmaDecodeError> {
+    let io_at = Instant::now();
+    let result = (|| {
+        let Some(mut file) = cache_open(XWMA_CACHE_KIND, key) else {
+            return Ok(false);
         };
-        out[i] = Some(answer);
-    }
-
-    out.into_iter()
-        .map(|answer| {
-            let answer = answer.unwrap_or(Err(XwmaDecodeError::EmptyPcm));
-            if answer.is_err() {
-                FAILED.fetch_add(1, Ordering::Relaxed);
+        let mut header = [0u8; XWMA_CACHE_HEADER];
+        if file.read_exact(&mut header).is_err() || &header[..8] != XWMA_CACHE_MAGIC {
+            return Ok(false);
+        }
+        let word = |at| u32::from_le_bytes(header[at..at + 4].try_into().unwrap());
+        let len = word(20) as usize;
+        if word(8) != XWMA_CACHE_FORMAT
+            || word(12) != channels
+            || word(16) != rate
+            || len == 0
+            || len > MAX_PCM_BYTES
+            || !len.is_multiple_of(channels as usize * 2)
+            || file
+                .metadata()
+                .map_or(true, |meta| meta.len() != (XWMA_CACHE_HEADER + len) as u64)
+        {
+            return Ok(false);
+        }
+        let mut bytes = [0u8; 8192];
+        let mut samples = [0i16; 4096];
+        let mut remaining = len;
+        while remaining != 0 {
+            let take = remaining.min(bytes.len());
+            file.read_exact(&mut bytes[..take])
+                .map_err(|_| XwmaDecodeError::CacheRead)?;
+            for (sample, pair) in samples.iter_mut().zip(bytes[..take].as_chunks::<2>().0) {
+                *sample = i16::from_le_bytes(*pair);
             }
-            answer
-        })
-        .collect()
-}
-
-fn cache_encode(channels: u32, rate: u32, pcm: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(XWMA_CACHE_HEADER + pcm.len());
-    out.extend_from_slice(XWMA_CACHE_MAGIC);
-    out.extend_from_slice(&XWMA_CACHE_FORMAT.to_le_bytes());
-    out.extend_from_slice(&channels.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
-    out.extend_from_slice(pcm);
-    out
-}
-
-fn cache_decode(bytes: &[u8], channels: u32, rate: u32) -> Option<Vec<u8>> {
-    if bytes.len() < XWMA_CACHE_HEADER || &bytes[..8] != XWMA_CACHE_MAGIC {
-        return None;
-    }
-    let word = |at: usize| -> Option<u32> {
-        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
-    };
-    if word(8)? != XWMA_CACHE_FORMAT || word(12)? != channels || word(16)? != rate {
-        return None;
-    }
-    let len = word(20)? as usize;
-    let pcm = bytes.get(XWMA_CACHE_HEADER..XWMA_CACHE_HEADER + len)?;
-    (!pcm.is_empty()).then(|| pcm.to_vec())
-}
-
-fn cached(key: &str, channels: u32, rate: u32) -> Option<Vec<u8>> {
-    let io_at = Instant::now();
-    let bytes = cache_get(XWMA_CACHE_KIND, key);
+            sink.extend(&samples[..take / 2])?;
+            remaining -= take;
+        }
+        HIT.fetch_add(1, Ordering::Relaxed);
+        PCM_BYTES.fetch_add(len as u64, Ordering::Relaxed);
+        Ok(true)
+    })();
     IO_NS.fetch_add(io_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
-    let pcm = cache_decode(&bytes?, channels, rate)?;
-    HIT.fetch_add(1, Ordering::Relaxed);
-    PCM_BYTES.fetch_add(pcm.len() as u64, Ordering::Relaxed);
-    Some(pcm)
+    result
 }
 
-fn store(key: &str, channels: u32, rate: u32, pcm: &[u8]) {
+fn store(key: &str, channels: u32, rate: u32, sink: &impl XwmaPcmSink) {
     let io_at = Instant::now();
-    if let Err(error) = cache_put(XWMA_CACHE_KIND, key, &cache_encode(channels, rate, pcm)) {
+    let result = cache_put_with(XWMA_CACHE_KIND, key, |file| {
+        let len = sink
+            .sample_count()
+            .checked_mul(2)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or_else(|| std::io::Error::other("PCM length overflow"))?;
+        file.write_all(XWMA_CACHE_MAGIC)?;
+        for word in [XWMA_CACHE_FORMAT, channels, rate, len] {
+            file.write_all(&word.to_le_bytes())?;
+        }
+        let mut bytes = [0u8; 8192];
+        sink.visit_samples(&mut |samples| {
+            for chunk in samples.chunks(bytes.len() / 2) {
+                for (pair, sample) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
+                    *pair = sample.to_le_bytes();
+                }
+                file.write_all(&bytes[..chunk.len() * 2])?;
+            }
+            Ok(())
+        })
+    });
+    if let Err(error) = result {
         diag::warn!(Audio, "xwma cache store {key}: {error}");
     }
     IO_NS.fetch_add(io_at.elapsed().as_nanos() as u64, Ordering::Relaxed);

@@ -79,9 +79,10 @@ impl AssetLinkSink for T5SoundCapture {
                 knots.push((s.f32_at(row, 36 + n * 8)?, s.f32_at(row, 40 + n * 8)?));
             }
             let name = format!("t5/curve/{i}");
-            self.catalog
-                .curves
-                .insert(name.clone(), CapturedSndCurve { name, knots });
+            self.catalog.curves.insert(
+                (AssetNamespace::T5, name.clone()),
+                CapturedSndCurve { name, knots },
+            );
         }
         Ok(())
     }
@@ -95,23 +96,12 @@ impl AssetLinkSink for T5SoundCapture {
         let mut groups = Vec::with_capacity(count);
         for i in 0..count {
             let row = rows.at(i * 80);
-            groups.push((s.i32_at(row, 68)?, f32::from(s.u16_at(row, 78)?) / 65535.0));
+            groups.push(crate::MixerGroup {
+                parent: s.i32_at(row, 68)?,
+                attenuation: f32::from(s.u16_at(row, 78)?) / 65535.0,
+            });
         }
-        let volumes = (0..count)
-            .map(|mut group| {
-                let mut volume = 1.0;
-                for _ in 0..100 {
-                    let (parent, attenuation) = groups[group];
-                    volume *= attenuation;
-                    match usize::try_from(parent) {
-                        Ok(parent) if parent < count => group = parent,
-                        _ => break,
-                    }
-                }
-                volume
-            })
-            .collect();
-        self.catalog.set_group_volumes(AssetNamespace::T5, volumes);
+        self.catalog.ingest_mixer_groups(AssetNamespace::T5, groups);
         Ok(())
     }
 
@@ -358,6 +348,7 @@ impl T5SoundCapture {
             mixer_group: None,
             loaded_name,
             loaded,
+            loaded_binding_origin: crate::LoadedBindingOrigin::Unresolved,
             streamed,
             file_type,
             file_exists,
@@ -412,6 +403,7 @@ impl T5SoundCapture {
             envelop_max,
             envelop_percentage,
             speaker_map: None,
+            stereo_speaker_gains: None,
             limit_count: s.u8_at(row, sz::SND_ALIAS_LIMIT_COUNT_OFF).ok(),
             entity_limit_count: s.u8_at(row, sz::SND_ALIAS_ENTITY_LIMIT_COUNT_OFF).ok(),
         }

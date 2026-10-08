@@ -92,7 +92,7 @@ impl AuthorityClock {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GatheredCommands {
-    pub cmds: Vec<(ClientId, UserCmd)>,
+    pub cmds: Vec<sim::PlayerCommand>,
 
     pub acks: Vec<(ClientId, CmdSeq)>,
 
@@ -353,7 +353,7 @@ impl ClientCommandInbox {
                     cmd.server_time = time_ms;
                     self.last_consumed.insert(id, cmd);
                     out.proxied.push(id);
-                    out.cmds.push((id, cmd));
+                    out.cmds.push(sim::PlayerCommand::unsequenced(id, cmd));
                 }
                 continue;
             }
@@ -372,7 +372,11 @@ impl ClientCommandInbox {
                 }
 
                 out.samples.push((id, cmd.server_time, sample));
-                out.cmds.push((id, cmd));
+                out.cmds.push(sim::PlayerCommand {
+                    client: id,
+                    command: cmd,
+                    sequence: seq.map(|seq| sim::CommandSequence(seq.0)),
+                });
             }
             if let Some(seq) = ack {
                 out.acks.push((id, seq));
@@ -543,13 +547,16 @@ pub fn run_fixed_authority_stream(
     for _ in 0..ticks {
         let tick = clock.advance();
         let cmds = sample(tick, clock.time_ms);
-        out.push(sim::step(
-            world,
-            sim::Tick(tick),
-            &sim::TickInput::from_cmds(cmds),
-            AUTHORITY_MS,
-            sim::StepReason::AuthorityFrame,
-        ));
+        out.push(
+            sim::step(
+                world,
+                sim::Tick(tick),
+                &sim::TickInput::from_cmds(cmds),
+                AUTHORITY_MS,
+                sim::StepReason::AuthorityFrame,
+            )
+            .snapshot,
+        );
     }
     out
 }

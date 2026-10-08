@@ -8,6 +8,7 @@ mod decode_budget;
 mod emit;
 mod entity_events;
 mod frontend;
+mod media_queue;
 mod messages;
 mod pcm;
 mod pcm_budget;
@@ -24,7 +25,7 @@ pub use aliases::{
     world_surface_alias,
 };
 pub use ambient::{MapAmbientBooted, SoundIwd};
-pub use clip_store::{ClipPath, ClipPathCost, ClipPrepCost, ClipStore, PREP_BATCH, clip_prep_cost};
+pub use clip_store::{ClipPath, ClipPathCost, ClipPrepCost, ClipStore, clip_prep_cost};
 pub use emit::{BobCycleTracker, emit_footstep_on_bob_wrap, emit_weapon_fire};
 pub use frontend::FrontendAudio;
 pub use match_set::{AudioReady, AudioSilent};

@@ -20,10 +20,15 @@ pub const XMODEL_PACKED_EMPTY_PLAN: &str = "xmodel plan has no vertices";
 pub fn body_lit_pass_material(
     lighting: &WorldModelLightingAtlas,
     catalog: &RuntimeMaterialCatalog,
-    material_name: &str,
+    material_key: &asset_core::MaterialKey,
 ) -> Option<SmodelPassMaterial> {
     let material_sorted_index = catalog
-        .ordinal_for_material_name(material_name)
+        .material_for_key(material_key)
+        .and_then(|material| {
+            catalog
+                .sorted_materials
+                .ordinal_for_asset_id(usize::from(material.asset_id.0))
+        })
         .map(SortedMaterialOrdinal::get);
     let material_sorted_index = material_sorted_index?;
     lit_xmodel_pass_material(lighting, material_sorted_index)

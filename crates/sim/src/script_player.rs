@@ -95,6 +95,7 @@ pub(crate) fn spawn(
         meta.burst_latch_secondary = false;
         meta.rechamber_pending = false;
         meta.rechamber_pending_secondary = false;
+        meta.pending_brass = [None; 2];
         meta.life_sequence
     };
     let class_id = world
@@ -593,6 +594,7 @@ pub(crate) fn switch_to_weapon_immediate(
     meta.burst_latch_secondary = false;
     meta.rechamber_pending = false;
     meta.rechamber_pending_secondary = false;
+    meta.pending_brass = [None; 2];
     Ok(())
 }
 
@@ -772,10 +774,10 @@ pub(crate) fn buttons(world: &mut FrameWorld, id: ClientId) -> u32 {
     let mut commands = input
         .cmds
         .iter()
-        .filter(|(client, _)| *client == id)
+        .filter(|command| command.client == id)
         .peekable();
     if commands.peek().is_some() {
-        return commands.fold(0, |buttons, (_, cmd)| buttons | cmd.buttons);
+        return commands.fold(0, |buttons, command| buttons | command.command.buttons);
     }
     world
         .old_buttons_mut()

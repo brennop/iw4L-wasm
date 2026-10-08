@@ -108,9 +108,19 @@ pub(super) fn audio_dump_section(
     clips: Option<&audio::ClipStore>,
     runtime: Option<&audio::AudioRuntime>,
 ) -> String {
-    let ready = ready.is_some_and(|r| r.0);
+    let report = ready.map(|ready| ready.0);
+    let ready = report.is_some_and(|report| report.ready_for(report.generation));
+    let generation = report.and_then(|report| report.generation.0);
+    let state = report.map_or("Missing", |report| match report.state {
+        frame::ReadinessState::Pending => "Pending",
+        frame::ReadinessState::Ready => "Ready",
+        frame::ReadinessState::Silent => "Silent",
+        frame::ReadinessState::Failed => "Failed",
+    });
     let late = clips.map(audio::ClipStore::late_prepares).unwrap_or(0);
-    let mut out = format!("[audio]\nAudioReady = {ready}\nlate_prepares = {late}\n");
+    let mut out = format!(
+        "[audio]\nAudioReady = {ready}\naudio_generation = {generation:?}\naudio_state = {state}\nlate_prepares = {late}\n"
+    );
     if let Some(runtime) = runtime {
         out.push_str(&format!("transport = {:?}\n", runtime.diagnostics()));
     }

@@ -1,3 +1,6 @@
+#[path = "sab_media.rs"]
+pub(crate) mod sab_media;
+
 #[path = "t5_stream.rs"]
 pub(crate) mod t5_stream;
 
@@ -7,6 +10,9 @@ use crate::media::PcmBuffer;
 #[derive(Debug)]
 pub(crate) enum DecodeError {
     Decode,
+    Read,
+    UnsupportedCodec(asset_audio::SabCodec),
+    MetadataMismatch,
     Pcm(crate::media::PcmError),
 }
 
@@ -93,7 +99,12 @@ fn riff_pcm(bytes: &[u8]) -> Option<Result<PcmBuffer, DecodeError>> {
     while let Some(header) = bytes.get(at..at.checked_add(8)?) {
         let size = u32::from_le_bytes(header[4..8].try_into().ok()?) as usize;
         let body = at + 8;
-        let chunk = bytes.get(body..body.checked_add(size)?.min(bytes.len()))?;
+        let Some(end) = body.checked_add(size) else {
+            return Some(Err(DecodeError::Decode));
+        };
+        let Some(chunk) = bytes.get(body..end) else {
+            return Some(Err(DecodeError::Decode));
+        };
         match &header[..4] {
             b"fmt " if chunk.len() >= 16 => fmt = Some(chunk),
             b"data" => data = Some(chunk),
@@ -110,23 +121,28 @@ fn riff_pcm(bytes: &[u8]) -> Option<Result<PcmBuffer, DecodeError>> {
     }
     let data = data?;
     Some((|| {
-        let mut samples = DecodeSamples::new().map_err(DecodeError::Pcm)?;
-        let lanes = usize::from(channels.max(1));
+        PcmBuffer::validate_geometry(channels, rate).map_err(DecodeError::Pcm)?;
         let width = usize::from(bits / 8);
-        let count = data.len() / width / lanes * lanes;
-        let mut block = Vec::with_capacity(4096);
-        for frame in data[..count * width].chunks(4096 * width) {
-            block.clear();
+        let frame_bytes = width * usize::from(channels);
+        if !data.len().is_multiple_of(frame_bytes) {
+            return Err(DecodeError::Pcm(crate::media::PcmError::PartialFrame));
+        }
+        let mut samples = DecodeSamples::for_frames(data.len() / frame_bytes, channels, rate)
+            .map_err(DecodeError::Pcm)?;
+        let mut block = [0i16; 4096];
+        for frame in data.chunks(block.len() * width) {
             if bits == 16 {
-                block.extend(
-                    frame
-                        .chunks_exact(2)
-                        .map(|b| i16::from_le_bytes([b[0], b[1]])),
-                );
+                for (sample, pair) in block.iter_mut().zip(frame.as_chunks::<2>().0) {
+                    *sample = i16::from_le_bytes([pair[0], pair[1]]);
+                }
             } else {
-                block.extend(frame.iter().map(|&b| (i16::from(b) - 128) << 8));
+                for (sample, &byte) in block.iter_mut().zip(frame) {
+                    *sample = (i16::from(byte) - 128) << 8;
+                }
             }
-            samples.extend(&block).map_err(DecodeError::Pcm)?;
+            samples
+                .extend(&block[..frame.len() / width])
+                .map_err(DecodeError::Pcm)?;
         }
         samples.into_pcm(channels, rate).map_err(DecodeError::Pcm)
     })())

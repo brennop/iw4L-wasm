@@ -47,6 +47,7 @@ pub struct ClientSnapshotMeta {
     pub burst_latch_secondary: bool,
     pub rechamber_pending: bool,
     pub rechamber_pending_secondary: bool,
+    pub pending_brass: [Option<crate::PendingBrass>; 2],
 
     pub dead_since_tick: Option<u32>,
 

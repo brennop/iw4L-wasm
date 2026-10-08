@@ -244,31 +244,32 @@ fn profile_data(world: &World, profile: crate::PlayerProfile) -> Option<Vec<(Vec
     Some(data)
 }
 
-pub(crate) fn set_profile(world: &mut World, client: u32, profile: crate::PlayerProfile) {
+pub(crate) fn set_profile(world: &mut World, client: u32, profile: crate::PlayerProfile) -> bool {
     if FrameWorld::from_world(world)
         .client_meta(ClientId(client))
         .is_none()
     {
-        return;
+        return false;
     }
     let Some(data) = profile_data(world, profile) else {
-        return;
+        return false;
     };
     if super::natives::player::write_class_data(world, client, &data).is_err() {
-        return;
+        return false;
     }
     let mut frame = FrameWorld::from_world(world);
     let meta = frame.client_meta_mut(ClientId(client));
     meta.player_card_title = profile.title;
     meta.player_card_icon = profile.emblem;
+    true
 }
 
 const GIVE_KILLSTREAK: &str = "maps/mp/killstreaks/_killstreaks::trygivekillstreak";
 
-pub(crate) fn give_killstreak(world: &mut World, client: u32, name: &str) {
+pub(crate) fn give_killstreak(world: &mut World, client: u32, name: &str) -> bool {
     let me = player_object(world, client);
     if me == Value::Undefined {
-        return;
+        return false;
     }
     let lookup = [
         Value::string("mp/killstreakTable.csv"),
@@ -277,16 +278,17 @@ pub(crate) fn give_killstreak(world: &mut World, client: u32, name: &str) {
         Value::Int(4),
     ];
     let Ok(Ok(cost)) = super::tables::table_lookup(world, &lookup).map(|c| c.parse::<i32>()) else {
-        return;
+        return false;
     };
     let now = now_ms(world);
-    let _ = run_now(
+    run_now(
         world,
         GIVE_KILLSTREAK,
         me,
         vec![Value::string(name), Value::Int(cost)],
         now,
-    );
+    )
+    .is_ok()
 }
 
 pub(crate) fn settle_deaths(world: &mut World) {

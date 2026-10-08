@@ -145,7 +145,7 @@ fn reset_roster_on_match_torn_down(
     }
     *roster = BotRoster::default();
     *nav = BotNav::default();
-    ready.0 = false;
+    *ready = BotNavigationReady::default();
 }
 
 fn drain_bot_add_queue(
@@ -512,12 +512,14 @@ fn prepare_navigation(
     world: Option<Res<AuthorityWorld>>,
     installed: Option<Res<HasWorld>>,
     role: Res<RuntimeRole>,
+    generation: Res<frame::WorldGeneration>,
     mut nav: ResMut<BotNav>,
     mut ready: ResMut<BotNavigationReady>,
     load: Option<Res<assets::MapLoadProcess>>,
 ) {
+    ready.0 = frame::WorldReadiness::new(*generation, frame::ReadinessState::Pending);
     if !matches!(*role, RuntimeRole::Listen | RuntimeRole::Dedicated) {
-        ready.0 = true;
+        ready.0.state = frame::ReadinessState::Ready;
         return;
     }
     if !installed.is_some_and(|installed| installed.0) {
@@ -526,7 +528,9 @@ fn prepare_navigation(
     let Some(world) = world else {
         return;
     };
-    ready.0 = refresh_nav(&world.0, &mut nav, load.as_deref());
+    if refresh_nav(&world.0, &mut nav, load.as_deref()) {
+        ready.0.state = frame::ReadinessState::Ready;
+    }
 }
 
 fn refresh_nav(world: &SimWorld, nav: &mut BotNav, load: Option<&assets::MapLoadProcess>) -> bool {

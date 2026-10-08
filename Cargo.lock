@@ -366,7 +366,6 @@ dependencies = [
  "fastfile_t5",
  "fastfile_t6",
  "gamefs",
- "symphonia",
  "web-time",
 ]
 

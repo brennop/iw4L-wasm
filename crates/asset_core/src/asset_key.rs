@@ -10,6 +10,7 @@ pub enum AssetNamespace {
 }
 
 impl AssetNamespace {
+    pub const ALL: [Self; 4] = [Self::Iw4, Self::T5, Self::Iw5, Self::T6];
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Iw4 => "iw4",

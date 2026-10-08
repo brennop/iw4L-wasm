@@ -32,6 +32,7 @@ use weapon_iw4::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AcceptedShot {
     pub shot_id: ShotId,
+    pub fire_cause: Option<crate::FireCause>,
     pub attacker: ClientId,
     pub attacker_life: LifeSequence,
 
@@ -56,6 +57,7 @@ pub struct AcceptedShot {
 pub struct Emission {
     pub combat_seed: u32,
     pub shot_id: ShotId,
+    pub fire_cause: Option<crate::FireCause>,
     pub pellet: PelletId,
     pub attacker: ClientId,
     pub attacker_life: LifeSequence,
@@ -145,6 +147,7 @@ pub(crate) fn advance_weapon_command(
     id: ClientId,
     cmd: playerstate_iw4::UserCmd,
     msec: i32,
+    command_sequence: Option<crate::CommandSequence>,
 ) -> Vec<AcceptedShot> {
     let msec = msec.clamp(1, 200);
     let frametime = msec as f32 / 1000.0;
@@ -637,6 +640,7 @@ pub(crate) fn advance_weapon_command(
             }
         }
 
+        let mut fire_ordinal = 0u16;
         for slot in events.into_iter().flatten() {
             let (_hand_i, ev) = slot;
             match ev {
@@ -673,14 +677,48 @@ pub(crate) fn advance_weapon_command(
                     } else {
                         entity_iw4::EntityEventKind::EJECT_BRASS
                     };
-                    if let Some(ps) = world.player_mut(*id) {
-                        movement_iw4::add_predictable_event(ps, kind.0, 0);
-                    }
+                    let pending = world.client_meta_mut(*id).pending_brass[_hand_i as usize]
+                        .take()
+                        .filter(|pending| {
+                            pending.life == life && pending.weapon == hands[_hand_i as usize].weapon
+                        });
+                    let origin = world.player(*id).map_or([0.0; 3], |ps| ps.origin);
+                    world.push_entity_event(
+                        tick,
+                        EventAudience::All,
+                        kind,
+                        crate::EntityEventPayload {
+                            number: id.0 as i32,
+                            weapon: hands[_hand_i as usize].weapon,
+                            hand: _hand_i,
+                            origin,
+                            correlation: pending.map_or(0, |pending| pending.shot.0),
+                            fire_cause: pending.and_then(|pending| pending.cause),
+                            ..Default::default()
+                        },
+                    );
                 }
                 WeaponTickEvent::ShotAccepted { ammo_used } => {
                     let hand = &hands[_hand_i as usize];
                     let shot_id = world.alloc_shot_id();
+                    let fire_cause = command_sequence.map(|command| crate::FireCause {
+                        client: *id,
+                        life,
+                        command,
+                        ordinal: fire_ordinal,
+                        hand: _hand_i,
+                    });
+                    fire_ordinal += 1;
                     let weapon = hand.weapon;
+                    if facts.bolt_action {
+                        world.client_meta_mut(*id).pending_brass[_hand_i as usize] =
+                            Some(crate::PendingBrass {
+                                cause: fire_cause,
+                                life,
+                                shot: shot_id,
+                                weapon,
+                            });
+                    }
                     let Some(ps) = world.player(*id).copied() else {
                         continue;
                     };
@@ -713,6 +751,8 @@ pub(crate) fn advance_weapon_command(
                             number: id.0 as i32,
                             weapon,
                             correlation: shot_id.0,
+                            fire_cause,
+                            hand: _hand_i,
                             origin,
                             direction: shot_angles,
                             ..Default::default()
@@ -750,6 +790,7 @@ pub(crate) fn advance_weapon_command(
                     );
                     accepted.push(AcceptedShot {
                         shot_id,
+                        fire_cause,
                         attacker: *id,
                         attacker_life: life,
                         hand: _hand_i,
@@ -953,6 +994,16 @@ pub(crate) fn advance_weapon_command(
                 WeaponTickEvent::RaiseFinished | WeaponTickEvent::DropFinished => {}
             }
         }
+        let meta = world.client_meta_mut(*id);
+        for (index, hand) in hands.iter().enumerate() {
+            if !hand.rechamber_pending
+                || index > last_hand as usize
+                || meta.pending_brass[index]
+                    .is_some_and(|pending| pending.life != life || pending.weapon != hand.weapon)
+            {
+                meta.pending_brass[index] = None;
+            }
+        }
     }
     accepted
 }
@@ -1093,6 +1144,7 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
             out.push(Emission {
                 combat_seed: shot.combat_seed,
                 shot_id: shot.shot_id,
+                fire_cause: shot.fire_cause,
                 pellet: PelletId(pellet),
                 attacker: shot.attacker,
                 attacker_life: shot.attacker_life,
@@ -1348,6 +1400,7 @@ pub(crate) fn phase_trace(
                 event_parm: i32::from(flesh_flags),
                 weapon: em.weapon,
                 correlation: em.shot_id.0,
+                fire_cause: em.fire_cause,
                 pellet: em.pellet.0,
                 hand: em.hand,
                 origin: segment.end,

@@ -187,6 +187,8 @@ pub fn run_teardown(
     mut screen: ResMut<AppScreen>,
     mut has_world: ResMut<HasWorld>,
     mut world_generation: ResMut<WorldGeneration>,
+    mut readiness: ResMut<crate::SessionReadinessPolicy>,
+    mut armed: ResMut<frame::LocalSpawnArmed>,
     mut handoff: ResMut<ClassSelectHandoff>,
     mut identity: Option<ResMut<LaunchIdentity>>,
     mut load_hold: Option<ResMut<AuthorityLoadHold>>,
@@ -224,6 +226,8 @@ pub fn run_teardown(
     *screen = AppScreen::MainMenu;
     *has_world = HasWorld(false);
     *world_generation = WorldGeneration(None);
+    *readiness = crate::SessionReadinessPolicy::default();
+    *armed = frame::LocalSpawnArmed::default();
     *handoff = ClassSelectHandoff::default();
 
     if let Some(hold) = load_hold.as_mut() {

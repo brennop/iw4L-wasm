@@ -552,13 +552,24 @@ fn missing_prepared_technique(
     match entries.get(usize::from(tech_type.0)).copied() {
         None => MaterialRefusal::StateEntryOutOfRange { tech_type },
         Some(0xff) => MaterialRefusal::TechniqueAbsent { tech_type },
-        Some(_) => match technique.passes.first().and_then(|pass| pass.shader_pair) {
-            Some(pair) => MaterialRefusal::UnsupportedShaderPair {
-                pass_index: 0,
-                pair,
-            },
-            None => MaterialRefusal::ShaderProgramMissing { pass_index: 0 },
-        },
+        Some(base) => {
+            for pass_index in 0..technique.passes.len() {
+                let row = usize::from(base).saturating_add(pass_index);
+                let Ok(pass_index) = u8::try_from(pass_index) else {
+                    return MaterialRefusal::PassIndexOverflow { pass_index };
+                };
+                if material.state_bits_table.get(row).is_none() {
+                    return MaterialRefusal::StateRowOutOfRange { row, pass_index };
+                }
+            }
+            match technique.passes.first().and_then(|pass| pass.shader_pair) {
+                Some(pair) => MaterialRefusal::UnsupportedShaderPair {
+                    pass_index: 0,
+                    pair,
+                },
+                None => MaterialRefusal::ShaderProgramMissing { pass_index: 0 },
+            }
+        }
     }
 }
 
@@ -721,10 +732,9 @@ pub fn draw_code_sampler_mask(
     prepared: &PreparedMaterialTable,
     key: MaterialDrawKey,
     tech_type: TechType,
-) -> u64 {
+) -> Result<u64, MaterialRefusal> {
     prepared_draw_technique(catalog, prepared, key, tech_type)
         .map(|(_, prepared_tech)| prepared_tech.code_sampler_mask)
-        .unwrap_or(0)
 }
 
 pub fn draw_binds_code_texture(
@@ -733,11 +743,9 @@ pub fn draw_binds_code_texture(
     key: MaterialDrawKey,
     tech_type: TechType,
     index: u32,
-) -> bool {
-    let Ok((_, prepared_tech)) = prepared_draw_technique(catalog, prepared, key, tech_type) else {
-        return false;
-    };
-    prepared_tech.binds_code_texture(index)
+) -> Result<bool, MaterialRefusal> {
+    let (_, prepared_tech) = prepared_draw_technique(catalog, prepared, key, tech_type)?;
+    Ok(prepared_tech.binds_code_texture(index))
 }
 
 pub fn execute_material(

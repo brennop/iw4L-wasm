@@ -96,12 +96,12 @@ pub use hudelem::{
     hud_elem_update_client, rebase_hud_archival,
 };
 pub use identities::{
-    ActionSequence, DamageSource, EventSequence, LifeSequence, MatchPhase, MatchRng, PelletId,
-    ProjectileId, RNG_DOMAIN_SCHEME, RngDomain, ScriptModelId, ShotId,
+    ActionSequence, DamageSource, EventSequence, FireCause, LifeSequence, MatchPhase, MatchRng,
+    PelletId, PendingBrass, ProjectileId, RNG_DOMAIN_SCHEME, RngDomain, ScriptModelId, ShotId,
 };
 pub use input::{
-    ActionRequestId, ClassId, ClientAction, MENU_RESPONSE_BYTES, SpawnPick, TickInput,
-    action_request_id, menu_response_field, menu_response_text,
+    ActionRequestId, ClassId, ClientAction, CommandSequence, MENU_RESPONSE_BYTES, PlayerCommand,
+    SpawnPick, TickInput, action_request_id, menu_response_field, menu_response_text,
 };
 pub use mantle_xanim::MantleXAnimBind;
 pub use match_state::{
@@ -175,3 +175,9 @@ mod script_audio;
 pub use script_audio::{ScriptAmbient, ScriptAudioCommand};
 
 pub use input::PlayerProfile;
+
+mod tick_result;
+pub use tick_result::{
+    ActionOutcome, ActionResult, FireCommandOutcome, FireCommandRefusal, FireCommandResult,
+    TickEffects, TickResult,
+};

@@ -33,8 +33,8 @@ pub use lighting::{
 };
 pub use occupancy::{
     DynEntCellBits, DynEntPhysClip, DynEntPhysWorld, FpvGeometrySet, FpvPlacementRoot,
-    FpvPlacementSet, GunOffset, LocalSpawnArmed, PendingViewHurt, RemoteFxBolts, RemotePlayer,
-    RenderFocus, ScriptModelDrawSet, ScriptModelSkinSet, SessionViewmodel, occupy_fpv_scene,
-    spawn_pending_fpv, stamp_fpv_placement_matrix, sync_camera_from_presented, tick_fpv_viewmodel,
+    FpvPlacementSet, GunOffset, PendingViewHurt, RemoteFxBolts, RemotePlayer, RenderFocus,
+    ScriptModelDrawSet, ScriptModelSkinSet, SessionViewmodel, occupy_fpv_scene, spawn_pending_fpv,
+    stamp_fpv_placement_matrix, sync_camera_from_presented, tick_fpv_viewmodel,
 };
 pub use plugin::RenderAnimPlugin;

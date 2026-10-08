@@ -1,14 +1,17 @@
 use std::collections::HashSet;
-#[cfg(windows)]
 use std::path::Path;
 use std::path::PathBuf;
 
 use crate::ZoneGame;
 use crate::discover::GamesRoot;
+use crate::discover::configured_search_roots;
 #[cfg(windows)]
-use crate::discover::{search_roots, zone_game_for_path};
+use crate::discover::zone_game_for_path;
 
+#[cfg(windows)]
 pub const MW2_SHORTCUT: &str = "Modern Warfare 2.lnk";
+#[cfg(not(windows))]
+pub const MW2_SHORTCUT: &str = "iw4";
 
 const TITLES: [(ZoneGame, &str, &str); 4] = [
     (ZoneGame::Iw4, MW2_SHORTCUT, "Call of Duty Modern Warfare 2"),
@@ -40,13 +43,22 @@ pub enum SteamCandidate {
     ShortcutFailed(String),
 }
 
-#[cfg(windows)]
 pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
     let mut probe = SteamProbe::default();
-    let roots = search_roots(&root.0);
+    let roots = configured_search_roots(&root.0);
     let missing = TITLES
         .into_iter()
-        .filter(|(game, shortcut, _)| !root.0.join(shortcut).exists() && !has_game(&roots, *game))
+        .map(|(game, shortcut, folder)| {
+            let shortcut = if cfg!(windows) {
+                shortcut
+            } else {
+                game.prefix()
+            };
+            (game, shortcut, folder)
+        })
+        .filter(|(game, shortcut, _)| {
+            root.0.join(shortcut).symlink_metadata().is_err() && !has_game(&roots, *game)
+        })
         .collect::<Vec<_>>();
     if missing.is_empty() {
         return probe;
@@ -100,24 +112,10 @@ pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
 }
 
 #[cfg(not(windows))]
-pub fn link_steam_games(_root: &GamesRoot) -> SteamProbe {
-    SteamProbe::default()
-}
-
-#[cfg(not(windows))]
 pub(crate) fn installed_game_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     let missing = TITLES
         .into_iter()
-        .filter(|(game, _, _)| {
-            !roots.iter().any(|root| {
-                crate::discover::folder_holds_game(root, *game)
-                    || std::fs::read_dir(root).is_ok_and(|entries| {
-                        entries
-                            .flatten()
-                            .any(|entry| crate::discover::folder_holds_game(&entry.path(), *game))
-                    })
-            })
-        })
+        .filter(|(game, _, _)| !has_game(roots, *game))
         .collect::<Vec<_>>();
     steam_libraries()
         .into_iter()
@@ -161,6 +159,34 @@ fn steam_libraries() -> Vec<PathBuf> {
         }
     }
     libraries
+}
+
+#[cfg(not(windows))]
+fn has_game(roots: &[PathBuf], game: ZoneGame) -> bool {
+    roots.iter().any(|root| {
+        crate::discover::folder_holds_game(root, game)
+            || std::fs::read_dir(root).is_ok_and(|entries| {
+                entries
+                    .flatten()
+                    .any(|entry| crate::discover::folder_holds_game(&entry.path(), game))
+            })
+    })
+}
+
+#[cfg(unix)]
+fn create_shortcut(link: &Path, target: &Path) -> Result<(), String> {
+    let target = std::fs::canonicalize(target)
+        .map_err(|error| format!("cannot resolve {}: {error}", target.display()))?;
+    std::os::unix::fs::symlink(&target, link)
+        .map_err(|error| format!("cannot create {}: {error}", link.display()))
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn create_shortcut(link: &Path, _target: &Path) -> Result<(), String> {
+    Err(format!(
+        "game links are unsupported on this platform: {}",
+        link.display()
+    ))
 }
 
 #[cfg(windows)]

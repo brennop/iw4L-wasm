@@ -1,25 +1,6 @@
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum LimitMode {
-    #[default]
-    Unlimited,
-    Oldest,
-    Reject,
-    Priority,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct AliasLimit {
-    pub mode: LimitMode,
-    pub count: u8,
-    pub per_emitter: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ChannelRule {
-    pub id: u32,
-    pub maximum: i32,
-    pub restricted: bool,
-}
+pub(crate) use asset_audio::{
+    ChannelAdmission as ChannelRule, VoiceLimit as AliasLimit, VoiceLimitMode as LimitMode,
+};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AdmissionPolicy {
@@ -69,7 +50,7 @@ pub(crate) fn plan(
                             && occupant
                                 .policy
                                 .channel
-                                .is_some_and(|old| old.id == channel.id)
+                                .is_some_and(|old| old.key == channel.key)
                     })
                     .map(|occupant| occupant.id),
             );
@@ -122,7 +103,7 @@ pub(crate) fn plan(
                     && occupant
                         .policy
                         .channel
-                        .is_some_and(|old| old.id == channel.id)
+                        .is_some_and(|old| old.key == channel.key)
                     && !victims.contains(&occupant.id)
             })
             .count();

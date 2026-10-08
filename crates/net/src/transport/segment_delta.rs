@@ -13,6 +13,19 @@ const PREFIX_MIN_BYTES: usize = 4096;
 #[cfg_attr(not(all(online, not(target_arch = "wasm32"))), allow(dead_code))]
 const OUTER_LEVEL: i32 = 3;
 
+pub const MAX_RECONSTRUCTED_FRAME_BYTES: usize = 256 * 1024;
+pub const MAX_DELTA_INSTRUCTION_BYTES: usize = 256 * 1024;
+#[cfg_attr(not(all(online, not(target_arch = "wasm32"))), allow(dead_code))]
+const MAX_ZSTD_WINDOW_LOG: u32 = 18;
+
+fn reserve_output(out: &mut Vec<u8>, additional: usize) -> Option<()> {
+    let end = out.len().checked_add(additional)?;
+    if end > MAX_RECONSTRUCTED_FRAME_BYTES {
+        return None;
+    }
+    out.try_reserve_exact(additional).ok()
+}
+
 fn segment_slices<'a>(bytes: &'a [u8], lens: &FrameSegments) -> Option<[&'a [u8]; FRAME_SEGMENTS]> {
     let mut out = [&bytes[..0]; FRAME_SEGMENTS];
     let mut at = 0usize;
@@ -88,15 +101,22 @@ fn put_segment(out: &mut Vec<u8>, new: &[u8], old: &[u8]) {
 }
 
 pub fn decode(delta: &[u8], base: &[u8], base_lens: &FrameSegments) -> Option<Vec<u8>> {
+    if delta.len() > MAX_DELTA_INSTRUCTION_BYTES || base.len() > MAX_RECONSTRUCTED_FRAME_BYTES {
+        return None;
+    }
     let old = segment_slices(base, base_lens)?;
     let mut input = delta;
-    let mut out = Vec::with_capacity(base.len());
+    let mut out = Vec::new();
     for old in old {
         let (&tag, rest) = input.split_first()?;
         input = rest;
         match tag {
-            SAME => out.extend_from_slice(old),
+            SAME => {
+                reserve_output(&mut out, old.len())?;
+                out.extend_from_slice(old);
+            }
             PATCH => {
+                reserve_output(&mut out, old.len())?;
                 let start = out.len();
                 out.extend_from_slice(old);
                 let runs = get_varint(&mut input)?;
@@ -112,6 +132,7 @@ pub fn decode(delta: &[u8], base: &[u8], base_lens: &FrameSegments) -> Option<Ve
             }
             RAW => {
                 let len = get_varint(&mut input)?;
+                reserve_output(&mut out, len)?;
                 out.extend_from_slice(take(&mut input, len)?);
             }
             PREFIXED => {
@@ -119,6 +140,7 @@ pub fn decode(delta: &[u8], base: &[u8], base_lens: &FrameSegments) -> Option<Ve
                 let packed_len = get_varint(&mut input)?;
                 let packed = take(&mut input, packed_len)?;
                 let start = out.len();
+                reserve_output(&mut out, len)?;
                 out.resize(start.checked_add(len)?, 0);
                 if prefixed_decompress(old, packed, &mut out[start..])? != len {
                     return None;
@@ -137,6 +159,10 @@ pub fn decode(delta: &[u8], base: &[u8], base_lens: &FrameSegments) -> Option<Ve
 #[cfg(all(online, not(target_arch = "wasm32")))]
 fn prefixed_decompress(old: &[u8], packed: &[u8], out: &mut [u8]) -> Option<usize> {
     let mut dctx = zstd::zstd_safe::DCtx::create();
+    dctx.set_parameter(zstd::zstd_safe::DParameter::WindowLogMax(
+        MAX_ZSTD_WINDOW_LOG,
+    ))
+    .ok()?;
     dctx.ref_prefix(old).ok()?;
     dctx.decompress(out, packed).ok()
 }
@@ -148,6 +174,12 @@ fn prefixed_decompress(_old: &[u8], _packed: &[u8], _out: &mut [u8]) -> Option<u
 
 #[cfg(all(online, not(target_arch = "wasm32")))]
 pub fn compress(delta: &[u8]) -> std::io::Result<Vec<u8>> {
+    if delta.len() > MAX_DELTA_INSTRUCTION_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "snapshot instruction budget exceeded",
+        ));
+    }
     thread_local! {
         static COMPRESSOR: std::cell::RefCell<Option<zstd::bulk::Compressor<'static>>> =
             const { std::cell::RefCell::new(None) };
@@ -170,26 +202,46 @@ pub fn compress(_delta: &[u8]) -> std::io::Result<Vec<u8>> {
 #[cfg(all(online, target_arch = "wasm32"))]
 pub fn decompress(packed: &[u8], len: usize) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
+    if len > MAX_DELTA_INSTRUCTION_BYTES
+        || packed.len() > crate::transport::protocol::MAX_PACKET_BYTES as usize
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "snapshot decode budget exceeded",
+        ));
+    }
     let decoder = ruzstd::decoding::StreamingDecoder::new(packed).map_err(std::io::Error::other)?;
     let mut out = Vec::with_capacity(len);
     decoder.take(len as u64 + 1).read_to_end(&mut out)?;
     Ok(out)
 }
 
-#[cfg(not(any(online, target_arch = "wasm32")))]
+#[cfg(not(online))]
 pub fn decompress(_packed: &[u8], _len: usize) -> std::io::Result<Vec<u8>> {
     Err(std::io::Error::other("compressed snapshot needs the online build"))
 }
 
 #[cfg(all(online, not(target_arch = "wasm32")))]
 pub fn decompress(packed: &[u8], len: usize) -> std::io::Result<Vec<u8>> {
+    if len > MAX_DELTA_INSTRUCTION_BYTES
+        || packed.len() > crate::transport::protocol::MAX_PACKET_BYTES as usize
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "snapshot decode budget exceeded",
+        ));
+    }
     thread_local! {
         static DECOMPRESSOR: std::cell::RefCell<Option<zstd::bulk::Decompressor<'static>>> =
             const { std::cell::RefCell::new(None) };
     }
     DECOMPRESSOR.with_borrow_mut(|slot| {
         if slot.is_none() {
-            *slot = Some(zstd::bulk::Decompressor::new()?);
+            let mut decoder = zstd::bulk::Decompressor::new()?;
+            decoder.set_parameter(zstd::zstd_safe::DParameter::WindowLogMax(
+                MAX_ZSTD_WINDOW_LOG,
+            ))?;
+            *slot = Some(decoder);
         }
         slot.as_mut()
             .expect("decompressor initialised")

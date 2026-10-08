@@ -5,13 +5,12 @@
 
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use super::*;
 
 struct InlineQueue {
-    rx: Arc<Mutex<Receiver<ClipJob>>>,
+    queue: Arc<MediaJobQueue>,
     bank: Arc<SoundCatalog>,
     iwd: Option<Arc<NamespaceSoundIwd>>,
     // Weak: the store owns these, and a dropped store retires its queue.
@@ -26,7 +25,7 @@ thread_local! {
 }
 
 pub(super) fn adopt(
-    rx: &Arc<Mutex<Receiver<ClipJob>>>,
+    queue: &Arc<MediaJobQueue>,
     bank: &Arc<SoundCatalog>,
     iwd: Option<&Arc<NamespaceSoundIwd>>,
     outcomes: &Arc<Mutex<Outcomes>>,
@@ -40,7 +39,7 @@ pub(super) fn adopt(
     );
     QUEUES.with_borrow_mut(|queues| {
         queues.push(InlineQueue {
-            rx: Arc::clone(rx),
+            queue: Arc::clone(queue),
             bank: Arc::clone(bank),
             iwd: iwd.cloned(),
             outcomes: Arc::downgrade(outcomes),
@@ -69,14 +68,8 @@ pub(crate) fn pump(budget: Duration) -> usize {
                 if done > 0 && start.elapsed() >= budget {
                     return;
                 }
-                let job = match queue
-                    .rx
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .try_recv()
-                {
-                    Ok(job) => job,
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                let Some(job) = queue.queue.try_pop() else {
+                    break;
                 };
                 decode(queue, &outcomes, &requests, job);
                 done += 1;
@@ -93,19 +86,17 @@ fn decode(
     job: ClipJob,
 ) {
     QUEUE_WAIT_NS.fetch_add(job.queued_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
-    let jobs = [job];
-    let mut prepared = prepare_jobs(&queue.bank, queue.iwd.as_deref(), &jobs);
-    let [job] = jobs;
-    let Some(mut result) = prepared.pop() else {
-        return;
-    };
+    let prepare_at = Instant::now();
+    let (path, mut result) = prepare_clip_now(&queue.bank, queue.iwd.as_deref(), &job.key);
+    note_prepared(path, prepare_at, result.as_ref());
     if matches!(
         result,
         Err(ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit))
     ) && evict_idle_streamed(requests, outcomes) != 0
     {
+        let retry_at = Instant::now();
         let (path, retry) = prepare_clip_now(&queue.bank, queue.iwd.as_deref(), &job.key);
-        note_outcome(path, retry.as_ref());
+        note_prepared(path, retry_at, retry.as_ref());
         result = retry;
     }
     if let Some(cache) = &queue.clip_cache

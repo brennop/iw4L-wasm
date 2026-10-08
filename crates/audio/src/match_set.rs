@@ -4,6 +4,7 @@ use asset_audio::SoundCatalog;
 use asset_core::AssetNamespace;
 use asset_game::WeaponRegistry;
 use assets::{MapLoadProcess, MatchType10SoundHints, PreparedWeapons};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use frame::{ClientSet, LaunchIdentity, MatchTornDown, ReturnedToMenu};
 
@@ -13,7 +14,7 @@ use crate::clip_store::{ClipKey, ClipStore, clip_keys_for_alias};
 use crate::playback::SoundBank;
 
 #[derive(Resource, Default)]
-pub struct AudioReady(pub bool);
+pub struct AudioReady(pub frame::WorldReadiness);
 
 #[derive(Resource)]
 pub struct AudioSilent;
@@ -45,6 +46,7 @@ struct MatchRequests {
 
 #[derive(Resource, Default)]
 struct MatchClipPrep {
+    generation: frame::WorldGeneration,
     submitted: bool,
     capacity_failure: bool,
     required: HashSet<ClipKey>,
@@ -54,6 +56,25 @@ struct MatchClipPrep {
     /// was queued. The decoders count for the life of the process, so what
     /// this match cost is the distance from here.
     sample_bytes_at_queue: u64,
+}
+
+#[derive(SystemParam)]
+struct AudioLoadScope<'w> {
+    silent: Option<Res<'w, AudioSilent>>,
+    accepted: Option<Res<'w, assets::MatchLoadAccepted>>,
+    incoming: Option<Res<'w, assets::PreparedMatchReady>>,
+    installed: Res<'w, frame::WorldGeneration>,
+}
+
+impl AudioLoadScope<'_> {
+    fn generation(&self) -> frame::WorldGeneration {
+        self.accepted
+            .as_ref()
+            .map(|accepted| accepted.load_key)
+            .or_else(|| self.incoming.as_ref().map(|incoming| incoming.load_key))
+            .map(|key| frame::WorldGeneration::from_install(key.local_load_request_id))
+            .unwrap_or(*self.installed)
+    }
 }
 
 fn prepared_sample_bytes() -> u64 {
@@ -90,10 +111,16 @@ fn reset_match_audio_on_match_end(
     mut prep: ResMut<MatchClipPrep>,
     mut announcer: ResMut<crate::match_voices::AnnouncerRoutes>,
 ) {
-    if torn.read().count() == 0 && returned.read().count() == 0 {
+    let retired = torn.read().fold(false, |retired, event| {
+        retired || event.world_generation == prep.generation
+    });
+    let menu = returned.read().fold(false, |menu, event| {
+        menu || (event.had_world && prep.generation.0.is_none())
+    });
+    if !retired && !menu {
         return;
     }
-    *ready = AudioReady(false);
+    *ready = AudioReady::default();
     if let Some(stage) = prep.stage.take() {
         stage.cancel();
     }
@@ -117,13 +144,27 @@ fn queue_match_clips(
     mut prep: ResMut<MatchClipPrep>,
     mut announcer: ResMut<crate::match_voices::AnnouncerRoutes>,
     mut ready: ResMut<AudioReady>,
-    silent: Option<Res<AudioSilent>>,
+    load_scope: AudioLoadScope,
 ) {
-    if ready.0 || prep.submitted {
+    let scope = load_scope.generation();
+    if scope.0.is_none() {
         return;
     }
-    if silent.is_some() {
-        ready.0 = true;
+    if prep.generation != scope {
+        if let Some(stage) = prep.stage.take() {
+            stage.cancel();
+        }
+        *prep = MatchClipPrep {
+            generation: scope,
+            ..Default::default()
+        };
+        ready.0 = frame::WorldReadiness::new(scope, frame::ReadinessState::Pending);
+    }
+    if ready.0.state != frame::ReadinessState::Pending || prep.submitted {
+        return;
+    }
+    if load_scope.silent.is_some() {
+        ready.0.state = frame::ReadinessState::Silent;
         if let Some(loading) = loading.as_ref() {
             loading
                 .progress
@@ -139,18 +180,22 @@ fn queue_match_clips(
         return;
     }
     let Some(clips) = clips.as_mut() else {
-        ready.0 = true;
+        ready.0.state = frame::ReadinessState::Failed;
         if let Some(loading) = loading.as_ref() {
             loading
                 .progress
-                .record_skipped(asset_transport::StageId::Audio);
+                .begin(asset_transport::StageId::Audio, None)
+                .fail();
         }
-        diag::info!(
+        diag::warn!(
             Audio,
-            "audio: AudioReady skipped — sound bank did not install"
+            "audio: preparation failed — sound bank did not install"
         );
         return;
     };
+    if *load_scope.installed != scope {
+        return;
+    }
     let Some(weapons) = weapons else {
         return;
     };
@@ -166,6 +211,9 @@ fn queue_match_clips(
     let Some(script_sound) = script_sound else {
         return;
     };
+    if namespace.generation != scope {
+        return;
+    }
     let mut set = MatchRequests::default();
     let mut aliases = 0usize;
     for weapon in 1..=weapons.0.len() as u32 {
@@ -235,16 +283,17 @@ fn queue_match_clips(
         aliases += 1;
         request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
     }
-    let mut breath_namespaces = HashSet::new();
+    let mut breath_policies = HashSet::new();
     for weapon in 1..=weapons.0.len() as u32 {
         if weapons
             .0
             .facts_of(weapon)
             .is_some_and(|facts| facts.can_hold_breath)
-            && let Some(ns) = weapons.0.namespace_of(weapon)
-            && breath_namespaces.insert(ns)
+            && let Some(policy) = weapons.0.semantic_policy_of(weapon)
+            && breath_policies.insert((policy.cue_namespace.namespace(), policy.breath_cues))
         {
-            for alias in crate::breath::aliases(ns) {
+            let ns = policy.cue_namespace.namespace();
+            for alias in policy.breath_cues.aliases() {
                 aliases += 1;
                 request_named(clips, &bank.0, ns, alias, &mut set);
             }
@@ -302,8 +351,15 @@ fn poll_match_audio_ready(
     mut clips: Option<ResMut<ClipStore>>,
     mut prep: ResMut<MatchClipPrep>,
     mut ready: ResMut<AudioReady>,
+    load_scope: AudioLoadScope,
 ) {
-    if ready.0 || !prep.submitted || prep.capacity_failure {
+    let scope = load_scope.generation();
+    if prep.generation != scope
+        || ready.0.generation != scope
+        || ready.0.state != frame::ReadinessState::Pending
+        || !prep.submitted
+        || prep.capacity_failure
+    {
         return;
     }
     let Some(clips) = clips.as_mut() else {
@@ -362,7 +418,7 @@ fn fail_capacity(ready: &mut AudioReady, prep: &mut MatchClipPrep, clips: Option
         prep.required.len(),
         prep.total
     );
-    ready.0 = true;
+    ready.0.state = frame::ReadinessState::Failed;
     if let Some(clips) = clips {
         clips.arm_match_live();
     }
@@ -374,8 +430,8 @@ fn mark_ready(ready: &mut AudioReady, prep: &mut MatchClipPrep, clips: Option<&m
         stage.set_bytes(prepared_sample_bytes().saturating_sub(prep.sample_bytes_at_queue));
         stage.done();
     }
-    if !ready.0 {
-        ready.0 = true;
+    if ready.0.generation == prep.generation && ready.0.state == frame::ReadinessState::Pending {
+        ready.0.state = frame::ReadinessState::Ready;
         diag::info!(Audio, "audio: AudioReady ({} clips prepared)", prep.total);
         if let Some(clips) = clips {
             clips.arm_match_live();

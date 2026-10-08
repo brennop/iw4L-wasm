@@ -600,11 +600,20 @@ pub struct SvcFrameWriters<'w> {
     notify: MessageWriter<'w, crate::SvcGameNotify>,
 }
 
+#[derive(Message, Clone, Debug)]
+pub struct FireCommandVerdicts {
+    pub world: frame::WorldGeneration,
+    pub results: Vec<sim::FireCommandResult>,
+}
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ReliableInbound<'w> {
     actions: ResMut<'w, ClientActionInbox>,
     ack: ResMut<'w, ClientReliableAck>,
     events: MessageWriter<'w, ReliableControlEvent>,
+    fire: MessageWriter<'w, FireCommandVerdicts>,
+    generation: Res<'w, frame::WorldGeneration>,
+    fire_verdicts: Res<'w, crate::FireVerdictState>,
     svc: SvcFrameWriters<'w>,
     scores: ResMut<'w, crate::Scoreboard>,
     signon: ResMut<'w, crate::SignonState>,
@@ -649,6 +658,20 @@ impl ReliableInbound<'_> {
                 continue;
             }
             match row {
+                crate::ReliableRow::FireCommands(results) => {
+                    if results.iter().any(|result| result.client != local) {
+                        self.fail("FireResultRecipientMismatch: connection retired");
+                        return;
+                    }
+                    if let Err(reason) = self.fire_verdicts.apply(*self.generation, results) {
+                        self.fail(reason);
+                        return;
+                    }
+                    self.fire.write(FireCommandVerdicts {
+                        world: *self.generation,
+                        results: results.clone(),
+                    });
+                }
                 crate::ReliableRow::Failure(_) => unreachable!("terminal handled before sequence"),
                 crate::ReliableRow::ScriptAudio(cmd) => {
                     self.svc.audio.write(crate::SvcScriptAudio(cmd.clone()));
@@ -693,7 +716,9 @@ impl ReliableInbound<'_> {
                             self.fail("ActionOutcomeUnknown: request expired");
                             return;
                         }
-                        crate::ActionVerdict::Applied | crate::ActionVerdict::Refused => {}
+                        crate::ActionVerdict::Applied
+                        | crate::ActionVerdict::Accepted
+                        | crate::ActionVerdict::Refused => {}
                     }
                     self.actions.retire(local, *request_id);
                 }
@@ -1284,12 +1309,10 @@ pub fn enforce_client_work_limits(
     cls: Res<ClientRealtime>,
     mut signon: ResMut<crate::SignonState>,
     bridge: Option<Res<crate::MasterBridge>>,
-    mut gate: ResMut<AuthorityInputGate>,
     actions: Res<ClientActionInbox>,
     mut stalls: Local<BacklogStalls>,
 ) {
     if signon.phase.is_failed() {
-        gate.local_cmds_enabled = false;
         return;
     }
     let oldest = pending.iter().next().map(|(_, cmd, _)| cmd.server_time);
@@ -1324,7 +1347,6 @@ pub fn enforce_client_work_limits(
         }
         return;
     };
-    gate.local_cmds_enabled = false;
     prediction.0.disarm();
     let match_key = crate::signon::live_match_key(bridge.as_deref());
     if let Some(bridge) = bridge {
@@ -1798,10 +1820,12 @@ pub fn reset_cgame_on_match_torn_down(
     mut presented: ResMut<PresentedSnapshot>,
     mut present_census: ResMut<PresentLocalCensus>,
     mut select: ResMut<WeaponSelect>,
-    (mut entity_events, mut pellet_fx, mut entity_event_cursor): (
+    (mut entity_events, mut pellet_fx, mut entity_event_cursor, mut fire_verdicts, fire_state): (
         ResMut<PendingPresentedEntityEvents>,
         ResMut<PendingPelletFx>,
         ResMut<crate::EntityEventCursor>,
+        ResMut<Messages<FireCommandVerdicts>>,
+        Res<crate::FireVerdictState>,
     ),
     (mut reliable_ack, mut actions, mut events, mut scores): (
         ResMut<ClientReliableAck>,
@@ -1835,6 +1859,8 @@ pub fn reset_cgame_on_match_torn_down(
     *entity_events = PendingPresentedEntityEvents::default();
     pellet_fx.0.clear();
     *entity_event_cursor = crate::EntityEventCursor::default();
+    fire_verdicts.clear();
+    fire_state.clear();
 
     *reliable_ack = ClientReliableAck::default();
     events.clear();
@@ -1875,6 +1901,8 @@ pub fn register_client_runtime(app: &mut App) {
         .init_resource::<ClientReliableAck>()
         .init_resource::<GameplaySendPacer>()
         .add_message::<ReliableControlEvent>()
+        .add_message::<FireCommandVerdicts>()
+        .init_resource::<crate::FireVerdictState>()
         .add_message::<frame::MatchInstalled>()
         .add_message::<frame::MatchTornDown>()
         .init_resource::<RemoteProxyState>()

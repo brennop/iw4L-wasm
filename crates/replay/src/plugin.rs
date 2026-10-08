@@ -172,7 +172,7 @@ fn pump_playback(
     if session.ended {
         return;
     }
-    if hold.is_some_and(|h| h.0) {
+    if hold.is_none_or(|h| h.0) {
         return;
     }
     session.acc_ms += time.delta_secs() * 1000.0;

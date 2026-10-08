@@ -5,7 +5,7 @@ use crate::sound_catalog::{
     CapturedAlias, CapturedSndCurve, CapturedSound, LoadedSoundPcm, MSS_PCM, SoundCatalog,
 };
 use crate::zone::{Iw5ZoneMemory, open_zone_shared};
-use crate::{ZoneGame, ZoneOwner};
+use crate::{AssetNamespace, ZoneGame, ZoneOwner};
 use asset_iw4::snd_alias::{SND_CURVE_KNOT_COUNT, SND_CURVE_KNOT_STRIDE, SND_CURVE_KNOTS};
 use fastfile_iw5::size as sz;
 use fastfile_iw5::{
@@ -354,7 +354,11 @@ impl Iw5SoundCapture {
         let volume_falloff = self
             .curve_by_ptr
             .get(&file_key(curve_field))
-            .and_then(|name| self.catalog.curves.get(name))
+            .and_then(|name| {
+                self.catalog
+                    .curves
+                    .get(&(AssetNamespace::Iw5, name.clone()))
+            })
             .cloned()
             .or_else(|| {
                 match s
@@ -367,7 +371,12 @@ impl Iw5SoundCapture {
                             .get(&file_key(target))
                             .or_else(|| self.curve_by_ptr.get(&file_key(p)))
                             .cloned()
-                            .and_then(|name| self.catalog.curves.get(&name).cloned())
+                            .and_then(|name| {
+                                self.catalog
+                                    .curves
+                                    .get(&(AssetNamespace::Iw5, name))
+                                    .cloned()
+                            })
                     }
                     _ => None,
                 }
@@ -380,6 +389,7 @@ impl Iw5SoundCapture {
             mixer_group: optional_name(s, row, s.layout(sz::SND_ALIAS_MIXER_GROUP_OFF, 32)),
             loaded_name,
             loaded,
+            loaded_binding_origin: crate::LoadedBindingOrigin::Unresolved,
             streamed,
             file_type,
             file_exists,
@@ -445,6 +455,7 @@ impl Iw5SoundCapture {
                 .f32_at(row, s.layout(sz::SND_ALIAS_ENVELOP_PERCENTAGE_OFF, 136))
                 .unwrap_or(0.0),
             speaker_map: speaker_map_name(s, row),
+            stereo_speaker_gains: stereo_speaker_gains(s, row),
             limit_count: None,
             entity_limit_count: None,
         }
@@ -582,6 +593,17 @@ fn speaker_map_name(s: &ZoneStream<'_>, row: Ptr) -> Option<String> {
         ZonePtr::Offset(p) => name_at(s, s.resolve_alias(p), s.layout(4, 8)),
         _ => None,
     }
+}
+
+fn stereo_speaker_gains(s: &ZoneStream<'_>, row: Ptr) -> Option<[[f32; 2]; 2]> {
+    if s.wire_format() != fastfile_iw5::Iw5WireFormat::X86 {
+        return None;
+    }
+    let ZonePtr::Offset(map) = s.ptr_at(row, sz::SND_ALIAS_SPEAKER_MAP_OFF).ok()? else {
+        return None;
+    };
+    let map = s.resolve_alias(map);
+    crate::sound_catalog::capture_stereo_speaker_gains(|offset| s.u32_at(map, offset).ok())
 }
 
 fn file_key(p: Ptr) -> (u8, u32) {

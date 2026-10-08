@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use crate::sound_catalog::{CapturedAlias, CapturedSound, LoadedSoundPcm, MSS_PCM, SoundCatalog};
-use crate::{ZoneGame, ZoneOwner};
-use asset_transport::{SAB_FORMAT_FLAC, SAB_FORMAT_PCMS16, SoundAssetBank, snd_hash_name};
+use crate::sound_catalog::{CapturedAlias, CapturedSound, LoadedSoundPcm, SoundCatalog};
+use crate::{AssetEdge, AssetEdgeReason, ZoneGame, ZoneOwner};
+use asset_transport::{SoundAssetBank, snd_hash_name};
 use fastfile_t6::{AssetType, Ptr, ZoneLoad};
 
 const SND_BANK_ALIAS_COUNT: usize = 4;
@@ -45,7 +45,7 @@ pub fn t6_sound_banks(zone: &Path) -> (Vec<SoundAssetBank>, Vec<String>) {
     }
 }
 
-pub fn capture_t6_sounds<'n>(
+pub fn capture_t6_sounds_for_iw4_compatibility<'n>(
     zone: &Path,
     loads: &[&ZoneLoad],
     banks: &[SoundAssetBank],
@@ -112,13 +112,10 @@ pub fn capture_t6_sounds_in_game<'n>(
                 continue;
             };
             let asset = le32(row, 16);
-            let loaded_name = loaded
+            loaded
                 .entry(asset)
-                .or_insert_with(|| load_asset(&mut catalog, banks, asset, name, game, &mut report))
-                .clone();
-            let Some(loaded_name) = loaded_name else {
-                continue;
-            };
+                .or_insert_with(|| load_asset(&mut catalog, banks, asset, name, game, &mut report));
+            let loaded_name = format!("t6/{asset:08x}");
             let secondary = decode_ptr(le32(row, SND_ALIAS_SECONDARY))
                 .and_then(|p| load.blocks.cstr(p).ok())
                 .and_then(|b| std::str::from_utf8(b).ok())
@@ -133,6 +130,7 @@ pub fn capture_t6_sounds_in_game<'n>(
                 alias_name: name.to_owned(),
                 secondary,
                 loaded_name: Some(loaded_name.clone()),
+                loaded: AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss),
                 file_type: Some(1),
                 file_name: Some(loaded_name),
                 vol_min: f32::from(le16(row, 60)) / 65535.0,
@@ -170,97 +168,26 @@ fn load_asset(
     game: ZoneGame,
     report: &mut Vec<String>,
 ) -> Option<String> {
-    let (entry, bytes) = match banks.iter().find_map(|bank| bank.read(id)) {
-        Some(Ok(read)) => read,
-        Some(Err(error)) => {
-            report.push(format!("t6 sound {alias}: asset {id:08x}: {error}"));
-            return None;
-        }
-        None => {
-            report.push(format!("t6 sound {alias}: asset {id:08x} in no bank"));
-            return None;
-        }
+    let Some((bank, entry)) = banks
+        .iter()
+        .find_map(|bank| bank.entry(id).map(|entry| (bank, entry)))
+    else {
+        report.push(format!("t6 sound {alias}: asset {id:08x} in no bank"));
+        return None;
     };
-    let (pcm, samples) = match entry.format {
-        SAB_FORMAT_PCMS16 => (bytes, entry.frame_count),
-        SAB_FORMAT_FLAC => match decode_flac(bytes, entry.channels) {
-            Ok(decoded) => decoded,
-            Err(error) => {
-                report.push(format!("t6 sound {alias}: asset {id:08x} flac: {error}"));
-                return None;
-            }
-        },
-        format => {
-            report.push(format!(
-                "t6 sound {alias}: asset {id:08x} format {format} is not read"
-            ));
-            return None;
-        }
+    let source = crate::SabMediaSource {
+        bank: bank.path().to_owned(),
+        entry,
     };
-    let rate = entry.frame_rate()?;
-    let name = format!("t6/{id:08x}");
-    catalog.ingest_loaded(LoadedSoundPcm {
-        name: name.clone(),
-        game,
-        format: MSS_PCM,
-        rate,
-        bits: 16,
-        channels: i32::from(entry.channels),
-        samples,
-        pcm: pcm.into(),
-        zone: catalog.capture_zone_for_ingest(),
-        ..Default::default()
-    });
-    Some(name)
-}
-
-fn decode_flac(bytes: Vec<u8>, channels: u8) -> Result<(Vec<u8>, u32), String> {
-    use symphonia::core::audio::SampleBuffer;
-    use symphonia::core::codecs::DecoderOptions;
-    use symphonia::core::errors::Error;
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-
-    let source = MediaSourceStream::new(Box::new(std::io::Cursor::new(bytes)), Default::default());
-    let mut format = symphonia::default::get_probe()
-        .format(
-            Hint::new().with_extension("flac"),
-            source,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|e| e.to_string())?
-        .format;
-    let track = format.default_track().ok_or("no track")?;
-    let track_id = track.id;
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|e| e.to_string())?;
-    let mut pcm = Vec::new();
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(e.to_string()),
-        };
-        if packet.track_id() != track_id {
-            continue;
-        }
-        let decoded = decoder.decode(&packet).map_err(|e| e.to_string())?;
-        if decoded.spec().channels.count() != usize::from(channels) {
-            return Err(format!(
-                "{} channels, bank says {channels}",
-                decoded.spec().channels.count()
-            ));
-        }
-        let mut samples = SampleBuffer::<i16>::new(decoded.capacity() as u64, *decoded.spec());
-        samples.copy_interleaved_ref(decoded);
-        pcm.extend(samples.samples().iter().flat_map(|s| s.to_le_bytes()));
+    if let crate::SabCodec::Unsupported(format) = source.codec() {
+        report.push(format!(
+            "t6 sound {alias}: asset {id:08x} has unsupported SAB codec {format}"
+        ));
     }
-    let frames = pcm.len() / 2 / usize::from(channels.max(1));
-    Ok((pcm, frames as u32))
+    let sound = LoadedSoundPcm::from_sab(source, game, catalog.capture_zone_for_ingest());
+    let name = sound.name.clone();
+    catalog.ingest_loaded(sound);
+    Some(name)
 }
 
 pub fn t6_sound_names(loads: &[&ZoneLoad]) -> Vec<String> {

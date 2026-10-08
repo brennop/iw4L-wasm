@@ -109,6 +109,7 @@ pub struct ClientMatchState {
 
     pub(crate) rechamber_pending: bool,
     pub(crate) rechamber_pending_secondary: bool,
+    pub(crate) pending_brass: [Option<crate::PendingBrass>; 2],
 
     pub(crate) dead_since_tick: Option<u32>,
 
@@ -238,6 +239,7 @@ impl ClientMatchState {
             burst_latch_secondary: self.burst_latch_secondary,
             rechamber_pending: self.rechamber_pending,
             rechamber_pending_secondary: self.rechamber_pending_secondary,
+            pending_brass: self.pending_brass,
             dead_since_tick: self.dead_since_tick,
             look_at_killer_yaw: self.look_at_killer_yaw,
             name: self.name,
@@ -295,6 +297,7 @@ impl ClientMatchState {
         self.burst_latch_secondary = meta.burst_latch_secondary;
         self.rechamber_pending = meta.rechamber_pending;
         self.rechamber_pending_secondary = meta.rechamber_pending_secondary;
+        self.pending_brass = meta.pending_brass;
         self.dead_since_tick = meta.dead_since_tick;
         self.look_at_killer_yaw = meta.look_at_killer_yaw;
         self.name = meta.name;

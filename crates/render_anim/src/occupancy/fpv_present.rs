@@ -106,9 +106,6 @@ fn same_material_catalog(
     current.is_some_and(|current| Arc::ptr_eq(owned, &current.catalog))
 }
 
-#[derive(Resource, Default)]
-pub struct LocalSpawnArmed(pub bool);
-
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
 pub struct FpvStatusGap(pub Option<FpvState>);
 
@@ -1180,7 +1177,6 @@ pub fn register_fpv_present_systems(app: &mut App) {
                 .in_set(LifeFrontPublished)
                 .after(reset_view_kick_on_life_started),
         )
-        .init_resource::<LocalSpawnArmed>()
         .init_resource::<SessionViewmodel>()
         .init_resource::<PreparedFpv>()
         .init_resource::<crate::anim::model_materials::PreparedModelMaterials>()

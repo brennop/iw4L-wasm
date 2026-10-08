@@ -60,8 +60,14 @@ pub enum StartFailure {
     NoPcm,
     NoListener,
     NoFalloffCurve,
+    UnsupportedSpatialPolicy(asset_core::AssetNamespace),
+    MissingChannelPolicy(asset_core::AssetNamespace),
     FalloffEval,
     DecodeFailed,
+    UnsupportedCodec(asset_audio::SabCodec),
+    UnsupportedCueFeatures(std::sync::Arc<[asset_audio::UnsupportedCueFeature]>),
+    MediaMetadataMismatch,
+    MediaReadFailed,
     MediaRequestLimit,
     InvalidPcm(crate::media::PcmError),
     Expired,
@@ -73,6 +79,9 @@ impl From<crate::clip_store::ClipError> for StartFailure {
         match error {
             crate::clip_store::ClipError::InvalidPcm(reason) => Self::InvalidPcm(reason),
             crate::clip_store::ClipError::RequestLimit => Self::MediaRequestLimit,
+            crate::clip_store::ClipError::UnsupportedCodec(codec) => Self::UnsupportedCodec(codec),
+            crate::clip_store::ClipError::MetadataMismatch => Self::MediaMetadataMismatch,
+            crate::clip_store::ClipError::Read => Self::MediaReadFailed,
             _ => Self::DecodeFailed,
         }
     }
@@ -112,9 +121,25 @@ impl fmt::Display for StartOutcome {
             Self::Failed(StartFailure::NoPcm) => f.write_str("FailedNoPcm"),
             Self::Failed(StartFailure::NoListener) => f.write_str("FailedNoListener"),
             Self::Failed(StartFailure::NoFalloffCurve) => f.write_str("FailedNoFalloffCurve"),
+            Self::Failed(StartFailure::UnsupportedSpatialPolicy(namespace)) => {
+                write!(f, "UnsupportedSpatialPolicy{namespace:?}")
+            }
+            Self::Failed(StartFailure::MissingChannelPolicy(namespace)) => {
+                write!(f, "MissingChannelPolicy{namespace:?}")
+            }
             Self::Failed(StartFailure::FalloffEval) => f.write_str("FailedFalloffEval"),
             Self::Failed(StartFailure::MediaRequestLimit) => f.write_str("FailedMediaRequestLimit"),
             Self::Failed(StartFailure::DecodeFailed) => f.write_str("FailedDecode"),
+            Self::Failed(StartFailure::UnsupportedCodec(codec)) => {
+                write!(f, "UnsupportedCodec{codec:?}")
+            }
+            Self::Failed(StartFailure::UnsupportedCueFeatures(features)) => {
+                write!(f, "UnsupportedCueFeatures{features:?}")
+            }
+            Self::Failed(StartFailure::MediaReadFailed) => f.write_str("FailedMediaRead"),
+            Self::Failed(StartFailure::MediaMetadataMismatch) => {
+                f.write_str("FailedMediaMetadataMismatch")
+            }
             Self::Failed(StartFailure::InvalidPcm(reason)) => write!(f, "FailedPcm{reason:?}"),
             Self::Failed(StartFailure::Expired) => f.write_str("ExpiredStartDeadline"),
             Self::Failed(StartFailure::OutputUnavailable) => f.write_str("OutputUnavailable"),
@@ -128,6 +153,7 @@ pub struct StartDecision {
     pub namespace: AssetNamespace,
     pub alias: String,
     pub variant: Option<usize>,
+    pub loaded_binding_origin: Option<asset_audio::LoadedBindingOrigin>,
     pub outcome: StartOutcome,
     pub secondary: Option<(String, StartOutcome)>,
 
@@ -148,6 +174,9 @@ impl StartDecision {
         );
         if let Some(event) = self.event {
             line.push_str(&format!(" event={:?}", event.id));
+        }
+        if let Some(origin) = self.loaded_binding_origin {
+            line.push_str(&format!(" loaded_binding={origin:?}"));
         }
         if let Some((sec, outcome)) = &self.secondary {
             line.push_str(&format!(" secondary=`{sec}` result={outcome}"));

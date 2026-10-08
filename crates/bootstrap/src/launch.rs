@@ -220,21 +220,27 @@ fn mw2_not_found(
     steam: &asset_transport::SteamProbe,
 ) -> String {
     use asset_transport::SteamCandidate;
-    let mut text = "MW2 Multiplayer was not found.\n\n\
+    let instructions = if cfg!(windows) {
+        "MW2 Multiplayer was not found.\n\n\
         Put a shortcut to the game folder next to iw4l.exe:\n\
         1. In Steam, right-click Call of Duty: Modern Warfare 2 > Manage > Browse local \
         files and copy the folder path from the address bar.\n\
         2. In the folder with iw4l.exe, right-click > New > Shortcut, paste the path and \
         name the shortcut Modern Warfare 2.\n\
         3. Launch iw4l.exe again.\n\nSearched:\n"
-        .to_owned();
+    } else {
+        "MW2 Multiplayer was not found.\n\nCreate an iw4 symlink to the game's installation directory in the configured games root, then launch again.\n\nSearched:\n"
+    };
+    let mut text = instructions.to_owned();
     for folder in asset_transport::search_roots(&games.0) {
         text.push_str(&format!("  {}\n", folder.display()));
     }
-    if !cfg!(windows) {
-        return text;
-    }
-    if games.0.join(asset_transport::MW2_SHORTCUT).exists() {
+    if games
+        .0
+        .join(asset_transport::MW2_SHORTCUT)
+        .symlink_metadata()
+        .is_ok()
+    {
         text.push_str(&format!(
             "{} already exists, so Steam was not searched.\n",
             asset_transport::MW2_SHORTCUT

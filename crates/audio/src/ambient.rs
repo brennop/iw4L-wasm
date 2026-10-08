@@ -75,6 +75,7 @@ struct ResidentComposed {
 
 #[derive(Resource)]
 pub(crate) struct SoundBankNamespace {
+    pub(crate) generation: frame::WorldGeneration,
     pub(crate) zone: String,
     pub(crate) namespace: AssetNamespace,
 }
@@ -353,6 +354,9 @@ pub(crate) fn install_sound_bank(
                 compose.started.elapsed().as_secs_f32() * 1000.0
             );
             commands.insert_resource(SoundBankNamespace {
+                generation: frame::WorldGeneration::from_install(
+                    compose.load_key.local_load_request_id,
+                ),
                 zone: compose.zone.clone(),
                 namespace,
             });
@@ -377,6 +381,7 @@ pub(crate) fn boot_map_ambient_once(
     namespace: Option<Res<SoundBankNamespace>>,
     epoch: Res<MatchEpoch>,
     ready: Res<crate::AudioReady>,
+    generation: Res<frame::WorldGeneration>,
     runtime: Res<crate::AudioRuntime>,
     mut sources: ResMut<MapSources>,
     mut commands: Commands,
@@ -388,7 +393,7 @@ pub(crate) fn boot_map_ambient_once(
     if loading.is_some_and(|screen| !screen.is_complete()) {
         return;
     }
-    if !ready.0 {
+    if !ready.0.ready_for(*generation) {
         return;
     }
     let Some(bank) = bank else {

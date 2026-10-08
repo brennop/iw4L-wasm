@@ -3,8 +3,11 @@ mod fourier;
 
 use std::fmt;
 
-const FRAME: usize = 2048;
+const FRAME: usize = crate::T5WmaProfile::FRAME_SAMPLES;
 const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
+// Two channels of ready/overlap/envelope/spectrum data plus block and FFT work
+// fit below this bound. Shared immutable transform/entropy tables are separate.
+const FRAME_WORKSPACE_BYTES: usize = 512 * 1024;
 
 type Result<T> = std::result::Result<T, DecodeError>;
 
@@ -145,7 +148,7 @@ struct Synthesis {
     rate: u32,
     channels: usize,
     envelopes: Vec<Envelope>,
-    samples: Vec<Vec<f32>>,
+    ready: Vec<Vec<f32>>,
     overlap: Vec<Vec<f32>>,
     frames: usize,
     sizes: [usize; 3],
@@ -156,9 +159,6 @@ impl Synthesis {
     fn frame(&mut self, input: &mut Cursor<'_>) -> Result<()> {
         if (self.frames + 3) * FRAME * self.channels > MAX_PCM_SAMPLES {
             return Err(DecodeError::new("PCM limit exceeded"));
-        }
-        for channel in &mut self.samples {
-            channel.resize((self.frames + 2) * FRAME, 0.0);
         }
         let mut offset = 0;
         while offset < FRAME {
@@ -267,8 +267,7 @@ impl Synthesis {
             offset += size;
         }
         for channel in 0..self.channels {
-            self.samples[channel][self.frames * FRAME..(self.frames + 1) * FRAME]
-                .copy_from_slice(&self.overlap[channel][..FRAME]);
+            self.ready[channel][..].copy_from_slice(&self.overlap[channel][..FRAME]);
             self.overlap[channel].copy_within(FRAME..2 * FRAME, 0);
         }
         self.frames += 1;
@@ -283,38 +282,74 @@ impl Synthesis {
         Ok(FRAME >> index)
     }
 
-    fn pcm(mut self) -> Result<Vec<u8>> {
-        let end = (self.frames + 1) * FRAME;
-        if end <= 2 * FRAME {
-            return Err(DecodeError::new("empty PCM"));
-        }
-        for channel in 0..self.channels {
-            self.samples[channel][self.frames * FRAME..(self.frames + 1) * FRAME]
-                .copy_from_slice(&self.overlap[channel][..FRAME]);
-        }
-        let mut output = Vec::with_capacity((end - 2 * FRAME) * self.channels * 2);
-        for sample in 2 * FRAME..end {
-            for channel in &self.samples {
-                let value = channel[sample] * 32768.0;
+    fn emit(
+        &self,
+        channels: &[Vec<f32>],
+        sink: &mut impl crate::XwmaPcmSink,
+    ) -> std::result::Result<(), crate::XwmaDecodeError> {
+        let mut output = [0i16; 2 * FRAME];
+        for sample in 0..FRAME {
+            for (channel, samples) in channels.iter().enumerate() {
+                let value = samples[sample] * 32768.0;
                 if !value.is_finite() {
-                    return Err(DecodeError::new("non-finite PCM"));
+                    return Err(crate::XwmaDecodeError::Decode("non-finite PCM".into()));
                 }
-                let value = value.round_ties_even().clamp(-32768.0, 32767.0) as i16;
-                output.extend_from_slice(&value.to_le_bytes());
+                output[sample * self.channels + channel] =
+                    value.round_ties_even().clamp(-32768.0, 32767.0) as i16;
             }
         }
-        Ok(output)
+        sink.extend(&output[..FRAME * self.channels])
+    }
+
+    fn emit_frame(
+        &self,
+        sink: &mut impl crate::XwmaPcmSink,
+    ) -> std::result::Result<(), crate::XwmaDecodeError> {
+        if self.frames > crate::T5WmaProfile::PRIMING_FRAMES {
+            self.emit(&self.ready, sink)?;
+        }
+        Ok(())
+    }
+
+    fn finish(
+        &self,
+        sink: &mut impl crate::XwmaPcmSink,
+    ) -> std::result::Result<(), crate::XwmaDecodeError> {
+        if self.frames < crate::T5WmaProfile::PRIMING_FRAMES {
+            return Err(crate::XwmaDecodeError::EmptyPcm);
+        }
+        self.emit(&self.overlap, sink)
     }
 }
 
-pub(crate) fn decode(data: &[u8], seek: &[u32], channels: u32, rate: u32) -> Result<Vec<u8>> {
-    if !matches!((channels, rate), (1, 44100) | (2, 48000)) {
-        return Err(DecodeError::new("unsupported T5 WMA2 profile"));
-    }
+pub(crate) fn decode(
+    data: &[u8],
+    seek: &[u32],
+    channels: u32,
+    rate: u32,
+    sink: &mut impl crate::XwmaPcmSink,
+) -> std::result::Result<(), crate::XwmaDecodeError> {
+    let profile = crate::T5WmaProfile::from_geometry(channels, rate)
+        .ok_or_else(|| DecodeError::new("unsupported T5 WMA2 profile"))?;
     if seek.is_empty() {
-        return Err(DecodeError::new("empty packets"));
+        return Err(DecodeError::new("empty packets").into());
     }
-    let alignment = if channels == 1 { 2230 } else { 4096 };
+    let alignment = profile.packet_bytes();
+    let packet_bytes = seek
+        .len()
+        .checked_mul(alignment)
+        .filter(|&bytes| bytes <= data.len())
+        .ok_or_else(|| DecodeError::new("truncated packets"))?;
+    let workspace = packet_bytes
+        .checked_add(
+            seek.len()
+                .checked_mul(std::mem::size_of::<Packet>())
+                .ok_or(crate::XwmaDecodeError::MemoryLimit)?,
+        )
+        .and_then(|bytes| bytes.checked_add(FRAME_WORKSPACE_BYTES))
+        .ok_or(crate::XwmaDecodeError::MemoryLimit)?;
+    // The guard covers packet repacking/table storage and bounded frame/FFT scratch.
+    let _workspace = sink.reserve_workspace(workspace)?;
     let (bytes, packets, length) = packet_stream(data, seek.len(), alignment)?;
     let mut input = Cursor {
         data: &bytes,
@@ -325,7 +360,7 @@ pub(crate) fn decode(data: &[u8], seek: &[u32], channels: u32, rate: u32) -> Res
         rate,
         channels: channels as usize,
         envelopes: (0..channels).map(|_| Envelope::default()).collect(),
-        samples: vec![Vec::new(); channels as usize],
+        ready: vec![vec![0.0; FRAME]; channels as usize],
         overlap: vec![vec![0.0; 2 * FRAME]; channels as usize],
         frames: 0,
         sizes: [FRAME; 3],
@@ -346,6 +381,7 @@ pub(crate) fn decode(data: &[u8], seek: &[u32], channels: u32, rate: u32) -> Res
             state
                 .frame(&mut input)
                 .map_err(|error| DecodeError(format!("packet {index} carried frame: {error}")))?;
+            state.emit_frame(sink)?;
         }
         input.position = boundary;
         input.limit = packet.end;
@@ -354,8 +390,9 @@ pub(crate) fn decode(data: &[u8], seek: &[u32], channels: u32, rate: u32) -> Res
             state
                 .frame(&mut input)
                 .map_err(|error| DecodeError(format!("packet {index} frame {frame}: {error}")))?;
+            state.emit_frame(sink)?;
         }
         pending = (input.position < packet.end).then_some(input.position);
     }
-    state.pcm()
+    state.finish(sink)
 }

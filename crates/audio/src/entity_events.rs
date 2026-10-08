@@ -73,50 +73,25 @@ fn selected_alias<'a>(
             WeaponSoundSlot::MeleeSwipePlayer,
         ),
         EntityEventKind::MELEE_HIT => {
-            return melee_impact_alias(weapons, bank, weapon, knife, WeaponSoundSlot::MeleeHit);
+            return weapons.melee_impact_sound_key(
+                weapon,
+                knife,
+                asset_game::MeleeImpact::Hit,
+                bank,
+            );
         }
         EntityEventKind::MELEE_MISS => {
-            return melee_impact_alias(weapons, bank, weapon, knife, WeaponSoundSlot::MeleeMiss);
+            return weapons.melee_impact_sound_key(
+                weapon,
+                knife,
+                asset_game::MeleeImpact::Miss,
+                bank,
+            );
         }
         _ => return None,
     };
 
     weapons.weapon_sound_key(weapon, if player_view { player } else { world }, bank)
-}
-
-fn melee_impact_alias<'a>(
-    weapons: &asset_game::WeaponRegistry,
-    bank: &'a asset_audio::SoundCatalog,
-    weapon: u32,
-    knife: bool,
-    slot: WeaponSoundSlot,
-) -> Option<(asset_core::AssetNamespace, &'a str)> {
-    let ns = weapons.namespace_of(weapon).unwrap_or_default();
-    let t5 = ns == asset_core::AssetNamespace::T5;
-    let hit = slot == WeaponSoundSlot::MeleeHit;
-    let generic = |knife: bool| {
-        let name = match (knife, hit) {
-            (true, true) => "melee_knife_hit_body",
-            (true, false) => "melee_knife_hit_other",
-            (false, true) => "melee_hit",
-            (false, false) => "melee_hit_other",
-        };
-        let name = if t5 {
-            format!("wpn_{name}")
-        } else {
-            name.to_owned()
-        };
-        let order = bank.index_in(ns, &name)?;
-        Some((bank.namespace_of_alias(order), bank.name_at(order)?))
-    };
-    let own = || weapons.weapon_sound_key(weapon, slot, bank);
-    let knife_alias = || knife.then(|| generic(true)).flatten();
-    if t5 {
-        own().or_else(knife_alias)
-    } else {
-        knife_alias().or_else(own)
-    }
-    .or_else(|| generic(false))
 }
 
 fn entity_event_sound(

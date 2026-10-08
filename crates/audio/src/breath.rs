@@ -6,24 +6,11 @@ use playerstate_iw4::{BREATH_HOLD_TIME_MS, weap_flags};
 use crate::sources::{DesiredSource, SourceCueRequest, SourceKey};
 use crate::{AliasCommand, PlayAlias};
 
-pub(crate) const IW_ALIASES: [&str; 4] = [
-    "weap_sniper_breathin",
-    "weap_sniper_breathout",
-    "weap_sniper_breathgasp",
-    "weap_sniper_heartbeat",
-];
-pub(crate) const T5_ALIASES: [&str; 4] = [
-    "wpn_sniper_breathin",
-    "wpn_sniper_breathout",
-    "wpn_sniper_breathgasp",
-    "wpn_sniper_heartbeat",
-];
-
 #[derive(Default)]
 pub(crate) struct BreathAudio {
     active: bool,
     holding: bool,
-    namespace: AssetNamespace,
+    selection: Option<(AssetNamespace, asset_game::BreathCuePolicy)>,
     heartbeat_at: i32,
 }
 
@@ -66,7 +53,7 @@ pub(crate) fn update(
         if state.active {
             stop_aliases(
                 &mut play,
-                state.namespace,
+                state.selection,
                 sources.context.map(|(_, client, _)| client),
             );
         }
@@ -87,7 +74,7 @@ pub(crate) fn update(
         || ps.is_none()
     {
         if state.active {
-            stop_aliases(&mut play, state.namespace, client.map(|client| client.0));
+            stop_aliases(&mut play, state.selection, client.map(|client| client.0));
         }
         sources.source = None;
         sources.context = None;
@@ -95,40 +82,46 @@ pub(crate) fn update(
         return;
     }
     let holding = ps.is_some_and(|p| p.weap_flags & weap_flags::HOLD_BREATH != 0);
-    let ns = ps
-        .and_then(|ps| {
-            weapons
-                .as_ref()?
-                .0
-                .namespace_of(playerstate_iw4::get_viewmodel_weapon_index(ps))
-        })
-        .unwrap_or(AssetNamespace::Iw4);
-    let aliases = aliases(ns);
-    if state.active && ns != state.namespace {
-        stop_aliases(&mut play, state.namespace, client.map(|client| client.0));
+    let selection = ps.and_then(|ps| {
+        let policy = weapons
+            .as_ref()?
+            .0
+            .semantic_policy_of(playerstate_iw4::get_viewmodel_weapon_index(ps))?;
+        Some((policy.cue_namespace.namespace(), policy.breath_cues))
+    });
+    let Some((ns, cues)) = selection else {
+        if state.active {
+            stop_aliases(&mut play, state.selection, client.map(|client| client.0));
+        }
+        sources.source = None;
+        *state = BreathAudio::default();
+        return;
+    };
+    let changed = state.selection != selection;
+    if state.active && changed {
+        stop_aliases(&mut play, state.selection, client.map(|client| client.0));
         sources.source = None;
     }
-    if state.holding && !holding && ns == state.namespace {
+    if state.holding && !holding && !changed {
         sources.source = None;
-        let previous = self::aliases(state.namespace);
-        for alias in [previous[0], previous[3]] {
+        for alias in [cues.inhale, cues.heartbeat] {
             play.write(AliasCommand::Stop {
-                namespace: state.namespace,
+                namespace: ns,
                 alias: alias.to_owned(),
                 snd_ent: Some(crate::SND_ENT_LOCAL),
             });
         }
         if let Some(ps) = ps {
             let alias = if ps.hold_breath_timer > BREATH_HOLD_TIME_MS {
-                aliases[2]
+                cues.gasp
             } else {
-                aliases[1]
+                cues.exhale
             };
             play.write(AliasCommand::Play(sound(ns, alias)));
         }
     }
-    if holding && (!state.holding || ns != state.namespace) {
-        play.write(AliasCommand::Play(sound(ns, aliases[0])));
+    if holding && (!state.holding || changed) {
+        play.write(AliasCommand::Play(sound(ns, cues.inhale)));
         state.heartbeat_at = ps.map_or(0, |p| p.command_time).saturating_add(1000);
     }
     if holding
@@ -136,21 +129,23 @@ pub(crate) fn update(
         && sources.source.is_none()
         && ps.command_time >= state.heartbeat_at
     {
-        let looping = bank
-            .as_ref()
-            .and_then(|bank| bank.0.sound_in(ns, aliases[3]))
-            .is_some_and(|sound| {
-                sound
-                    .aliases
-                    .iter()
-                    .any(|alias| alias.decoded_flags().is_some_and(|flags| flags.looping()))
-            });
+        let looping = bank.as_ref().is_some_and(|bank| {
+            bank.0.index_in(ns, cues.heartbeat).is_some_and(|index| {
+                bank.0.sound_at(index).is_some_and(|sound| {
+                    (0..sound.aliases.len()).any(|variant| {
+                        bank.0
+                            .playback_policy(index, variant)
+                            .is_some_and(|policy| policy.authored_looping == Some(true))
+                    })
+                })
+            })
+        });
         if looping {
             if let Some(bank) = bank.as_ref()
                 && let Some(cue) = runtime.source_cue(SourceCueRequest {
                     bank: bank.0.clone(),
                     namespace: ns,
-                    alias: aliases[3].into(),
+                    alias: cues.heartbeat.into(),
                     emitter: client.map(|client| client.0),
                     scope: crate::backend::AudioScope::Match,
                     epoch: epoch.0,
@@ -178,34 +173,29 @@ pub(crate) fn update(
                 });
             }
         } else {
-            play.write(AliasCommand::Play(sound(ns, aliases[3])));
+            play.write(AliasCommand::Play(sound(ns, cues.heartbeat)));
             state.heartbeat_at = ps.command_time.saturating_add(1000);
         }
     }
     state.active = true;
     state.holding = holding;
-    state.namespace = ns;
+    state.selection = selection;
 }
 
 fn stop_aliases(
     play: &mut MessageWriter<AliasCommand>,
-    namespace: AssetNamespace,
+    selection: Option<(AssetNamespace, asset_game::BreathCuePolicy)>,
     client: Option<u32>,
 ) {
-    for alias in aliases(namespace) {
+    let Some((namespace, cues)) = selection else {
+        return;
+    };
+    for alias in cues.aliases() {
         play.write(AliasCommand::Stop {
             namespace,
             alias: alias.to_owned(),
             snd_ent: client,
         });
-    }
-}
-
-pub(crate) fn aliases(namespace: AssetNamespace) -> [&'static str; 4] {
-    if namespace == AssetNamespace::T5 {
-        T5_ALIASES
-    } else {
-        IW_ALIASES
     }
 }
 

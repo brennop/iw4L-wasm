@@ -330,6 +330,17 @@ impl FpvMeshBuild {
         self.insert_in(AssetNamespace::Iw5, skel, Some(materials));
     }
 
+    pub fn capture_shared(
+        &mut self,
+        ns: Option<AssetNamespace>,
+        skel: &std::sync::Arc<FpvSkel>,
+        materials: &MaterialCatalog,
+    ) {
+        if model_kind(&skel.name) == Some(ModelKind::Fpv) {
+            self.insert_in(ns.unwrap_or(self.capture_ns), skel.clone(), Some(materials));
+        }
+    }
+
     pub fn insert_captured(&mut self, skel: FpvSkel, materials: Option<&MaterialCatalog>) {
         self.insert_in(self.capture_ns, skel, materials);
     }

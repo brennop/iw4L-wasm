@@ -16,6 +16,7 @@ pub(crate) struct ScriptAmbientPlayback {
 pub(crate) fn update_script_ambient(
     epoch: Res<crate::backend::MatchEpoch>,
     ready: Res<crate::AudioReady>,
+    generation: Res<frame::WorldGeneration>,
     loading: Option<Res<assets::LoadingScreen>>,
     presented: Option<Res<net::PresentedSnapshot>>,
     clock: Option<Res<net::FrameClock>>,
@@ -33,7 +34,7 @@ pub(crate) fn update_script_ambient(
         playback.voices.clear();
     }
     playback.voices.retain(CueHandle::active);
-    if !ready.0 || loading.is_some_and(|screen| !screen.is_complete()) {
+    if !ready.0.ready_for(*generation) || loading.is_some_and(|screen| !screen.is_complete()) {
         return;
     }
     let Some(presented) = presented else { return };

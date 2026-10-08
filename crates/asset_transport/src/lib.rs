@@ -9,7 +9,10 @@ pub mod sab;
 pub mod steam;
 pub mod zone;
 
-pub use artifact_cache::{CacheFlight, cache_flight, cache_get, cache_put, fnv1a64, fnv1a64_more};
+pub use artifact_cache::{
+    CacheFlight, cache_flight, cache_get, cache_open, cache_put, cache_put_with, fnv1a64,
+    fnv1a64_more,
+};
 pub use asset_core::ZoneGame;
 pub use discover::{
     GamesRoot, MapPack, ZoneFile, ensure_artifacts_dir, find_common_mp_for_envelope,

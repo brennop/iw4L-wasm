@@ -914,7 +914,7 @@ impl SimState {
         self.pending_prints.push(print);
     }
 
-    pub fn take_pending_prints(&mut self) -> Vec<PendingPrint> {
+    pub(crate) fn take_pending_prints(&mut self) -> Vec<PendingPrint> {
         core::mem::take(&mut self.pending_prints)
     }
 
@@ -926,11 +926,11 @@ impl SimState {
         self.pending_script_audio.push(command);
     }
 
-    pub fn take_pending_script_audio(&mut self) -> Vec<crate::ScriptAudioCommand> {
+    pub(crate) fn take_pending_script_audio(&mut self) -> Vec<crate::ScriptAudioCommand> {
         core::mem::take(&mut self.pending_script_audio)
     }
 
-    pub fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
+    pub(crate) fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
         core::mem::take(&mut self.pending_local_sounds)
     }
 
@@ -979,11 +979,11 @@ impl SimState {
         });
     }
 
-    pub fn take_pending_player_cards(&mut self) -> Vec<PendingPlayerCardEvent> {
+    pub(crate) fn take_pending_player_cards(&mut self) -> Vec<PendingPlayerCardEvent> {
         core::mem::take(&mut self.pending_player_cards)
     }
 
-    pub fn take_pending_final_kill(&mut self) -> Option<(ClientId, ClientId)> {
+    pub(crate) fn take_pending_final_kill(&mut self) -> Option<(ClientId, ClientId)> {
         self.pending_final_kill.take()
     }
 
@@ -2026,7 +2026,7 @@ impl SimState {
         }
     }
 
-    pub fn set_lagcomp_commands(
+    pub(crate) fn set_lagcomp_commands(
         &mut self,
         rows: impl IntoIterator<Item = ((ClientId, i32), crate::ShotSampleProvenance)>,
     ) {

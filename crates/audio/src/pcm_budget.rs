@@ -40,6 +40,16 @@ impl PcmReservation {
 }
 
 impl PcmReservation {
+    pub fn shrink_to(&mut self, bytes: usize) -> Result<(), crate::media::PcmError> {
+        let released = self
+            .0
+            .checked_sub(bytes)
+            .ok_or(crate::media::PcmError::MemoryLimit)?;
+        self.0 = bytes;
+        LIVE.fetch_sub(released, Ordering::AcqRel);
+        Ok(())
+    }
+
     pub fn absorb(&mut self, other: Self) {
         self.0 += other.0;
         std::mem::forget(other);

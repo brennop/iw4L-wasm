@@ -26,9 +26,10 @@ pub use script_notify::{ExitLevelCalled, register_script_notify};
 pub use session::{
     AdmissionKey, AppScreen, BotNavigationReady, CacWeaponOffer, ClassSelectHandoff, HasWorld,
     Headless, HostClassLoadouts, HostClassSlot, HudInputView, LaunchIdentity, LaunchReport,
-    LifeEndCause, LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, MapLoadApproved,
-    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, ReturnedToMenu, RuntimeRole,
-    TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration, WorldProducts,
+    LifeEndCause, LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, LocalSpawnArmed,
+    MapLoadApproved, MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, ReadinessState,
+    ReturnedToMenu, RuntimeRole, TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration,
+    WorldProducts, WorldReadiness,
 };
 pub use settings::{DisplayResolution, GameSettings, OtherGame};
 pub use ui::{

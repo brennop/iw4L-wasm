@@ -125,7 +125,7 @@ impl SimWorld {
         input: &TickInput,
         msec: i32,
         reason: StepReason,
-    ) -> Result<Snapshot, crate::script::Fault> {
+    ) -> Result<crate::TickResult, crate::script::Fault> {
         crate::step::run_schedule(&mut self.ecs, &mut self.schedule, tick, input, msec, reason)
     }
 
@@ -201,10 +201,6 @@ impl SimWorld {
         }
         runtime.fault_reported = runtime.fault.is_some();
         runtime.fault.clone()
-    }
-
-    pub fn take_script_exit_level(&mut self) -> bool {
-        std::mem::take(&mut self.ecs.resource_mut::<crate::script::Runtime>().exit_level)
     }
 
     pub fn spawn_script_mover(
@@ -284,13 +280,6 @@ impl SimWorld {
 
     pub fn player_count(&self) -> usize {
         crate::frame::player_row_count(&self.ecs)
-    }
-
-    pub fn take_script_kicks(&mut self) -> Vec<(ClientId, String)> {
-        std::mem::take(&mut self.ecs.resource_mut::<crate::script::Runtime>().kicks)
-            .into_iter()
-            .map(|(client, reason)| (ClientId(client), reason))
-            .collect()
     }
 
     pub fn retire_client(&mut self, id: ClientId) {
@@ -423,7 +412,7 @@ pub fn step(
     input: &TickInput,
     msec: i32,
     reason: StepReason,
-) -> Snapshot {
+) -> crate::TickResult {
     try_step(world, tick, input, msec, reason)
         .unwrap_or_else(|fault| panic!("GSC execution failed: {fault}"))
 }
@@ -434,6 +423,6 @@ pub fn try_step(
     input: &TickInput,
     msec: i32,
     reason: StepReason,
-) -> Result<Snapshot, crate::script::Fault> {
+) -> Result<crate::TickResult, crate::script::Fault> {
     world.run(tick, input, msec, reason)
 }

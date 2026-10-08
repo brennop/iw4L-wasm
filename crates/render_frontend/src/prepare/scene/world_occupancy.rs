@@ -185,7 +185,9 @@ pub fn place(
             Some(asset_world::MapXModelSceneAsset::Iw4(_))
             | Some(asset_world::MapXModelSceneAsset::Iw5(_))
             | Some(asset_world::MapXModelSceneAsset::T5(_)) => script_ready += 1,
-            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => script_unavailable += 1,
+            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
+                script_unavailable += 1
+            }
         }
 
         if !instance.metadata.gameobject.is_empty() {
@@ -221,7 +223,9 @@ pub fn place(
             Some(asset_world::MapXModelSceneAsset::Iw4(_))
             | Some(asset_world::MapXModelSceneAsset::Iw5(_))
             | Some(asset_world::MapXModelSceneAsset::T5(_)) => dyn_ready += 1,
-            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => dyn_unavailable += 1,
+            Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
+                dyn_unavailable += 1
+            }
         }
         let transform = instance.transform;
         commands.spawn((

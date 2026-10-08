@@ -14,8 +14,13 @@ impl MatchEpoch {
 }
 
 pub(crate) fn register(app: &mut App) {
+    app.init_resource::<net::FireVerdictState>();
+    let verdicts = app.world().resource::<net::FireVerdictState>().clone();
+    app.init_resource::<AudioRuntime>();
+    app.world()
+        .resource::<AudioRuntime>()
+        .set_fire_verdicts(verdicts);
     app.init_resource::<MatchEpoch>()
-        .init_resource::<AudioRuntime>()
         .add_systems(
             Update,
             publish_audio_context
@@ -34,6 +39,7 @@ pub(crate) fn register(app: &mut App) {
 pub(crate) fn publish_audio_context(
     epoch: Res<MatchEpoch>,
     runtime: Res<AudioRuntime>,
+    verdicts: Option<Res<net::FireVerdictState>>,
     clips: Option<Res<crate::ClipStore>>,
     mut mix: Option<ResMut<crate::script_mix::ScriptAudioMix>>,
     mut channels: Option<ResMut<crate::script_mix::ChannelAudioMix>>,
@@ -46,6 +52,9 @@ pub(crate) fn publish_audio_context(
     prediction: Option<Res<net::ClientPredictionState>>,
     view: Option<Res<frame::ViewSubject>>,
 ) {
+    if let Some(verdicts) = verdicts {
+        runtime.set_fire_verdicts(verdicts.clone());
+    }
     runtime.set_match_epoch(epoch.0);
     runtime.set_event_context(
         generation

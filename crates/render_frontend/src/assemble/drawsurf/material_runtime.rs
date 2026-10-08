@@ -1374,6 +1374,7 @@ pub fn capture_runtime_catalog(
                     })
                     .collect();
                 slots[slot_index] = Some(RuntimeTechnique {
+                    source_selection: technique.source_selection,
                     flags: technique.flags,
                     passes,
                 });

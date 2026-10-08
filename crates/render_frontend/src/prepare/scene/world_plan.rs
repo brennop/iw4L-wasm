@@ -26,7 +26,8 @@ fn log_image_asset_memory(images: &Assets<Image>) {
         "image asset memory: assets={count} main_world_retained={:.1}MiB uploaded={:.1}MiB rss={:.0}MiB",
         mib(main_bytes),
         mib(render_bytes),
-        asset_transport::process_resident_bytes().map_or(0.0, |bytes| bytes as f64 / (1024.0 * 1024.0)),
+        asset_transport::process_resident_bytes()
+            .map_or(0.0, |bytes| bytes as f64 / (1024.0 * 1024.0)),
     );
 }
 

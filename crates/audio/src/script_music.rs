@@ -14,6 +14,7 @@ pub(crate) struct ScriptMusicPlayback {
 pub(crate) fn update_script_music(
     epoch: Res<crate::backend::MatchEpoch>,
     ready: Res<crate::AudioReady>,
+    generation: Res<frame::WorldGeneration>,
     runtime: Res<crate::AudioRuntime>,
     loading: Option<Res<assets::LoadingScreen>>,
     mut events: MessageReader<net::SvcScriptAudio>,
@@ -67,7 +68,7 @@ pub(crate) fn update_script_music(
             }
         }
     }
-    if !ready.0 || loading.is_some_and(|screen| !screen.is_complete()) {
+    if !ready.0.ready_for(*generation) || loading.is_some_and(|screen| !screen.is_complete()) {
         return;
     }
     let Some(bank) = bank else { return };

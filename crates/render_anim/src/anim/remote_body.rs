@@ -475,6 +475,8 @@ pub struct PreparedRemoteKits {
     kits: std::collections::HashMap<(bool, u32), PreparedRemoteKit>,
 }
 
+type KitModels = Vec<(usize, Option<(usize, String)>)>;
+
 impl PreparedRemoteKits {
     pub fn owned_by(
         &self,
@@ -499,6 +501,8 @@ impl PreparedRemoteKits {
         world_weapons: &assets::PreparedWorldWeapons,
     ) -> Self {
         let mut kits = std::collections::HashMap::new();
+        let mut built: std::collections::HashMap<KitModels, Option<Arc<xmodel_runtime::DObj>>> =
+            std::collections::HashMap::new();
         for axis in [false, true] {
             for weapon in 0..=weapons.0.len() as u32 {
                 let Some((models, radius)) = occupy_remote_kit_dobj(
@@ -529,8 +533,26 @@ impl PreparedRemoteKits {
                     None,
                 )
                 .ok()
-                .and_then(|set| xmodel_runtime::DObj::build(&set.dobj_models).ok())
-                .map(std::sync::Arc::new);
+                .and_then(|set| {
+                    let key = set
+                        .dobj_models
+                        .iter()
+                        .map(|(model, attach)| {
+                            (
+                                std::ptr::from_ref(*model) as usize,
+                                attach.as_ref().map(|a| (a.parent_model, a.tag.clone())),
+                            )
+                        })
+                        .collect();
+                    built
+                        .entry(key)
+                        .or_insert_with(|| {
+                            xmodel_runtime::DObj::build(&set.dobj_models)
+                                .ok()
+                                .map(std::sync::Arc::new)
+                        })
+                        .clone()
+                });
                 kits.insert(
                     (axis, weapon),
                     PreparedRemoteKit {
@@ -1208,13 +1230,13 @@ pub struct CpuBodyGeom {
 pub struct CpuSurfMeta {
     pub index_start: u32,
     pub index_count: u32,
-    pub name: Option<String>,
+    pub material: Option<asset_core::MaterialKey>,
 }
 
 pub struct CpuNamedSurface {
     pub vert_n: usize,
     pub indices: Vec<u32>,
-    pub name: Option<String>,
+    pub material: Option<asset_core::MaterialKey>,
     pub packed: Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
 }
 
@@ -1376,22 +1398,22 @@ pub fn commit_assembled_body(
 
 pub fn named_surfaces(
     surfaces: Vec<PosedSmodelSurface>,
-    names: &[Option<String>],
+    keys: &[Option<asset_core::MaterialKey>],
     edges: &[assets::AssetEdge<assets::MaterialSpace>],
 ) -> Vec<CpuNamedSurface> {
     surfaces
         .into_iter()
         .map(|surface| {
-            let name = match edges.get(surface.surface_index) {
+            let material = match edges.get(surface.surface_index) {
                 Some(assets::AssetEdge::Bound(_)) => {
-                    names.get(surface.surface_index).cloned().flatten()
+                    keys.get(surface.surface_index).cloned().flatten()
                 }
                 _ => None,
             };
             CpuNamedSurface {
                 vert_n: surface.vert_n,
                 indices: surface.indices,
-                name,
+                material,
                 packed: surface.packed_vertices,
             }
         })
@@ -1411,7 +1433,7 @@ pub fn flatten_cpu_geom(surfaces: Vec<CpuNamedSurface>) -> CpuBodyGeom {
             metas.push(CpuSurfMeta {
                 index_start: 0,
                 index_count: 0,
-                name: surface.name,
+                material: surface.material,
             });
             continue;
         }
@@ -1427,7 +1449,7 @@ pub fn flatten_cpu_geom(surfaces: Vec<CpuNamedSurface>) -> CpuBodyGeom {
         metas.push(CpuSurfMeta {
             index_start,
             index_count: surface.indices.len() as u32,
-            name: surface.name,
+            material: surface.material,
         });
         decoded_n = decoded_n.saturating_add(surface.vert_n);
     }

@@ -582,6 +582,7 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
         meta.burst_latch_secondary = false;
         meta.rechamber_pending = false;
         meta.rechamber_pending_secondary = false;
+        meta.pending_brass = [None; 2];
     }
     world.item_pickups_mut().push(ItemPickupRecord {
         picker: walker.0 as i32,

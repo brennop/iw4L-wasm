@@ -289,8 +289,26 @@ impl RuntimePass {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeTechnique {
+    pub source_selection: Option<SourceTechniqueSelection>,
     pub flags: u16,
     pub passes: Vec<RuntimePass>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TechniqueSelectionPolicy {
+    Exact,
+    DfogCompatibility,
+    UnshadowedCompatibility,
+    LitFallbackCompatibility,
+    EmissiveCompatibility,
+    DepthToColourCompatibility,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceTechniqueSelection {
+    pub namespace: AssetNamespace,
+    pub slot: u8,
+    pub policy: TechniqueSelectionPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

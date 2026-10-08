@@ -599,10 +599,6 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
             }
         }
         if ty == fastfile_iw5::AssetType::XModel {
-            self.fpv_meshes
-                .capture_iw5(stream, &self.strings_iw5, &self.materials);
-            self.world_weapons
-                .capture_iw5(stream, &self.strings_iw5, &self.materials);
             if let Some(geometry) = stream.latest_xmodel()
                 && let Some(name) = geometry.name.and_then(|p| stream.cstr(p).ok())
             {
@@ -616,6 +612,10 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
                     let skel = std::sync::Arc::new(skel);
                     self.shared_surfaces
                         .retain_iw5(stream, geometry, skel.clone());
+                    let ns = Some(asset_core::AssetNamespace::Iw5);
+                    self.fpv_meshes.capture_shared(ns, &skel, &self.materials);
+                    self.world_weapons
+                        .capture_shared(ns, &skel, &self.materials);
                     asset_world::MapXModelSceneAsset::Iw5(skel)
                 })
                 .unwrap_or(asset_world::MapXModelSceneAsset::Unavailable {
@@ -773,12 +773,6 @@ impl fastfile_t5::AssetLinkSink for CommonWalkSink {
                 .note_loaded(t5_iw4_ptr(slot), insert_slot.map(t5_iw4_ptr));
         }
         if ty == fastfile_t5::AssetType::XModel {
-            self.fpv_meshes
-                .capture_t5(stream, &self.strings_t5, &self.materials);
-            self.world_weapons
-                .capture_t5(stream, &self.strings_t5, &self.materials);
-            self.projectile_meshes
-                .capture_t5(stream, &self.strings_t5, &self.materials);
             if let Some(geometry) = stream.latest_xmodel()
                 && let Some(name) = geometry.name.and_then(|p| stream.cstr(p).ok())
             {
@@ -788,7 +782,17 @@ impl fastfile_t5::AssetLinkSink for CommonWalkSink {
                     geometry,
                     &self.materials,
                 )
-                .map(|skel| asset_world::MapXModelSceneAsset::T5(std::sync::Arc::new(skel)))
+                .map(|skel| {
+                    let skel = std::sync::Arc::new(skel);
+                    let ns = asset_core::AssetNamespace::T5;
+                    self.fpv_meshes
+                        .capture_shared(Some(ns), &skel, &self.materials);
+                    self.world_weapons
+                        .capture_shared(Some(ns), &skel, &self.materials);
+                    self.projectile_meshes
+                        .capture_shared(ns, &skel, &self.materials);
+                    asset_world::MapXModelSceneAsset::T5(skel)
+                })
                 .unwrap_or(asset_world::MapXModelSceneAsset::Unavailable {
                     reason: "T5 common XModel skeleton capture failed",
                 });
@@ -1444,12 +1448,14 @@ impl AssetLinkSink for CommonWalkSink {
                     Some(&self.materials),
                 )
                 .map(std::sync::Arc::new);
-                // One decode for the scene catalog and the FX catalog: each is
-                // pruned only after the map walk, so separate copies of every
-                // common_mp XModel would both be live at the load's peak.
                 if let Some(skel) = &skel {
                     self.shared_surfaces.retain(stream, geometry, skel.clone());
                     self.fx_models.capture_shared(skel.clone(), &self.materials);
+                    self.fpv_meshes.capture_shared(None, skel, &self.materials);
+                    self.world_weapons
+                        .capture_shared(None, skel, &self.materials);
+                    self.projectile_meshes
+                        .capture_shared_unclassified(skel, &self.materials);
                 }
                 let asset = skel.map(asset_world::MapXModelSceneAsset::Iw4).unwrap_or(
                     asset_world::MapXModelSceneAsset::Unavailable {
@@ -1459,10 +1465,6 @@ impl AssetLinkSink for CommonWalkSink {
                 self.scene_models
                     .insert(asset_world::MapXModelAssetKey(name.to_owned()), asset);
             }
-            self.fpv_meshes.capture(stream, &self.materials);
-            self.world_weapons.capture(stream, &self.materials);
-            self.projectile_meshes
-                .capture_unclassified(stream, &self.materials);
             self.models.capture(stream);
         }
         Ok(())
