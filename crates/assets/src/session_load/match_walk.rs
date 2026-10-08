@@ -648,7 +648,7 @@ pub(super) async fn walk_prepared_match(
         &xanims,
     );
     weapons.resolve_fpv_soldiers(&fpv_meshes, &soldiers);
-    let assembly_started = std::time::Instant::now();
+    let assembly_started = web_time::Instant::now();
     let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
     report.push(format!(
         "FPV assemblies: built={} kit sides linked={} refused={} clip track tables={} elapsed_ms={:.1}",

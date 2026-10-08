@@ -230,9 +230,9 @@ pub struct ClientPrediction {
 
     tick_input: TickInput,
 
-    owner_events: Vec<(EntityEventRecord, std::time::Instant)>,
+    owner_events: Vec<(EntityEventRecord, web_time::Instant)>,
     next_owner_event: EventSequence,
-    owner_pellet_fx: Vec<(sim::PelletFxRecord, std::time::Instant)>,
+    owner_pellet_fx: Vec<(sim::PelletFxRecord, web_time::Instant)>,
 }
 
 impl ClientPrediction {
@@ -326,7 +326,7 @@ impl ClientPrediction {
     }
 
     pub fn take_owner_events(&mut self) -> Vec<EntityEventRecord> {
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         std::mem::take(&mut self.owner_events)
             .into_iter()
             .filter(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(5))
@@ -634,7 +634,7 @@ impl ClientPrediction {
                         audience: EventAudience::Client(self.local),
                         ..record.clone()
                     },
-                    std::time::Instant::now(),
+                    web_time::Instant::now(),
                 ));
                 next = next.next();
             }
@@ -645,11 +645,11 @@ impl ClientPrediction {
                 .iter()
                 .copied()
                 .filter(|record| record.attacker == local)
-                .map(|record| (record, std::time::Instant::now())),
+                .map(|record| (record, web_time::Instant::now())),
         );
         self.next_owner_event = next;
         let life = self.local_life();
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         owner_events.retain(|(event, at)| {
             now.duration_since(*at) < std::time::Duration::from_secs(5)
                 && event

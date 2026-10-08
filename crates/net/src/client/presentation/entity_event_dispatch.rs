@@ -5,7 +5,8 @@ use entity_iw4::{
 };
 use sim::{EntityEventPayload, EventSequence, Tick};
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate as net;
 use crate::CEntity;
