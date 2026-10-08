@@ -27,22 +27,66 @@ struct ItemComposition {
 }
 
 #[derive(Resource, Default)]
-struct PreparedItemCompositions {
-    owner: Option<(usize, u64)>,
-    by_weapon: std::collections::HashMap<u32, std::sync::Arc<ItemComposition>>,
+pub(crate) struct PreparedItemCompositions {
+    owner: Option<(std::sync::Arc<asset_game::WeaponRegistry>, u64)>,
+    by_weapon: std::collections::HashMap<u32, Option<std::sync::Arc<ItemComposition>>>,
 }
 
 impl PreparedItemCompositions {
+    pub(crate) fn clear(&mut self) {
+        self.owner = None;
+        self.by_weapon.clear();
+    }
     fn owned_by(
         &self,
         weapons: &assets::PreparedWeapons,
         world: &assets::PreparedWorldWeapons,
     ) -> bool {
-        self.owner
-            == Some((
-                std::sync::Arc::as_ptr(&weapons.0) as usize,
-                world.0.identity(),
-            ))
+        self.owner.as_ref().is_some_and(|(registry, identity)| {
+            registry.revision() == weapons.0.revision() && *identity == world.0.identity()
+        })
+    }
+
+    fn reset_for(
+        &mut self,
+        weapons: &assets::PreparedWeapons,
+        world: &assets::PreparedWorldWeapons,
+    ) {
+        if !self.owned_by(weapons, world) {
+            self.by_weapon.clear();
+            self.owner = Some((std::sync::Arc::clone(&weapons.0), world.0.identity()));
+        }
+    }
+
+    fn prepare(
+        &mut self,
+        world: &asset_model::WorldWeaponCatalog,
+        weapon: u32,
+    ) -> Option<std::sync::Arc<ItemComposition>> {
+        let (registry, identity) = self.owner.as_ref()?;
+        if *identity != world.identity() {
+            return None;
+        }
+        self.by_weapon
+            .entry(weapon)
+            .or_insert_with(|| {
+                if let Err(refusal) = registry.configuration_admission(weapon) {
+                    diag::warn!(
+                        World,
+                        "dropped item weapon {weapon}: configuration refused: {refusal:?}"
+                    );
+                    return None;
+                }
+                let composition = compose_item(registry, world, weapon).map(std::sync::Arc::new);
+                if composition.is_none() {
+                    diag::warn!(
+                        World,
+                        "dropped item weapon {weapon}: world composition dependencies refused"
+                    );
+                }
+                composition
+            })
+            .clone()
     }
 }
 
@@ -81,41 +125,6 @@ fn compose_item(
         key,
         dobj,
     })
-}
-
-fn prepare_item_compositions(
-    weapons: Option<Res<assets::PreparedWeapons>>,
-    world_weapons: Option<Res<assets::PreparedWorldWeapons>>,
-    mut prepared: ResMut<PreparedItemCompositions>,
-) {
-    let (Some(weapons), Some(world)) = (weapons, world_weapons) else {
-        return;
-    };
-    if prepared.owned_by(&weapons, &world) {
-        return;
-    }
-    let started = web_time::Instant::now();
-    let mut by_weapon = std::collections::HashMap::new();
-    if !world.0.is_empty() {
-        for weapon in 1..=weapons.0.len() as u32 {
-            if let Some(composition) = compose_item(&weapons.0, &world.0, weapon) {
-                by_weapon.insert(weapon, std::sync::Arc::new(composition));
-            }
-        }
-    }
-    diag::info!(
-        World,
-        "dropped items: {} weapon compositions prepared in {:.1}ms",
-        by_weapon.len(),
-        started.elapsed().as_secs_f64() * 1000.0
-    );
-    *prepared = PreparedItemCompositions {
-        owner: Some((
-            std::sync::Arc::as_ptr(&weapons.0) as usize,
-            world.0.identity(),
-        )),
-        by_weapon,
-    };
 }
 
 #[derive(Resource, Default)]
@@ -174,10 +183,6 @@ pub fn register_item_systems(app: &mut App) {
     app.init_resource::<ItemDrawPlan>()
         .init_resource::<ItemOccupancy>()
         .init_resource::<PreparedItemCompositions>()
-        .add_systems(
-            Update,
-            prepare_item_compositions.in_set(net::ClientSet::Load),
-        )
         .init_resource::<ItemPoseProduct>()
         .add_systems(
             Update,
@@ -246,13 +251,20 @@ fn occupy_item_scene_ents(
     local_client: Option<Res<net::LocalPresentClient>>,
     weapons: Option<Res<assets::PreparedWeapons>>,
     world_weapons: Option<Res<assets::PreparedWorldWeapons>>,
-    compositions: Res<PreparedItemCompositions>,
+    mut compositions: ResMut<PreparedItemCompositions>,
     mut occupancy: ResMut<ItemOccupancy>,
     mut scene_skels: ResMut<AnimDObjSceneSkels>,
     mut scene_submissions: MessageWriter<AnimDObjSceneSubmission>,
     cg_clock: Option<Res<net::FrameClock>>,
 ) {
     occupancy.rows.clear();
+    let (Some(weapons), Some(world)) = (weapons.as_deref(), world_weapons.as_deref()) else {
+        compositions.clear();
+        return;
+    };
+    compositions.reset_for(weapons, world);
+    let catalog = &world.0;
+
     let Some(presented_inner) = presented.as_deref() else {
         return;
     };
@@ -265,26 +277,15 @@ fn occupy_item_scene_ents(
         .filter(|clock| clock.started())
         .map(|clock| clock.time())
         .unwrap_or_else(|| sim::level_time_ms(snapshot.tick));
-    let live = match (weapons.as_deref(), world_weapons.as_deref()) {
-        (Some(weapons), Some(world)) => compositions.owned_by(weapons, world),
-        _ => false,
-    };
-    if !live {
-        return;
-    }
-    let catalog = world_weapons
-        .as_ref()
-        .map(|prepared| &prepared.0)
-        .filter(|c| !c.is_empty());
     let items: Vec<_> = snapshot
         .meta
         .entities
         .iter()
         .filter(|es| es.e_type == ET_ITEM)
         .collect();
-    let Some(catalog) = catalog else {
+    if catalog.is_empty() {
         return;
-    };
+    }
 
     for (index, es) in items.iter().enumerate() {
         let Some(weapon) = item_weapon_index(es.index) else {
@@ -296,7 +297,7 @@ fn occupy_item_scene_ents(
         if hide_scavenger && item_is_scavenger(snapshot, es.number) {
             continue;
         }
-        let Some(composition) = compositions.by_weapon.get(&weapon) else {
+        let Some(composition) = compositions.prepare(catalog, weapon) else {
             continue;
         };
         let Some(entry) = catalog.get_at(composition.model.order()) else {
@@ -336,7 +337,7 @@ fn occupy_item_scene_ents(
             entnum: es.number,
             origin,
             angles,
-            composition: std::sync::Arc::clone(composition),
+            composition,
             lighting_origin,
         });
     }

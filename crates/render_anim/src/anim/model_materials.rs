@@ -244,6 +244,7 @@ pub fn prepare_model_materials(
             let skel = match asset {
                 asset_world::MapXModelSceneAsset::Iw4(skel)
                 | asset_world::MapXModelSceneAsset::Iw5(skel)
+                | asset_world::MapXModelSceneAsset::T6(skel)
                 | asset_world::MapXModelSceneAsset::T5(skel) => skel,
                 asset_world::MapXModelSceneAsset::Unavailable { .. } => continue,
             };

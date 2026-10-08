@@ -1,13 +1,16 @@
-use super::material_runtime::RuntimeCodeSources;
-use asset_material::t5_code_remap::{
+use super::{BindingWriter, MaterialFogInputs};
+use crate::t5_code_remap::{
     LEFTOVER_T5_CODE_BASE, T5_CODE_FOG, T5_CODE_FOG_COLOR, T5_CODE_FOG2, T5_CODE_SUN_FOG,
     T5_CODE_SUN_FOG_COLOR, T5_CODE_SUN_FOG_DIR,
 };
-use asset_material::t6_techset::CODE_T6_FOG;
-use asset_world::ExpFog;
-
-pub(super) fn produce(sources: &mut RuntimeCodeSources, fog: &ExpFog, eye_z: f32, enabled: bool) {
-    let put = |sources: &mut RuntimeCodeSources, index, row: [f32; 4]| {
+use crate::t6_techset::CODE_T6_FOG;
+pub(super) fn produce(
+    sources: &mut BindingWriter<'_>,
+    fog: &MaterialFogInputs,
+    eye_z: f32,
+    enabled: bool,
+) {
+    let put = |sources: &mut BindingWriter<'_>, index, row: [f32; 4]| {
         sources.set_constant_rows(LEFTOVER_T5_CODE_BASE + index, &[row.map(f32::to_bits)]);
     };
     let (height_density, base_height, color) = match fog.volumetric {
@@ -29,7 +32,7 @@ pub(super) fn produce(sources: &mut RuntimeCodeSources, fog: &ExpFog, eye_z: f32
         None => (
             0.0,
             0.0,
-            super::command_context::fog_color_linear_and_gamma(fog.color_rgb, 1.0).0,
+            super::fog_color_linear_and_gamma(fog.color_rgb, 1.0).0,
         ),
     };
     put(sources, T5_CODE_FOG_COLOR, color);
@@ -38,8 +41,7 @@ pub(super) fn produce(sources: &mut RuntimeCodeSources, fog: &ExpFog, eye_z: f32
             let rgb = if fog.volumetric.is_some() {
                 sun.color_rgb
             } else {
-                let linear =
-                    super::command_context::fog_color_linear_and_gamma(sun.color_rgb, 1.0).0;
+                let linear = super::fog_color_linear_and_gamma(sun.color_rgb, 1.0).0;
                 [linear[0], linear[1], linear[2]]
             };
             (

@@ -183,7 +183,9 @@ pub fn place(
     for instance in script_model_instances {
         match map_xmodel_scene_assets.get(&instance.current_model) {
             Some(asset_world::MapXModelSceneAsset::Iw4(_))
-            | Some(asset_world::MapXModelSceneAsset::Iw5(_))
+            | Some(
+                asset_world::MapXModelSceneAsset::Iw5(_) | asset_world::MapXModelSceneAsset::T6(_),
+            )
             | Some(asset_world::MapXModelSceneAsset::T5(_)) => script_ready += 1,
             Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
                 script_unavailable += 1
@@ -221,7 +223,9 @@ pub fn place(
     for instance in dyn_ent_instances {
         match map_xmodel_scene_assets.get(&instance.current_model) {
             Some(asset_world::MapXModelSceneAsset::Iw4(_))
-            | Some(asset_world::MapXModelSceneAsset::Iw5(_))
+            | Some(
+                asset_world::MapXModelSceneAsset::Iw5(_) | asset_world::MapXModelSceneAsset::T6(_),
+            )
             | Some(asset_world::MapXModelSceneAsset::T5(_)) => dyn_ready += 1,
             Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
                 dyn_unavailable += 1

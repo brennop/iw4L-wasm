@@ -434,6 +434,7 @@ pub struct SampledLighting {
     pub colors: [u8; LIGHT_GRID_COLORS_BYTE_COUNT],
     pub compressed: [u8; 3],
     pub tile: [u8; MODEL_LIGHTING_TILE_BYTES],
+    pub lighting_sh: Option<[[f32; 4]; 3]>,
 }
 
 pub fn sample_light_grid(
@@ -575,7 +576,9 @@ fn sample_light_grid_at(
         },
     );
 
-    let (colors, compressed, tile) = if grid.color_encoding != LightGridColorEncoding::Rgb8 {
+    let (colors, compressed, tile, lighting_sh) = if grid.color_encoding
+        != LightGridColorEncoding::Rgb8
+    {
         let mut rows = Vec::new();
         match path {
             LightGridAtPointPath::SetFromIndex => rows.push((u32::from(accum.indices[0]), 1.0)),
@@ -598,6 +601,7 @@ fn sample_light_grid_at(
             )),
         }
         let mut linear = [[0.0; 3]; 56];
+        let mut blended_coefficients = [[0.0; 3]; 9];
         for (index, weight) in rows {
             let row = grid
                 .colors_row(index)
@@ -610,6 +614,11 @@ fn sample_light_grid_at(
                 LightGridColorEncoding::T6Coefficients => {
                     let coefficients = fastfile_t6::light_grid::decode_coefficients(row)
                         .ok_or(BlockedReason::TruncatedZoneData)?;
+                    for (out, value) in blended_coefficients.iter_mut().zip(coefficients) {
+                        for c in 0..3 {
+                            out[c] += value[c] * weight;
+                        }
+                    }
                     fastfile_t6::light_grid::directional_colors(&coefficients)
                 }
                 LightGridColorEncoding::Rgb8 => unreachable!(),
@@ -629,7 +638,8 @@ fn sample_light_grid_at(
         }
         let compressed =
             light_grid_compress_colors(&colors, 0xff).ok_or(BlockedReason::TruncatedZoneData)?;
-        (colors, compressed, tile)
+        let lighting_sh = t6.then(|| fastfile_t6::light_grid::lighting_sh(&blended_coefficients));
+        (colors, compressed, tile, lighting_sh)
     } else {
         let mut colors = [0u8; LIGHT_GRID_COLORS_BYTE_COUNT];
         match path {
@@ -691,7 +701,7 @@ fn sample_light_grid_at(
         if !light_grid_expand_shell_to_tile_rgba(&colors, compressed.weight, &mut tile) {
             return Err(BlockedReason::TruncatedZoneData);
         }
-        (colors, compressed, tile)
+        (colors, compressed, tile, None)
     };
 
     Ok(SampledLighting {
@@ -712,7 +722,15 @@ fn sample_light_grid_at(
         colors,
         compressed: [compressed.r, compressed.g, compressed.b],
         tile,
+        lighting_sh,
     })
+}
+
+pub fn model_lighting_texel_decode_scale(encoding: LightGridColorEncoding) -> f32 {
+    match encoding {
+        LightGridColorEncoding::Rgb8 => core::f32::consts::FRAC_1_SQRT_2 / 2.0,
+        LightGridColorEncoding::T5Y12U6W6 | LightGridColorEncoding::T6Coefficients => 1.0,
+    }
 }
 
 fn linear_light_grid_channel(value: f32, t6: bool) -> u8 {
@@ -776,6 +794,8 @@ pub struct SmodelLightingSample {
 
     pub packed_lighting: [u8; 4],
     pub path: LightGridAtPointPath,
+    pub lighting_sh: Option<[[f32; 4]; 3]>,
+    pub vertex_lighting: Option<std::sync::Arc<[Vec<[u8; 4]>; 4]>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -998,6 +1018,8 @@ pub fn build_smodel_lighting_samples_with_sight(
                                     0xff,
                                 ],
                                 path: sample.path,
+                                lighting_sh: sample.lighting_sh,
+                                vertex_lighting: None,
                             });
                         }
                         Err(reason) => census.record_block(reason),

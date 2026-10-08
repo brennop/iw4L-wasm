@@ -68,7 +68,7 @@ pub(super) async fn walk_prepared_match(
         xmodel_walk,
         s1_common_bytes,
         teamsets,
-        film_visions: mut common_film_visions,
+        film_visions: common_film_visions,
         mut weapons,
         mut fpv_meshes,
         mut world_weapons,
@@ -145,7 +145,7 @@ pub(super) async fn walk_prepared_match(
                     &progress,
                     shared_surfaces,
                     material_seed,
-                    &mut common_film_visions,
+                    &common_film_visions,
                 ),
                 Some(asset_core::AssetNamespace::from_zone_game(game)),
             )

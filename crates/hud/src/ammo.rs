@@ -53,7 +53,7 @@ pub(crate) fn weaponbar_ammo(
     meta: Option<&ClientSnapshotMeta>,
 ) -> Option<WeaponbarAmmo> {
     let viewmodel = get_viewmodel_weapon_index(ps);
-    let facts = weapons.0.facts_of(viewmodel)?;
+    let facts = weapons.0.hud_facts_of(viewmodel)?;
     let kind = ammo_counter_clip_kind(facts.ammo_counter_clip)?;
     let clip_key = clip_table_key(facts.clip_index, viewmodel);
     let ammo_key = ammo_table_key(facts.ammo_index, viewmodel);
@@ -118,7 +118,7 @@ pub(crate) fn offhand_ammo(ps: &PlayerState, weapons: &PreparedWeapons, class: i
             continue;
         }
         let index = slot as u32;
-        let Some(facts) = weapons.0.facts_of(index) else {
+        let Some(facts) = weapons.0.hud_facts_of(index) else {
             continue;
         };
         if facts.offhand_class != class {
@@ -151,7 +151,7 @@ pub(crate) fn offhand_weapon_index(
         let index = slot as u32;
         weapons
             .0
-            .facts_of(index)
+            .hud_facts_of(index)
             .filter(|facts| facts.offhand_class == class)
             .map(|_| index)
     })

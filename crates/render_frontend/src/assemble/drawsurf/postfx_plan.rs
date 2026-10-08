@@ -118,9 +118,7 @@ fn postfx_material_location<'a>(
         .technique_sets
         .get(set_i)
         .ok_or(PostFxAdmissionRefusal::TechniqueSetOutOfRange { set })?;
-    if technique_set.namespace != material.namespace
-        || material.namespace != asset_core::AssetNamespace::Iw4
-    {
+    if technique_set.namespace != material.namespace || !material.draw_rules.postfx_host_supported {
         return Err(PostFxAdmissionRefusal::TechniqueNamespaceMismatch);
     }
     let technique = technique_set
@@ -367,14 +365,13 @@ fn admit_unlit_2d(
             actual: execution.pass_count(),
         });
     };
-    let actual_state = [pass.state.word0, pass.state.word1];
+    let actual_state = pass.state.authored_words();
     if require_film_state && actual_state != STANDARD_FILM_STATE {
         return Err(PostFxAdmissionRefusal::StateBitsMismatch {
             actual: actual_state,
         });
     }
-    let host_state = super::state::GfxPassState::from_bits(pass.state);
-    if host_state.authored_alpha_test().is_some() {
+    if pass.state.alpha_test().is_some() {
         return Err(PostFxAdmissionRefusal::AlphaTestEnabled);
     }
     let Some(port) = programs.get(pass.port).cloned() else {

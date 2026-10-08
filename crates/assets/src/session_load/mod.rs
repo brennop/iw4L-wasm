@@ -133,6 +133,7 @@ pub struct PreparedWorld {
     pub intermission_view: Option<IntermissionView>,
 
     pub exp_fog: Option<asset_world::ExpFog>,
+    pub t6_film_grade: Option<asset_world::T6FilmGrade>,
 
     pub film_vision: Option<asset_world::FilmVision>,
     pub film_visions: std::collections::BTreeMap<

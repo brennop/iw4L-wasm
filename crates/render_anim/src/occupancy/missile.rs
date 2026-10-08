@@ -241,7 +241,7 @@ fn occupy_missile_scene_ents(
             weapon: row.weapon(),
             ignited: match row {
                 net::PresentedProjectile::Authoritative(p) => weapons_reg
-                    .and_then(|reg| reg.facts_of(p.weapon))
+                    .and_then(|reg| reg.event_facts_of(p.weapon))
                     .is_none_or(|facts| {
                         at_time >= p.spawn_time_ms.saturating_add(facts.ignition_delay_ms)
                     }),

@@ -207,7 +207,7 @@ fn update_dof(
     ) {
         if let Some(range) = weapons
             .as_ref()
-            .and_then(|w| w.0.facts_of(weapon_iw4::get_viewmodel_weapon_index(ps)))
+            .and_then(|w| w.0.hud_facts_of(weapon_iw4::get_viewmodel_weapon_index(ps)))
             .and_then(|w| w.ads_dof)
         {
             scene.view_model_start = range[0] * ads;

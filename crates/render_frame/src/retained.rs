@@ -167,16 +167,3 @@ pub struct LightAttenuationBind {
     pub image: Option<u32>,
     pub sampler: u8,
 }
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct T5LightFalloffPack {
-    pub diffuse: Option<[f32; 4]>,
-    pub specular: Option<[f32; 4]>,
-    pub attenuation: Option<[f32; 4]>,
-    pub falloff: Option<[f32; 4]>,
-    pub a_ab_b: Option<[f32; 4]>,
-    pub angle_z: Option<f32>,
-    pub cookie0: Option<[f32; 4]>,
-    pub cookie1: Option<[f32; 4]>,
-    pub cookie2: Option<[f32; 4]>,
-}

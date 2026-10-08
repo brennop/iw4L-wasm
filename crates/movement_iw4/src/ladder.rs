@@ -292,8 +292,6 @@ pub fn ladder_move<C: crate::CollisionBackend>(
     );
 }
 
-/// Without a strafe, speed along the ladder bleeds off at
-/// `LADDER_SIDE_FRICTION` per second, at least 1 unit/s per tick.
 fn ladder_side_friction(ps: &mut PlayerState, pml: &crate::Pml) {
     let mut side_dir = [pml.right[0], pml.right[1]];
     let len = libm::sqrtf(side_dir[0] * side_dir[0] + side_dir[1] * side_dir[1]);

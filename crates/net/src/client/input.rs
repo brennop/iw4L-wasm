@@ -64,10 +64,7 @@ pub struct ClientActionInput {
     pub pad_lockon: Option<u64>,
     pub pad_autoaim: Option<(u64, f32)>,
     pub pad_was_ads: bool,
-    /// Use+reload is down.
     pub use_reload_down: bool,
-    /// When use+reload went down over an item, and the item's entity: a tap
-    /// reloads once released, a hold is the item's.
     pub use_reload_over_item: Option<(i32, i32)>,
 }
 

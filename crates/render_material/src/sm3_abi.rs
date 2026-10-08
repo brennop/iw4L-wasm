@@ -231,7 +231,7 @@ pub enum PassAbiRefusal {
     },
 }
 
-pub fn build_pass_abi(
+pub(crate) fn build_pass_abi(
     vertex: &Sm3ProgramIr,
     pixel: &Sm3ProgramIr,
     decl: &RuntimeVertexDecl,

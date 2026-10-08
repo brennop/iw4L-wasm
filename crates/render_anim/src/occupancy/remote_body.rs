@@ -74,7 +74,15 @@ pub fn register_remote_body_systems(app: &mut App) {
         .init_resource::<RemoteBodySkinnedQueue>()
         .init_resource::<RemoteBodyLightingBinds>()
         .init_resource::<PreparedRemoteKits>()
-        .add_systems(Update, prepare_remote_kits.in_set(ClientSet::Load))
+        .add_systems(Update, reset_remote_kits.in_set(ClientSet::Load))
+        .add_systems(
+            Update,
+            prepare_remote_kits
+                .after(sync_remote_bodies)
+                .before(occupy_remote_scene_ents)
+                .before(pose_remote_bodies)
+                .in_set(render_scene::GfxSceneAdd),
+        )
         .init_resource::<crate::anim::dobj_pose::HostDObjPoseFrame>()
         .init_resource::<crate::anim::dobj_pose::PosedPlayerFrame>()
         .add_systems(
@@ -135,26 +143,41 @@ pub fn register_remote_body_systems(app: &mut App) {
         );
 }
 
-fn prepare_remote_kits(
+fn reset_remote_kits(
     bodies: Option<Res<PreparedBodies>>,
     weapons: Option<Res<PreparedWeapons>>,
     world_weapons: Option<Res<PreparedWorldWeapons>>,
     mut kits: ResMut<PreparedRemoteKits>,
 ) {
     let (Some(bodies), Some(weapons), Some(world)) = (bodies, weapons, world_weapons) else {
+        kits.clear();
         return;
     };
-    if kits.owned_by(&bodies, &weapons, &world) {
+    kits.reset_for(&bodies, &weapons, &world);
+}
+
+fn prepare_remote_kits(
+    bodies: Option<Res<PreparedBodies>>,
+    weapons: Option<Res<PreparedWeapons>>,
+    world_weapons: Option<Res<PreparedWorldWeapons>>,
+    mut kits: ResMut<PreparedRemoteKits>,
+    remotes: Query<(&CEntityRuntime, &RemotePlayer)>,
+) {
+    let (Some(bodies), Some(weapons), Some(world)) = (bodies, weapons, world_weapons) else {
+        kits.clear();
         return;
+    };
+    kits.reset_for(&bodies, &weapons, &world);
+    for (runtime, remote) in &remotes {
+        let axis = asset_model::kit_assignment_is_axis(remote.client_state_team, remote.ffa_team);
+        kits.prepare(
+            &bodies,
+            &weapons,
+            &world,
+            axis,
+            remote_pose_sample(runtime).weapon,
+        );
     }
-    let started = web_time::Instant::now();
-    *kits = PreparedRemoteKits::prepare(&bodies, &weapons, &world);
-    diag::info!(
-        World,
-        "remote kits: prepared for {} weapons in {:.1}ms",
-        weapons.0.len(),
-        started.elapsed().as_secs_f64() * 1000.0
-    );
 }
 
 fn finish_body_draw_plan(mut plan: ResMut<RemoteBodyDrawPlan>) {

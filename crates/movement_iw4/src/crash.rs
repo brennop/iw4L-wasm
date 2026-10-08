@@ -9,10 +9,8 @@ const EV_LANDING_FIRST: i32 = 0x70;
 
 const EV_LANDING_PAIN_FIRST: i32 = 0x8f;
 
-/// `bg_fallDamageMinHeight`: a landing from no higher than this hurts nothing.
 pub const FALL_DAMAGE_MIN_HEIGHT_IN: f32 = 128.0;
 
-/// `bg_fallDamageMaxHeight`: a landing from this high or higher deals 100.
 pub const FALL_DAMAGE_MAX_HEIGHT_IN: f32 = 300.0;
 
 const FALL_LIGHT_IN: f32 = 4.0;
@@ -23,16 +21,12 @@ const FALL_HARD_IN: f32 = 12.0;
 
 const HARD_LAND_VEL_SCALE: f32 = 0.67;
 
-/// Surface flag: landing on it never hurts.
 const SURF_NODAMAGE: u32 = 0x1;
 
-/// Surface flag: a hurting landing keeps its speed scale at 0.67.
 const SURF_SLICK: u32 = 0x2;
 
-/// Surface flag: landings on it deal a tenth of the damage.
 const SURF_SOFT_LANDING: u32 = 0x1000;
 
-/// Pm types from here on (dead and beyond) take no fall damage.
 const PM_TYPE_DEAD: i32 = 8;
 
 const HALF: f32 = 0.5;
@@ -56,7 +50,6 @@ pub fn crash_land(ps: &mut PlayerState, pml: &mut Pml) {
         0
     };
     if damage > 0 {
-        // The server applies the event's damage as MOD_FALLING.
         pml.fall_damage = damage;
         land_hurt(ps, damage, surface_flags);
         let soft = if surface_flags & SURF_SOFT_LANDING != 0 {
@@ -70,8 +63,6 @@ pub fn crash_land(ps: &mut PlayerState, pml: &mut Pml) {
     crash_land_apply_sfx(ps, fall_height, surface);
 }
 
-/// Linear from nothing at the minimum height to 100 (10 on a soft-landing
-/// surface) at the maximum.
 pub fn fall_damage(fall_height: f32, soft: bool) -> i32 {
     let max = if soft { 10.0 } else { 100.0 };
     if fall_height <= FALL_DAMAGE_MIN_HEIGHT_IN {
@@ -85,8 +76,6 @@ pub fn fall_damage(fall_height: f32, soft: bool) -> i32 {
         * max) as i32
 }
 
-/// A hurting landing short of death holds the player down for
-/// `damage * 35 + 500` ms (at most 2000) and keeps 0.5 to 0.2 of their speed.
 fn land_hurt(ps: &mut PlayerState, damage: i32, surface_flags: u32) {
     let scale = if damage < 100 && surface_flags & SURF_SLICK == 0 {
         let time = (damage * 35 + 500).min(2000);

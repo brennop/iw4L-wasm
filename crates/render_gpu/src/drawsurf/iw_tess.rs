@@ -128,7 +128,7 @@ struct IwTessPipeline {
 struct IwTessPipelineKey {
     target: TextureFormat,
     samples: u32,
-    state_bits: Option<[u32; 2]>,
+    state: Option<render_material::CompiledPassState>,
 }
 
 impl SpecializedRenderPipeline for IwTessPipeline {
@@ -140,8 +140,8 @@ impl SpecializedRenderPipeline for IwTessPipeline {
             dst_factor: BlendFactor::OneMinusSrcAlpha,
             operation: BlendOperation::Add,
         };
-        let state = key.state_bits.map(|bits| {
-            crate::GfxPassState::from_state_bits(bits[0], bits[1])
+        let state = key.state.map(|bits| {
+            crate::GfxPassState::from_prepared(bits)
                 .apply_change_state_0_host(AlphaMode::Blend, false)
         });
         RenderPipelineDescriptor {
@@ -515,7 +515,7 @@ fn draw_iw_tess(
                     IwTessPipelineKey {
                         target: format,
                         samples,
-                        state_bits: batch.state_bits,
+                        state: batch.state,
                     },
                 );
                 let layout = cache.get_bind_group_layout(&pipeline.modulate_layout);
@@ -540,7 +540,7 @@ fn draw_iw_tess(
                     IwTessPipelineKey {
                         target: format,
                         samples,
-                        state_bits: batch.state_bits,
+                        state: batch.state,
                     },
                 );
                 let layout = cache.get_bind_group_layout(&pipeline.modulate_layout);
@@ -664,7 +664,7 @@ fn prepare_saved_screen(
         IwTessPipelineKey {
             target: format,
             samples: 1,
-            state_bits: None,
+            state: None,
         },
     );
     if saved

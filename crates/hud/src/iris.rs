@@ -166,7 +166,7 @@ pub(crate) fn update_iris(
         hide_letterbox(&mut letterbox);
         return;
     };
-    let Some(facts) = weapons.0.facts_of(viewmodel_index) else {
+    let Some(facts) = weapons.0.hud_facts_of(viewmodel_index) else {
         gaps.clear(HudGap::AdsOverlay);
         hide_overlay(&mut overlay);
         hide_letterbox(&mut letterbox);

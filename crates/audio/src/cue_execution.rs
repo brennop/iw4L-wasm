@@ -191,9 +191,10 @@ impl CueWork {
                 };
                 let id = self.request.state.playback.get().map(|state| state.id);
                 format!(
-                    "instance={id:?} request_to_decision_ms={elapsed_ms:.3} source={:?} clip={:?}",
+                    "instance={id:?} request_to_decision_ms={elapsed_ms:.3} source={:?} clip={:?} looping_policy={:?}",
                     self.source,
-                    self.resolved.as_ref().and_then(|cue| cue.clip.as_ref())
+                    self.resolved.as_ref().and_then(|cue| cue.clip.as_ref()),
+                    self.resolved.as_ref().map(|cue| cue.policy.looping)
                 )
             }),
         };
@@ -367,7 +368,7 @@ impl CueWork {
         let start = CueStart {
             looping: self.source.is_some()
                 || (matches!(intent.class, SoundClass::Music | SoundClass::Ambience)
-                    && cue.policy.looping),
+                    && cue.policy.looping.is_looping()),
             media,
             spatial,
             admission: cue.policy.admission_for(intent.emitter, priority),

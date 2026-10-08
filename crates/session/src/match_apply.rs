@@ -424,8 +424,7 @@ pub fn apply_prepared_match(
             (0..=weapons.0.len())
                 .map(|index| {
                     let weapon = index as u32;
-                    (weapons.0.facts_of(weapon)?.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
-                        .then_some(())?;
+                    (weapons.0.world_facts_of(weapon)?.is_shield()).then_some(())?;
                     weapons
                         .0
                         .world_model_entry(weapon, &world_weapons.0)?
@@ -941,6 +940,9 @@ fn preflight_match_install(
                 ) | (
                     Some(asset_core::AssetNamespace::T5),
                     Some(asset_world::MapXModelSceneAsset::T5(_))
+                ) | (
+                    Some(asset_core::AssetNamespace::T6),
+                    Some(asset_world::MapXModelSceneAsset::T6(_))
                 )
             );
             if !native || !scene.alias(from, to) {
@@ -1398,6 +1400,7 @@ fn retained(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(model)
             | asset_world::MapXModelSceneAsset::Iw5(model)
+            | asset_world::MapXModelSceneAsset::T6(model)
             | asset_world::MapXModelSceneAsset::T5(model),
         ) => model.retained_capability().map(std::sync::Arc::new),
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => None,

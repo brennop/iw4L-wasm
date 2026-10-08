@@ -11,14 +11,14 @@ and 64 pending steps per pass, virtualizes saturated loops and rejects excess
 one-shots. Cancellation and epoch invalidation bypass queues. Weapon attacks
 preserve their first 20 ms during replacement; explicit Stop cancels them.
 
-Catalog publication compiles each variant's looping, spatial, channel, voice
-limits, gain, pitch, composition and loaded-media policy. Namespaces survive
-admission and mixing. Missing policies, ambiguous media bindings, unsupported
-features and invalid mixer graphs produce typed refusals. Compatibility rules
-retain named sources; unknown looping stays unknown. T5 layers activate on
-resolution; other families wait for primary preparation. Layers share deadline,
-cancellation and lifetime, with independent pitch and failure. Killcam worlds
-retain the live sound registry for round-result commands.
+Family cue compilers publish looping, spatial, admission, gain, pitch, layers,
+routing and media policies per variant. Namespaces survive admission and mixing.
+Missing policies, ambiguous bindings, unsupported features and invalid mixer
+graphs produce typed refusals. Compatibility sources stay named; unknown looping
+compiles to a one-shot compatibility policy reported in cue decisions.
+T5 layers activate on resolution; other families wait for primary preparation.
+Layers share deadlines, cancellation and lifetime, with independent pitch and
+failure. Killcam worlds retain the live sound registry for round-result commands.
 
 Weapon publication compiles thermal scopes, cue namespaces, melee precedence,
 knife substitution and breath aliases. Prediction identifies fire occurrences;

@@ -19,7 +19,8 @@ pub struct MapDirPrimaryLight {
     pub t5_specular_color: Option<[f32; 4]>,
 }
 
-pub use render_frame::{LightAttenuationBind, T5LightFalloffPack};
+pub use asset_material::MaterialLightOverrides;
+pub use render_frame::LightAttenuationBind;
 
 #[derive(Clone, Debug)]
 pub struct WorldPortal {
@@ -142,6 +143,8 @@ pub struct WorldSmodelLightingSample {
     pub tile_rgba: [u8; 256],
 
     pub packed_lighting: [u8; 4],
+    pub lighting_sh: Option<[[f32; 4]; 3]>,
+    pub vertex_lighting: Option<std::sync::Arc<[Vec<[u8; 4]>; 4]>>,
 }
 
 pub const SMODEL_LIGHTING_MAX_CLIENT_VIEWS: u32 = 1;
@@ -232,6 +235,7 @@ pub struct WorldScene {
     pub retained_lightmap_uvs: Vec<[f32; 2]>,
 
     pub exp_fog: Option<asset_world::ExpFog>,
+    pub t6_film_grade: Option<asset_world::T6FilmGrade>,
 
     pub film_vision: Option<asset_world::FilmVision>,
     pub film_visions: std::collections::BTreeMap<
@@ -272,7 +276,7 @@ pub struct WorldScene {
 
     pub primary_light_def_names: Vec<Option<String>>,
 
-    pub primary_light_t5_falloff: Vec<T5LightFalloffPack>,
+    pub primary_light_overrides: Vec<MaterialLightOverrides>,
 
     pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
 
@@ -727,6 +731,7 @@ impl WorldScene {
             retained_texture_uvs: Vec::new(),
             retained_lightmap_uvs: Vec::new(),
             exp_fog: None,
+            t6_film_grade: None,
             film_vision: None,
             film_visions: Default::default(),
             createart_name: None,
@@ -746,7 +751,7 @@ impl WorldScene {
             primary_light_attenuation: Vec::new(),
             dynamic_light: None,
             primary_light_def_names: Vec::new(),
-            primary_light_t5_falloff: Vec::new(),
+            primary_light_overrides: Vec::new(),
             reflection_probe_sh: Vec::new(),
             sun_primary_light_count: 0,
             light_region_hulls: None,
@@ -824,6 +829,7 @@ impl WorldScene {
             retained_texture_uvs: Vec::new(),
             retained_lightmap_uvs: Vec::new(),
             exp_fog: None,
+            t6_film_grade: None,
             film_vision: None,
             film_visions: Default::default(),
             createart_name: None,
@@ -843,7 +849,7 @@ impl WorldScene {
             primary_light_attenuation: Vec::new(),
             dynamic_light: None,
             primary_light_def_names: Vec::new(),
-            primary_light_t5_falloff: Vec::new(),
+            primary_light_overrides: Vec::new(),
             reflection_probe_sh: Vec::new(),
             sun_primary_light_count: 0,
             light_region_hulls: None,
@@ -1106,8 +1112,7 @@ pub fn world_scene_from_draw(
         .iter()
         .map(|probe| probe.origin)
         .collect();
-    let runtime_material_catalog =
-        crate::assemble::drawsurf::capture_runtime_catalog(&global_materials);
+    let runtime_material_catalog = asset_material::compile_material_catalog(&global_materials);
     let asset_ref = asset_material::AssetRefDumpCensus::from_catalog(&global_materials);
 
     let exact_material_images = global_materials
@@ -1531,6 +1536,8 @@ pub fn world_scene_from_draw(
                     lighting_origin: sample.lighting_origin,
                     tile_rgba: sample.tile_rgba,
                     packed_lighting: sample.packed_lighting,
+                    lighting_sh: sample.lighting_sh,
+                    vertex_lighting: sample.vertex_lighting,
                 })
                 .collect(),
         },
@@ -1574,6 +1581,7 @@ pub fn world_scene_from_draw(
     scene.light_grid = world.light_grid;
     scene.sky_model = sky_model;
     scene.exp_fog = world.exp_fog;
+    scene.t6_film_grade = world.t6_film_grade;
     scene.film_vision = world.film_vision;
     scene.film_visions = world.film_visions;
     scene.createart_name = world.createart_name;
@@ -1626,16 +1634,16 @@ pub fn world_scene_from_draw(
         .iter()
         .map(|light| light.def_name.clone())
         .collect();
-    scene.primary_light_t5_falloff = draw
+    scene.primary_light_overrides = draw
         .primary_lights
         .iter()
-        .map(|light| T5LightFalloffPack {
+        .map(|light| MaterialLightOverrides {
             diffuse: light.t5_diffuse_color,
             specular: light.t5_specular_color,
             attenuation: light.t5_attenuation,
             falloff: light.t5_falloff,
-            a_ab_b: light.t5_a_ab_b,
-            angle_z: light.t5_angle.map(|angle| angle[2]),
+            cone_bounds: light.t5_a_ab_b,
+            rotation: light.t5_angle.map(|angle| angle[2]),
             cookie0: light.t5_cookie0,
             cookie1: light.t5_cookie1,
             cookie2: light.t5_cookie2,

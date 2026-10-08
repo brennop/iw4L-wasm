@@ -257,8 +257,6 @@ pub struct ClientInput {
 
     pub stance_held: Option<(i32, i32)>,
     pub center_view: bool,
-    /// The local player is off the ground; set before each move sample. A
-    /// held stance button only counts toward prone on the ground.
     pub airborne: bool,
 }
 
@@ -589,8 +587,6 @@ pub fn create_cmd(input: &CreateCmdInput) -> UserCmd {
 pub fn sample_move(client: &mut ClientInput, now_msec: i32, frame_msec: u32) -> (u32, MoveAxes) {
     stance_hold(client, now_msec);
     let mut bits = key_move_bits(&client.kb, client.using_ads, cmd_buttons(&client.kb));
-    // A jump stands once, as it is pressed: crouch pressed while it is
-    // still held is a jump-crouch.
     if client.kb.gostand.was_pressed {
         client.stance_latch = 0;
         client.stance_held = None;

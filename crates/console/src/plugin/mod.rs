@@ -211,6 +211,7 @@ impl Plugin for ConsolePlugin {
                             crate::user_settings::native_menu_settings,
                             crate::user_settings::consume_menu_binding,
                             crate::game_folders::game_folder_menu,
+                            crate::community_servers::community_server_menu,
                         )
                             .chain(),
                         crate::user_settings::sync_binding_view,

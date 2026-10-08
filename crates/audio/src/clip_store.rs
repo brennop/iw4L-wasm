@@ -24,6 +24,7 @@ pub(crate) enum ClipKey {
         ns: AssetNamespace,
         dir: String,
         name: String,
+        decode: asset_audio::StreamedDecodePolicy,
     },
 }
 
@@ -688,7 +689,15 @@ fn collect_clip_keys(
                 out.push(key);
             }
         } else if let Some((sns, dir, name)) = bank.streamed_for_variant(ns, alias, vi) {
-            let key = ClipKey::Streamed { ns: sns, dir, name };
+            let Some(policy) = bank.playback_policy(index, vi) else {
+                continue;
+            };
+            let key = ClipKey::Streamed {
+                ns: sns,
+                dir,
+                name,
+                decode: policy.streamed_decode(),
+            };
             if seen_key.insert(key.clone()) {
                 out.push(key);
             }
@@ -717,21 +726,19 @@ pub(crate) fn clip_key_for_variant(
     bound: Option<usize>,
     variant: usize,
 ) -> Option<ClipKey> {
-    let sound = match bound {
-        Some(index) => bank.sound_at(index),
-        None => bank.sound_in(ns, alias),
-    };
-    if let Some(idx) = sound
-        .and_then(|s| s.aliases.get(variant))
-        .and_then(|row| row.loaded.bound_index())
-    {
+    let index = bound.or_else(|| bank.index_in(ns, alias))?;
+    let sound = bank.sound_at(index)?;
+    if let Some(idx) = sound.aliases.get(variant)?.loaded.bound_index() {
         return Some(ClipKey::Loaded(idx));
     }
-    match bound {
-        Some(index) => bank.streamed_for_variant_at(index, variant),
-        None => bank.streamed_for_variant(ns, alias, variant),
-    }
-    .map(|(sns, dir, name)| ClipKey::Streamed { ns: sns, dir, name })
+    let policy = bank.playback_policy(index, variant)?;
+    bank.streamed_for_variant_at(index, variant)
+        .map(|(sns, dir, name)| ClipKey::Streamed {
+            ns: sns,
+            dir,
+            name,
+            decode: policy.streamed_decode(),
+        })
 }
 
 static WORKERS: AtomicU64 = AtomicU64::new(0);
@@ -847,9 +854,15 @@ fn prepare_clip_now(
             };
             (path, prepare_loaded(sound))
         }
-        ClipKey::Streamed { ns, dir, name } => {
-            (ClipPath::Streamed, prepare_streamed(iwd, *ns, dir, name))
-        }
+        ClipKey::Streamed {
+            ns,
+            dir,
+            name,
+            decode,
+        } => (
+            ClipPath::Streamed,
+            prepare_streamed(iwd, *ns, dir, name, *decode),
+        ),
     }
 }
 
@@ -924,6 +937,7 @@ fn prepare_streamed(
     ns: AssetNamespace,
     dir: &str,
     name: &str,
+    decode: asset_audio::StreamedDecodePolicy,
 ) -> Result<PcmBuffer, ClipError> {
     let iwd = iwd.ok_or(ClipError::Read)?;
     let rel = format!("{dir}/{name}");
@@ -942,7 +956,9 @@ fn prepare_streamed(
             return Err(ClipError::Read);
         }
     };
-    let pcm = if ns == AssetNamespace::T5 && !bytes.starts_with(b"RIFF") {
+    let pcm = if decode == asset_audio::StreamedDecodePolicy::WmaContainerWithWaveCompatibility
+        && !bytes.starts_with(b"RIFF")
+    {
         crate::pcm::t5_stream::decode(&bytes)
     } else {
         decode_audio_bytes(&bytes)

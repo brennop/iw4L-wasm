@@ -64,7 +64,7 @@ fn iwd_key(ns: AssetNamespace, name: &str, sampling: HudSampling, sampler: Optio
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BloodMaterialBinding {
-    pub state: [u32; 2],
+    pub state: render_material::CompiledPassState,
     pub color_sampler: u8,
     pub mask_sampler: u8,
 }
@@ -95,8 +95,13 @@ fn blood_material_binding(catalog: &MenuCatalog) -> Result<BloodMaterialBinding,
             "{pass}: color/mask color-map bindings missing or out of order"
         ));
     }
+    let state =
+        render_material::compile_material_state(HUD_CHROME_NAMESPACE, plan.unlit_pass_states[0]);
+    if let Some(fields) = state.unsupported_host_fields() {
+        return Err(format!("{pass}: unsupported material state: {fields:?}"));
+    }
     Ok(BloodMaterialBinding {
-        state: plan.unlit_pass_states[0],
+        state,
         color_sampler: color.sampler_state,
         mask_sampler: mask.sampler_state,
     })
@@ -140,7 +145,7 @@ pub struct HudImages {
     zone_handles: HashMap<ZoneKey, Handle<Image>>,
     zone_image_name: HashMap<String, String>,
     material_images: HashMap<String, String>,
-    zone_states: HashMap<String, Option<[u32; 2]>>,
+    zone_states: HashMap<String, Option<render_material::CompiledPassState>>,
     zone_srgb_reads: HashMap<String, bool>,
     zone_samplers: HashMap<String, u8>,
     blood_plan: Option<Result<BloodMaterialBinding, String>>,
@@ -236,7 +241,16 @@ impl HudImages {
             }
         }
         for (name, state) in &catalog.material_state_bits {
-            self.zone_states.insert(name.clone(), state.agreed());
+            let compiled = state.agreed().and_then(|words| {
+                let compiled = render_material::compile_material_state(HUD_CHROME_NAMESPACE, words);
+                if let Some(fields) = compiled.unsupported_host_fields() {
+                    diag::warn!(Ui, "hud material state refused: {name}: {fields:?}");
+                    None
+                } else {
+                    Some(compiled)
+                }
+            });
+            self.zone_states.insert(name.clone(), compiled);
             if catalog.zone_images.contains_key(name) && state.agreed().is_none() {
                 diag::warn!(Ui, "hud material state gap: {name}: {state:?}");
             }
@@ -252,7 +266,11 @@ impl HudImages {
         }
     }
 
-    pub fn material_state_bits(&self, ns: AssetNamespace, name: &str) -> Option<[u32; 2]> {
+    pub fn material_state(
+        &self,
+        ns: AssetNamespace,
+        name: &str,
+    ) -> Option<render_material::CompiledPassState> {
         (ns == HUD_CHROME_NAMESPACE)
             .then(|| self.zone_states.get(&cache_key(name)).copied().flatten())
             .flatten()

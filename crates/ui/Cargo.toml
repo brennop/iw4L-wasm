@@ -22,3 +22,8 @@ sim.workspace = true
 
 [lints]
 workspace = true
+
+# Community servers are chosen by restarting the process: native only (the updater
+# needs reqwest, file locks and child processes).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+updater = { path = "../updater" }

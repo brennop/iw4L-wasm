@@ -1057,6 +1057,7 @@ pub(crate) fn presented_skel_arcs(
         let skel = match catalog.get_name(&descriptor.model)? {
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel) => std::sync::Arc::clone(skel),
             asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
@@ -1077,6 +1078,7 @@ pub(crate) fn presented_skels<'a>(
         let skel = match catalog.get_name(&descriptor.model)? {
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel) => skel.as_ref(),
             asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };
@@ -1104,6 +1106,7 @@ pub fn collect_presented_models<'a>(
         let skel = match catalog.get_name(&descriptor.model)? {
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel) => skel,
             asset_world::MapXModelSceneAsset::Unavailable { .. } => return None,
         };

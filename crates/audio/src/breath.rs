@@ -135,7 +135,7 @@ pub(crate) fn update(
                     (0..sound.aliases.len()).any(|variant| {
                         bank.0
                             .playback_policy(index, variant)
-                            .is_some_and(|policy| policy.authored_looping == Some(true))
+                            .is_some_and(|policy| policy.looping().is_looping())
                     })
                 })
             })

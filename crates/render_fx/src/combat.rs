@@ -254,7 +254,7 @@ pub fn play_pellet_segment(
         return;
     }
     let Some(impact_type) = weapons
-        .and_then(|w| w.0.facts_of(weapon))
+        .and_then(|w| w.0.event_facts_of(weapon))
         .map(|f| f.impact_type)
     else {
         cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);

@@ -100,6 +100,8 @@ pub struct SampleAdapter {
     pub opaque_alpha: bool,
     pub square_rgb: bool,
     pub rgb_scale: f32,
+    pub scale_row: Option<ConstantRow>,
+    pub alpha_row: Option<ConstantRow>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -719,10 +721,32 @@ impl Lowering<'_> {
             _ => unreachable!(),
         };
         let sampled = match self.sample_adapters.iter().find(|a| a.slot == slot) {
-            Some(adapter) => format!(
-                "dx_adapt({sampled}, {}, {}, {:?})",
-                adapter.opaque_alpha, adapter.square_rgb, adapter.rgb_scale
-            ),
+            Some(adapter) => {
+                let row_lane = |row: Option<ConstantRow>, lane: &str| match row {
+                    Some(row) if !self.constants.contains_key(&row) => {
+                        Err(WgslError::UnassignedConstant {
+                            buffer: row.buffer,
+                            row: row.row,
+                        })
+                    }
+                    Some(row) => Ok(Some(format!(
+                        "bitcast<f32>(cb{}_{}.{lane})",
+                        row.buffer, row.row
+                    ))),
+                    None => Ok(None),
+                };
+                let scale = match row_lane(adapter.scale_row, "x")? {
+                    Some(lane) => format!("{:?} * {lane}", adapter.rgb_scale),
+                    None => format!("{:?}", adapter.rgb_scale),
+                };
+                let alpha_weight = row_lane(adapter.alpha_row, "y")?.unwrap_or_else(|| {
+                    String::from(if adapter.opaque_alpha { "0.0" } else { "1.0" })
+                });
+                format!(
+                    "dx_adapt({sampled}, {alpha_weight}, {}, {scale})",
+                    adapter.square_rgb
+                )
+            }
             None => sampled,
         };
         let swizzled = match resource.components {
@@ -823,7 +847,15 @@ fn stage_body(
         epilogue,
     };
     lowering.out.push_str(prologue);
-    for row in shader.constant_rows()? {
+    let mut declared = shader.constant_rows()?;
+    declared.extend(
+        abi.sample_adapters
+            .iter()
+            .flat_map(|adapter| [adapter.scale_row, adapter.alpha_row])
+            .flatten()
+            .filter(|row| lowering.constants.contains_key(row)),
+    );
+    for row in declared {
         let arena = *lowering
             .constants
             .get(&row)
@@ -906,9 +938,9 @@ pub fn lower_pass(abi: &PassAbi, vertex: &Shader, pixel: &Shader) -> Result<Stri
     texture_tables(&mut out, &abi.textures);
     if !abi.sample_adapters.is_empty() {
         out.push_str(
-            "\nfn dx_adapt(s: vec4<f32>, opaque_alpha: bool, square_rgb: bool, scale: f32) -> vec4<f32> {\n    \
+            "\nfn dx_adapt(s: vec4<f32>, alpha_weight: f32, square_rgb: bool, scale: f32) -> vec4<f32> {\n    \
              let rgb = select(s.xyz, s.xyz * s.xyz, square_rgb) * scale;\n    \
-             return vec4<f32>(rgb, select(s.w, 1.0, opaque_alpha));\n}\n",
+             return vec4<f32>(rgb, mix(1.0, s.w, alpha_weight));\n}\n",
         );
     }
     out.push_str("\nstruct DxVaryings {\n    @builtin(position) @invariant position: vec4<f32>,\n");

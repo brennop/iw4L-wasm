@@ -749,9 +749,6 @@ fn apply_weapon_switch_requests(
     }
 }
 
-/// Use+reload reloads, except over an item: there a hold is the item's
-/// (`sim::ITEM_USE_HOLD_MS`, the authority takes it) and a tap still reloads,
-/// sent once it is released, if the item is still the one it began on.
 fn use_reload_as_reload(
     actions: &mut ClientActionInput,
     cmd: &mut playerstate_iw4::UserCmd,

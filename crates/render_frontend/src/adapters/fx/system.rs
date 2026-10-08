@@ -66,7 +66,6 @@ use crate::{
         world::WorldScene,
     },
 };
-use weapon_iw4::WEAPTYPE_GRENADE;
 
 // Resolve muzzle tags after this frame's weapon poses, before advancing FX.
 #[derive(Message)]
@@ -193,14 +192,7 @@ fn present_tracker_light(
         let weapon = weapon_iw4::get_viewmodel_weapon_index(ps);
         (meta.lifecycle == sim::ClientLifecycle::Alive
             && ps.other_flags & 0x400 == 0
-            && prepared.table()?.facts_of(weapon).is_some_and(|facts| {
-                facts.motion_tracker
-                    || (facts.inventory_type == 3
-                        && prepared
-                            .table()
-                            .and_then(|t| t.facts_of(ps.weapon_primary))
-                            .is_some_and(|parent| parent.motion_tracker))
-            }))
+            && prepared.table()?.motion_tracker(weapon, ps.weapon_primary))
         .then_some((*generation, local.0, meta.life_sequence, weapon))
     });
     if owner != light.owner {
@@ -2284,7 +2276,7 @@ fn drain_weapon_fire_fx(
             }
             let delayed_brass = weapons
                 .as_deref()
-                .and_then(|weapons| weapons.0.facts_of(fire.event.payload.weapon))
+                .and_then(|weapons| weapons.0.event_facts_of(fire.event.payload.weapon))
                 .is_some_and(|facts| facts.bolt_action);
             if !delayed_brass
                 && occurrences.may_present(
@@ -2319,7 +2311,7 @@ fn drain_weapon_fire_fx(
         }
         if let Some(facts) = weapons
             .as_deref()
-            .and_then(|weapons| weapons.0.facts_of(fire.event.payload.weapon))
+            .and_then(|weapons| weapons.0.event_facts_of(fire.event.payload.weapon))
             && fire_weapon_fx_should_client_trace(facts.impact_type)
         {
             combat.last_impact_miss_why = Some("authority_segments".into());
@@ -2329,8 +2321,8 @@ fn drain_weapon_fire_fx(
         let hide_fire_ping = weapons.as_deref().is_some_and(|weapons| {
             weapons
                 .0
-                .facts_of(fire.event.payload.weapon)
-                .is_some_and(|facts| facts.weap_type == WEAPTYPE_GRENADE || facts.silenced)
+                .event_facts_of(fire.event.payload.weapon)
+                .is_some_and(|facts| facts.hides_fire_ping())
         });
         if fire.event.payload.number != local_number && !player_view && !hide_fire_ping {
             ping_bus.pings.push(WeaponFirePing {
@@ -2625,7 +2617,7 @@ fn explosion(
     let payload = explosion.event.payload;
     let impact_type = weapons
         .as_deref()
-        .and_then(|weapons| weapons.0.facts_of(payload.weapon))
+        .and_then(|weapons| weapons.0.event_facts_of(payload.weapon))
         .map(|facts| facts.impact_type);
     let combat_fx = weapons
         .as_deref()

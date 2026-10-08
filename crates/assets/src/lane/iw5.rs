@@ -135,10 +135,7 @@ impl ZoneLane for Iw5Lane {
         progress: &LoadProgress,
         shared_surfaces: asset_model::SharedXModelSurfaces,
         material_seed: asset_material::MaterialCatalog,
-        _common_film_visions: &mut std::collections::BTreeMap<
-            String,
-            Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
-        >,
+        _common_film_visions: &super::FilmVisionCatalog,
     ) -> LoadedWorld {
         let mut report = vec![format!("game: IW5 ({})", path.display())];
         let stage = progress.begin_scoped(StageId::MapAssets, "header", None);

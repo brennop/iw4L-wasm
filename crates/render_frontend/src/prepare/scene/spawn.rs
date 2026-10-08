@@ -532,7 +532,7 @@ pub(crate) fn spawn_world(
         commands.insert_resource(crate::assemble::drawsurf::MapPrimaryLights {
             lights: scene.primary_light_pack.clone(),
             attenuation: scene.primary_light_attenuation.clone(),
-            t5_falloff: scene.primary_light_t5_falloff.clone(),
+            overrides: scene.primary_light_overrides.clone(),
             reflection_probe_sh: scene.reflection_probe_sh.clone(),
             dynamic: scene.dynamic_light,
         });
@@ -549,7 +549,7 @@ pub(crate) fn spawn_world(
                 .filter(|bind| bind.image.is_some())
                 .count();
             let t5_atten = scene
-                .primary_light_t5_falloff
+                .primary_light_overrides
                 .iter()
                 .filter(|pack| pack.attenuation.is_some())
                 .count();

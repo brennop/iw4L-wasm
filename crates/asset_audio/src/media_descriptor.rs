@@ -24,3 +24,9 @@ impl SabMediaSource {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StreamedDecodePolicy {
+    Detected,
+    WmaContainerWithWaveCompatibility,
+}

@@ -1,6 +1,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod equipment;
+pub use equipment::{EquipmentRuntimeFacts, WEAPCLASS_THROWINGKNIFE};
+
 mod ads_allow;
 mod ads_overlay;
 mod ammo;
@@ -126,8 +129,8 @@ pub use tick::{
     AimAssistRanges, BURST_COOLDOWN_DEFAULT_MS, BUTTON_ATTACK, BUTTON_RELOAD, BUTTON_THROW,
     CHECK_FIRING_AMMO_DRY_FIRE_MS, CapturedCombatInput, MissingCombatFacts, PERK_FASTRELOAD,
     PERK_WEAP_RELOAD_MULTIPLIER_DEFAULT, WeaponCmd, WeaponCombatFacts, WeaponHandState,
-    WeaponTickEvent, get_weapon_fire_button, perk_fastreload_eligible, spawn_clip_stock,
-    spawn_weapon_hand, weapon_hands, weapon_ordinary, weapon_time_adjust,
+    WeaponHostRules, WeaponTickEvent, get_weapon_fire_button, perk_fastreload_eligible,
+    spawn_clip_stock, spawn_weapon_hand, weapon_hands, weapon_ordinary, weapon_time_adjust,
 };
 pub use view_bob::{
     BG_VIEW_KICK_MAX, BG_VIEW_KICK_MIN, BG_VIEW_KICK_SCALE, EFLAGS_TURRET_VEHICLE, LAND_DEFLECT_MS,

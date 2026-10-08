@@ -347,7 +347,7 @@ fn can_wake(inst: &WorldDynEntInstance) -> Option<&asset_world::OwnedPhysPreset>
 }
 
 fn weapon_radii(weapons: Option<&PreparedWeapons>, weapon: u32) -> Option<(f32, f32)> {
-    let facts = weapons?.0.facts_of(weapon)?;
+    let facts = weapons?.0.event_facts_of(weapon)?;
     let outer = facts.explosion_radius.max(0) as f32;
     if outer <= 0.0 {
         return None;
@@ -358,14 +358,14 @@ fn weapon_radii(weapons: Option<&PreparedWeapons>, weapon: u32) -> Option<(f32, 
 
 fn weapon_explosion_damage(weapons: Option<&PreparedWeapons>, weapon: u32) -> (i32, i32) {
     weapons
-        .and_then(|w| w.0.facts_of(weapon))
+        .and_then(|w| w.0.event_facts_of(weapon))
         .map(|f| (f.explosion_inner_damage, f.explosion_outer_damage))
         .unwrap_or((0, 0))
 }
 
 fn weapon_hit_damage(weapons: Option<&PreparedWeapons>, weapon: u32) -> i32 {
     weapons
-        .and_then(|w| w.0.facts_of(weapon))
+        .and_then(|w| w.0.event_facts_of(weapon))
         .map(|f| f.damage)
         .unwrap_or(0)
 }

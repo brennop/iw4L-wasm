@@ -30,10 +30,16 @@ impl SessionClassStore {
                 .take(PERSONAL_CLASS_SLOTS)
                 .collect();
         if slots.len() < PERSONAL_CLASS_SLOTS {
-            for primary in ["m4", "mp5k", "m16", "ak47", "rpd"] {
+            for primary in [
+                "iw4:weapon/m4_mp",
+                "iw4:weapon/mp5k_mp",
+                "iw4:weapon/m16_mp",
+                "iw4:weapon/ak47_mp",
+                "iw4:weapon/rpd_mp",
+            ] {
                 let slot = HostClassSlot {
                     name: format!("custom_{}", slots.len() + 1),
-                    primary: format!("iw4:weapon/{primary}_mp"),
+                    primary: primary.into(),
                     primary_attachments: Vec::new(),
                     secondary: "iw4:weapon/usp_mp".into(),
                     secondary_attachments: Vec::new(),

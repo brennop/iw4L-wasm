@@ -50,7 +50,7 @@ pub(super) fn update(
             })
             .and_then(|e| u32::try_from(e.index).ok())
             .filter(|&w| w != 0)
-            .and_then(|w| weapons.as_ref()?.0.facts_of(w))
+            .and_then(|w| weapons.as_ref()?.0.hud_facts_of(w))
             .is_some_and(|f| f.thermal_scope);
     let direction = if ps.f_weapon_pos_frac > kick.last_weapon_pos_frac {
         true
@@ -71,7 +71,7 @@ pub(super) fn update(
                 .as_ref()
                 .and_then(|w| {
                     let index = get_viewmodel_weapon_index(ps);
-                    let f = w.0.facts_of(index)?;
+                    let f = w.0.hud_facts_of(index)?;
                     let zoom = hud_iw4::get_weap_reticle_zoom(
                         ps.f_weapon_pos_frac,
                         direction,

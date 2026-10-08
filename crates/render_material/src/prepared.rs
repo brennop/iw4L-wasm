@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use asset_core::AssetNamespace;
-
 use crate::catalog::{
     MaterialAssetId, PortId, RemapResolution, RuntimeImageId, RuntimeMaterial,
     RuntimeMaterialCatalog, RuntimePass, RuntimeShaderPair, RuntimeTextureBinding,
@@ -10,13 +8,6 @@ use crate::catalog::{
 use crate::{RuntimeArgumentBinding, RuntimeShaderStage, TechType};
 
 const VERTEX_TYPE_COUNT: usize = asset_iw4::vertex_decl::VERTEX_TYPE_COUNT;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GfxPassStateBits {
-    pub namespace: AssetNamespace,
-    pub word0: u32,
-    pub word1: u32,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AdmittedPortFacts {
@@ -242,7 +233,7 @@ pub struct PreparedPass {
     pub port: Arc<[Option<PortId>; VERTEX_TYPE_COUNT]>,
 
     pub shader_pair: Option<RuntimeShaderPair>,
-    pub state: GfxPassStateBits,
+    pub state: crate::CompiledPassState,
 
     pub per_prim_arg_count: u8,
     pub per_obj_arg_count: u8,
@@ -368,6 +359,7 @@ pub struct PreparedMaterial {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PreparedMaterialTable {
+    generation_id: crate::MaterialGenerationId,
     materials: Vec<PreparedMaterial>,
 
     census: PreparedTableCensus,
@@ -396,7 +388,15 @@ impl PreparedMaterialTable {
             ));
         }
         let census = count_prepared_table(&materials);
-        Self { materials, census }
+        Self {
+            generation_id: catalog.generation_id,
+            materials,
+            census,
+        }
+    }
+
+    pub fn generation_id(&self) -> crate::MaterialGenerationId {
+        self.generation_id
     }
 
     pub fn material(&self, id: MaterialAssetId) -> Option<&PreparedMaterial> {
@@ -570,14 +570,14 @@ fn prepare_one_material(
         if base_row == 0xff
             || usize::from(base_row)
                 .checked_add(technique.passes.len())
-                .is_none_or(|end| end > material.state_bits_table.len())
+                .is_none_or(|end| end > material.pass_states.len())
         {
             continue;
         }
         let mut passes = Vec::with_capacity(technique.passes.len());
         for (pass_index, pass) in technique.passes.iter().enumerate() {
             let row = usize::from(base_row).saturating_add(pass_index);
-            let load_bits = material.state_bits_table[row];
+            let state = material.pass_states[row];
             let mut port = [None; VERTEX_TYPE_COUNT];
             let mut bank_lens = [None; VERTEX_TYPE_COUNT];
 
@@ -591,7 +591,6 @@ fn prepare_one_material(
                     }
                 }
             }
-            let [state0, state1] = load_bits;
             let pass_index_u8 = u8::try_from(pass_index).unwrap_or(u8::MAX);
             let belts = PreparedArgBelts::from_pass(material, pass_index_u8, pass);
             let mut local_banks = [const { None }; VERTEX_TYPE_COUNT];
@@ -610,11 +609,7 @@ fn prepare_one_material(
             passes.push(PreparedPass {
                 port: shared.ports(port),
                 shader_pair: pass.shader_pair,
-                state: GfxPassStateBits {
-                    namespace: material.namespace,
-                    word0: state0,
-                    word1: state1,
-                },
+                state,
                 per_prim_arg_count: pass.per_prim_arg_count,
                 per_obj_arg_count: pass.per_obj_arg_count,
                 stable_arg_count: pass.stable_arg_count,

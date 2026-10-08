@@ -771,7 +771,7 @@ fn parse_worldspawn_north_yaw(text: &str) -> Option<f32> {
         .and_then(|e| e.north_yaw)
 }
 
-fn parse_script_model_placements(text: &str) -> Vec<ScriptModelPlacement> {
+pub fn parse_script_model_placements(text: &str) -> Vec<ScriptModelPlacement> {
     let entities = parse_entities(text).collect::<Vec<_>>();
     let mut out = Vec::new();
     for (source_ordinal, entity) in entities.iter().enumerate() {

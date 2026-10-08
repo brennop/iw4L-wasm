@@ -42,7 +42,7 @@ pub(crate) fn update(
     if ps.f_weapon_pos_frac != 1.0
         || !weapons
             .as_ref()
-            .and_then(|w| w.0.facts_of(weapon))
+            .and_then(|w| w.0.hud_facts_of(weapon))
             .is_some_and(|f| f.can_hold_breath)
     {
         return;

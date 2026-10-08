@@ -43,3 +43,16 @@ pub fn directional_colors(coefficients: &[[f32; 3]; 9]) -> [[f32; 3]; 56] {
     }
     colors
 }
+
+pub fn lighting_sh(coefficients: &[[f32; 3]; 9]) -> [[f32; 4]; 3] {
+    let luminance = |[r, g, b]: [f32; 3]| (r + b) * 0.25 + g * 0.5;
+    let ambient = luminance(coefficients[0]) + f32::from_bits(0x38d1b717);
+    let zonal = luminance(coefficients[7]);
+    let [r, g, b] = coefficients[0].map(|c| c / ambient);
+    let l = |i: usize| luminance(coefficients[i]);
+    [
+        [r, g, b, zonal * 3.0],
+        [l(1), l(2), l(3), ambient - zonal],
+        [l(4), l(5), l(6), l(8)],
+    ]
+}

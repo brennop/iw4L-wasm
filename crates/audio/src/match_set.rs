@@ -287,7 +287,7 @@ fn queue_match_clips(
     for weapon in 1..=weapons.0.len() as u32 {
         if weapons
             .0
-            .facts_of(weapon)
+            .hud_facts_of(weapon)
             .is_some_and(|facts| facts.can_hold_breath)
             && let Some(policy) = weapons.0.semantic_policy_of(weapon)
             && breath_policies.insert((policy.cue_namespace.namespace(), policy.breath_cues))

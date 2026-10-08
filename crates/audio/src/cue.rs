@@ -45,7 +45,7 @@ pub(crate) struct ResolvedCue {
 
 #[derive(Clone)]
 pub(crate) struct CueExecutionPolicy {
-    pub looping: bool,
+    pub looping: asset_audio::LoopingPolicy,
     pub composition: asset_audio::CueCompositionPolicy,
     pub stereo_speaker_gains: Option<[[f32; 2]; 2]>,
     pub loaded_binding_origin: asset_audio::LoadedBindingOrigin,
@@ -80,10 +80,11 @@ impl CueExecutionPolicy {
                 asset_audio::SpatialPolicyFailure::MissingFalloffCurve => {
                     StartFailure::NoFalloffCurve
                 }
+                asset_audio::SpatialPolicyFailure::InvalidFalloffCurve => StartFailure::FalloffEval,
             }),
         });
         Some(Self {
-            looping: policy.authored_looping.unwrap_or(false),
+            looping: policy.looping(),
             composition: policy.composition.clone(),
             stereo_speaker_gains: policy.stereo_speaker_gains,
             loaded_binding_origin: policy.loaded_binding_origin,
@@ -146,12 +147,19 @@ impl CueHandle {
         let mut decision = self.0.completion()?;
         if let Some(Ok(cue)) = self.result() {
             decision.detail = Some(self.0.playback.get().map_or_else(
-                || format!("bank_revision={}", cue.bank.revision()),
+                || {
+                    format!(
+                        "bank_revision={} looping_policy={:?}",
+                        cue.bank.revision(),
+                        cue.policy.looping
+                    )
+                },
                 |instance| {
                     format!(
-                        "instance={} bank_revision={}",
+                        "instance={} bank_revision={} looping_policy={:?}",
                         instance.id,
-                        cue.bank.revision()
+                        cue.bank.revision(),
+                        cue.policy.looping
                     )
                 },
             ));

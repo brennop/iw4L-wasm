@@ -109,7 +109,7 @@ pub(crate) fn update_reticle(
         hide_all(&mut quads);
         return;
     };
-    let Some(facts) = weapons.0.facts_of(viewmodel_index) else {
+    let Some(facts) = weapons.0.hud_facts_of(viewmodel_index) else {
         gaps.raise(GapCause::ReticleWeaponNotInCatalog { viewmodel_index });
         hide_all(&mut quads);
         return;

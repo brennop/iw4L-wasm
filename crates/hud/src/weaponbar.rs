@@ -553,16 +553,14 @@ fn background_stem(background: &str) -> Option<String> {
     }
 }
 
-const WEAPOVERLAYINTERFACE_JAVELIN: i32 = 1;
-
 fn ads_javelin(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
     let viewmodel = get_viewmodel_weapon_index(ps);
     viewmodel > 0
         && ps.f_weapon_pos_frac == 1.0
         && weapons
             .0
-            .facts_of(viewmodel)
-            .is_some_and(|facts| facts.overlay_interface == WEAPOVERLAYINTERFACE_JAVELIN)
+            .hud_facts_of(viewmodel)
+            .is_some_and(|facts| facts.guided_overlay())
 }
 
 #[derive(Clone, Default)]
@@ -1011,7 +1009,7 @@ fn action_slot_weapon(
     }
     if ps.action_slot_type.get(slot) == Some(&2) {
         let weapons = &weapons?.0;
-        let weapon = if weapons.facts_of(ps.weapon)?.inventory_type == 3 {
+        let weapon = if weapons.hud_facts_of(ps.weapon)?.is_alternate() {
             ps.weapon_primary
         } else {
             weapons.alternate_of(ps.weapon)

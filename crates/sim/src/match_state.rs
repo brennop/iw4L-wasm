@@ -94,7 +94,6 @@ pub struct ClientMatchState {
 
     pub item_use_spawn_ms: i32,
     pub item_use_entity: Option<crate::EntityRef>,
-    /// When the use press on `item_use_entity` began.
     pub item_use_press_ms: i32,
 
     pub(crate) ammo_clip: i32,

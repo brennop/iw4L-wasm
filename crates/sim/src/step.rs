@@ -595,8 +595,6 @@ fn run_players_system(ecs: &mut World) {
     request.fire_results = fire_results;
 }
 
-/// A landing-pain event's damage, dealt by the world as `MOD_FALLING` so the
-/// game scripts see it as IW4's do (Commando's immunity is theirs).
 fn apply_fall_damage(world: &mut FrameWorld, tick: Tick, id: ClientId, amount: i32, at: [f32; 3]) {
     let hit = crate::script::ScriptHit {
         piece: None,

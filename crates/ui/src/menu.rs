@@ -29,6 +29,7 @@ pub(crate) struct MenuPlugin;
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MenuMapList>()
+            .init_resource::<crate::CommunityServers>()
             .init_resource::<crate::barracks::BarracksProfile>()
             .init_resource::<crate::ClassLoadoutCatalog>()
             .init_resource::<frame::GameSettings>()
@@ -63,6 +64,18 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
     catalog.load_definitions(include_str!("../menus/settings.json"))?;
     catalog.load_definitions(include_str!("../menus/controller.json"))?;
     catalog.load_definitions(include_str!("../menus/game_folders.json"))?;
+    catalog.load_definitions(include_str!("../menus/community_servers.json"))?;
+    if let Some(item) = catalog
+        .menus
+        .get_mut("options_community_servers")
+        .and_then(|menu| {
+            menu.items
+                .iter_mut()
+                .find(|item| item.name == "community_server")
+        })
+    {
+        item.choices = crate::CommunityServers::default().choices;
+    }
     let slider = catalog
         .get("pc_options_video")
         .and_then(|menu| {
@@ -146,7 +159,16 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
             game_folders.handlers.action = vec![asset_game::MenuEvent::Script(
                 "play mouse_click; close self; open options_game_folders;".into(),
             )];
+            let mut community_servers = game_folders.clone();
             menu.items.push(game_folders);
+            community_servers.name = "community_servers_settings".into();
+            community_servers.text_key = "Community Servers".into();
+            community_servers.rect.y = 148.0;
+            community_servers.vis_exp = "op 38 s:75695f636f6d6d756e6974795f6d656e75 op 1".into();
+            community_servers.handlers.action = vec![asset_game::MenuEvent::Script(
+                "play mouse_click; close self; open options_community_servers;".into(),
+            )];
+            menu.items.push(community_servers);
         }
 
         let removed_rows: Vec<_> = menu
@@ -168,6 +190,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                     && item.name != "multiplayer_settings"
                     && item.name != "controller_settings"
                     && item.name != "game_folders_settings"
+                    && item.name != "community_servers_settings"
             })
         });
         if name == "pc_options_controls" {

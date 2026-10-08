@@ -418,7 +418,7 @@ pub enum KitSource<'a> {
     World(usize),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum PreparedKitSource {
     Body(String),
     World(usize),
@@ -466,124 +466,164 @@ impl PreparedRemoteKit {
 }
 
 #[derive(bevy::prelude::Resource, Default)]
-pub struct PreparedRemoteKits {
+pub(crate) struct PreparedRemoteKits {
     owner: Option<(
-        std::sync::Arc<asset_model::BodyMeshCatalog>,
-        std::sync::Arc<asset_game::WeaponRegistry>,
+        Arc<asset_model::BodyMeshCatalog>,
+        Arc<asset_game::WeaponRegistry>,
         u64,
     )>,
-    kits: std::collections::HashMap<(bool, u32), PreparedRemoteKit>,
+    kits: HashMap<(bool, u32), Option<PreparedRemoteKit>>,
+    built: HashMap<KitModels, Option<Arc<xmodel_runtime::DObj>>>,
 }
 
-type KitModels = Vec<(usize, Option<(usize, String)>)>;
+type KitModels = Vec<(PreparedKitSource, Option<(usize, String)>)>;
 
 impl PreparedRemoteKits {
-    pub fn owned_by(
+    pub(crate) fn clear(&mut self) {
+        self.kits.clear();
+        self.built.clear();
+        self.owner = None;
+    }
+
+    pub(crate) fn owned_by(
         &self,
         bodies: &assets::PreparedBodies,
         weapons: &assets::PreparedWeapons,
         world_weapons: &assets::PreparedWorldWeapons,
     ) -> bool {
         self.owner.as_ref().is_some_and(|(b, w, catalog)| {
-            std::sync::Arc::ptr_eq(b, &bodies.0)
-                && std::sync::Arc::ptr_eq(w, &weapons.0)
+            Arc::ptr_eq(b, &bodies.0)
+                && w.revision() == weapons.0.revision()
                 && *catalog == world_weapons.0.identity()
         })
     }
 
-    pub fn get(&self, axis: bool, weapon: u32) -> Option<&PreparedRemoteKit> {
-        self.kits.get(&(axis, weapon))
-    }
-
-    pub fn prepare(
+    pub(crate) fn reset_for(
+        &mut self,
         bodies: &assets::PreparedBodies,
         weapons: &assets::PreparedWeapons,
         world_weapons: &assets::PreparedWorldWeapons,
-    ) -> Self {
-        let mut kits = std::collections::HashMap::new();
-        let mut built: std::collections::HashMap<KitModels, Option<Arc<xmodel_runtime::DObj>>> =
-            std::collections::HashMap::new();
-        for axis in [false, true] {
-            for weapon in 0..=weapons.0.len() as u32 {
-                let Some((models, radius)) = occupy_remote_kit_dobj(
-                    bodies,
-                    Some(weapons),
-                    Some(world_weapons),
-                    axis,
-                    weapon,
-                    true,
-                    None,
-                ) else {
-                    continue;
-                };
-                let sources = models
-                    .iter()
-                    .map(|model| match model.source {
+    ) {
+        if !self.owned_by(bodies, weapons, world_weapons) {
+            self.clear();
+            self.owner = Some((
+                Arc::clone(&bodies.0),
+                Arc::clone(&weapons.0),
+                world_weapons.0.identity(),
+            ));
+        }
+    }
+
+    pub(crate) fn get(&self, axis: bool, weapon: u32) -> Option<&PreparedRemoteKit> {
+        self.kits.get(&(axis, weapon)).and_then(Option::as_ref)
+    }
+
+    pub(crate) fn prepare(
+        &mut self,
+        bodies: &assets::PreparedBodies,
+        weapons: &assets::PreparedWeapons,
+        world_weapons: &assets::PreparedWorldWeapons,
+        axis: bool,
+        weapon: u32,
+    ) {
+        self.reset_for(bodies, weapons, world_weapons);
+        if self.kits.contains_key(&(axis, weapon)) {
+            return;
+        }
+        let kit = if weapon == 0 || weapons.0.configuration_admission(weapon).is_ok() {
+            self.compile(bodies, weapons, world_weapons, axis, weapon)
+        } else {
+            None
+        };
+        self.kits.insert((axis, weapon), kit);
+    }
+
+    fn compile(
+        &mut self,
+        bodies: &assets::PreparedBodies,
+        weapons: &assets::PreparedWeapons,
+        world_weapons: &assets::PreparedWorldWeapons,
+        axis: bool,
+        weapon: u32,
+    ) -> Option<PreparedRemoteKit> {
+        let (models, radius) = occupy_remote_kit_dobj(
+            bodies,
+            Some(weapons),
+            Some(world_weapons),
+            axis,
+            weapon,
+            true,
+            None,
+        )?;
+        let sources = models
+            .iter()
+            .map(|model| match model.source {
+                KitSource::Body(key) => PreparedKitSource::Body(key.to_owned()),
+                KitSource::World(index) => PreparedKitSource::World(index),
+            })
+            .collect();
+        let dobj = select_remote_models(
+            bodies,
+            Some(weapons),
+            Some(world_weapons),
+            axis,
+            weapon,
+            0,
+            None,
+        )
+        .ok()
+        .and_then(|set| {
+            let key = set
+                .dobj_models
+                .iter()
+                .map(|(model, attach)| {
+                    let source = models
+                        .iter()
+                        .find(|candidate| {
+                            candidate
+                                .skel
+                                .pose
+                                .as_ref()
+                                .is_some_and(|pose| std::ptr::eq(pose, *model))
+                        })?
+                        .source;
+                    let source = match source {
                         KitSource::Body(key) => PreparedKitSource::Body(key.to_owned()),
                         KitSource::World(index) => PreparedKitSource::World(index),
-                    })
-                    .collect();
-                let dobj = select_remote_models(
-                    bodies,
-                    Some(weapons),
-                    Some(world_weapons),
-                    axis,
-                    weapon,
-                    0,
-                    None,
-                )
-                .ok()
-                .and_then(|set| {
-                    let key = set
-                        .dobj_models
-                        .iter()
-                        .map(|(model, attach)| {
-                            (
-                                std::ptr::from_ref(*model) as usize,
-                                attach.as_ref().map(|a| (a.parent_model, a.tag.clone())),
-                            )
-                        })
-                        .collect();
-                    built
-                        .entry(key)
-                        .or_insert_with(|| {
-                            xmodel_runtime::DObj::build(&set.dobj_models)
-                                .ok()
-                                .map(std::sync::Arc::new)
-                        })
-                        .clone()
-                });
-                kits.insert(
-                    (axis, weapon),
-                    PreparedRemoteKit {
-                        sources,
-                        radius,
-                        hide_part_bits: kit_hide_part_bits(&models),
-                        bolt_bones: [
-                            "tag_flash",
-                            "tag_brass",
-                            "tag_knife_fx",
-                            fx_iw4::FX_LASER_TAG,
-                        ]
-                        .map(|tag| {
-                            dobj.as_ref()
-                                .and_then(|dobj| dobj.find(tag))
-                                .and_then(|bone| u16::try_from(bone).ok())
-                        }),
-                        head_bone: dobj.as_ref().and_then(|dobj| dobj.find("j_head")),
-                        dobj,
-                    },
-                );
-            }
-        }
-        Self {
-            owner: Some((
-                std::sync::Arc::clone(&bodies.0),
-                std::sync::Arc::clone(&weapons.0),
-                world_weapons.0.identity(),
-            )),
-            kits,
-        }
+                    };
+                    Some((
+                        source,
+                        attach.as_ref().map(|a| (a.parent_model, a.tag.clone())),
+                    ))
+                })
+                .collect::<Option<KitModels>>()?;
+            self.built
+                .entry(key)
+                .or_insert_with(|| {
+                    xmodel_runtime::DObj::build(&set.dobj_models)
+                        .ok()
+                        .map(std::sync::Arc::new)
+                })
+                .clone()
+        });
+        Some(PreparedRemoteKit {
+            sources,
+            radius,
+            hide_part_bits: kit_hide_part_bits(&models),
+            bolt_bones: [
+                "tag_flash",
+                "tag_brass",
+                "tag_knife_fx",
+                fx_iw4::FX_LASER_TAG,
+            ]
+            .map(|tag| {
+                dobj.as_ref()
+                    .and_then(|dobj| dobj.find(tag))
+                    .and_then(|bone| u16::try_from(bone).ok())
+            }),
+            head_bone: dobj.as_ref().and_then(|dobj| dobj.find("j_head")),
+            dobj,
+        })
     }
 }
 
@@ -643,8 +683,8 @@ pub fn occupy_remote_kit_dobj<'a>(
     }
     if weapon != 0
         && !weapons
-            .and_then(|w| w.0.facts_of(weapon))
-            .is_some_and(|f| f.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+            .and_then(|w| w.0.world_facts_of(weapon))
+            .is_some_and(|f| f.is_shield())
     {
         if let (Some(registry), Some(catalog)) = (weapons, world_weapons) {
             let gun_index = registry
@@ -878,8 +918,8 @@ pub fn select_remote_models<'a>(
     let mut world_gun_gap = None;
     let mut attachments = Vec::new();
     let held = if weapons
-        .and_then(|w| w.0.facts_of(weapon))
-        .is_some_and(|f| f.weap_type == weapon_iw4::WEAPTYPE_SHIELD)
+        .and_then(|w| w.0.world_facts_of(weapon))
+        .is_some_and(|f| f.is_shield())
     {
         0
     } else {

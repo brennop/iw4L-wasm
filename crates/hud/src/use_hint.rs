@@ -108,13 +108,13 @@ pub(crate) fn update(
                 w > 0
                     && weapons
                         .0
-                        .facts_of(w as u32)
-                        .is_some_and(|f| f.inventory_type == 0)
+                        .hud_facts_of(w as u32)
+                        .is_some_and(|f| f.is_primary())
             })
             .count();
         let offhand = weapons
             .0
-            .facts_of(weapon)
+            .hud_facts_of(weapon)
             .is_some_and(|f| f.offhand_class != 0);
         let key = if offhand || primary_count < 2 {
             "PLATFORM_PICKUPNEWWEAPON"

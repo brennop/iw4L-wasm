@@ -1,3 +1,15 @@
+mod combat;
+pub use combat::WeaponCombatRefusal;
+pub(crate) mod configuration;
+mod equipment;
+mod fpv;
+mod iw5_configuration;
+mod presentation;
+pub use fpv::WeaponFpvFacts;
+pub use presentation::{
+    ProjectileCameraPolicy, WeaponEventFacts, WeaponHudFacts, WeaponWorldFacts,
+};
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,7 +32,7 @@ use weapon_iw4::{WEAPON_ANIM_SLOTS, weap_anim_extra};
 use weapon_iw4::{WeaponIdleInputs, WeaponMovementOfsInputs};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct WeaponBodyFacts {
+pub(crate) struct WeaponBodyFacts {
     pub body_resolved: bool,
 
     pub fire_time_ms: i32,
@@ -471,7 +483,7 @@ impl WeaponCamoModels {
 }
 
 #[derive(Clone, Debug)]
-pub struct CatalogWeapon {
+struct CatalogWeapon {
     pub namespace: crate::AssetNamespace,
     pub name: String,
     pub alternate_weapon: Option<String>,
@@ -492,10 +504,6 @@ pub struct CatalogWeapon {
     pub reticle_side_slot: Option<Ptr>,
 
     pub overlay_material_slot: Option<Ptr>,
-
-    pub scope_name: Option<String>,
-
-    pub scope_rows: [Iw5ScopeRow; 6],
 
     pub iw5_attachment_slots: [Option<String>; fastfile_iw5::size::WEAPON_ATTACHMENT_SLOT_COUNT],
     pub attached_models: [Vec<String>; 2],
@@ -570,19 +578,11 @@ pub struct CatalogWeapon {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Iw5ScopeRow {
-    pub scope: Option<String>,
+struct Iw5ScopeRow {
     pub display_name: Option<String>,
-    pub attachment_type: i32,
     pub weapon_type: i32,
     pub weapon_class: i32,
-    pub load_index: i32,
     pub overlay: Option<String>,
-    pub overlay_lowres: Option<String>,
-    pub overlay_emp: Option<String>,
-    pub overlay_emp_lowres: Option<String>,
-    pub view_model: Option<String>,
-    pub world_model: Option<String>,
     pub view_models: [Option<String>; fastfile_iw5::size::ATTACH_MODEL_COUNT],
     pub world_models: [Option<String>; fastfile_iw5::size::ATTACH_MODEL_COUNT],
     pub reticle_models: [Option<String>; fastfile_iw5::size::ATTACH_RETICLE_COUNT],
@@ -590,15 +590,11 @@ pub struct Iw5ScopeRow {
     pub thermal: bool,
     pub width: f32,
     pub height: f32,
-    pub ads_zoom_fov: f32,
-    pub ads_zoom_in_frac: f32,
-    pub ads_zoom_out_frac: f32,
     pub sight: Option<fastfile_iw5::AttachmentSight>,
     pub ammo_general: Option<fastfile_iw5::AttachmentAmmoGeneral>,
     pub reload: Option<fastfile_iw5::AttachmentReload>,
     pub add_ons: Option<fastfile_iw5::AttachmentAddOns>,
     pub general: Option<fastfile_iw5::AttachmentGeneral>,
-    pub aim_assist: Option<fastfile_iw5::AttachmentAimAssist>,
     pub ammunition: Option<fastfile_iw5::AttachmentAmmunition>,
     pub damage: Option<fastfile_iw5::AttachmentDamage>,
     pub projectile: Option<fastfile_iw5::AttachmentProjectile>,
@@ -617,22 +613,17 @@ pub struct Iw5ScopeRow {
     pub gun_kick: Option<fastfile_iw5::AttachmentGunKick>,
     pub view_kick: Option<[f32; 10]>,
     pub scales: fastfile_iw5::AttachmentScales,
-    pub hide_iron_sights: bool,
     pub share_ammo_with_alt: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Iw5AttachmentSelection {
+pub(crate) struct Iw5AttachmentSelection {
     pub scope: u8,
     pub underbarrel: u8,
     pub others: u8,
 }
 
 impl Iw5AttachmentSelection {
-    pub fn fields(self) -> u16 {
-        u16::from(self.scope) | (u16::from(self.underbarrel) << 3) | (u16::from(self.others) << 5)
-    }
-
     fn override_candidates(self) -> [u16; 3] {
         let mut candidates = [0; 3];
         let mut count = 0;
@@ -832,7 +823,7 @@ pub struct WeaponSoundAliases {
 
     pub fire_last_player: Option<String>,
 
-    pub leftover_sound_overrides: Vec<LeftoverSoundOverride>,
+    leftover_sound_overrides: Vec<LeftoverSoundOverride>,
 
     pub fire_ptr_kind: Option<&'static str>,
     pub fire_player_ptr_kind: Option<&'static str>,
@@ -984,7 +975,7 @@ impl WeaponSoundAliases {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LeftoverAnimOverride {
+struct LeftoverAnimOverride {
     pub attachment1: u16,
     pub attachment2: u16,
     pub anim_tree_type: u32,
@@ -995,7 +986,7 @@ pub struct LeftoverAnimOverride {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LeftoverSoundOverride {
+struct LeftoverSoundOverride {
     pub attachment1: u16,
     pub attachment2: u16,
     pub sound_type: u32,
@@ -1004,7 +995,7 @@ pub struct LeftoverSoundOverride {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Iw5FxOverride {
+struct Iw5FxOverride {
     pub attachment1: u16,
     pub attachment2: u16,
     pub fx_type: u32,
@@ -1013,7 +1004,7 @@ pub struct Iw5FxOverride {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Iw5NotetrackOverride {
+struct Iw5NotetrackOverride {
     pub attachment: u16,
     pub sound_map: Vec<(String, String)>,
 }
@@ -1207,31 +1198,15 @@ impl WeaponCatalog {
         };
         let projectile_sound =
             |x86, x64| leftover_iw5_snd_alias(stream, facts.projectile?.body, x86, x64);
-        let ads_settings = facts.ads_settings;
         self.iw5_attachments.insert(
-            name.clone(),
+            name,
             Iw5ScopeRow {
-                scope: Some(name),
                 display_name: facts
                     .display_name
                     .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
-                attachment_type: facts.attachment_type,
                 weapon_type: facts.weapon_type,
                 weapon_class: facts.weapon_class,
-                load_index: facts.load_index,
                 overlay: geometry.overlay_names[0].and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
-                overlay_lowres: geometry.overlay_names[1]
-                    .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
-                overlay_emp: geometry.overlay_names[2]
-                    .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
-                overlay_emp_lowres: geometry.overlay_names[3]
-                    .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
-                view_model: geometry
-                    .view_model_name
-                    .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
-                world_model: geometry
-                    .world_model_name
-                    .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
                 view_models: geometry
                     .view_model_names
                     .map(|ptr| ptr.and_then(|p| leftover_cstr_iw5(stream, p))),
@@ -1245,9 +1220,6 @@ impl WeaponCatalog {
                 thermal: geometry.thermal,
                 width: geometry.overlay_width,
                 height: geometry.overlay_height,
-                ads_zoom_fov: ads_settings.map_or(0.0, |ads| ads.ads_zoom_fov),
-                ads_zoom_in_frac: ads_settings.map_or(0.0, |ads| ads.ads_zoom_in_frac),
-                ads_zoom_out_frac: ads_settings.map_or(0.0, |ads| ads.ads_zoom_out_frac),
                 sight: facts.sight,
                 ammo_general: facts.ammo_general,
                 reload: facts.reload,
@@ -1266,7 +1238,6 @@ impl WeaponCatalog {
                         ..Default::default()
                     }
                 }),
-                aim_assist: facts.aim_assist,
                 ammunition: facts.ammunition,
                 damage: facts.damage,
                 projectile: facts.projectile,
@@ -1285,13 +1256,12 @@ impl WeaponCatalog {
                 }),
                 location_damage: facts.location_damage,
                 idle_settings: facts.idle_settings,
-                ads_settings,
+                ads_settings: facts.ads_settings,
                 ads_settings_main: facts.ads_settings_main,
                 hip_spread: facts.hip_spread,
                 gun_kick: facts.gun_kick,
                 view_kick: facts.view_kick,
                 scales: facts.scales,
-                hide_iron_sights: facts.hide_iron_sights,
                 share_ammo_with_alt: facts.share_ammo_with_alt,
                 ..Default::default()
             },
@@ -1413,8 +1383,6 @@ impl WeaponCatalog {
             reticle_center_slot: geometry.reticle_center_material_slot,
             reticle_side_slot: geometry.reticle_side_material_slot,
             overlay_material_slot: geometry.overlay_material_slot,
-            scope_name: None,
-            scope_rows: Default::default(),
             iw5_attachment_slots: std::array::from_fn(|_| None),
             attached_models: Default::default(),
             t6_clip_models: Default::default(),
@@ -2135,13 +2103,6 @@ impl WeaponCatalog {
         let overlay_material = leftover_iw5_overlay_name(stream, &geometry);
         let overlay_image = None;
         let overlay_material_slot = leftover_iw5_weapdef_overlay_slot(stream, geometry.weap_def);
-        let scope_name = None;
-        let scope_rows = std::array::from_fn(|index| {
-            geometry.attachments[index]
-                .and_then(|ptr| leftover_cstr_iw5(stream, ptr))
-                .and_then(|name| self.iw5_attachments.get(&name).cloned())
-                .unwrap_or_default()
-        });
         let iw5_attachment_slots = geometry
             .attachments
             .map(|name| name.and_then(|ptr| leftover_cstr_iw5(stream, ptr)));
@@ -2184,8 +2145,6 @@ impl WeaponCatalog {
             overlay_material,
             overlay_image,
             overlay_material_slot,
-            scope_name,
-            scope_rows,
             iw5_attachment_slots,
             attached_models: Default::default(),
             t6_clip_models: Default::default(),
@@ -2343,8 +2302,6 @@ impl WeaponCatalog {
             overlay_material: leftover_t5_overlay_name(stream, &geometry),
             overlay_image: None,
             overlay_material_slot: leftover_t5_overlay_slot(stream, &geometry),
-            scope_name: None,
-            scope_rows: Default::default(),
             iw5_attachment_slots: std::array::from_fn(|_| None),
             attached_models: Default::default(),
             t6_clip_models: Default::default(),
@@ -2490,8 +2447,6 @@ impl WeaponCatalog {
                 .variant_asset_name(v::OVERLAY_MATERIAL)
                 .map(str::to_owned),
             overlay_material_slot: None,
-            scope_name: None,
-            scope_rows: Default::default(),
             iw5_attachment_slots: std::array::from_fn(|_| None),
             attached_models: [true, false].map(|view| t6_attached_models(weapon, view)),
             t6_clip_models: [true, false].map(|view| {
@@ -2566,10 +2521,6 @@ impl WeaponCatalog {
             combat_slots: CombatFxSlots::default(),
             facts: capture_t6_body_facts(weapon),
         });
-    }
-
-    pub fn push(&mut self, entry: CatalogWeapon) {
-        self.entries.push(entry);
     }
 
     pub fn len(&self) -> usize {
@@ -3709,8 +3660,7 @@ fn capture_t6_sounds(w: fastfile_t6::weapon::WeaponView<'_>) -> WeaponSoundAlias
 const T6_CLIP_SLOT: u32 = 6;
 
 #[derive(Clone, Debug)]
-pub struct T6Attachment {
-    pub name: String,
+struct T6Attachment {
     pub kind: u32,
     pub mask: u32,
     pub alt_weapon: Option<String>,
@@ -3726,7 +3676,7 @@ pub struct T6Attachment {
 }
 
 #[derive(Clone, Debug)]
-pub struct T6AttachmentStats {
+struct T6AttachmentStats {
     pub kind: u32,
     pub clip_size_scale: f32,
     pub fire_time_scale: f32,
@@ -3880,7 +3830,7 @@ fn capture_t6_attachment(
     unique: fastfile_t6::weapon::AttachmentUniqueView<'_>,
 ) -> Option<T6Attachment> {
     use fastfile_t6::weapon::unique as u;
-    let name = unique.name()?.to_owned();
+    unique.name()?;
     Some(T6Attachment {
         kind: unique.attachment_type(),
         mask: unique.combined_mask(),
@@ -3905,7 +3855,6 @@ fn capture_t6_attachment(
         fire_sound_player: unique.sound(u::FIRE_SOUND_PLAYER).map(str::to_owned),
         disable_base_attachment: unique.flag(u::DISABLE_BASE_ATTACHMENT),
         disable_base_clip: unique.flag(u::DISABLE_BASE_CLIP),
-        name,
     })
 }
 
@@ -5781,6 +5730,13 @@ struct WeaponRow {
 
     facts: WeaponBodyFacts,
     semantics: Option<crate::WeaponSemanticPolicy>,
+    combat: Option<combat::WeaponCombatProjection>,
+    fpv: Option<WeaponFpvFacts>,
+    hud: Option<WeaponHudFacts>,
+    events: Option<WeaponEventFacts>,
+    world: Option<WeaponWorldFacts>,
+    equipment: Option<weapon_iw4::EquipmentRuntimeFacts>,
+    penetration: Option<weapon_iw4::BulletPenFacts>,
 
     gun_xmodel: Option<String>,
 
@@ -5911,6 +5867,13 @@ impl Default for WeaponRow {
             namespace: crate::AssetNamespace::Iw4,
             facts: WeaponBodyFacts::default(),
             semantics: None,
+            combat: None,
+            fpv: None,
+            hud: None,
+            events: None,
+            world: None,
+            equipment: None,
+            penetration: None,
             gun_xmodel: None,
             hand_xmodel: None,
             dual_wield_weapon: None,
@@ -6008,6 +5971,7 @@ pub struct WeaponRegistry {
     item_groups: HashMap<(crate::AssetNamespace, String), String>,
 
     families: crate::WeaponFamilies,
+    completion_names: Vec<String>,
 
     alternate_fpv: HashMap<(u32, u32), [Option<Result<crate::FpvSideAssemblies, String>>; 2]>,
     fpv_clip_tracks: Arc<crate::FpvClipTracks>,
@@ -6213,6 +6177,7 @@ impl std::ops::Deref for WeaponBuild {
 impl WeaponBuild {
     pub fn publish(self) -> WeaponRegistry {
         let mut registry = self.registry;
+        registry.revision = mint_weapon_revision();
         registry.families = crate::WeaponFamilies::build(&self.family_tables, &registry);
         let t5_knife = registry
             .rows
@@ -6240,6 +6205,24 @@ impl WeaponBuild {
             row.facts.thermal_scope = policy.thermal_scope.enabled();
             row.semantics = Some(policy);
         }
+        for id in 0..registry.rows.len() as u32 {
+            let projection = combat::WeaponCombatProjection::prepare(&registry, id);
+            let equipment = equipment::equipment(&registry, id);
+            let penetration = equipment::penetration(&registry, id);
+            let row = &mut registry.rows[id as usize];
+            row.combat = projection;
+            row.equipment = equipment;
+            row.penetration = penetration;
+            row.hud = Some(WeaponHudFacts::prepare(row.facts));
+            row.events = Some(WeaponEventFacts::prepare(row.facts));
+            row.world = Some(WeaponWorldFacts::prepare(row.facts));
+            row.fpv = Some(WeaponFpvFacts::prepare(
+                row.facts,
+                row.sz_xanim_right_edges[weap_anim::IDLE].is_bound(),
+                row.namespace,
+            ));
+        }
+        registry.completion_names = configuration::compile_completion_names(&registry);
         registry
     }
 
@@ -6267,7 +6250,7 @@ impl WeaponBuild {
                 continue;
             };
             let attachments = families.normalize(crate::AssetNamespace::T6, &selection.attachments);
-            let name = families.configuration_name(family, &attachments);
+            let name = configuration::authored_name(&family.key, &attachments);
             if self
                 .registry
                 .by_namespaced
@@ -7746,6 +7729,13 @@ impl WeaponBuild {
                 namespace: crate::AssetNamespace::Iw4,
                 facts: entry.facts,
                 semantics: None,
+                combat: None,
+                fpv: None,
+                hud: None,
+                events: None,
+                world: None,
+                equipment: None,
+                penetration: None,
                 gun_xmodel: entry.gun_xmodel,
                 hand_xmodel: entry.hand_xmodel,
                 dual_wield_weapon: entry.dual_wield_weapon,
@@ -7833,6 +7823,7 @@ impl WeaponBuild {
             by_namespaced: HashMap::new(),
             item_groups: HashMap::new(),
             families: crate::WeaponFamilies::default(),
+            completion_names: Vec::new(),
             alternate_fpv: HashMap::new(),
             fpv_clip_tracks: Arc::default(),
             vehicle_turrets: HashMap::new(),
@@ -7873,434 +7864,7 @@ impl WeaponRegistry {
         self.world_catalog_identity
     }
 
-    pub fn iw5_attachment_slots_of(
-        &self,
-        id: u32,
-    ) -> Option<&[Option<String>; fastfile_iw5::size::WEAPON_ATTACHMENT_SLOT_COUNT]> {
-        let row = self.rows.get(id as usize)?;
-        (row.namespace == crate::AssetNamespace::Iw5).then_some(&row.iw5_attachment_slots)
-    }
-
-    pub fn iw5_attachment_asset(&self, native_name: &str) -> Option<&Iw5ScopeRow> {
-        self.iw5_attachments.get(native_name)
-    }
-
-    pub fn iw5_reload_overrides_of(&self, id: u32) -> Option<&[fastfile_iw5::ReloadOverride]> {
-        let row = self.rows.get(id as usize)?;
-        (row.namespace == crate::AssetNamespace::Iw5).then_some(row.iw5_reload_overrides.as_slice())
-    }
-
-    pub fn iw5_anim_overrides_of(&self, id: u32) -> Option<&[LeftoverAnimOverride]> {
-        let row = self.rows.get(id as usize)?;
-        (row.namespace == crate::AssetNamespace::Iw5).then_some(row.iw5_anim_overrides.as_slice())
-    }
-
-    pub fn iw5_fx_overrides_of(&self, id: u32) -> Option<&[Iw5FxOverride]> {
-        let row = self.rows.get(id as usize)?;
-        (row.namespace == crate::AssetNamespace::Iw5).then_some(row.iw5_fx_overrides.as_slice())
-    }
-
-    pub fn iw5_notetrack_overrides_of(&self, id: u32) -> Option<&[Iw5NotetrackOverride]> {
-        let row = self.rows.get(id as usize)?;
-        (row.namespace == crate::AssetNamespace::Iw5)
-            .then_some(row.iw5_notetrack_overrides.as_slice())
-    }
-
-    pub fn select_iw5_anim_override(
-        &self,
-        id: u32,
-        selection: Iw5AttachmentSelection,
-        anim_tree_type: u32,
-    ) -> Option<&LeftoverAnimOverride> {
-        iw5_best_pair_override(
-            self.iw5_anim_overrides_of(id)?,
-            selection,
-            anim_tree_type,
-            |row| (row.attachment1, row.attachment2, row.anim_tree_type),
-        )
-    }
-
-    pub fn select_iw5_sound_override(
-        &self,
-        id: u32,
-        selection: Iw5AttachmentSelection,
-        sound_type: u32,
-    ) -> Option<&LeftoverSoundOverride> {
-        let row = self.rows.get(id as usize)?;
-        if row.namespace != crate::AssetNamespace::Iw5 {
-            return None;
-        }
-        iw5_best_pair_override(
-            &row.sounds.leftover_sound_overrides,
-            selection,
-            sound_type,
-            |row| (row.attachment1, row.attachment2, row.sound_type),
-        )
-    }
-
-    pub fn select_iw5_fx_override(
-        &self,
-        id: u32,
-        selection: Iw5AttachmentSelection,
-        fx_type: u32,
-    ) -> Option<&Iw5FxOverride> {
-        iw5_best_pair_override(self.iw5_fx_overrides_of(id)?, selection, fx_type, |row| {
-            (row.attachment1, row.attachment2, row.fx_type)
-        })
-    }
-
-    pub fn select_iw5_reload_override(
-        &self,
-        id: u32,
-        selection: Iw5AttachmentSelection,
-    ) -> Option<&fastfile_iw5::ReloadOverride> {
-        self.iw5_reload_overrides_of(id)?
-            .iter()
-            .find(|row| row.attachment != 0 && selection.contains_condition(row.attachment))
-    }
-
-    pub fn select_iw5_notetrack_override(
-        &self,
-        id: u32,
-        selection: Iw5AttachmentSelection,
-    ) -> Option<&Iw5NotetrackOverride> {
-        self.iw5_notetrack_overrides_of(id)?
-            .iter()
-            .find(|row| row.attachment != 0 && selection.contains_condition(row.attachment))
-    }
-
-    pub fn resolve_iw5_attachment_slots(
-        &self,
-        base_id: u32,
-        names: &[String],
-    ) -> Result<Iw5AttachmentSelection, crate::ConfigurationRefusal> {
-        let slots = self.iw5_attachment_slots_of(base_id).ok_or_else(|| {
-            crate::ConfigurationRefusal::UnknownFamily(self.name_of(base_id).to_owned())
-        })?;
-        let mut selected = Iw5AttachmentSelection::default();
-        for name in names {
-            let mut matches = slots.iter().enumerate().filter(|(_, slot)| {
-                slot.as_deref()
-                    .is_some_and(|native| native.eq_ignore_ascii_case(name))
-            });
-            let direct = matches.next();
-            if matches.next().is_some() {
-                return Err(crate::ConfigurationRefusal::Unsupported(format!(
-                    "`{name}` has more than one native IW5 slot in `{}`",
-                    self.name_of(base_id)
-                )));
-            }
-            let index = if let Some((index, _)) = direct {
-                index
-            } else {
-                let display_key = format!("WEAPON_{}_ATTACHMENT", name.to_ascii_uppercase());
-                let mut by_display = slots.iter().enumerate().filter(|(_, slot)| {
-                    slot.as_deref()
-                        .and_then(|native| self.iw5_attachments.get(native))
-                        .and_then(|asset| asset.display_name.as_deref())
-                        .is_some_and(|key| key.eq_ignore_ascii_case(&display_key))
-                });
-                let Some((index, _)) = by_display.next() else {
-                    return Err(crate::ConfigurationRefusal::NotOffered(name.clone()));
-                };
-                if by_display.next().is_some() {
-                    return Err(crate::ConfigurationRefusal::Unsupported(format!(
-                        "`{name}` has an ambiguous IW5 display key in `{}`",
-                        self.name_of(base_id)
-                    )));
-                }
-                index
-            };
-            let native = slots[index].as_deref().expect("matched native slot");
-            if !self.iw5_attachments.contains_key(native) {
-                return Err(crate::ConfigurationRefusal::MissingContent(
-                    native.to_owned(),
-                ));
-            }
-            match index {
-                0..=5 => {
-                    if selected.scope != 0 && selected.scope != (index + 1) as u8 {
-                        return Err(crate::ConfigurationRefusal::Incompatible {
-                            a: slots[selected.scope as usize - 1]
-                                .clone()
-                                .unwrap_or_default(),
-                            b: name.clone(),
-                        });
-                    }
-                    selected.scope = (index + 1) as u8;
-                }
-                6..=8 => {
-                    if selected.underbarrel != 0 && selected.underbarrel != (index - 5) as u8 {
-                        return Err(crate::ConfigurationRefusal::Incompatible {
-                            a: slots[selected.underbarrel as usize + 5]
-                                .clone()
-                                .unwrap_or_default(),
-                            b: name.clone(),
-                        });
-                    }
-                    selected.underbarrel = (index - 5) as u8;
-                }
-                9..=12 => selected.others |= 1 << (index - 9),
-                _ => unreachable!(),
-            }
-        }
-        Ok(selected)
-    }
-
-    pub fn iw5_primary_attachment_assets(
-        &self,
-        base_id: u32,
-        selection: Iw5AttachmentSelection,
-    ) -> Option<Vec<&Iw5ScopeRow>> {
-        let slots = self.iw5_attachment_slots_of(base_id)?;
-        let slot_asset = |index: usize| {
-            slots
-                .get(index)?
-                .as_deref()
-                .and_then(|name| self.iw5_attachment_asset(name))
-        };
-        let mut assets = Vec::with_capacity(3);
-        let mut push = |asset| {
-            if assets.len() < 3 {
-                assets.push(asset);
-            } else {
-                assets[2] = asset;
-            }
-        };
-        if selection.scope != 0 {
-            push(slot_asset(usize::from(selection.scope - 1))?);
-        }
-        for bit in 0..4 {
-            if selection.others & (1 << bit) != 0 {
-                push(slot_asset(9 + bit)?);
-            }
-        }
-        if selection.underbarrel != 0 {
-            let asset = slot_asset(usize::from(selection.underbarrel) + 5)?;
-            if asset.weapon_class == 0
-                || asset.ads_settings_main.is_some()
-                || (asset.scales.ads_settings_main != 0.0 && asset.scales.ads_settings_main != 1.0)
-            {
-                push(asset);
-            }
-        }
-        Some(assets)
-    }
-
-    fn compose_iw5_configuration(
-        &self,
-        base_id: u32,
-        native: Iw5AttachmentSelection,
-        alternate: bool,
-    ) -> Option<WeaponRow> {
-        use fastfile_iw5::size as sz;
-        let base = self.rows.get(base_id as usize)?;
-        let slot_asset = |index: usize| {
-            base.iw5_attachment_slots
-                .get(index)?
-                .as_deref()
-                .and_then(|native| self.iw5_attachments.get(native))
-        };
-        let scope = match native.scope {
-            0 => None,
-            index => Some(slot_asset(usize::from(index) - 1)?),
-        };
-        let underbarrel = match native.underbarrel {
-            0 => None,
-            index => Some(slot_asset(usize::from(index) + 5)?),
-        };
-        let others = (0..4)
-            .filter(|bit| native.others & (1 << bit) != 0)
-            .map(|bit| slot_asset(9 + bit))
-            .collect::<Option<Vec<_>>>()?;
-
-        let mut row = base.clone();
-        row.iw5_configuration = Some((base_id, native));
-
-        let first = |models: &[Option<String>]| models.first().cloned().flatten();
-        let mut view = if scope.is_none() {
-            base.attachment_view_models.clone()
-        } else {
-            Vec::new()
-        };
-        let mut world = if scope.is_none() {
-            base.attachment_world_models.clone()
-        } else {
-            Vec::new()
-        };
-        if let Some(scope) = scope {
-            view.extend(first(&scope.view_models));
-            view.extend(first(&scope.reticle_models));
-            world.extend(first(&scope.world_models));
-        }
-        for asset in underbarrel.into_iter().chain(others.iter().copied()) {
-            view.extend(first(&asset.view_models));
-            world.extend(first(&asset.world_models));
-        }
-        row.attachment_view_models = view;
-        row.attachment_world_models = world;
-
-        let primary_assets = self.iw5_primary_attachment_assets(base_id, native)?;
-        let alternate_assets;
-        let assets = if alternate {
-            let underbarrel = underbarrel.filter(|asset| asset.weapon_class != 0)?;
-            row.facts.weap_type = remap_iw5_weap_type(underbarrel.weapon_type);
-            row.facts.weap_class = underbarrel.weapon_class;
-            row.facts.inventory_type = 3;
-            alternate_assets = if underbarrel.share_ammo_with_alt {
-                primary_assets
-            } else {
-                vec![underbarrel]
-            };
-            &alternate_assets
-        } else {
-            &primary_assets
-        };
-        apply_iw5_parameter_blocks(&mut row.facts, assets);
-        if let Some(reticle) = assets.iter().find_map(|asset| asset.reticle.as_ref()) {
-            row.reticle = reticle.clone();
-        }
-        if alternate {
-            if let Some(projectile) = iw5_first_block(assets, |asset| asset.projectile) {
-                row.facts.explosion_radius = projectile.explosion_radius;
-                row.facts.explosion_inner_damage = projectile.explosion_inner_damage;
-                row.facts.explosion_outer_damage = projectile.explosion_outer_damage;
-                row.facts.projectile_speed = projectile.speed;
-                row.facts.projectile_speed_up = projectile.speed_up;
-                row.facts.projectile_activate_dist = projectile.activate_distance;
-                row.facts.projectile_explosion_type = projectile.explosion_type;
-                row.facts.proj_impact_explode = projectile.impact_explode;
-                let asset = assets.iter().find(|asset| asset.projectile.is_some())?;
-                row.projectile_model = asset.projectile_model.clone();
-                row.combat_fx.explosion_hint = asset.projectile_explosion_fx.clone();
-                row.proj_trail = asset.projectile_trail_fx.clone();
-                row.proj_trail_from_slot = row.proj_trail.is_some();
-                row.proj_ignition = asset.projectile_ignition_fx.clone();
-                row.proj_ignition_from_slot = row.proj_ignition.is_some();
-                row.sounds.proj_explosion = asset.projectile_explosion_sound.clone();
-                row.sounds.proj_ignition_sound = asset.projectile_ignition_sound.clone();
-            }
-        }
-
-        if scope.is_some() || alternate {
-            row.overlay_material = None;
-            row.overlay_image = None;
-            row.overlay_material_from_slot = false;
-            row.facts.thermal_scope = false;
-            row.facts.overlay_reticle = 0;
-            row.facts.overlay_interface = 0;
-            row.facts.ads_overlay_width = 0.0;
-            row.facts.ads_overlay_height = 0.0;
-        }
-        if let Some(scope) = assets.iter().find(|asset| asset.overlay.is_some()) {
-            if let Some(overlay) = scope
-                .overlay
-                .as_deref()
-                .filter(|name| !name.is_empty() && overlay_name_is_hud_iris(name))
-            {
-                row.overlay_material = Some(overlay.to_owned());
-                row.overlay_image = None;
-                row.overlay_material_from_slot = true;
-                row.facts.overlay_reticle = scope.overlay_reticle;
-                row.facts.thermal_scope = scope.thermal;
-                row.facts.ads_overlay_width = scope.width;
-                row.facts.ads_overlay_height = scope.height;
-            }
-        }
-
-        let mut anim_types: Vec<u32> = base
-            .iw5_anim_overrides
-            .iter()
-            .map(|row| row.anim_tree_type)
-            .collect();
-        anim_types.sort_unstable();
-        anim_types.dedup();
-        for anim_type in anim_types {
-            let Some(chosen) = self.select_iw5_anim_override(base_id, native, anim_type) else {
-                continue;
-            };
-            let Some(slot) = iw5_anim_tree_type_to_iw4_slot(anim_type) else {
-                continue;
-            };
-            if let Some(anim) = if alternate {
-                chosen.altmode_anim.clone()
-            } else {
-                chosen.override_anim.clone()
-            } {
-                row.sz_xanims[slot] = Some(anim);
-            }
-            let time = if alternate {
-                chosen.alt_time_ms
-            } else {
-                chosen.anim_time_ms
-            };
-            if time > 0 {
-                if let Some(timer) = iw5_anim_timer(&mut row.facts, slot) {
-                    *timer = time;
-                }
-            }
-        }
-
-        for (sound_type, target) in [
-            (sz::SND_OVERRIDE_TYPE_FIRE, &mut row.sounds.fire),
-            (
-                sz::SND_OVERRIDE_TYPE_PLAYER_FIRE,
-                &mut row.sounds.fire_player,
-            ),
-            (
-                sz::SND_OVERRIDE_TYPE_PLAYER_AKIMBO,
-                &mut row.sounds.fire_player_akimbo,
-            ),
-            (
-                sz::SND_OVERRIDE_TYPE_PLAYER_LASTSHOT,
-                &mut row.sounds.fire_last_player,
-            ),
-        ] {
-            if let Some(sound) = self
-                .select_iw5_sound_override(base_id, native, sound_type)
-                .and_then(|chosen| {
-                    if alternate {
-                        chosen.altmode_sound.clone()
-                    } else {
-                        chosen.override_sound.clone()
-                    }
-                })
-            {
-                *target = Some(sound);
-            }
-        }
-
-        for (fx_type, hint) in [
-            (1, &mut row.combat_fx.view_flash_hint),
-            (2, &mut row.combat_fx.world_flash_hint),
-            (3, &mut row.combat_fx.view_shell_eject_hint),
-            (4, &mut row.combat_fx.world_shell_eject_hint),
-        ] {
-            if let Some(fx) = self
-                .select_iw5_fx_override(base_id, native, fx_type)
-                .and_then(|chosen| {
-                    if alternate {
-                        chosen.altmode_fx.clone()
-                    } else {
-                        chosen.override_fx.clone()
-                    }
-                })
-            {
-                *hint = Some(fx);
-            }
-        }
-
-        if let Some(reload) = self.select_iw5_reload_override(base_id, native) {
-            row.facts.reload_add_time_ms = reload.reload_add_time_ms;
-            row.facts.reload_start_add_time_ms = reload.reload_start_add_time_ms;
-        }
-        if let Some(notetracks) = self.select_iw5_notetrack_override(base_id, native) {
-            row.sounds.notetrack_sound_map = notetracks.sound_map.clone();
-        }
-        Some(row)
-    }
-
-    pub fn iw5_configuration_of(&self, id: u32) -> Option<(u32, Iw5AttachmentSelection)> {
+    pub(crate) fn iw5_configuration_of(&self, id: u32) -> Option<(u32, Iw5AttachmentSelection)> {
         self.rows.get(id as usize)?.iw5_configuration
     }
 
@@ -8822,7 +8386,7 @@ impl WeaponRegistry {
             .and_then(|row| row.display_name_key.as_deref())
     }
 
-    pub fn facts_of(&self, index: u32) -> Option<WeaponBodyFacts> {
+    pub(crate) fn facts_of(&self, index: u32) -> Option<WeaponBodyFacts> {
         self.rows.get(index as usize).map(|row| row.facts)
     }
 
@@ -9037,6 +8601,10 @@ impl WeaponRegistry {
         self.rows
             .get(id as usize)
             .map_or(&[], |row| row.prepared_attachments.as_slice())
+    }
+
+    pub fn weapon_completion_names(&self) -> &[String] {
+        &self.completion_names
     }
 
     pub fn configuration_label(&self, id: u32) -> String {
@@ -9747,54 +9315,6 @@ pub fn gsc_weapon_script_name(catalog_bare: &str) -> String {
         catalog_bare.to_owned()
     } else {
         format!("{catalog_bare}_mp")
-    }
-}
-
-impl crate::weapon_families::FamilyContent for WeaponRegistry {
-    fn iw5_bind(
-        &self,
-        base_id: u32,
-        attachments: &[String],
-    ) -> Result<(), crate::ConfigurationRefusal> {
-        let selection = self.resolve_iw5_attachment_slots(base_id, attachments)?;
-        self.iw5_primary_attachment_assets(base_id, selection)
-            .ok_or_else(|| {
-                crate::ConfigurationRefusal::MissingContent(self.name_of(base_id).into())
-            })?;
-        Ok(())
-    }
-
-    fn lookup(&self, namespace: crate::AssetNamespace, name: &str) -> Option<u32> {
-        self.by_namespaced
-            .get(&(namespace, normalize_weapon_name(name)))
-            .copied()
-    }
-
-    fn offhand_class(&self, id: u32) -> i32 {
-        self.facts_of(id).map_or(0, |facts| facts.offhand_class)
-    }
-
-    fn admission(&self, id: u32) -> Result<(), crate::ConfigurationRefusal> {
-        self.configuration_admission(id)
-    }
-
-    fn prepared(&self, selection: &crate::WeaponSelection) -> Option<u32> {
-        self.configurations.get(selection).copied()
-    }
-
-    fn prepared_all(&self) -> Vec<(u32, crate::WeaponSelection)> {
-        self.configurations
-            .iter()
-            .map(|(selection, &id)| (id, selection.clone()))
-            .collect()
-    }
-
-    fn names_in(&self, namespace: crate::AssetNamespace) -> Vec<(u32, String)> {
-        (1..=self.len() as u32)
-            .filter(|&id| self.identity_namespace_of(id) == Some(namespace))
-            .filter(|&id| self.iw5_configuration_of(id).is_none())
-            .map(|id| (id, normalize_weapon_name(self.name_of(id))))
-            .collect()
     }
 }
 

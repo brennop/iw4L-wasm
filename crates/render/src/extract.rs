@@ -329,6 +329,12 @@ pub fn seal_render_frame(
             None => empty_smodel(),
         }
     };
+    let smodel_vertex_lighting = match smodel.as_ref() {
+        Some(plan) if !skip_world_smodel && smodel_vertex_refusal.is_none() => {
+            take_published(plan.vertex_lighting_share.as_ref()).0
+        }
+        _ => Arc::new(Vec::new()),
+    };
     let mut smc_vb_patches = Vec::new();
     let mut smc_ib_patches = Vec::new();
     let mut smc_index_baked = Vec::new();
@@ -557,6 +563,7 @@ pub fn seal_render_frame(
             smodel_vertex_refusal,
             smodel_cached_vertices,
             smodel_surface_verts,
+            smodel_vertex_lighting,
         }),
         smc_index_baked: Arc::new(smc_index_baked),
         smodel_pretess_indices,
@@ -719,6 +726,7 @@ pub fn extract_postfx(
     film: Extract<Res<render_frontend::assemble::drawsurf::FilmVisionView>>,
     glow_dvars: Extract<Res<render_frontend::assemble::drawsurf::dof::GlowDvars>>,
     draw_method: Extract<Res<render_frontend::assemble::drawsurf::ColourDrawMethod>>,
+    scene: Extract<Option<Res<render_frontend::prepare::scene::world::WorldScene>>>,
     mut extracted: ResMut<render_gpu::ExtractedPostFx>,
 ) {
     use render_frontend::assemble::drawsurf::postfx_plan::RuntimePostFxResources;
@@ -769,6 +777,7 @@ pub fn extract_postfx(
         });
     }
     extracted.vision = film.current;
+    extracted.t6_film_grade = scene.as_ref().and_then(|scene| scene.t6_film_grade);
     extracted.frame = render_gpu::DofFrame {
         dof: render_gpu::DepthOfField {
             view_model_start: frame.dof.view_model_start,

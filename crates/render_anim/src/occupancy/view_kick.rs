@@ -1,4 +1,4 @@
-use asset_game::{WeaponBodyFacts, WeaponKickFacts};
+use asset_game::{WeaponFpvFacts, WeaponKickFacts};
 use assets::PreparedWeapons;
 use bevy::prelude::*;
 use frame::{LifeStarted, ViewSubject};
@@ -160,7 +160,7 @@ pub fn tick_session_view_kick(
     let Some(reg) = weapons.as_ref() else {
         return;
     };
-    let Some(facts) = reg.0.facts_of(viewmodel) else {
+    let Some(facts) = reg.0.fpv_facts_of(viewmodel) else {
         return;
     };
     if !facts.body_resolved {
@@ -305,7 +305,7 @@ pub fn sync_camera_from_presented(
             ps.e_flags,
             0.0,
             viewmodel,
-            weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
+            weapons.as_ref().and_then(|w| w.0.fpv_facts_of(viewmodel)),
             false,
             actions.as_deref_mut(),
         )
@@ -336,7 +336,7 @@ pub fn sync_camera_from_presented(
         ps.viewangles,
         clock.time(),
     );
-    let bob_angles = match weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)) {
+    let bob_angles = match weapons.as_ref().and_then(|w| w.0.fpv_facts_of(viewmodel)) {
         Some(facts) if facts.body_resolved => view_angle_bob(ViewAngleBobInputs {
             org,
             e_flags: ps.e_flags,
@@ -428,7 +428,7 @@ pub fn sync_camera_from_presented(
         ps.e_flags,
         ps.f_weapon_pos_frac,
         viewmodel,
-        weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
+        weapons.as_ref().and_then(|w| w.0.fpv_facts_of(viewmodel)),
         kick.b_position_to_ads,
         actions.as_deref_mut(),
     ) {
@@ -444,7 +444,7 @@ fn apply_fpv_lens_fov(
     e_flags: u32,
     f_weapon_pos_frac: f32,
     viewmodel: u32,
-    facts: Option<WeaponBodyFacts>,
+    facts: Option<WeaponFpvFacts>,
     b_position_to_ads: bool,
     actions: Option<&mut ClientActionInput>,
 ) -> Option<f32> {

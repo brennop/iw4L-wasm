@@ -357,27 +357,20 @@ pub const PERK_FASTMANTLE: u32 = 1 << 19;
 
 pub const PERK_SCAVENGER: u32 = 1 << 22;
 
-/// Steady Aim Pro: breath holds `PERK_EXTRA_BREATH_MS` longer.
 pub const PERK_HOLDBREATH: u32 = 1 << 4;
 
-/// `perk_extraBreath`, in milliseconds.
 pub const PERK_EXTRA_BREATH_MS: i32 = 5000;
 
-/// Sleight of Hand Pro: aiming down sights is `PERK_QUICKDRAW_SPEED_SCALE` faster.
 pub const PERK_QUICKDRAW: u32 = 1 << 26;
 
-/// `perk_quickDrawSpeedScale`.
 pub const PERK_QUICKDRAW_SPEED_SCALE: f32 = 1.5;
 
 pub const PERK_COLDBLOODED: u32 = 1 << 27;
 
 pub const PERK_HEARTBREAKER: u32 = 1 << 28;
 
-/// Cold-Blooded Pro (perk 32, so bit 0 of `perks[1]`): enemies aiming at the
-/// player see no name.
 pub const PERK1_SPYGAME: u32 = 1;
 
-/// How long this player can hold their breath before gasping.
 pub fn breath_hold_time_ms(ps: &PlayerState) -> i32 {
     if ps.perks[0] & PERK_HOLDBREATH != 0 {
         BREATH_HOLD_TIME_MS + PERK_EXTRA_BREATH_MS

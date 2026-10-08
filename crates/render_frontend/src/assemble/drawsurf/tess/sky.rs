@@ -39,7 +39,7 @@ pub fn build_sky_model_draw_plan(
     if exact.is_empty() {
         return;
     }
-    let (mut geometry, _, _) = pack_smodel_meshes(std::slice::from_ref(model));
+    let (mut geometry, _, _, _) = pack_smodel_meshes(std::slice::from_ref(model), &[]);
     let mut draws = Vec::new();
     let mut refusals = Vec::new();
     for &(surface, authored) in &geometry.meshes[0].surfaces_by_lod[0] {

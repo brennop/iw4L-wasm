@@ -359,6 +359,14 @@ impl RuntimeTechniqueSet {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaterialDrawRules {
+    pub colour_camera_region: u8,
+    pub smodel_colour_emits: bool,
+    pub unlit_sky: bool,
+    pub postfx_host_supported: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeMaterial {
     pub asset_id: MaterialAssetId,
@@ -372,9 +380,10 @@ pub struct RuntimeMaterial {
     pub local_technique_set: RuntimeTechniqueSetId,
     pub remap: RemapResolution,
     pub state_bits_entry: Option<[u8; TECHNIQUE_SLOT_COUNT]>,
-    pub state_bits_table: Vec<[u32; 2]>,
+    pub pass_states: Vec<crate::CompiledPassState>,
 
     pub camera_region: u8,
+    pub draw_rules: MaterialDrawRules,
 
     pub sort_key: u8,
 

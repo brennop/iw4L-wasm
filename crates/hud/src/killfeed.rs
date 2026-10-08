@@ -133,7 +133,7 @@ fn pick_kill_icon(
         };
     }
     let weapon = payload.event_parm as u32;
-    let (ratio, flip) = match weapons.and_then(|reg| reg.0.facts_of(weapon)) {
+    let (ratio, flip) = match weapons.and_then(|reg| reg.0.hud_facts_of(weapon)) {
         Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
         None => (0, false),
     };

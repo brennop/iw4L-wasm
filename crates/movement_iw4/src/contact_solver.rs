@@ -22,9 +22,8 @@ pub(crate) struct Settings {
     pub(crate) landing_normal_z: f32,
 }
 const BUDGET: usize = 12;
-/// How far a retried move lifts off the planes it presses into. A move
-/// projected flush onto a plane rounds slightly into it at map-scale
-/// coordinates, and the trace stops that at once (IW4 overclips instead).
+// A projected target can round inside a contact plane and stop the trace.
+// Keep the retry just outside that plane.
 const SKIN: f64 = 1. / 32.;
 fn finite(v: Vector) -> bool {
     v.iter().all(|x| x.is_finite())

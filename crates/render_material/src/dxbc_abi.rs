@@ -15,12 +15,19 @@ use crate::stage::RuntimeShaderStage;
 use crate::vertex_decl::RuntimeVertexDecl;
 
 pub const CODE_T6_REFLECTION_SH: [u16; 3] = [0x303, 0x304, 0x305];
+pub const CODE_T6_GRID_SH: [u16; 3] = [0x30c, 0x30d, 0x30e];
+/// x: model-lighting texel scale; y: weight of the reflection-probe alpha
+/// (T6 probes store rgb / alpha, probes from other maps keep no scale there).
+pub const CODE_T6_SAMPLE_DECODE: u16 = 0x30f;
 
-pub fn is_dxbc_program(program: &[u8]) -> bool {
+// D3D11 binds at most 14 constant buffers, so no shader reads buffer 14.
+const SAMPLE_DECODE_ROW: ConstantRow = ConstantRow { buffer: 14, row: 0 };
+
+pub(crate) fn is_dxbc_program(program: &[u8]) -> bool {
     program.starts_with(b"DXBC")
 }
 
-pub fn dxbc_constant_rows(shader: &Shader) -> Result<Vec<ConstantRow>, PassAbiRefusal> {
+pub(crate) fn dxbc_constant_rows(shader: &Shader) -> Result<Vec<ConstantRow>, PassAbiRefusal> {
     Ok(shader
         .constant_rows()
         .map_err(|_| PassAbiRefusal::DxbcProgram)?
@@ -28,7 +35,7 @@ pub fn dxbc_constant_rows(shader: &Shader) -> Result<Vec<ConstantRow>, PassAbiRe
         .collect())
 }
 
-pub fn dxbc_texture_slots(
+pub(crate) fn dxbc_texture_slots(
     vertex: &Shader,
     pixel: &Shader,
 ) -> Result<Vec<TextureSlot>, PassAbiRefusal> {
@@ -60,12 +67,6 @@ fn semantic_of(name: &str, index: u32) -> Option<Semantic> {
     })
 }
 
-const BAKED_LIGHTING: Semantic = Semantic {
-    usage: vd::D3DDECLUSAGE_TEXCOORD,
-    usage_index: 1,
-};
-const UNIT_BAKED_LIGHTING: f32 = 0.176_776_7;
-
 fn vertex_input(attribute: &VertexAttribute, register: u32, vertex_type: u8) -> VertexInput {
     let location = attribute.location;
     let a = format!("attribute_{location}");
@@ -75,9 +76,7 @@ fn vertex_input(attribute: &VertexAttribute, register: u32, vertex_type: u8) -> 
             let unit = format!(
                 "((vec3<f32>({a}.xyz) - vec3<f32>(127.0)) * ((f32({a}.w) + 192.0) / 32385.0))"
             );
-            let expression = if attribute.semantic == BAKED_LIGHTING {
-                format!("vec4<f32>(vec3<f32>({UNIT_BAKED_LIGHTING}), 1.0)")
-            } else if attribute.semantic.usage == vd::D3DDECLUSAGE_TEXCOORD
+            let expression = if attribute.semantic.usage == vd::D3DDECLUSAGE_TEXCOORD
                 && attribute.semantic.usage_index == 0
             {
                 format!("vec4<f32>(unpack2x16float({packed}).yx, 0.0, 1.0)")
@@ -158,7 +157,7 @@ fn constant_bindings(
         .collect()
 }
 
-pub fn build_dxbc_pass_abi(
+pub(crate) fn build_dxbc_pass_abi(
     vertex: &Shader,
     pixel: &Shader,
     decl: &RuntimeVertexDecl,
@@ -188,9 +187,9 @@ pub fn build_dxbc_pass_abi(
     }
 
     let vertex_rows = dxbc_constant_rows(vertex)?;
-    let pixel_rows = dxbc_constant_rows(pixel)?;
+    let mut pixel_rows = dxbc_constant_rows(pixel)?;
     let vertex_constants = constant_bindings(&vertex_rows, RuntimeShaderStage::Vertex, arguments)?;
-    let pixel_constants = constant_bindings(&pixel_rows, RuntimeShaderStage::Pixel, arguments)?;
+    let mut pixel_constants = constant_bindings(&pixel_rows, RuntimeShaderStage::Pixel, arguments)?;
 
     let textures = dxbc_texture_slots(vertex, pixel)?;
     let mut samplers = Vec::with_capacity(textures.len());
@@ -232,6 +231,12 @@ pub fn build_dxbc_pass_abi(
     let model_lighting = SamplerSource::CodeTexture {
         index: u32::from(lighting_iw4::TEXTURE_SRC_CODE_MODEL_LIGHTING),
     };
+    if samplers.iter().any(|binding| {
+        binding.source == model_lighting || binding.source == SamplerSource::SurfaceReflectionProbe
+    }) {
+        pixel_rows.push(SAMPLE_DECODE_ROW);
+        pixel_constants = constant_bindings(&pixel_rows, RuntimeShaderStage::Pixel, arguments)?;
+    }
     let sample_adapters = samplers
         .iter()
         .enumerate()
@@ -240,15 +245,17 @@ pub fn build_dxbc_pass_abi(
                 slot,
                 opaque_alpha: false,
                 square_rgb: false,
-                rgb_scale: core::f32::consts::FRAC_1_SQRT_2 / 2.0,
+                rgb_scale: 1.0,
+                scale_row: Some(SAMPLE_DECODE_ROW),
+                alpha_row: None,
             }),
-            // T6 probes are HDR (rgb / alpha), but the probes bound here come from
-            // IW4/IW5/T5 maps, whose alpha is not a scale: dividing by it blows out.
             SamplerSource::SurfaceReflectionProbe => Some(SampleAdapter {
                 slot,
-                opaque_alpha: true,
+                opaque_alpha: false,
                 square_rgb: false,
                 rgb_scale: 1.0,
+                scale_row: None,
+                alpha_row: Some(SAMPLE_DECODE_ROW),
             }),
             _ => None,
         })

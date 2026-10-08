@@ -3,6 +3,19 @@ use crate::weaponstate::{FireType, WeaponDecodeError, WeaponState};
 
 pub const BURST_COOLDOWN_DEFAULT_MS: i32 = 200;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeaponHostRules {
+    pub burst_cooldown_ms: i32,
+}
+
+impl Default for WeaponHostRules {
+    fn default() -> Self {
+        Self {
+            burst_cooldown_ms: BURST_COOLDOWN_DEFAULT_MS,
+        }
+    }
+}
+
 pub const PERK_FASTRELOAD: u32 = 4;
 
 pub const PERK_WEAP_RELOAD_MULTIPLIER_DEFAULT: f32 = 0.5;

@@ -232,6 +232,7 @@ pub fn xmodel_radius(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel),
         ) => skel.radius.unwrap_or(0.0),
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => 0.0,
@@ -251,6 +252,7 @@ pub fn xmodel_phys_hull(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel),
         ) => hull_from_bounds(skel.bounds).unwrap_or(fallback),
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => fallback,
@@ -279,6 +281,7 @@ fn xmodel_local_bounds(
         Some(
             asset_world::MapXModelSceneAsset::Iw4(skel)
             | asset_world::MapXModelSceneAsset::Iw5(skel)
+            | asset_world::MapXModelSceneAsset::T6(skel)
             | asset_world::MapXModelSceneAsset::T5(skel),
         ) => skel.bounds,
         Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => None,
@@ -504,6 +507,7 @@ fn pose_dyn_ents(
             Some(
                 asset_world::MapXModelSceneAsset::Iw4(skel)
                 | asset_world::MapXModelSceneAsset::Iw5(skel)
+                | asset_world::MapXModelSceneAsset::T6(skel)
                 | asset_world::MapXModelSceneAsset::T5(skel),
             ) => skel.as_ref(),
             Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {

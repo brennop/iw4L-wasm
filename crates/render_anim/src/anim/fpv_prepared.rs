@@ -4,7 +4,7 @@ use std::sync::Arc;
 use asset_anim::XAnimCatalog;
 use asset_core::AssetNamespace;
 use asset_game::{
-    FpvSideAssemblies, WEAPON_ANIM_SLOTS, WeaponAnimations, WeaponBodyFacts, WeaponRegistry,
+    FpvSideAssemblies, WEAPON_ANIM_SLOTS, WeaponAnimations, WeaponFpvFacts, WeaponRegistry,
 };
 use asset_material::TS_COLOR_MAP;
 use asset_model::{FpvHands, FpvMeshCatalog};
@@ -108,7 +108,7 @@ pub struct FpvPreparationCensus {
 pub struct FpvWeaponTable {
     material_catalog: Arc<RuntimeMaterialCatalog>,
     catalog_id: u64,
-    facts: Vec<Option<WeaponBodyFacts>>,
+    facts: Vec<Option<WeaponFpvFacts>>,
     hud_iris: Vec<bool>,
     melee: Vec<u32>,
     guns: Vec<Option<FpvMeshIndex>>,
@@ -130,7 +130,7 @@ impl FpvWeaponTable {
         self.catalog_id
     }
 
-    pub fn facts_of(&self, weapon: u32) -> Option<WeaponBodyFacts> {
+    pub fn facts_of(&self, weapon: u32) -> Option<WeaponFpvFacts> {
         self.facts.get(weapon as usize).copied().flatten()
     }
 
@@ -146,8 +146,18 @@ impl FpvWeaponTable {
         self.guns.get(weapon as usize).copied().flatten()
     }
 
+    pub fn motion_tracker(&self, weapon: u32, parent: u32) -> bool {
+        self.facts_of(weapon).is_some_and(|facts| {
+            facts.motion_tracker
+                || (facts.is_alternate()
+                    && self
+                        .facts_of(parent)
+                        .is_some_and(|parent| parent.motion_tracker))
+        })
+    }
+
     pub fn slot(&self, weapon: u32, parent: u32, axis: bool) -> &FpvWeaponSlot {
-        if parent != 0 && self.facts_of(weapon).is_some_and(|f| f.inventory_type == 3) {
+        if parent != 0 && self.facts_of(weapon).is_some_and(|f| f.is_alternate()) {
             return self
                 .alternate_slots
                 .get(&(weapon, parent))
@@ -211,7 +221,7 @@ struct FpvPreparationJob {
     compositions: HashMap<usize, Result<Arc<PreparedFpvComposition>, String>>,
     tracks: HashMap<(usize, usize), Option<Arc<[u16]>>>,
     rigs: HashMap<RigKey, Arc<PreparedFpvRig>>,
-    facts: Vec<Option<WeaponBodyFacts>>,
+    facts: Vec<Option<WeaponFpvFacts>>,
     hud_iris: Vec<bool>,
     melee: Vec<u32>,
     guns: Vec<Option<FpvMeshIndex>>,
@@ -368,17 +378,14 @@ fn admit_material(
         return refused(present_name, "model lighting atlas has no rows");
     };
     let scale = model_lighting_lookup_scale(inv_h);
-    let cull_mode = authored.state_bits_table.first().and_then(|bits| {
-        match asset_material::cull_face_from_state_bits(*bits) {
-            asset_material::MaterialCullFace::Back => {
-                Some(bevy::render::render_resource::Face::Back)
-            }
-            asset_material::MaterialCullFace::Front => {
-                Some(bevy::render::render_resource::Face::Front)
-            }
-            asset_material::MaterialCullFace::None => None,
-        }
-    });
+    let cull_mode = authored
+        .pass_states
+        .first()
+        .and_then(|state| match state.cull() {
+            1 => Some(bevy::render::render_resource::Face::Back),
+            2 => Some(bevy::render::render_resource::Face::Front),
+            _ => None,
+        });
     let material = SmodelPassMaterial {
         model_lighting_required: true,
         color: Some(color),
@@ -800,7 +807,7 @@ impl FpvPreparationJob {
         } else {
             let id = self.next_weapon;
             self.next_weapon += 1;
-            self.facts.push(registry.facts_of(id));
+            self.facts.push(registry.fpv_facts_of(id));
             self.hud_iris.push(registry.overlay_is_hud_iris(id));
             self.melee.push(registry.melee_weapon_of(id));
             (id, 0)
@@ -834,13 +841,9 @@ impl FpvPreparationJob {
         };
 
         let right_edges = registry.sz_xanim_right_edges_of(id);
-        let right_idle_bound =
-            right_edges.is_some_and(|edges| edges[asset_iw4::size::weap_anim::IDLE].is_bound());
-        let no_dual = registry
-            .facts_of(id)
-            .map(|f| u8::from(f.no_dual_wield))
-            .unwrap_or(1);
-        let create_lr = no_dual == 0 && right_idle_bound;
+        let create_lr = registry
+            .fpv_facts_of(id)
+            .is_some_and(|facts| facts.dual_animation());
         let right = if create_lr {
             WeaponAnimations::from_registry_edges(&registry, id, right_edges, xanims)
         } else {
@@ -1102,7 +1105,7 @@ fn refused_table(
         census: FpvPreparationCensus::default(),
     };
     for id in 0..=weapon_n {
-        table.facts.push(registry.facts_of(id));
+        table.facts.push(registry.fpv_facts_of(id));
         table.hud_iris.push(registry.overlay_is_hud_iris(id));
         table.melee.push(registry.melee_weapon_of(id));
         table.guns.push(

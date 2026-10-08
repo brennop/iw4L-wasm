@@ -10,7 +10,7 @@ use crate::occupancy::fpv_present::{
     SessionViewmodel,
 };
 
-pub fn reset_anim_for_match(
+pub(crate) fn reset_anim_for_match(
     mut commands: Commands,
     mut installed: MessageReader<MatchInstalled>,
     mut torn: MessageReader<MatchTornDown>,
@@ -18,6 +18,8 @@ pub fn reset_anim_for_match(
     mut pending: ResMut<PendingFpvSpawn>,
     mut viewmodel: ResMut<SessionViewmodel>,
     mut prepared_fpv: ResMut<PreparedFpv>,
+    mut item_compositions: ResMut<crate::occupancy::item::PreparedItemCompositions>,
+    mut remote_kits: ResMut<crate::anim::remote_body::PreparedRemoteKits>,
     mut model_materials: ResMut<crate::anim::model_materials::PreparedModelMaterials>,
     mut settled: ResMut<FpvHeldSettled>,
     mut held_life: ResMut<FpvHeldLife>,
@@ -34,6 +36,8 @@ pub fn reset_anim_for_match(
     pending.0 = None;
     *viewmodel = SessionViewmodel::default();
     prepared_fpv.clear();
+    item_compositions.clear();
+    remote_kits.clear();
     model_materials.clear();
     settled.0 = None;
     held_life.0 = None;

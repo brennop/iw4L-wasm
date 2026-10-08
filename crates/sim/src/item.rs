@@ -27,7 +27,6 @@ pub const WEAP_INVENTORY_PRIMARY: i32 = 0;
 pub const ITEM_MINS: [f32; 3] = [0.0, 0.0, 0.0];
 pub const ITEM_MAXS: [f32; 3] = [1.0, 1.0, 1.0];
 
-/// How long use must stay down on a dropped weapon before it is taken.
 pub const ITEM_USE_HOLD_MS: i32 = 250;
 
 pub const PLAYER_DROP_Z: f32 = (PLAYER_MAXS[2] - PLAYER_MINS[2]) * 0.5;
@@ -912,7 +911,6 @@ pub(crate) fn phase_use_items(
                 .expect("occupied item")
         });
         let meta = world.client_meta_mut(id);
-        // A press counts only while it stays on the item it began on.
         if !held || selected.is_none() || selected_ref != meta.item_use_entity {
             meta.item_use_entity = None;
         }
@@ -921,7 +919,6 @@ pub(crate) fn phase_use_items(
             meta.item_use_press_ms = now;
         }
         let pending = meta.item_use_entity;
-        // A weapon is taken once use is held; a thrown item on the press.
         let hold_ms = if selected.is_some_and(|item| item.projectile) {
             0
         } else {

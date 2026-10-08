@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::tasks::ComputeTaskPool;
 use std::sync::Arc;
 
-use super::command_context::{LightAttenuationBind, T5LightFalloffPack};
+use super::command_context::LightAttenuationBind;
 
 use super::material_runtime::{
     MaterialGenerationId, PreparedMaterialTable, RuntimeCodeSources, RuntimeMaterialCatalog,
@@ -259,6 +259,7 @@ pub struct MaterialGeneration {
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MaterialFrameInputs {
+    pub(crate) material_bindings: Option<asset_material::PreparedMaterialBindings>,
     pub code_sources: RuntimeCodeSources,
 
     pub view_origin: Vec3,
@@ -596,15 +597,6 @@ fn apply_camera_list(
     );
 }
 
-fn t6_sky_draws_unlit(material: &render_material::RuntimeMaterial) -> bool {
-    material.namespace == asset_core::AssetNamespace::T6
-        && material.unlit
-        && matches!(
-            material.sort_key,
-            asset_iw4::SORT_KEY_SKY | asset_iw4::SORT_KEY_SKYBOX
-        )
-}
-
 fn compact_product_draws(
     product: &mut FrameProduct,
     tech_type: TechType,
@@ -652,7 +644,7 @@ fn compact_product_draws(
                 render_material::MaterialDrawKey::new(draw.key, draw.material_rank)
                     .with_material_id(draw.material_id),
             )
-            .is_ok_and(t6_sky_draws_unlit)
+            .is_ok_and(|material| material.draw_rules.unlit_sky)
         {
             TechType(asset_iw4::TECHNIQUE_UNLIT as u8 + u8::from(dfog))
         } else if remap_lit {
@@ -903,8 +895,9 @@ pub struct FrameAssemblyInputs {
 
     pub map_light_n: usize,
     pub attenuation: Vec<LightAttenuationBind>,
-    pub t5_falloff: Vec<T5LightFalloffPack>,
+    pub local_light_bindings: Vec<render_material::CompiledConstantOverlay>,
     pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
+    pub smodel_lighting_sh: std::sync::Arc<Vec<Option<[[f32; 4]; 3]>>>,
 }
 
 pub(crate) fn open_frame_products(
@@ -913,6 +906,7 @@ pub(crate) fn open_frame_products(
     lighting: Option<Res<WorldModelLightingAtlas>>,
     dfog: Option<Res<super::DrawMethodDfog>>,
     primary_lights: Option<Res<super::MapPrimaryLights>>,
+    smodel_plan: Option<Res<super::tess::smodel::SmodelGpuPlan>>,
     fx_dlights: Option<Res<render_fx::HostFxDlights>>,
     prepared: Option<Res<crate::prepare::scene::view_parms::PreparedSceneView>>,
     mut inputs: ResMut<FrameAssemblyInputs>,
@@ -935,15 +929,17 @@ pub(crate) fn open_frame_products(
     inputs.dfog = dfog.map(|flag| flag.0).unwrap_or(false);
     inputs.primary_lights.clear();
     inputs.attenuation.clear();
-    inputs.t5_falloff.clear();
+    inputs.local_light_bindings.clear();
     inputs.reflection_probe_sh.clear();
+    inputs.smodel_lighting_sh = smodel_plan
+        .map(|plan| plan.lighting_sh.clone())
+        .unwrap_or_default();
     if let Some(map) = primary_lights.as_ref() {
         inputs
             .reflection_probe_sh
             .extend_from_slice(&map.reflection_probe_sh);
         inputs.primary_lights.extend_from_slice(&map.lights);
         inputs.attenuation.extend_from_slice(&map.attenuation);
-        inputs.t5_falloff.extend_from_slice(&map.t5_falloff);
     }
     inputs.map_light_n = inputs.primary_lights.len();
     if let (Some(fx), Some(dynamic)) = (
@@ -982,8 +978,46 @@ pub(crate) fn open_frame_products(
             light.lmap_lookup_start = dynamic.lmap_lookup_start;
             inputs.primary_lights.push(light);
             inputs.attenuation.push(dynamic.attenuation);
-            inputs.t5_falloff.push(T5LightFalloffPack::default());
         }
+    }
+    let generation_id = inputs.catalog_generation;
+    if mat_frame
+        .material_bindings
+        .as_ref()
+        .is_none_or(|bindings| bindings.generation_id() != generation_id)
+    {
+        mat_frame.material_bindings = Some(asset_material::compile_material_bindings(
+            &generation.catalog,
+        ));
+    }
+    let bindings = mat_frame
+        .material_bindings
+        .as_ref()
+        .expect("current material bindings");
+    for (index, light) in inputs.primary_lights.iter().enumerate() {
+        let pack = primary_lights
+            .as_ref()
+            .and_then(|map| map.overrides.get(index))
+            .copied()
+            .unwrap_or_default();
+        let light_inputs = asset_material::MaterialLocalLightInputs {
+            light_type: light.light_type,
+            direction: light.direction,
+            origin: light.origin,
+            radius: light.radius,
+            cos_outer: light.cos_outer,
+            overrides: pack,
+        };
+        inputs.local_light_bindings.push(
+            bindings
+                .prepare_local_light(
+                    generation_id,
+                    (index != 0).then_some(&light_inputs),
+                    mat_frame.view_origin,
+                    mat_frame.float_time,
+                )
+                .expect("local-light generation correlated"),
+        );
     }
 }
 

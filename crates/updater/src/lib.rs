@@ -15,6 +15,146 @@ pub type Result<T> = std::result::Result<T, String>;
 const MAX_BINARY: u64 = 512 * 1024 * 1024;
 const MAX_MANIFEST: u64 = 64 * 1024;
 static SELECTED: OnceLock<Community> = OnceLock::new();
+static COMMUNITIES: OnceLock<CommunityFiles> = OnceLock::new();
+const SELECTION_FILE: &str = "iw4l.community.json";
+
+#[derive(Clone, Debug)]
+pub struct CommunityFile {
+    pub path: PathBuf,
+    pub name: String,
+}
+
+struct CommunityFiles {
+    entries: Vec<CommunityFile>,
+    selected: Option<PathBuf>,
+}
+
+pub fn communities() -> &'static [CommunityFile] {
+    COMMUNITIES.get().map_or(&[], |files| &files.entries)
+}
+
+pub fn selected_path() -> Option<&'static Path> {
+    COMMUNITIES.get()?.selected.as_deref()
+}
+
+fn read_community(path: &Path) -> Result<Community> {
+    let bytes = read_bounded(
+        File::open(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        MAX_MANIFEST,
+    )?;
+    let community: Community =
+        toml::from_str(std::str::from_utf8(&bytes).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+    if community.schema != 1
+        || community.name.trim().is_empty()
+        || community.master.server_name.trim().is_empty()
+        || community.master.address.trim().is_empty()
+    {
+        return Err("unsupported or incomplete community descriptor".into());
+    }
+    trust_roots(&community.updates.ca_pem)?;
+    update_url(&community)?;
+    Ok(community)
+}
+
+fn discover_communities(root: &Path, explicit: Option<PathBuf>) -> Result<CommunityFiles> {
+    let mut paths: Vec<_> = fs::read_dir(root)
+        .map_err(|e| e.to_string())?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "iw4l-server"))
+        .collect();
+    let saved = match File::open(root.join(SELECTION_FILE)) {
+        Ok(file) => match read_bounded(file, MAX_MANIFEST)
+            .and_then(|bytes| serde_json::from_slice::<PathBuf>(&bytes).map_err(|e| e.to_string()))
+        {
+            Ok(path) => Some(root.join(path)),
+            Err(error) => {
+                println!("[iw4l] cannot read community selection: {error}");
+                None
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            println!("[iw4l] cannot read community selection: {error}");
+            None
+        }
+    };
+    let explicit = explicit.map(|path| root.join(path));
+    if let Some(path) = &explicit {
+        read_community(path)?;
+        if !paths.contains(path) {
+            paths.push(path.clone());
+        }
+    }
+    if let Some(path) = &saved
+        && !paths.contains(path)
+        && path.is_file()
+    {
+        paths.push(path.clone());
+    }
+    let mut entries = Vec::new();
+    for path in paths {
+        match read_community(&path) {
+            Ok(community) => entries.push(CommunityFile {
+                path,
+                name: community.name,
+            }),
+            Err(error) => println!("[iw4l] skipping {}: {error}", path.display()),
+        }
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
+    let selected = explicit
+        .or_else(|| saved.filter(|path| entries.iter().any(|entry| entry.path == *path)))
+        .or_else(|| (entries.len() == 1).then(|| entries[0].path.clone()));
+    Ok(CommunityFiles { entries, selected })
+}
+
+pub fn restart_with_community(path: &Path) -> Result<()> {
+    if !communities().iter().any(|entry| entry.path == path) {
+        return Err("community is not in the installed server list".into());
+    }
+    read_community(path)?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let root = exe.parent().ok_or("executable has no directory")?;
+    let selection = root.join(SELECTION_FILE);
+    let previous = match fs::read(&selection) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("read community selection: {error}")),
+    };
+    let payload =
+        serde_json::to_vec(path.strip_prefix(root).unwrap_or(path)).map_err(|e| e.to_string())?;
+    save_selection(root, &payload)?;
+    if let Err(error) = Command::new(&exe)
+        .arg("menu")
+        .env("IW4L_COMMUNITY", path)
+        .env_remove("IW4L_MASTER_HOST_NAME")
+        .env_remove("IW4L_MASTER_JOIN")
+        .env_remove("IW4L_CMDS")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        let rollback = match previous {
+            Some(bytes) => save_selection(root, &bytes),
+            None => fs::remove_file(selection).map_err(|e| e.to_string()),
+        };
+        rollback.map_err(|rollback| format!("restart: {error}; restore selection: {rollback}"))?;
+        return Err(format!("restart community: {error}"));
+    }
+    Ok(())
+}
+
+fn save_selection(root: &Path, payload: &[u8]) -> Result<()> {
+    let temp = root.join(format!("iw4l.community.{}.tmp", std::process::id()));
+    let result = write_synced(&temp, payload)
+        .and_then(|()| fs::rename(&temp, root.join(SELECTION_FILE)).map_err(|e| e.to_string()));
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result.map_err(|e| format!("save community selection: {e}"))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,48 +243,15 @@ pub fn startup() -> Result<Option<Vec<OsString>>> {
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let root = exe.parent().ok_or("executable has no directory")?;
-    let descriptor = if let Ok(path) = std::env::var("IW4L_COMMUNITY") {
-        Some(root.join(path))
-    } else {
-        let mut descriptors = Vec::new();
-        for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if path.extension().is_some_and(|ext| ext == "iw4l-server") {
-                descriptors.push(path);
-            }
-        }
-        match descriptors.len() {
-            0 => None,
-            1 => descriptors.pop(),
-            _ => {
-                return Err(
-                    "multiple communities: set IW4L_COMMUNITY to the chosen .iw4l-server file"
-                        .into(),
-                );
-            }
-        }
-    };
+    let files = discover_communities(root, std::env::var_os("IW4L_COMMUNITY").map(PathBuf::from))?;
+    let descriptor = files.selected.clone();
+    COMMUNITIES
+        .set(files)
+        .map_err(|_| "communities already loaded")?;
     let Some(path) = descriptor else {
         return Ok(Some(args));
     };
-    let bytes = read_bounded(
-        File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?,
-        MAX_MANIFEST,
-    )?;
-    let community: Community =
-        toml::from_str(std::str::from_utf8(&bytes).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-    if community.schema != 1
-        || community.name.trim().is_empty()
-        || community.master.server_name.is_empty()
-    {
-        return Err("unsupported or incomplete community descriptor".into());
-    }
-    community
-        .master
-        .address
-        .to_socket_addrs()
-        .map_err(|e| format!("master address: {e}"))?;
+    let community = read_community(&path)?;
     if !cfg!(windows) {
         SELECTED
             .set(community)
@@ -282,8 +389,8 @@ fn cleanup_helper(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn client(community: &Community) -> Result<(reqwest::blocking::Client, reqwest::Url)> {
-    let mut url = reqwest::Url::parse(&community.updates.url).map_err(|e| e.to_string())?;
+fn update_url(community: &Community) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(&community.updates.url).map_err(|e| e.to_string())?;
     if url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -297,6 +404,11 @@ fn client(community: &Community) -> Result<(reqwest::blocking::Client, reqwest::
                 .into(),
         );
     }
+    Ok(url)
+}
+
+fn client(community: &Community) -> Result<(reqwest::blocking::Client, reqwest::Url)> {
+    let mut url = update_url(community)?;
     let port = url
         .port_or_known_default()
         .ok_or("update URL has no port")?;

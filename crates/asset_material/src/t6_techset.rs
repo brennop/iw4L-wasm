@@ -304,7 +304,7 @@ const T6_FOG_NAMES: [&str; 6] = [
     "sunFogColor",
     "sunFog",
 ];
-pub use render_material::CODE_T6_REFLECTION_SH;
+pub use render_material::{CODE_T6_GRID_SH, CODE_T6_REFLECTION_SH, CODE_T6_SAMPLE_DECODE};
 
 enum EngineValue {
     Code(&'static str),
@@ -361,7 +361,9 @@ fn engine_value(name: &str) -> EngineValue {
         "reflectionLightingSH0" => Code("T6_REFLECTION_SH0"),
         "reflectionLightingSH1" => Code("T6_REFLECTION_SH1"),
         "reflectionLightingSH2" => Code("T6_REFLECTION_SH2"),
-        "gridLightingSH0" | "gridLightingSH1" | "gridLightingSH2" => Literal([0.25; 4]),
+        "gridLightingSH0" => Code("T6_GRID_SH0"),
+        "gridLightingSH1" => Code("T6_GRID_SH1"),
+        "gridLightingSH2" => Code("T6_GRID_SH2"),
         _ => Literal([0.0; 4]),
     }
 }
@@ -514,6 +516,9 @@ fn constant_argument(
                 "T6_REFLECTION_SH0" => Some(CODE_T6_REFLECTION_SH[0]),
                 "T6_REFLECTION_SH1" => Some(CODE_T6_REFLECTION_SH[1]),
                 "T6_REFLECTION_SH2" => Some(CODE_T6_REFLECTION_SH[2]),
+                "T6_GRID_SH0" => Some(CODE_T6_GRID_SH[0]),
+                "T6_GRID_SH1" => Some(CODE_T6_GRID_SH[1]),
+                "T6_GRID_SH2" => Some(CODE_T6_GRID_SH[2]),
                 "T6_FOG" => T6_FOG_NAMES
                     .iter()
                     .position(|fog| *fog == name)
@@ -645,7 +650,14 @@ fn iw4_layer_source(t6: u8) -> Option<u8> {
 
 fn t6_vertex_decl(layer_routing: &[[u8; 2]]) -> AuthoredVertexDecl {
     let mut routing = [[0u8; 2]; asset_iw4::vertex_decl::ROUTING_COUNT];
-    let base = [[0, 0], [1, 2], [2, 5], [3, 1], [4, 7], [2, 6]];
+    let base = [
+        [0, 0],
+        [1, 2],
+        [2, 5],
+        [3, 1],
+        [4, 7],
+        [crate::T6_VERTEX_LIGHTING_SOURCE, 6],
+    ];
     let layer = layer_routing
         .iter()
         .filter_map(|&[source, dest]| Some([iw4_layer_source(source)?, dest]));
@@ -655,7 +667,7 @@ fn t6_vertex_decl(layer_routing: &[[u8; 2]]) -> AuthoredVertexDecl {
         stream_count += 1;
     }
     AuthoredVertexDecl {
-        family: crate::VertexLayoutFamily::Iw4,
+        family: crate::VertexLayoutFamily::T6,
         name: AssetRef::Real(if layer_routing.is_empty() {
             "$t6_packed_vertex".to_owned()
         } else {
@@ -698,6 +710,27 @@ impl MaterialCatalog {
                     gaps,
                 ));
             }
+        }
+        let samples_decoded_texture = pixel
+            .texture_slots()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|slot| {
+                texture_name(&pixel.reflection, slot.texture).is_some_and(|name| {
+                    let name = name.to_ascii_lowercase();
+                    name.contains("modellighting") || name.contains("reflectionprobe")
+                })
+            });
+        if samples_decoded_texture {
+            arguments.push((
+                Tier::Object,
+                OwnedShaderArgument::CodePixelConstant {
+                    destination: rows(&pixel)?.len() as u16,
+                    index: CODE_T6_SAMPLE_DECODE,
+                    first_row: 0,
+                    row_count: 1,
+                },
+            ));
         }
         let mut slots = vertex.texture_slots().map_err(|e| e.to_string())?;
         slots.extend(pixel.texture_slots().map_err(|e| e.to_string())?);

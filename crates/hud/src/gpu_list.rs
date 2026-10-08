@@ -42,7 +42,7 @@ pub struct HudTessBatch {
     pub mask: Option<Handle<Image>>,
     pub technique: HudTessTechnique,
 
-    pub state_bits: Option<[u32; 2]>,
+    pub state: Option<render_material::CompiledPassState>,
     pub first_index: u32,
     pub index_count: u32,
 
@@ -93,7 +93,7 @@ impl HudTessGpuFrame {
                 image: batch.image.clone(),
                 mask: batch.mask.clone(),
                 technique: batch.technique,
-                state_bits: batch.state_bits,
+                state: batch.state,
                 first_index: index_base.saturating_add(batch.first_index),
                 index_count: batch.index_count,
                 first_vertex: u32::from(vert_base).saturating_add(batch.first_vertex),
@@ -329,7 +329,7 @@ fn lerp2(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
 
 struct Prepared {
     texture: Handle<Image>,
-    state_bits: Option<[u32; 2]>,
+    state: Option<render_material::CompiledPassState>,
     quad: Draw2dQuad,
 }
 
@@ -371,8 +371,7 @@ pub fn present_list(input: PresentInput<'_>) -> usize {
         };
         prepared.push(Prepared {
             texture,
-            state_bits: hud_images
-                .material_state_bits(clipped.material_namespace, &clipped.material),
+            state: hud_images.material_state(clipped.material_namespace, &clipped.material),
             quad: clipped,
         });
     }
@@ -427,7 +426,7 @@ fn pack_material_runs(prepared: &[Prepared]) -> PackedList {
         let mut j = i;
         while j < prepared.len()
             && prepared[j].texture.id() == id
-            && prepared[j].state_bits == prepared[i].state_bits
+            && prepared[j].state == prepared[i].state
             && prepared[j].quad.material == prepared[i].quad.material
             && prepared[j].quad.material_namespace == prepared[i].quad.material_namespace
         {
@@ -449,7 +448,7 @@ fn pack_material_runs(prepared: &[Prepared]) -> PackedList {
             image: prepared[i].texture.clone(),
             mask: None,
             technique: HudTessTechnique::Modulate,
-            state_bits: prepared[i].state_bits,
+            state: prepared[i].state,
             first_index,
             index_count: batch_idx,
             first_vertex: u32::from(vert0),
@@ -464,7 +463,7 @@ pub(crate) fn pack_splatter_alt(
     quad: &Draw2dQuad,
     color: Handle<Image>,
     mask: Handle<Image>,
-    state_bits: [u32; 2],
+    state: render_material::CompiledPassState,
 ) -> PackedList {
     let mut packed = PackedList::default();
     packed.vertices.extend(pack_quad_verts(quad));
@@ -473,7 +472,7 @@ pub(crate) fn pack_splatter_alt(
         image: color,
         mask: Some(mask),
         technique: HudTessTechnique::SplatterAlt,
-        state_bits: Some(state_bits),
+        state: Some(state),
         first_index: 0,
         index_count: 6,
         first_vertex: 0,
@@ -498,7 +497,7 @@ pub(crate) fn pack_modulate(quad: &Draw2dQuad, image: Handle<Image>) -> PackedLi
         image,
         mask: None,
         technique: HudTessTechnique::Modulate,
-        state_bits: None,
+        state: None,
         first_index: 0,
         index_count: 6,
         first_vertex: 0,
