@@ -411,8 +411,8 @@ const LEGAL_FILES: &[(&str, &str)] = &[
     ("NOTICE", "NOTICE"),
     ("crates/ui/assets/OFL-Oxanium.txt", "OFL-Oxanium.txt"),
     (
-        "crates/console/assets/COPYING-FreeFont.txt",
-        "COPYING-FreeFont.txt",
+        "crates/console/assets/OFL-FiraMono.txt",
+        "OFL-FiraMono.txt",
     ),
 ];
 

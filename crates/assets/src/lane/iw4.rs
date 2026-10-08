@@ -853,6 +853,10 @@ impl ZoneLane for Iw4Lane {
         weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);
         weapons.resolve_world_model_edges(&sink.world_weapons);
         let gun_named = weapons.gun_xmodel_count();
+        let (camo_weapons, camo_view, camo_world) = weapons.camo_census();
+        report.push(format!(
+            "common_mp camouflage: {camo_weapons} weapons; {camo_view} view and {camo_world} world models bound"
+        ));
         report.push(format!(
         "common_mp weapons: {captured} captures → {} unique catalog ids (sorted); {gun_named} with gunXModel[0]; {} with szXAnims[IDLE]; {} with any szXAnims slot",
         weapons.len(),
@@ -1106,6 +1110,7 @@ impl ZoneLane for Iw4Lane {
                 teamsets: std::collections::HashMap::new(),
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
+                t6_content: None,
             }
         } else {
             let memory = sink.materials.image_memory();
@@ -1142,6 +1147,7 @@ impl ZoneLane for Iw4Lane {
                 teamsets: std::collections::HashMap::new(),
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
+                t6_content: None,
             }
         }
     }

@@ -922,6 +922,8 @@ pub struct WeaponGeometry {
     pub alternate_weapon_name: Option<Ptr>,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
+    /// `iFirstRaiseTime`: a weapon's first raise after it is given.
+    pub first_raise_time_ms: i32,
 
     pub weap_def: Option<Ptr>,
 
@@ -929,9 +931,15 @@ pub struct WeaponGeometry {
 
     pub gun_xmodel_name: Option<Ptr>,
 
+    /// Every `gunXModel` slot: 0 is `gun_xmodel_name`, the others camouflage.
+    pub gun_xmodel_names: [Option<Ptr>; 16],
+
     pub hand_xmodel_name: Option<Ptr>,
 
     pub world_model_name: Option<Ptr>,
+
+    /// Every `worldModel` slot, as `gun_xmodel_names`.
+    pub world_model_names: [Option<Ptr>; 16],
 
     pub projectile_model_name: Option<Ptr>,
 

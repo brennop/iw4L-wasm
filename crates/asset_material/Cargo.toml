@@ -19,6 +19,7 @@ render_material.workspace = true
 diag.workspace = true
 bevy.workspace = true
 bcdec_rs.workspace = true
+dxbc_sm5.workspace = true
 
 [lints]
 workspace = true

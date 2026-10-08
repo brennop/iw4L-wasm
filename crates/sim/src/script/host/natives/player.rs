@@ -1339,9 +1339,15 @@ fn register_inventory(registry: &mut NativeRegistry) {
     );
     registry.register(Method, "giveweapon", |world, receiver, args| {
         let id = client_of(world, receiver)?;
+        let named = weapon_arg(world, args, 0)?;
         let weapon = player_weapon(world, id, args, 0)?;
+        // IW4 `giveWeapon( weapon, model, akimbo )`: the model is the
+        // camouflage slot of the weapon's `gunXModel` / `worldModel`.
+        let model = optional(args, 1, int)?.unwrap_or(0).clamp(0, 15) as u8;
         let akimbo = optional(args, 2, int)?.unwrap_or(0) != 0;
         script_player::give_weapon(&mut FrameWorld::from_world(world), id, weapon, akimbo)?;
+        script_player::set_weapon_model(&mut FrameWorld::from_world(world), id, weapon, model);
+        super::super::players::give_carried_insertion(world, id.0, receiver, named)?;
         Ok(Value::Undefined)
     });
     registry.register(Method, "takeweapon", |world, receiver, args| {

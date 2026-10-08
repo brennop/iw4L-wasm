@@ -24,8 +24,8 @@ const LICENSES: [(&str, &str); 5] = [
         include_str!("../../ui/assets/OFL-Oxanium.txt"),
     ),
     (
-        "COPYING-FreeFont.txt",
-        include_str!("../../console/assets/COPYING-FreeFont.txt"),
+        "OFL-FiraMono.txt",
+        include_str!("../../console/assets/OFL-FiraMono.txt"),
     ),
     (
         "THIRD-PARTY-LICENSES.txt",

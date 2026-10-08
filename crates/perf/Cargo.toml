@@ -11,6 +11,7 @@ native = ["dep:perfetto-sdk"]
 
 [dependencies]
 artifactfs.workspace = true
+diag.workspace = true
 web-time = { workspace = true }
 serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }

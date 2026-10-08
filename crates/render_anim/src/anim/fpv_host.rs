@@ -103,6 +103,8 @@ pub struct FpvPosedFrame {
 pub struct FpvPoseProduct {
     pub drawgun: Option<i32>,
     pub kind: FpvPoseKind,
+    /// The camouflage slot of the held gun (0 for none).
+    pub camo: u8,
 }
 
 pub struct FpvGenerateArgs<'a> {
@@ -113,6 +115,8 @@ pub struct FpvGenerateArgs<'a> {
     pub cursor: &'a mut FpvPresentState,
     pub rocket: bool,
     pub melee: bool,
+    /// Fully aimed: attachments draw their aiming models.
+    pub ads: bool,
     pub sample: Option<FpvAuthoritySample>,
     pub predicted_fire: bool,
     pub dual: bool,
@@ -130,6 +134,7 @@ pub fn generate_fpv_pose(
         cursor,
         rocket,
         melee,
+        ads,
         sample,
         predicted_fire,
         dual,
@@ -138,7 +143,16 @@ pub fn generate_fpv_pose(
     let (_pose, notifies) =
         tick_equipped_fpv_with_predicted_fire(equipped, cursor, sample, predicted_fire, dt);
 
-    let kind = pose_equipped_fpv(equipped, rigs, active, rocket, melee, dual, dual_offset);
+    let kind = pose_equipped_fpv(
+        equipped,
+        rigs,
+        active,
+        rocket,
+        melee,
+        ads,
+        dual,
+        dual_offset,
+    );
     (kind, notifies)
 }
 
@@ -148,6 +162,7 @@ fn pose_equipped_fpv(
     active: &mut Option<Arc<PreparedFpvRig>>,
     rocket: bool,
     melee: bool,
+    ads: bool,
     dual: bool,
     dual_offset: Option<f32>,
 ) -> FpvPoseKind {
@@ -178,7 +193,7 @@ fn pose_equipped_fpv(
     };
     let dual_drawn = !left.is_empty();
 
-    let Some(prepared) = rigs.pick(rocket, dual_drawn, melee) else {
+    let Some(prepared) = rigs.pick(rocket, dual_drawn, melee, ads) else {
         *active = None;
         return FpvPoseKind::Refuse(FpvPoseRefuse::EyePoseFailed {
             gun_xmodel: equipped.gun_xmodel.clone(),

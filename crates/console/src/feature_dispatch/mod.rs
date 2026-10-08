@@ -22,7 +22,7 @@ mod ui;
 pub(crate) use capture::route_capture_commands;
 pub(crate) use echo::ConsoleEcho;
 pub(crate) use hitvol::route_hitvol_commands;
-pub(crate) use process::exit_process;
+pub(crate) use process::{exit_process, request_exit};
 pub(crate) use replay::route_replay_commands;
 pub(crate) use session::route_session_commands;
 pub(crate) use state_dump::route_state_dump_commands;
@@ -111,15 +111,22 @@ pub(crate) fn route_debug_feature_commands(
                         echo(format!("bot give: {id:?} is not a bot"), console, line);
                         continue;
                     }
+                    let (camo, attachments) = crate::weapon_dispatch::split_camo(&attachments);
                     match crate::weapon_dispatch::resolve_give_id(&weapons.0, &weapon, &attachments)
-                    {
-                        Ok(weapon_id) => {
+                        .and_then(|weapon_id| {
+                            let model = camo.map_or(Ok(0), |camo| {
+                                crate::weapon_dispatch::camo_slot(&weapons.0, weapon_id, camo)
+                            })?;
+                            Ok((weapon_id, model))
+                        }) {
+                        Ok((weapon_id, model)) => {
                             let request_id = give_seq.allocate();
                             if let Err(error) = inbox.push(
                                 id,
                                 ClientAction::GiveWeapon {
                                     request_id,
                                     weapon: weapon_id,
+                                    model,
                                 },
                             ) {
                                 echo(format!("bot give: {error}"), console, line);
@@ -275,7 +282,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         (
             "bot",
-            "bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z>",
+            "bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] [camo=<name>] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z>",
         ),
         (
             "menu",
@@ -297,7 +304,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] [camo=<name>] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {

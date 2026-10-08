@@ -1,4 +1,5 @@
 mod alloc_count;
+pub mod exit;
 pub mod gap;
 #[cfg(target_arch = "wasm32")]
 mod wasm_heap;
