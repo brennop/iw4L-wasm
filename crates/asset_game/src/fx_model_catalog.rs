@@ -83,9 +83,6 @@ impl FxModelCatalog {
         self.capture_shared(Arc::new(skel), materials);
     }
 
-    /// [`Self::capture`] for a skeleton another catalog already decoded from
-    /// the same stream, strings and materials; the entry shares it rather than
-    /// holding a second decode.
     pub fn capture_shared(&mut self, skel: Arc<ModelSkel>, materials: &MaterialCatalog) {
         let key = (self.capture_ns, skel.name.clone());
         if !self.entries.contains_key(&key) {
