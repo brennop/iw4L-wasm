@@ -7,7 +7,7 @@ Two players through the dev master: `make approved SCENARIO=master_duo_chaos`
 ```bash
 set -a; . ./.env; set +a          # IW4L_GAMES; DISPLAY=:0 if the session has none
 make map mp_boneyard CMDS='spawn 0; wait 2s; quit'
-cargo run --profile play -p launcher -- map iw5:mp_overwatch --cmds '…'
+cargo run --profile play -p launcher -- --cheats map iw5:mp_overwatch --cmds '…'
 ```
 
 `make` passes no foreign flags through: in the `Makefile` it is `CMDS`, on the

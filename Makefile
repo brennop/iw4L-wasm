@@ -22,7 +22,7 @@ $(ARGS):
 # unknown `--cmds` flag (it parses its own options first and exits), so the
 # spelling here is a make variable; the launcher binary takes `--cmds` verbatim:
 #   make map mp_boneyard CMDS='spawn 0; hold +attack'
-#   cargo run -p launcher -- map mp_boneyard --cmds 'spawn 0; hold +attack'
+#   cargo run -p launcher -- --cheats map mp_boneyard --cmds 'spawn 0; hold +attack'
 CMDS ?=
 CMDS_ARG = $(if $(CMDS),--cmds '$(CMDS)',)
 ZONE ?=
@@ -85,7 +85,7 @@ require-games:
 # uses ARGS. ZONE wins if both are set.
 map: require-games
 	@test -n "$(or $(ZONE),$(ARGS))" || { echo "usage: make map <zone>   e.g. make map mp_boneyard"; echo "       make map ZONE=iw5:mp_overwatch   (colon is a make pattern)"; exit 1; }
-	cd $(ROOT) && $(CARGO) run $(PROFILE_ARG) -p launcher -- map $(or $(ZONE),$(ARGS)) $(CMDS_ARG)
+	cd $(ROOT) && $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map $(or $(ZONE),$(ARGS)) $(CMDS_ARG)
 
 export-gltf: require-games
 	@test -n "$(or $(ZONE),$(ARGS))" || { echo "usage: make export-gltf <zone>"; exit 1; }
@@ -131,7 +131,7 @@ bench: require-games
 ifneq ($(BENCH_DEMO)$(ARGS),)
 BENCH_TARGET = play $(or $(BENCH_DEMO),$(ARGS)) $(ZONE_ARG) $(if $(or $(CMDS),$(BENCH_DEMO_CMDS)),--cmds '$(or $(CMDS),$(BENCH_DEMO_CMDS))')
 else
-BENCH_TARGET = map $(or $(ZONE),$(ARGS)) --cmds '$(or $(CMDS),$(BENCH_MAP_CMDS))'
+BENCH_TARGET = --cheats map $(or $(ZONE),$(ARGS)) --cmds '$(or $(CMDS),$(BENCH_MAP_CMDS))'
 endif
 
 # One menu process, two synchronous loads. Engine markers exclude Cargo and
@@ -159,7 +159,7 @@ bench-perf: require-games
 	@mkdir -p $(PERF_DIR)
 	cd $(ROOT) && RUSTFLAGS="-Cforce-frame-pointers=yes" cargo build --profile perf -p launcher
 	cd $(ROOT) && perf record -F $(PERF_FREQ) --call-graph fp -o $(PERF_DIR)/bench-live.data -- \
-	  $(ROOT)/target/perf/iw4l map $(or $(ZONE),$(ARGS),$(SCENARIO_ZONE)) --cmds '$(or $(CMDS),$(BENCH_LIVE_CMDS))'
+	  $(ROOT)/target/perf/iw4l --cheats map $(or $(ZONE),$(ARGS),$(SCENARIO_ZONE)) --cmds '$(or $(CMDS),$(BENCH_LIVE_CMDS))'
 	@echo "perf.data: $(PERF_DIR)/bench-live.data"
 	@echo "read it:   perf report -i $(PERF_DIR)/bench-live.data --stdio --no-children"
 
@@ -167,7 +167,7 @@ bench-perf: require-games
 # Script is BENCH_LIVE_CMDS; CMDS= replaces it. The process prints the run path,
 # then xtask reports active-gameplay percentiles and hot paths from that trace.
 bench-live: require-games
-	cd $(ROOT) && IW4L_PERF=1 IW4L_PRESENT_MODE=AutoNoVsync $(CARGO) run $(PROFILE_ARG) -p launcher -- map $(or $(ZONE),$(ARGS),$(SCENARIO_ZONE)) --cmds '$(or $(CMDS),$(BENCH_LIVE_CMDS))'
+	cd $(ROOT) && IW4L_PERF=1 IW4L_PRESENT_MODE=AutoNoVsync $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map $(or $(ZONE),$(ARGS),$(SCENARIO_ZONE)) --cmds '$(or $(CMDS),$(BENCH_LIVE_CMDS))'
 	cd $(ROOT) && $(CARGO) run --quiet -p xtask -- bench
 
 # Alternating paired process benchmark. One binary and one script are used for
@@ -182,11 +182,11 @@ bench-overhead: require-games
 
 # Play the scripted match, then read player_tick events from the run's .pftrace.
 scenario: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map $(SCENARIO_ZONE) --cmds '$(SCENARIO_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map $(SCENARIO_ZONE) --cmds '$(SCENARIO_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- scenario
 
 chaos: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map $(SCENARIO_ZONE) --cmds '$(CHAOS_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map $(SCENARIO_ZONE) --cmds '$(CHAOS_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- chaos
 
 # Occupancy claims are Perfetto events (`cargo xtask live`); this target
@@ -199,23 +199,23 @@ lifecycle-all: require-games
 	$(MAKE) lifecycle-demo-map
 
 lifecycle-swap: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_SWAP_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map mp_boneyard --cmds '$(LIFECYCLE_SWAP_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live swap
 
 lifecycle-replace: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_REPLACE_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map mp_boneyard --cmds '$(LIFECYCLE_REPLACE_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live replace
 
 lifecycle-play-in: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_PLAY_IN_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map mp_boneyard --cmds '$(LIFECYCLE_PLAY_IN_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live play-in
 
 lifecycle-demo-out: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_DEMO_OUT_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map mp_boneyard --cmds '$(LIFECYCLE_DEMO_OUT_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live demo-out
 
 lifecycle-demo-map: require-games
-	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- map mp_boneyard --cmds '$(LIFECYCLE_DEMO_MAP_CMDS)'
+	cd $(ROOT) && IW4L_PERF=1 $(CARGO) run $(PROFILE_ARG) -p launcher -- --cheats map mp_boneyard --cmds '$(LIFECYCLE_DEMO_MAP_CMDS)'
 	cd $(ROOT) && $(CARGO) run -p xtask -- live demo-map
 
 menu: require-games
