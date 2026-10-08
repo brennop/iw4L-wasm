@@ -1237,7 +1237,9 @@ fn decode_map_material_images(
     glass_names: Vec<String>,
 ) -> Vec<String> {
     let mut report = Vec::new();
-    match decode_material_color_maps(path, catalog, &stage, crate::session_load::load_pool()) {
+    let mut trees = asset_transport::NamespaceTrees::default();
+    trees.adopt_zone(path);
+    match decode_material_color_maps(&trees, catalog, &stage, crate::session_load::load_pool()) {
         Ok(stats) => {
             report.push(format!(
                 "IWD color/normal maps: {}/{} decoded, {} missing, {} unsupported from {} archives",
@@ -1258,7 +1260,7 @@ fn decode_map_material_images(
         name: name.clone(),
     }));
     match asset_material::material_images::decode_images_for_keys(
-        path,
+        &trees,
         catalog,
         keys,
         &stage,

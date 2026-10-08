@@ -524,6 +524,7 @@ fn dispatch_entity_events(
 fn dispatch_owner_events(
     mut commands: Commands,
     mut prediction: ResMut<ClientPredictionState>,
+    mut pellet_fx: ResMut<crate::PendingPelletFx>,
     (local, generation): (Res<LocalPresentClient>, Res<frame::WorldGeneration>),
     slots: Res<CEntitySlots>,
     verdicts: Res<crate::FireVerdictState>,
@@ -534,6 +535,7 @@ fn dispatch_owner_events(
     let local_number = i32::try_from(local.0.0).unwrap_or(-1);
     if cursor.in_killcam {
         prediction.0.take_owner_events();
+        prediction.0.take_owner_pellet_fx();
         return;
     }
     let Some(entity) = u16::try_from(local_number)
@@ -543,6 +545,21 @@ fn dispatch_owner_events(
         return;
     };
     let life = prediction.0.local_life();
+    pellet_fx.0.extend(
+        prediction
+            .0
+            .take_owner_pellet_fx()
+            .into_iter()
+            .filter(|record| {
+                record.fire_cause.is_some_and(|cause| {
+                    cause.client == local.0
+                        && Some(cause.life) == life
+                        && verdicts.status(*generation, cause)
+                            != crate::PredictedFireStatus::Refused
+                })
+            })
+            .map(|record| (*generation, EntityEventDomain::Predicted, record)),
+    );
     for record in prediction.0.take_owner_events() {
         if record.payload.fire_cause.is_some_and(|cause| {
             cause.client != local.0

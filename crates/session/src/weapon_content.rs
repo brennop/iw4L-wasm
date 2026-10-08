@@ -3,7 +3,7 @@ use std::sync::Arc;
 use asset_game::WeaponRegistry;
 use weapon_iw4::{HITLOC_COUNT, WeaponCombatFacts, WeaponHostRules};
 
-pub(crate) struct PreparedSimWeapons {
+pub struct PreparedSimWeapons {
     revision: u64,
     content: Arc<sim::SimWeaponContent>,
 }
@@ -31,7 +31,10 @@ pub(crate) fn compile(
     let groups = weapons.configuration_transition_groups();
     let rows = weapons.published_weapons().map(|weapon| {
         let id = weapon.wire_id();
-        let combat = compile_combat(weapons, weapon, rules, global_location, &mut refused);
+        let execution = weapons
+            .configuration_admission(id)
+            .map_err(|reason| format!("{reason:?}"))
+            .and_then(|()| compile_combat(weapons, weapon, rules, global_location, &mut refused));
         let setup = weapons.describe_configuration(id).and_then(|selection| {
             let family = selection.family.as_ref()?;
             Some(sim::WeaponSetup {
@@ -60,8 +63,7 @@ pub(crate) fn compile(
         sim::SimWeaponRow {
             wire_id: id,
             scales: weapon.movement_scales(),
-            combat,
-            runnable: id != 0 && weapons.configuration_admission(id).is_ok(),
+            execution,
             transition_group: groups[id as usize],
             penetration: weapons
                 .penetration_facts_of(id)
@@ -102,61 +104,40 @@ fn compile_combat(
     rules: WeaponHostRules,
     global_location: Option<[f32; HITLOC_COUNT]>,
     refused: &mut Vec<String>,
-) -> WeaponCombatFacts {
+) -> Result<WeaponCombatFacts, String> {
     if weapon.wire_id() == 0 {
-        return WeaponCombatFacts::none();
+        return Err("unarmed".to_owned());
     }
     match weapon.combat_facts(rules, global_location) {
-        Ok(facts) => facts,
+        Ok(facts) => Ok(facts),
         Err(reason) => {
             refused.push(format!("{}({reason:?})", weapons.name_of(weapon.wire_id())));
-            WeaponCombatFacts::none()
+            Err(format!("{reason:?}"))
         }
     }
 }
 
 pub struct ClassWeaponAdmission<'a> {
     registry: &'a WeaponRegistry,
-    combat: Vec<WeaponCombatFacts>,
-    equipment: Vec<sim::EquipmentRuntimeFacts>,
+    compiled: PreparedSimWeapons,
 }
 
 impl<'a> ClassWeaponAdmission<'a> {
     pub fn prepare(registry: &'a WeaponRegistry) -> Self {
-        let mut combat = Vec::new();
-        let mut equipment = Vec::new();
-        let mut refused = Vec::new();
-        for weapon in registry.published_weapons() {
-            combat.push(compile_combat(
-                registry,
-                weapon,
-                WeaponHostRules::default(),
-                None,
-                &mut refused,
-            ));
-            equipment.push(
-                registry
-                    .equipment_facts_of(weapon.wire_id())
-                    .unwrap_or(sim::EquipmentRuntimeFacts::default()),
-            );
-        }
-        if !refused.is_empty() {
-            diag::info!(
-                Sim,
-                "combat facts refused for {} weapons: {}",
-                refused.len(),
-                refused.join(" ")
-            );
-        }
-        Self {
+        let compiled = compile(
             registry,
-            combat,
-            equipment,
-        }
+            &asset_model::WorldWeaponCatalog::default(),
+            None,
+            Vec::new(),
+            weapon_iw4::PenetrationDepthTable::default(),
+            false,
+        )
+        .expect("published weapon registry has dense rows and a sentinel");
+        Self { registry, compiled }
     }
 
     pub fn allows(&self, row: &crate::ClassRow) -> bool {
-        !crate::project_class(0, row, self.registry, &self.combat, &self.equipment)
+        !crate::project_class(0, row, self.registry, &self.compiled)
             .def
             .locked
     }

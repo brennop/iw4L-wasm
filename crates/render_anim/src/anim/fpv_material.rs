@@ -64,6 +64,12 @@ pub(super) fn admit_material(
         material: material.to_owned(),
         cause,
     };
+    if !admission.owns_materials(global) {
+        return refused(
+            present_name,
+            "material admission belongs to another publication",
+        );
+    }
     if let Some(&row) = admission.by_authored.get(&mat_i) {
         return FpvSurfaceVerdict::Admitted(row);
     }

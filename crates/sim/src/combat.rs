@@ -724,7 +724,10 @@ pub(crate) fn advance_weapon_command(
                         continue;
                     };
                     apply_player_anim_event(world, *id, ANIM_ET_FIREWEAPON);
-                    let combat_seed = world.combat_rng_mut().next_u32();
+                    let combat_seed = match fire_cause {
+                        Some(cause) => cause.combat_seed(world.root_seed()),
+                        None => world.combat_rng_mut().next_u32(),
+                    };
                     let origin = world
                         .client_meta(*id)
                         .and_then(|meta| meta.linked_weapon_view)
@@ -1177,6 +1180,7 @@ pub(crate) fn phase_trace(
     emissions: &[Emission],
 ) -> TracePhaseOutput {
     let mut output = TracePhaseOutput::default();
+    let mut segment_ordinals = HashMap::<(ShotId, PelletId), u16>::new();
     let mut pending: std::collections::VecDeque<_> =
         emissions.iter().copied().map(|em| (em, 0u8)).collect();
     while let Some((em, bounces)) = pending.pop_front() {
@@ -1319,6 +1323,11 @@ pub(crate) fn phase_trace(
         }
         let mut glass_hit: Vec<u32> = Vec::new();
         for segment in &segments {
+            let ordinal = segment_ordinals.entry((em.shot_id, em.pellet)).or_default();
+            let segment_ordinal = *ordinal;
+            *ordinal = ordinal
+                .checked_add(1)
+                .expect("bullet segment count exceeds wire limit");
             let exit = segment.surface_flags & fx_iw4::FX_IMPACT_EXIT_SURFACE_FLAG != 0;
             let dist = {
                 let dx = segment.end[0] - em.origin[0];
@@ -1403,6 +1412,7 @@ pub(crate) fn phase_trace(
                 correlation: em.shot_id.0,
                 fire_cause: em.fire_cause,
                 pellet: em.pellet.0,
+                segment: segment_ordinal,
                 hand: em.hand,
                 origin: segment.end,
                 origin2: segment.start,
@@ -1449,7 +1459,9 @@ pub(crate) fn phase_trace(
                         attacker: em.attacker.0 as i32,
                         weapon: em.weapon,
                         correlation: em.shot_id.0,
+                        fire_cause: em.fire_cause,
                         pellet: em.pellet.0,
+                        segment: segment_ordinal,
                         hand: em.hand,
                         start: segment.start,
                         end: segment.end,
@@ -1464,7 +1476,9 @@ pub(crate) fn phase_trace(
                     attacker: em.attacker.0 as i32,
                     weapon: em.weapon,
                     correlation: em.shot_id.0,
+                    fire_cause: em.fire_cause,
                     pellet: em.pellet.0,
+                    segment: segment_ordinal,
                     hand: em.hand,
                     start: segment.start,
                     end: segment.end,

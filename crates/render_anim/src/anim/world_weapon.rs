@@ -161,21 +161,15 @@ fn compose_item(
     registry
         .configuration_admission(id)
         .map_err(WorldCompositionRefusal::Configuration)?;
-    let entry = registry
-        .world_model_entry_for(id, camo, catalog)
+    let appearance = registry
+        .select_appearance(id, camo)
         .ok_or(WorldCompositionRefusal::RequiredModel)?;
-    let order = if camo != 0 {
-        registry
-            .camo_world_edge_of(id, camo)
-            .and_then(|e| e.bound_index())
-            .filter(|&i| catalog.get_at(i).is_some())
-            .or_else(|| registry.world_model_edge_of(id)?.bound_index())
-    } else {
-        registry
-            .world_model_edge_of(id)
-            .and_then(|e| e.bound_index())
-    }
-    .ok_or(WorldCompositionRefusal::RequiredModel)?;
+    let entry = appearance
+        .world_model(catalog)
+        .ok_or(WorldCompositionRefusal::RequiredModel)?;
+    let order = appearance
+        .world_order(catalog)
+        .ok_or(WorldCompositionRefusal::RequiredModel)?;
     let pose = entry
         .skel
         .pose

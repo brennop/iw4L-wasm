@@ -816,6 +816,7 @@ fn encode_entity_event_record(out: &mut WireWriter, record: &EntityEventRecord) 
     out.put_u32(payload.correlation);
     encode_fire_cause(out, payload.fire_cause);
     out.put_u16(payload.pellet);
+    out.put_u16(payload.segment);
     out.put_u8(payload.hand);
     for value in payload.origin {
         out.put_f32(value);
@@ -856,6 +857,7 @@ fn decode_entity_event_record(input: &mut WireReader<'_>) -> Result<EntityEventR
             correlation: input.get_u32()?,
             fire_cause: decode_fire_cause(input)?,
             pellet: input.get_u16()?,
+            segment: input.get_u16()?,
             hand: input.get_u8()?,
             origin: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
             origin2: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
@@ -871,7 +873,9 @@ fn encode_pellet_fx_record(out: &mut WireWriter, record: &PelletFxRecord) {
     out.put_i32(record.attacker);
     out.put_u32(record.weapon);
     out.put_u32(record.correlation);
+    encode_fire_cause(out, record.fire_cause);
     out.put_u16(record.pellet);
+    out.put_u16(record.segment);
     out.put_u8(record.hand);
     for value in record.start {
         out.put_f32(value);
@@ -892,7 +896,9 @@ fn decode_pellet_fx_record(input: &mut WireReader<'_>) -> Result<PelletFxRecord,
         attacker: input.get_i32()?,
         weapon: input.get_u32()?,
         correlation: input.get_u32()?,
+        fire_cause: decode_fire_cause(input)?,
         pellet: input.get_u16()?,
+        segment: input.get_u16()?,
         hand: input.get_u8()?,
         start: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
         end: [input.get_f32()?, input.get_f32()?, input.get_f32()?],

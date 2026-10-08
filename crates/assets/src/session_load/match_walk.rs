@@ -7,6 +7,15 @@ pub(super) async fn walk_prepared_match(
     common_mp: Result<PathBuf, String>,
     progress: LoadProgress,
 ) -> (MatchLoadOutcome, Option<Arc<CommonSet>>) {
+    let mut image_trees = games_root_from_env()
+        .map(|root| asset_transport::NamespaceTrees::discover(&root))
+        .unwrap_or_default();
+    if let Ok(path) = &common_mp {
+        image_trees.adopt_zone(path);
+    }
+    if let Ok(path) = &zone_ff {
+        image_trees.adopt_zone(path);
+    }
     let zone_name = zone_ff
         .as_ref()
         .ok()
@@ -189,6 +198,7 @@ pub(super) async fn walk_prepared_match(
     let common_fx_model_early_pruned = common_fx_model_full - common_fx_models.len();
     world.source_namespace = map_namespace;
     report.append(&mut common_report);
+    report.extend(image_trees.report_lines());
 
     if facts.team_settings.allies.is_none() && facts.team_settings.axis.is_none() {
         if let Some(name) = facts.t5_teamset.as_ref() {
@@ -334,7 +344,6 @@ pub(super) async fn walk_prepared_match(
     let map_fpv_n = map_fpv.len();
     let map_fpv_added = fpv_meshes.absorb(map_fpv);
     fpv_meshes.set_map_namespace(map_namespace);
-    weapons.resolve_fpv_mesh_edges(&fpv_meshes);
 
     world_weapons.seal_identity();
     weapons.resolve_world_model_edges(&world_weapons);
@@ -510,16 +519,28 @@ pub(super) async fn walk_prepared_match(
         ));
         merge_image_batch(&mut global, label, batch, job, &mut report);
     }
-    if let Ok(path) = &zone_ff {
+    if zone_ff.is_ok() {
         let stage = progress.begin_scoped(StageId::Images, "merged", None);
-        let decoded =
-            asset_material::decode_material_color_maps(path, &mut global, &stage, load_pool());
+        let decoded = asset_material::decode_material_color_maps(
+            &image_trees,
+            &mut global,
+            &stage,
+            load_pool(),
+        );
         stage.finish_from(&decoded);
         match decoded {
-            Ok(stats) => report.push(format!(
-                "merged material images: {}/{} decoded, {} missing, {} unsupported",
-                stats.decoded, stats.requested, stats.missing, stats.unsupported
-            )),
+            Ok(stats) => {
+                report.push(format!(
+                    "merged material images: {}/{} decoded, {} missing, {} unsupported",
+                    stats.decoded, stats.requested, stats.missing, stats.unsupported
+                ));
+                if let Some(gap) = stats.first_gap {
+                    report.push(format!("merged material image missing: {gap}"));
+                }
+                if let Some(gap) = stats.first_unsupported {
+                    report.push(format!("merged material image unsupported: {gap}"));
+                }
+            }
             Err(error) => report.push(format!("merged material images gap: {error}")),
         }
     }
@@ -529,7 +550,7 @@ pub(super) async fn walk_prepared_match(
             &mut global,
             &common_light_defs,
             map_namespace,
-            &zone_ff,
+            &image_trees,
             &progress,
             &mut report,
         );
@@ -540,10 +561,10 @@ pub(super) async fn walk_prepared_match(
             "in-zone builtin images: decoded {builtins} leftover $ 2D loadDefs after absorb"
         ));
     }
-    if let Ok(path) = &zone_ff {
+    if zone_ff.is_ok() {
         let stage = progress.begin_scoped(StageId::Images, "tracers", None);
         let decoded = asset_material::material_images::decode_images_for_keys(
-            path,
+            &image_trees,
             &mut global,
             common_tracers.material_keys(),
             &stage,
@@ -617,6 +638,7 @@ pub(super) async fn walk_prepared_match(
     );
     // Bind rigs and tracks to the finished mesh publication, after material linking.
     let fpv_meshes = Arc::new(fpv_meshes.publish());
+    weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     let bodies = Arc::new(bodies.publish());
     let xanims = Arc::new(xanims.publish());
     let soldiers = asset_game::SoldierPresentations::prepare(
@@ -664,7 +686,7 @@ pub(super) async fn walk_prepared_match(
         "fx color maps handoff: n=0 bytes=0 (Bound GPU bind at spawn; no CPU clone sidecar; stub_aliases=0)"
             .into(),
     );
-    decode_fx_colour_maps(&world.fx, &mut global, &zone_ff, &progress, &mut report);
+    decode_fx_colour_maps(&world.fx, &mut global, &image_trees, &progress, &mut report);
     if world.impact_fx.is_none() {
         world.impact_fx = if map_namespace == Some(asset_core::AssetNamespace::T5) {
             t5_impact_fx.or(common_impact)
@@ -790,7 +812,7 @@ fn resolve_world_lights(
     global: &mut asset_material::MaterialDefinitions,
     common_light_defs: &[asset_world::CapturedLightDef],
     map_namespace: Option<asset_core::AssetNamespace>,
-    zone_ff: &Result<PathBuf, String>,
+    image_trees: &asset_transport::NamespaceTrees,
     progress: &LoadProgress,
     report: &mut Vec<String>,
 ) -> Option<asset_world::ResolvedLightDef> {
@@ -856,7 +878,7 @@ fn resolve_world_lights(
             .map(|def| def.attenuation_image_name.as_deref())
             .collect::<Vec<_>>(),
     ));
-    if let Ok(path) = &zone_ff {
+    {
         let mut requested: Vec<(usize, u8)> = draw
             .primary_lights
             .iter()
@@ -872,7 +894,7 @@ fn resolve_world_lights(
         let want = want.len();
         let stage = progress.begin_scoped(StageId::Images, "attenuation", None);
         let decoded = asset_material::decode_catalog_images_from_iwd(
-            path,
+            image_trees,
             global,
             requested,
             &stage,
@@ -1046,7 +1068,7 @@ fn link_materials_after_absorb(
 fn decode_fx_colour_maps(
     fx: &FxCatalog,
     global: &mut asset_material::MaterialDefinitions,
-    zone_ff: &Result<PathBuf, String>,
+    image_trees: &asset_transport::NamespaceTrees,
     progress: &LoadProgress,
     report: &mut Vec<String>,
 ) {
@@ -1064,20 +1086,18 @@ fn decode_fx_colour_maps(
         })
         .collect();
     if !missing.is_empty() {
-        if let Ok(path) = zone_ff {
-            let stage = progress.begin_scoped(StageId::Images, "fx_elem", None);
-            let decoded = asset_material::material_images::decode_images_for_keys(
-                path,
-                global,
-                missing,
-                &stage,
-                load_pool(),
-            );
-            stage.finish_from(&decoded);
-            match decoded {
-                Ok(n) => report.push(format!("fx elem 2d images after absorb: {n} decoded")),
-                Err(error) => report.push(format!("fx elem 2d images after absorb: {error}")),
-            }
+        let stage = progress.begin_scoped(StageId::Images, "fx_elem", None);
+        let decoded = asset_material::material_images::decode_images_for_keys(
+            image_trees,
+            global,
+            missing,
+            &stage,
+            load_pool(),
+        );
+        stage.finish_from(&decoded);
+        match decoded {
+            Ok(n) => report.push(format!("fx elem 2d images after absorb: {n} decoded")),
+            Err(error) => report.push(format!("fx elem 2d images after absorb: {error}")),
         }
     }
     let nocolor: Vec<(usize, String)> = fx

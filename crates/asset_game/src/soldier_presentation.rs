@@ -136,6 +136,68 @@ impl SoldierHands {
 }
 
 #[derive(Debug)]
+pub struct SoldierHead {
+    bodies: Arc<BodyMeshCatalog>,
+    name: String,
+    tag: String,
+}
+
+impl SoldierHead {
+    fn prepare(
+        bodies: &Arc<BodyMeshCatalog>,
+        kit: &SoldierKit,
+        family: FamilyId,
+    ) -> Result<Option<Self>, String> {
+        let Some(name) = &kit.head else {
+            return Ok(None);
+        };
+        let body = bodies.get(&kit.body).ok_or("soldier body missing")?;
+        let entry = bodies
+            .get(name)
+            .ok_or_else(|| format!("soldier head `{name}` missing"))?;
+        if entry.namespace != family {
+            return Err("soldier head differs from body family".into());
+        }
+        let body_pose = body
+            .skel
+            .pose
+            .as_ref()
+            .ok_or("soldier body pose missing for head")?;
+        let head_pose = entry
+            .skel
+            .pose
+            .as_ref()
+            .ok_or("soldier head pose missing")?;
+        let tag = xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names)
+            .ok_or("soldier head mount missing")?;
+        DObj::build(&[
+            (body_pose, None),
+            (
+                head_pose,
+                Some(xmodel_runtime::Attach {
+                    parent_model: 0,
+                    tag: tag.into(),
+                }),
+            ),
+        ])
+        .map_err(|error| error.to_string())?;
+        Ok(Some(Self {
+            bodies: Arc::clone(bodies),
+            name: name.clone(),
+            tag: tag.into(),
+        }))
+    }
+
+    pub fn entry(&self) -> &BodyMeshEntry {
+        self.bodies.get(&self.name).expect("prepared soldier head")
+    }
+
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+}
+
+#[derive(Debug)]
 pub struct SoldierPresentation {
     kit: SoldierKit,
     family: FamilyId,
@@ -143,6 +205,7 @@ pub struct SoldierPresentation {
     meshes: Arc<FpvMeshCatalog>,
     mounts: Arc<[HandMounts]>,
     kit_hands: Result<Option<SoldierHands>, String>,
+    head: Result<Option<SoldierHead>, String>,
     animation: Result<Arc<SoldierBodyAnimation>, String>,
 }
 
@@ -178,6 +241,7 @@ impl SoldierPresentation {
             Ok(choice.key().is_some().then_some(choice))
         };
         let mut presentation = Self {
+            head: SoldierHead::prepare(bodies, &kit, family),
             animation: SoldierBodyAnimation::prepare(bodies, &kit, sources, catalog),
             kit,
             family,
@@ -233,8 +297,11 @@ impl SoldierPresentation {
             .expect("prepared soldier body")
     }
 
-    pub fn head(&self) -> Option<&BodyMeshEntry> {
-        self.bodies.get(self.kit.head.as_deref()?)
+    pub fn head(&self) -> Result<Option<&SoldierHead>, &str> {
+        self.head
+            .as_ref()
+            .map(Option::as_ref)
+            .map_err(String::as_str)
     }
 
     pub fn owns_bodies(&self, bodies: &Arc<BodyMeshCatalog>) -> bool {

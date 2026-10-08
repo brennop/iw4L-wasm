@@ -8,23 +8,15 @@ pub struct AdoptGap {
 pub const ADOPT_GAPS: &[AdoptGap] = &[
     AdoptGap {
         field: "spawn_rng / combat_rng / bot_rng",
-        reason: "authority-only draws. A snapshot carries draw counters (RngDebugMeta) but not \
-                 generator state, so a client cannot resume the sequence. It does not need to: \
-                 every draw belongs to a decision authority already made and replicated \
-                 (spawn placement, spread). A client that re-runs step draws from its own \
-                 stream, gets a different answer, and has that answer overwritten on the next \
-                 adopt — which is why spread-bearing shot results are authority-validated \
-                 rather than predicted.",
+        reason: "generator state is authority-owned. Sequenced shots derive spread from the \
+                 match seed and FireCause; prediction does not need the authority draw stream. \
+                 Spawn and bot draws remain authority-owned.",
     },
     AdoptGap {
         field: "next_shot / next_projectile",
-        reason: "id allocators. A predicted shot gets a client-local id that authority never \
-                 issued; the authoritative ids arrive with the snapshot that adopts over them. \
-                 Predicted ids therefore must not escape into presentation keyed by id — \
-                 events are read from the adopted snapshot, not from predicted output. \
-                 Projectile flight itself is predicted (deterministic ballistics); only the id \
-                 is withheld until adopt. Presentation merges by (owner, weapon) via \
-                 net::merge_presented_projectiles.",
+        reason: "prediction-local ids are not authority identities. Owner fire and impact \
+                 presentation deduplicates by FireCause, pellet and segment; projectile \
+                 presentation merges by owner and weapon until authority ids arrive.",
     },
     AdoptGap {
         field: "collision_history",

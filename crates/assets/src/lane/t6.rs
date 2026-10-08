@@ -551,6 +551,29 @@ enum ColourMapAlpha {
     Gloss,
 }
 
+fn resolve_material<'a>(
+    load: &'a fastfile_t6::ZoneLoad,
+    zones: &[&'a fastfile_t6::ZoneLoad],
+    material: &'a fastfile_t6::LoadedAsset,
+) -> Result<(&'a fastfile_t6::ZoneLoad, &'a fastfile_t6::LoadedAsset), String> {
+    let raw_name = header_str(load, &material.header, 0).ok_or("T6 material name missing")?;
+    let Some(name) = raw_name.strip_prefix(',') else {
+        return Ok((load, material));
+    };
+    zones
+        .iter()
+        .find_map(|zone| {
+            zone.assets
+                .iter()
+                .find(|asset| {
+                    asset.ty == fastfile_t6::AssetType::Material
+                        && header_str(zone, &asset.header, 0) == Some(name)
+                })
+                .map(|asset| (*zone, asset))
+        })
+        .ok_or_else(|| format!("T6 material {name}: definition missing"))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn capture_native(
     load: &fastfile_t6::ZoneLoad,
@@ -1527,28 +1550,12 @@ fn capture_soldiers(
                     .ptr_at(slot)
                     .map_err(|e| format!("T6 soldier material pointer: {e:?}"))?
                     .ok_or("T6 soldier material null")?;
-                let (material_load, material) = if raw_name.starts_with(',') {
-                    zones
-                        .iter()
-                        .find_map(|zone| {
-                            zone.assets
-                                .iter()
-                                .find(|asset| {
-                                    asset.ty == fastfile_t6::AssetType::Material
-                                        && header_str(zone, &asset.header, 0) == Some(material_name)
-                                })
-                                .map(|asset| (*zone, asset))
-                        })
-                        .ok_or_else(|| {
-                            format!("T6 soldier material {material_name}: definition missing")
-                        })?
-                } else {
-                    (load, material)
-                };
+                let (material_load, material) = resolve_material(load, &zones, material)?;
+                let address = std::ptr::eq(material_load, load).then_some(address);
                 let native = capture_native(
                     material_load,
                     &zones,
-                    Some(address),
+                    address,
                     material,
                     ColourMapAlpha::Mask,
                     ipaks,
@@ -1877,14 +1884,17 @@ impl ZoneLane for T6Lane {
                 .chain(&smodel_materials)
             {
                 let material = *material;
-                let name = header_str(&load, &material.header, 0)
-                    .ok_or("T6 material name missing")?
-                    .to_owned();
+                let raw_name =
+                    header_str(&load, &material.header, 0).ok_or("T6 material name missing")?;
+                let name = asset_core::AssetRef::bare_name(raw_name).to_owned();
                 let row = if let Some(row) = material_rows.get(&name) {
                     *row
                 } else {
+                    let is_sky = sky_materials.iter().any(|sky| std::ptr::eq(*sky, material));
+                    let (material_load, material) =
+                        resolve_material(&load, &image_loads, material)?;
                     let native = capture_native(
-                        &load,
+                        material_load,
                         &image_loads,
                         None,
                         material,
@@ -1897,7 +1907,6 @@ impl ZoneLane for T6Lane {
                     .ok_or_else(|| format!("T6 material {name}: native capture failed"))?;
                     let set = &techsets[&native.technique_set];
                     materials.link_t6_technique_set(set, T6Draw::Lit, &mut report);
-                    let is_sky = sky_materials.iter().any(|sky| std::ptr::eq(*sky, material));
                     let seed = native_material_seed(
                         path,
                         &name,
@@ -1954,7 +1963,7 @@ impl ZoneLane for T6Lane {
                 let material = load.asset_at(model.material_slot(surface)?)?;
                 let name = header_str(&load, &material.header, 0)?;
                 material_rows
-                    .get(name)
+                    .get(asset_core::AssetRef::bare_name(name))
                     .copied()
                     .map(asset_core::WalkLocalMaterialIndex::from_walk)
             };

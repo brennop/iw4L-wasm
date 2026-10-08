@@ -41,13 +41,25 @@ pub struct PendingPresentedEntityEvents {
 }
 
 #[derive(Resource, Default)]
-pub struct PendingPelletFx(Vec<(frame::WorldGeneration, sim::PelletFxRecord)>);
+pub struct PendingPelletFx(
+    pub(crate)  Vec<(
+        frame::WorldGeneration,
+        crate::EntityEventDomain,
+        sim::PelletFxRecord,
+    )>,
+);
 
 impl PendingPelletFx {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn take(&mut self) -> Vec<(frame::WorldGeneration, sim::PelletFxRecord)> {
+    pub fn take(
+        &mut self,
+    ) -> Vec<(
+        frame::WorldGeneration,
+        crate::EntityEventDomain,
+        sim::PelletFxRecord,
+    )> {
         core::mem::take(&mut self.0)
     }
     fn clear(&mut self) {
@@ -549,13 +561,15 @@ pub fn reconcile_prediction(
         if !match_key.is_none()
             && tick.snapshot.meta.world_objects.map_round_epoch == match_key.match_epoch
         {
-            pellet_fx.0.extend(
-                tick.snapshot
-                    .meta
-                    .pellet_fx
-                    .drain(..)
-                    .map(|record| (*reliable.generation, record)),
-            );
+            pellet_fx
+                .0
+                .extend(tick.snapshot.meta.pellet_fx.drain(..).map(|record| {
+                    (
+                        *reliable.generation,
+                        crate::EntityEventDomain::Snapshot,
+                        record,
+                    )
+                }));
         }
         reliable.apply(local.0, &tick.frame.reliable);
         let ack = tick.ack_for(local.0);

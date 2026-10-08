@@ -18,7 +18,9 @@ pub use preparation::{
 mod iw5_parameters;
 mod native_t6;
 use iw5_parameters::*;
+mod appearance;
 mod registry;
+pub use appearance::SelectedWeaponAppearance;
 pub use capture_t6::{
     t6_attachment_ads_model, t6_attachment_models, t6_attachment_sound_names,
     t6_attachment_xanim_names, t6_model_name, t6_weapon_sound_names, t6_weapon_xanim_names,
@@ -1355,6 +1357,7 @@ struct WeaponRow {
     camo_models: WeaponCamoModels,
     skin_parent: Option<String>,
     material_camos: Arc<[crate::WeaponCamouflage]>,
+    appearances: Arc<[appearance::PreparedWeaponAppearance]>,
 
     camo_view_edges: Vec<(u8, AssetEdge<FpvMeshSpace>)>,
     camo_world_edges: Vec<(u8, AssetEdge<WorldWeaponSpace>)>,
@@ -1480,6 +1483,7 @@ impl Default for WeaponRow {
             camo_models: WeaponCamoModels::default(),
             skin_parent: None,
             material_camos: Arc::default(),
+            appearances: Arc::default(),
             camo_view_edges: Vec::new(),
             camo_world_edges: Vec::new(),
             attachment_world_model_edges: Vec::new(),
@@ -1548,6 +1552,8 @@ pub struct WeaponRegistry {
     rows: Vec<WeaponRow>,
 
     world_catalog_identity: u64,
+    fpv_catalog_identity: u64,
+    loadout_only: bool,
 
     iw5_attachments: HashMap<String, Iw5ScopeRow>,
 
@@ -1751,6 +1757,18 @@ impl std::ops::Deref for WeaponBuild {
 }
 
 impl WeaponBuild {
+    pub fn hand_xmodel_of(&self, index: u32) -> Option<&str> {
+        self.rows
+            .get(index as usize)
+            .and_then(|row| row.hand_xmodel.as_deref())
+    }
+
+    pub fn material_camouflages_of(&self, weapon: u32) -> &[crate::WeaponCamouflage] {
+        self.rows
+            .get(weapon as usize)
+            .map_or(&[], |row| &row.material_camos)
+    }
+
     pub fn set_family_tables(
         &mut self,
         tables: Vec<(crate::AssetNamespace, crate::CapturedStringTable)>,

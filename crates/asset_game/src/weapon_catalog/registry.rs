@@ -139,41 +139,6 @@ impl WeaponRegistry {
         self.rows.get(index as usize).map(|row| row.gun_xmodel_edge)
     }
 
-    pub fn material_camouflages_of(&self, weapon: u32) -> &[crate::WeaponCamouflage] {
-        self.rows
-            .get(weapon as usize)
-            .map_or(&[], |row| &row.material_camos)
-    }
-
-    pub fn camouflage_choices(&self, weapon: u32) -> Vec<(u8, &str)> {
-        let camos = self.material_camouflages_of(weapon);
-        if !camos.is_empty() {
-            return camos
-                .iter()
-                .map(|camo| (camo.slot, camo.name.as_str()))
-                .collect();
-        }
-        self.camo_models_of(weapon).map_or_else(Vec::new, |models| {
-            if self.identity_namespace_of(weapon) == Some(crate::AssetNamespace::Iw5) {
-                return models
-                    .choices
-                    .iter()
-                    .map(|choice| (choice.slot, choice.name.as_str()))
-                    .collect();
-            }
-            models
-                .view
-                .iter()
-                .filter_map(|(slot, _)| {
-                    weapon_iw4::IW4_CAMOS
-                        .get(usize::from(*slot))
-                        .filter(|_| *slot != 0)
-                        .map(|name| (*slot, *name))
-                })
-                .collect()
-        })
-    }
-
     pub fn camouflage_slot(&self, weapon: u32, name: &str) -> Option<u8> {
         if name.is_empty() || name.eq_ignore_ascii_case("none") {
             return Some(0);
@@ -182,63 +147,6 @@ impl WeaponRegistry {
             .into_iter()
             .find(|(_, own)| own.eq_ignore_ascii_case(name))
             .map(|(slot, _)| slot)
-    }
-
-    pub fn camouflage_caption(&self, weapon: u32, name: &str) -> Option<&str> {
-        self.material_camouflages_of(weapon)
-            .iter()
-            .find(|camo| camo.name.eq_ignore_ascii_case(name))
-            .map(|camo| camo.caption_key.as_str())
-            .or_else(|| {
-                self.camo_models_of(weapon)?
-                    .choices
-                    .iter()
-                    .find(|choice| choice.name.eq_ignore_ascii_case(name))
-                    .map(|choice| choice.caption_key.as_str())
-            })
-    }
-
-    pub fn camouflage_preview(&self, weapon: u32, name: &str) -> String {
-        if name.is_empty() || name.eq_ignore_ascii_case("none") {
-            return String::new();
-        }
-        if let Some(camo) = self
-            .material_camouflages_of(weapon)
-            .iter()
-            .find(|camo| camo.name.eq_ignore_ascii_case(name))
-        {
-            return camo.preview.clone();
-        }
-        if self.identity_namespace_of(weapon) == Some(crate::AssetNamespace::Iw5) {
-            return self
-                .camo_models_of(weapon)
-                .and_then(|models| {
-                    models
-                        .choices
-                        .iter()
-                        .find(|choice| choice.name.eq_ignore_ascii_case(name))
-                })
-                .map_or_else(String::new, |choice| choice.preview.clone());
-        }
-        format!("iw4:material/weapon_camo_menu_{name}")
-    }
-
-    pub fn camo_view_edges_of(&self, index: u32) -> &[(u8, AssetEdge<FpvMeshSpace>)] {
-        self.rows
-            .get(index as usize)
-            .map_or(&[], |row| row.camo_view_edges.as_slice())
-    }
-
-    pub fn camo_world_edge_of(&self, index: u32, slot: u8) -> Option<AssetEdge<WorldWeaponSpace>> {
-        let row = self.rows.get(index as usize)?;
-        row.camo_world_edges
-            .iter()
-            .find(|(own, _)| *own == slot)
-            .map(|(_, edge)| *edge)
-    }
-
-    pub fn camo_models_of(&self, index: u32) -> Option<&WeaponCamoModels> {
-        self.rows.get(index as usize).map(|row| &row.camo_models)
     }
 
     pub fn fpv_hands_of(
@@ -338,11 +246,6 @@ impl WeaponRegistry {
                 &row.gun_xmodel,
             ),
             (
-                row.hand_xmodel.is_some() && !row.hand_xmodel_edge.is_bound(),
-                "hands",
-                &row.hand_xmodel,
-            ),
-            (
                 row.rocket_model.is_some() && !row.rocket_model_edge.is_bound(),
                 "FPV rocket model",
                 &row.rocket_model,
@@ -400,13 +303,20 @@ impl WeaponRegistry {
                 });
             }
         }
-        if row.gun_xmodel_edge.is_bound() {
+        if !self.loadout_only && row.gun_xmodel_edge.is_bound() {
             for (side, hands) in row.fpv_soldiers.iter().enumerate() {
                 if hands.as_ref().is_none_or(|hands| hands.is_err()) {
                     gaps.push(WeaponDependencyGap {
                         id,
                         kind: "FPV hands layout",
-                        name: if side == 0 { "allies" } else { "axis" }.to_owned(),
+                        name: format!(
+                            "{}: {}",
+                            if side == 0 { "allies" } else { "axis" },
+                            hands
+                                .as_ref()
+                                .and_then(|hands| hands.as_ref().err())
+                                .map_or("soldier presentation not prepared", String::as_str)
+                        ),
                     });
                 }
             }
@@ -510,16 +420,7 @@ impl WeaponRegistry {
         camo: u8,
         catalog: &'a crate::WorldWeaponCatalog,
     ) -> Option<&'a crate::WorldWeaponEntry> {
-        if camo != 0
-            && self.world_catalog_identity == catalog.identity()
-            && let Some(entry) = self
-                .camo_world_edge_of(index, camo)
-                .and_then(|edge| edge.bound_index())
-                .and_then(|order| catalog.get_at(order))
-        {
-            return Some(entry);
-        }
-        self.world_model_entry(index, catalog)
+        self.select_appearance(index, camo)?.world_model(catalog)
     }
 
     pub fn authored_weapon_sound(&self, index: u32, slot: WeaponSoundSlot) -> Option<&str> {
@@ -870,12 +771,6 @@ impl WeaponRegistry {
         self.rows
             .get(index as usize)
             .and_then(|row| row.gun_xmodel.as_deref())
-    }
-
-    pub fn hand_xmodel_of(&self, index: u32) -> Option<&str> {
-        self.rows
-            .get(index as usize)
-            .and_then(|row| row.hand_xmodel.as_deref())
     }
 
     pub fn world_model_of(&self, index: u32) -> Option<&str> {

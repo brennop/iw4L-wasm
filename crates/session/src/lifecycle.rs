@@ -305,10 +305,12 @@ fn load_key_for_swap(request_id: u64, bridge: Option<&net::MasterBridge>) -> Loc
         return LocalLoadKey::from_request(request_id, MatchKey::NONE, 0);
     };
     match bridge.state() {
-        net::MasterBridgeState::Hosting { .. } => {
-            LocalLoadKey::from_request(request_id, MatchKey::NONE, bridge.incarnation())
+        net::MasterBridgeState::Hosting {
+            identity,
+            in_match: true,
+            ..
         }
-        net::MasterBridgeState::Joined {
+        | net::MasterBridgeState::Joined {
             identity,
             in_match: true,
             ..
@@ -317,6 +319,9 @@ fn load_key_for_swap(request_id: u64, bridge: Option<&net::MasterBridge>) -> Loc
             MatchKey::new(identity.room_id.0, identity.epoch),
             bridge.incarnation(),
         ),
+        net::MasterBridgeState::Hosting { .. } => {
+            LocalLoadKey::from_request(request_id, MatchKey::NONE, bridge.incarnation())
+        }
         _ => LocalLoadKey::from_request(request_id, MatchKey::NONE, 0),
     }
 }

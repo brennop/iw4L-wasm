@@ -28,14 +28,35 @@ pub enum FpvSurfaceVerdict {
     },
 }
 
-#[derive(Default)]
-pub struct FpvMaterialAdmission {
-    pub materials: Vec<SmodelPassMaterial>,
-    pub by_authored: HashMap<usize, u32>,
+pub(super) struct FpvMaterialAdmission {
+    meshes: Arc<FpvMeshCatalog>,
+    material_catalog: Arc<render_material::RuntimeMaterialCatalog>,
+    pub(super) materials: Vec<SmodelPassMaterial>,
+    pub(super) by_authored: HashMap<usize, u32>,
     verdicts: HashMap<usize, Vec<(usize, FpvSurfaceVerdict)>>,
 }
 
 impl FpvMaterialAdmission {
+    pub(super) fn new(
+        meshes: Arc<FpvMeshCatalog>,
+        material_catalog: Arc<render_material::RuntimeMaterialCatalog>,
+    ) -> Self {
+        Self {
+            meshes,
+            material_catalog,
+            materials: Vec::new(),
+            by_authored: HashMap::new(),
+            verdicts: HashMap::new(),
+        }
+    }
+
+    pub(super) fn owns_materials(
+        &self,
+        materials: &render_material::RuntimeMaterialCatalog,
+    ) -> bool {
+        std::ptr::eq(self.material_catalog.as_ref(), materials)
+    }
+
     pub fn record(&mut self, catalog_entry: usize, verdicts: Vec<(usize, FpvSurfaceVerdict)>) {
         self.verdicts.insert(catalog_entry, verdicts);
     }
@@ -113,12 +134,17 @@ pub fn leftover_scope_surf_is_lens(name: &str) -> bool {
 }
 
 impl PreparedFpvModel {
-    pub fn build(
+    pub(super) fn build(
         catalog: &FpvMeshCatalog,
         catalog_entry: usize,
         hide: Option<&[u32; 6]>,
         admission: &FpvMaterialAdmission,
     ) -> Result<Self, FpvRigError> {
+        if catalog.identity() != admission.meshes.identity() {
+            return Err(FpvRigError::Layout(
+                "material admission belongs to another mesh publication",
+            ));
+        }
         if catalog.identity() == 0 {
             return Err(FpvRigError::Catalog("published mesh owner"));
         }
@@ -367,6 +393,7 @@ impl PreparedFpvRig {
         clips: [Vec<Option<Arc<asset_anim::AnimClip>>>; 2],
     ) -> Self {
         assert_eq!(composition.assembly.mesh_identity(), meshes.identity());
+        assert_eq!(admission.meshes.identity(), meshes.identity());
         let parts_n = composition.parts.len();
 
         // Every hand's view hands first, then every hand's gun and whatever

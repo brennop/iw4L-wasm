@@ -167,7 +167,7 @@ fn hide_words(
 }
 
 impl FpvAssembly {
-    pub fn build(
+    pub(crate) fn build(
         catalog: &FpvMeshCatalog,
         hands: FpvMeshIndex,
         mounts: &FpvMountPlan,

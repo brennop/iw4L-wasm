@@ -88,6 +88,17 @@ pub fn owner_shot(source: &str, ordinal: u32, tick: u32) {
     track_event_end!("iw4l.sim");
 }
 
+pub fn owner_impact(source: &str, client: u32, command: u32, pellet: u16, segment: u16) {
+    track_event_begin!("iw4l.sim", "owner_impact", |ctx: &mut EventContext| {
+        str_arg(ctx, "source", source);
+        i64_arg(ctx, "client", i64::from(client));
+        i64_arg(ctx, "command", i64::from(command));
+        i64_arg(ctx, "pellet", i64::from(pellet));
+        i64_arg(ctx, "segment", i64::from(segment));
+    });
+    track_event_end!("iw4l.sim");
+}
+
 pub fn net_leg(leg: &str, key: u32, bytes: u32) {
     track_event_begin!("iw4l.sim", "net_leg", |ctx: &mut EventContext| {
         str_arg(ctx, "leg", leg);

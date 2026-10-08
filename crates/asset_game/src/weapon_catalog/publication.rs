@@ -11,6 +11,11 @@ impl WeaponCatalog {
 }
 
 impl WeaponBuild {
+    pub fn publish_for_loadout(mut self) -> WeaponRegistry {
+        self.registry.loadout_only = true;
+        self.publish()
+    }
+
     pub fn publish(self) -> WeaponRegistry {
         let mut registry = self.registry;
         registry.revision = mint_weapon_revision();
@@ -27,6 +32,25 @@ impl WeaponBuild {
             row.preparation.set_source(row.namespace, &row.name);
             row.preparation.declare_sound_hints(&row.sounds);
             row.preparation.finish();
+            if row.namespace == crate::AssetNamespace::Iw4 && row.camo_models.choices.is_empty() {
+                row.camo_models.choices = row
+                    .camo_models
+                    .view
+                    .iter()
+                    .filter_map(|(slot, _)| {
+                        let name = weapon_iw4::IW4_CAMOS
+                            .get(usize::from(*slot))
+                            .filter(|_| *slot != 0)?;
+                        Some(WeaponCamouflageChoice {
+                            slot: *slot,
+                            name: (*name).to_owned(),
+                            caption_key: String::new(),
+                            preview: format!("iw4:material/weapon_camo_menu_{name}"),
+                        })
+                    })
+                    .collect();
+            }
+            row.appearances = appearance::PreparedWeaponAppearance::prepare(row);
             let melee_weapon =
                 if row.namespace == crate::AssetNamespace::T5 && !row.facts.use_as_melee {
                     t5_knife.map_or(crate::MeleeWeaponPolicy::Own, |weapon| {
@@ -348,6 +372,7 @@ impl WeaponBuild {
                 camo_models: entry.camo_models,
                 skin_parent: entry.skin_parent,
                 material_camos: Arc::default(),
+                appearances: Arc::default(),
                 camo_view_edges: Vec::new(),
                 camo_world_edges: Vec::new(),
                 attachment_world_model_edges: Vec::new(),
@@ -430,6 +455,8 @@ impl WeaponBuild {
         let mut registry = WeaponRegistry {
             rows,
             world_catalog_identity: 0,
+            fpv_catalog_identity: 0,
+            loadout_only: false,
             iw5_attachments,
             configurations: HashMap::new(),
             by_name: index_of,

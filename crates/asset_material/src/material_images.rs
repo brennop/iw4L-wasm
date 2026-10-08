@@ -59,24 +59,19 @@ fn texture_semantic_decodes_as_normal(semantic: u8) -> Option<bool> {
 }
 
 pub fn decode_material_color_maps(
-    zone_ff: &Path,
+    trees: &asset_transport::NamespaceTrees,
     catalog: &mut MaterialDefinitions,
     stage: &StageHandle,
     pool: &TaskPool,
 ) -> Result<MaterialImageStats, String> {
-    let main = game_main_for_zone(zone_ff)?;
-    let index = IwdIndex::open(&main)?;
+    let work = requested_color_map_slots(catalog);
+    let (decoded, archives) =
+        decode_requests_from_trees(&catalog.images, trees, &work, stage, pool)?;
     let mut stats = MaterialImageStats {
-        archives: index.archive_count(),
+        requested: work.len(),
+        archives,
         ..Default::default()
     };
-
-    let work = requested_color_map_slots(catalog);
-    stats.requested = work.len();
-    stage.set_total(work.len() as u64);
-
-    let images = &catalog.images;
-    let decoded = decode_requests_in_parallel(images, index.as_ref(), &work, stage, pool);
 
     for outcome in decoded {
         match outcome {
@@ -155,7 +150,7 @@ fn requested_color_map_slots(catalog: &MaterialDefinitions) -> Vec<ImageRequest>
 }
 
 pub fn decode_images_for_keys(
-    zone_ff: &Path,
+    trees: &asset_transport::NamespaceTrees,
     catalog: &mut MaterialDefinitions,
     keys: impl IntoIterator<Item = crate::MaterialKey>,
     stage: &StageHandle,
@@ -165,11 +160,7 @@ pub fn decode_images_for_keys(
     if work.is_empty() {
         return Ok(0);
     }
-    let main = game_main_for_zone(zone_ff)?;
-    let index = IwdIndex::open(&main)?;
-    stage.set_total(work.len() as u64);
-    let images = &catalog.images;
-    let decoded = decode_requests_in_parallel(images, index.as_ref(), &work, stage, pool);
+    let (decoded, _) = decode_requests_from_trees(&catalog.images, trees, &work, stage, pool)?;
     let mut n = 0usize;
     for outcome in decoded {
         if let ImageOutcome::Decoded {
@@ -253,7 +244,7 @@ fn requested_keyed_image_slots(
 }
 
 pub fn decode_catalog_images_from_iwd(
-    zone_ff: &Path,
+    trees: &asset_transport::NamespaceTrees,
     catalog: &mut MaterialDefinitions,
     images: impl IntoIterator<Item = (usize, u8)>,
     stage: &StageHandle,
@@ -277,11 +268,7 @@ pub fn decode_catalog_images_from_iwd(
     if work.is_empty() {
         return Ok(0);
     }
-    let main = game_main_for_zone(zone_ff)?;
-    let index = IwdIndex::open(&main)?;
-    stage.set_total(work.len() as u64);
-    let catalog_images = &catalog.images;
-    let decoded = decode_requests_in_parallel(catalog_images, index.as_ref(), &work, stage, pool);
+    let (decoded, _) = decode_requests_from_trees(&catalog.images, trees, &work, stage, pool)?;
     let mut n = 0usize;
     for outcome in decoded {
         if let ImageOutcome::Decoded {
@@ -367,6 +354,55 @@ enum ImageOutcome {
 }
 
 type ImageRequest = (usize, (u8, bool, bool, bool));
+
+fn decode_requests_from_trees(
+    images: &[AuthoredImage],
+    trees: &asset_transport::NamespaceTrees,
+    work: &[ImageRequest],
+    stage: &StageHandle,
+    pool: &TaskPool,
+) -> Result<(Vec<ImageOutcome>, usize), String> {
+    stage.set_total(work.len() as u64);
+    let mut decoded = Vec::with_capacity(work.len());
+    let mut archives = 0;
+    for &(slot, _) in work {
+        if images.get(slot).is_none() {
+            decoded.push(ImageOutcome::Missing {
+                gap: format!("catalog image index {slot} is out of bounds"),
+            });
+            stage.advance(1);
+        }
+    }
+    for namespace in [
+        crate::AssetNamespace::Iw4,
+        crate::AssetNamespace::T5,
+        crate::AssetNamespace::Iw5,
+        crate::AssetNamespace::T6,
+    ] {
+        let requests: Vec<_> = work
+            .iter()
+            .copied()
+            .filter(|(slot, _)| {
+                images
+                    .get(*slot)
+                    .is_some_and(|image| image.namespace == namespace)
+            })
+            .collect();
+        if requests.is_empty() {
+            continue;
+        }
+        let index = match trees.main_for(namespace) {
+            Some(main) => IwdIndex::open(main)
+                .map_err(|error| format!("{} image archives: {error}", namespace.as_str()))?,
+            None => Arc::new(IwdIndex::empty()),
+        };
+        archives += index.archive_count();
+        decoded.extend(decode_requests_in_parallel(
+            images, &index, &requests, stage, pool,
+        ));
+    }
+    Ok((decoded, archives))
+}
 
 /// Decode this work on the pool the caller names.
 ///
@@ -808,7 +844,18 @@ pub fn decode_ui_image(
         let Some(main) = trees.main_for(key.namespace) else {
             return Ok(None);
         };
-        return decode_ui_image_from_main(main, &key.name);
+        if let Some(image) = crate::ui_material_image(key.namespace, &key.name)
+            && let Some(decoded) = decode_ui_image_from_main(main, &image)?
+        {
+            return Ok(Some(decoded));
+        }
+        if let Some(decoded) = decode_ui_image_from_main(main, &key.name)? {
+            return Ok(Some(decoded));
+        }
+        if let Some(image) = crate::ui_preview_fallback(key.namespace, &key.name) {
+            return decode_ui_image_from_main(main, &image);
+        }
+        return Ok(None);
     }
     let name = crate::AssetRef::bare_name(image_name);
     for main in ui_decode_mains(games_root) {

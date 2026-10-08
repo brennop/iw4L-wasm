@@ -296,20 +296,14 @@ pub(crate) fn occupy_remote_kit_dobj<'a>(
         hide_tags: Vec::new(),
         source: KitSource::Body(kit.body.as_str()),
     }];
-    if let Some(name) = kit.head.as_deref() {
-        if let Some(entry) = soldier.head() {
-            if let (Some(_head_pose), Some(_tag)) = (
-                entry.skel.pose.as_ref(),
-                xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names),
-            ) {
-                skels.push(KitModel {
-                    name: entry.skel.name.as_str(),
-                    skel: &entry.skel,
-                    hide_tags: Vec::new(),
-                    source: KitSource::Body(name),
-                });
-            }
-        }
+    if let Some(head) = soldier.head().ok()? {
+        let entry = head.entry();
+        skels.push(KitModel {
+            name: entry.skel.name.as_str(),
+            skel: &entry.skel,
+            hide_tags: Vec::new(),
+            source: KitSource::Body(kit.head.as_deref().expect("prepared head name")),
+        });
     }
     if weapon != 0
         && !weapons
@@ -470,30 +464,16 @@ pub(crate) fn select_remote_models<'a>(
         .ok_or_else(|| format!("body `{}` has no ModelPoseSrc", kit.body))?;
 
     let mut dobj_models = vec![(pose_src, None)];
-    let head = match kit.head.as_deref() {
+    let head = match soldier.head().map_err(str::to_owned)? {
         None => None,
-        Some(name) => {
-            let entry = soldier
-                .head()
-                .ok_or_else(|| format!("head `{name}` missing from catalog"))?;
-            let head_pose = entry
-                .skel
-                .pose
-                .as_ref()
-                .ok_or_else(|| format!("head `{name}` has no ModelPoseSrc"))?;
-            let tag =
-                xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names).ok_or_else(|| {
-                    format!(
-                        "body `{}` has no {}; refusing a headless DObj for `{name}`",
-                        kit.body,
-                        xmodel_runtime::TP_HEAD_ATTACH_TAG
-                    )
-                })?;
+        Some(head) => {
+            let entry = head.entry();
+            let head_pose = entry.skel.pose.as_ref().expect("prepared head pose");
             dobj_models.push((
                 head_pose,
                 Some(xmodel_runtime::Attach {
                     parent_model: 0,
-                    tag: tag.into(),
+                    tag: head.tag().into(),
                 }),
             ));
             Some(entry)

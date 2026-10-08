@@ -19,8 +19,9 @@ hands are eligible only when they belong to the soldier's family. Missing hands
 leave first-person composition unresolved. T6 maps capture both faction viewhands
 and require the selected kit hands for every weapon family. `SoldierPresentations`
 prepares each selected kit once, retaining its body, native animation profile,
-published mesh owner and checked hand mounts. Weapon preparation consumes a
-`SoldierFpvPresentation`; missing poses or mount tags return explicit refusals.
+published mesh owner and checked hand mounts. `SoldierFpvPresentation` owns
+hand admission; unused WeaponDef hands are optional. Head capabilities distinguish
+absence, bound family/pose/mount and refusal; required collision refuses invalid heads.
 
 `FamilyFpvMesh<F>` is issued by a published catalog after checking family and
 owner. `SoldierFpvConnection<G, H>` connects native gun family G to native soldier
@@ -42,7 +43,8 @@ registry binding and renderer code banks retain their existing interfaces.
 
 The session weapon compiler traverses one published registry to build complete
 simulation rows. `SimWeaponContent` validates dense row order and script alias
-targets before publishing immutable execution arrays. Match installation checks
+targets and derives readiness from execution results, retaining refusal reasons.
+It publishes immutable execution arrays. Match installation checks
 the registry revision and exact product owner. Class projection and the session
-manifest read those same arrays. `SimContentBuilder::bootstrap` keeps the empty
+manifest reject foreign publications and preserve execution refusals. `SimContentBuilder::bootstrap` keeps the empty
 world explicit; installed matches use `for_match` with a compiled product.

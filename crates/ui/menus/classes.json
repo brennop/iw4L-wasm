@@ -367,7 +367,8 @@
         "index": 57,
         "fields": {
           "text_exp": "op 38 s:75695f636c6173735f646573635f34 op 1",
-          "vis_exp": "1"
+          "vis_exp": "1",
+          "text_scale": 0.25
         }
       },
       {
@@ -381,7 +382,8 @@
         "index": 63,
         "fields": {
           "text_exp": "op 38 s:75695f636c6173735f646573635f35 op 1",
-          "vis_exp": "1"
+          "vis_exp": "1",
+          "text_scale": 0.25
         }
       },
       {
@@ -395,7 +397,8 @@
         "index": 69,
         "fields": {
           "text_exp": "op 38 s:75695f636c6173735f646573635f36 op 1",
-          "vis_exp": "1"
+          "vis_exp": "1",
+          "text_scale": 0.25
         }
       },
       {
@@ -409,14 +412,16 @@
         "index": 78,
         "fields": {
           "text_exp": "op 38 s:75695f636c6173735f76616c75655f32 op 1",
-          "vis_exp": "1"
+          "vis_exp": "1",
+          "text_scale": 0.3
         }
       },
       {
         "index": 80,
         "fields": {
           "text_exp": "op 38 s:75695f636c6173735f76616c75655f33 op 1",
-          "vis_exp": "1"
+          "vis_exp": "1",
+          "text_scale": 0.3
         }
       },
       {
@@ -624,6 +629,206 @@
         "text_align_y": 12,
         "static_flags": 9437184,
         "vis_exp": "op 7 op 57 s:636c6173735f72656e616d65 op 1 op 14 op 7 op 57 s:636c6173735f7069636b6572 op 1"
+      },
+      {
+        "name": "class_attachments_0",
+        "item_type": 1,
+        "text_exp": "op 38 s:75695f636c6173735f6174746163686d656e74735f627574746f6e5f30 op 1",
+        "rect": {
+          "x": -64,
+          "y": 238,
+          "w": 336,
+          "h": 20,
+          "horz_align": 1,
+          "vert_align": 1
+        },
+        "background": ",menu_button_selection_bar",
+        "style": 1,
+        "fore_color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "font_enum": 3,
+        "text_scale": 0.3,
+        "text_align_mode": 6,
+        "text_align_x": -60,
+        "vis_exp": "op 57 s:636c6173735f656469746f72 op 1 op 14 op 35 s:75695f636c6173735f6861735f6174746163686d656e74735f30 op 1",
+        "handlers": {
+          "action": [
+            {
+              "SetLocalVar": {
+                "kind": 5,
+                "name": "ui_class_anchor",
+                "expr": "op 32 op 150 op 17 140 op 1"
+              }
+            },
+            {
+              "Script": "play mouse_click; exec \"ui_class_attachments 0\";"
+            }
+          ],
+          "focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 1;"
+            }
+          ],
+          "leave_focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 0;"
+            }
+          ]
+        }
+      },
+      {
+        "name": "class_camo_0",
+        "item_type": 1,
+        "text_exp": "op 38 s:75695f636c6173735f63616d6f5f627574746f6e5f30 op 1",
+        "rect": {
+          "x": -64,
+          "y": 258,
+          "w": 336,
+          "h": 20,
+          "horz_align": 1,
+          "vert_align": 1
+        },
+        "background": ",menu_button_selection_bar",
+        "style": 1,
+        "fore_color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "font_enum": 3,
+        "text_scale": 0.3,
+        "text_align_mode": 6,
+        "text_align_x": -60,
+        "vis_exp": "op 57 s:636c6173735f656469746f72 op 1 op 14 op 35 s:75695f636c6173735f6861735f63616d6f5f30 op 1",
+        "handlers": {
+          "action": [
+            {
+              "SetLocalVar": {
+                "kind": 5,
+                "name": "ui_class_anchor",
+                "expr": "op 32 op 150 op 17 140 op 1"
+              }
+            },
+            {
+              "Script": "play mouse_click; exec \"ui_class_camo 0\";"
+            }
+          ],
+          "focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 1;"
+            }
+          ],
+          "leave_focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 0;"
+            }
+          ]
+        }
+      },
+      {
+        "name": "class_attachments_1",
+        "item_type": 1,
+        "text_exp": "op 38 s:75695f636c6173735f6174746163686d656e74735f627574746f6e5f31 op 1",
+        "rect": {
+          "x": -64,
+          "y": 278,
+          "w": 336,
+          "h": 20,
+          "horz_align": 1,
+          "vert_align": 1
+        },
+        "background": ",menu_button_selection_bar",
+        "style": 1,
+        "fore_color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "font_enum": 3,
+        "text_scale": 0.3,
+        "text_align_mode": 6,
+        "text_align_x": -60,
+        "vis_exp": "op 57 s:636c6173735f656469746f72 op 1 op 14 op 35 s:75695f636c6173735f6861735f6174746163686d656e74735f31 op 1",
+        "handlers": {
+          "action": [
+            {
+              "SetLocalVar": {
+                "kind": 5,
+                "name": "ui_class_anchor",
+                "expr": "op 32 op 150 op 17 140 op 1"
+              }
+            },
+            {
+              "Script": "play mouse_click; exec \"ui_class_attachments 1\";"
+            }
+          ],
+          "focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 1;"
+            }
+          ],
+          "leave_focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 0;"
+            }
+          ]
+        }
+      },
+      {
+        "name": "class_camo_1",
+        "item_type": 1,
+        "text_exp": "op 38 s:75695f636c6173735f63616d6f5f627574746f6e5f31 op 1",
+        "rect": {
+          "x": -64,
+          "y": 298,
+          "w": 336,
+          "h": 20,
+          "horz_align": 1,
+          "vert_align": 1
+        },
+        "background": ",menu_button_selection_bar",
+        "style": 1,
+        "fore_color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "font_enum": 3,
+        "text_scale": 0.3,
+        "text_align_mode": 6,
+        "text_align_x": -60,
+        "vis_exp": "op 57 s:636c6173735f656469746f72 op 1 op 14 op 35 s:75695f636c6173735f6861735f63616d6f5f31 op 1",
+        "handlers": {
+          "action": [
+            {
+              "SetLocalVar": {
+                "kind": 5,
+                "name": "ui_class_anchor",
+                "expr": "op 32 op 150 op 17 140 op 1"
+              }
+            },
+            {
+              "Script": "play mouse_click; exec \"ui_class_camo 1\";"
+            }
+          ],
+          "focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 1;"
+            }
+          ],
+          "leave_focus": [
+            {
+              "Script": "setItemColor self backcolor 0 0 0 0;"
+            }
+          ]
+        }
       }
     ]
   },
@@ -3480,7 +3685,12 @@
         "fields": {
           "vis_exp": "op 38 s:75695f636c6173735f70726576696577 op 1 op 13 s:",
           "material_exp": "op 38 s:75695f636c6173735f70726576696577 op 1",
-          "float_exp": [[2, "op 35 s:75695f636c6173735f707265766965775f7769647468 op 1"]]
+          "float_exp": [
+            [
+              2,
+              "op 35 s:75695f636c6173735f707265766965775f7769647468 op 1"
+            ]
+          ]
         }
       },
       {

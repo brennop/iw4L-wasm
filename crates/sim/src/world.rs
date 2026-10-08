@@ -986,12 +986,7 @@ impl SimState {
     }
 
     pub(crate) fn weapon_runnable(&self, id: u32) -> bool {
-        self.content
-            .weapons()
-            .weapon_runnable
-            .get(id as usize)
-            .copied()
-            .unwrap_or(false)
+        self.content.weapons().is_runnable(id)
     }
 
     fn reset_area_entity_world(&mut self) {

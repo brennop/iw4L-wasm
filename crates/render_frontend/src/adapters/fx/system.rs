@@ -3107,7 +3107,13 @@ fn drain_bullet_hit_fx(
     tracers: Option<Res<PreparedTracers>>,
     mut tracer_world: ResMut<TracerWorld>,
     mut gate: ResMut<TracerDrawGate>,
-    local: Res<LocalPresentClient>,
+    (local, generation, timeline, mut occurrences, verdicts): (
+        Res<LocalPresentClient>,
+        Res<frame::WorldGeneration>,
+        Res<net::EntityEventCursor>,
+        ResMut<PresentedFireFx>,
+        Res<net::FireVerdictState>,
+    ),
     mut host: ResMut<HostFxSystem>,
     mut cursor: ResMut<FxJournalCursor>,
     mut combat: ResMut<CombatFxDump>,
@@ -3115,6 +3121,39 @@ fn drain_bullet_hit_fx(
 ) {
     for hit in hits.read() {
         let payload = hit.0.payload;
+        let occurrence = FireFxOccurrence::Impact {
+            pellet: payload.pellet,
+            segment: payload.segment,
+            surface: payload.surf_type,
+            target: payload.other_entity_num,
+            flesh: payload.event_parm as u8,
+        };
+        let now = host.0.msec_now;
+        if payload.attacker_entity_num == local.0.0 as i32
+            && let Some(cause) = payload.fire_cause
+        {
+            perf::owner_impact(
+                match hit.0.domain {
+                    net::EntityEventDomain::Predicted => "predicted",
+                    _ => "authority",
+                },
+                cause.client.0,
+                cause.command.0,
+                payload.pellet,
+                payload.segment,
+            );
+        }
+        if !occurrences.may_present(
+            *generation,
+            timeline.timeline(),
+            &hit.0,
+            occurrence,
+            now,
+            &verdicts,
+        ) {
+            continue;
+        }
+        occurrences.presented(&hit.0, occurrence, now);
         let bound = weapons
             .as_deref()
             .and_then(|weapons| weapons.for_event(hit.0.world).ok());
@@ -3168,7 +3207,13 @@ fn drain_pellet_fx(
     tracers: Option<Res<PreparedTracers>>,
     mut tracer_world: ResMut<TracerWorld>,
     mut gate: ResMut<TracerDrawGate>,
-    local: Res<LocalPresentClient>,
+    (local, generation, timeline, mut occurrences, verdicts): (
+        Res<LocalPresentClient>,
+        Res<frame::WorldGeneration>,
+        Res<net::EntityEventCursor>,
+        ResMut<PresentedFireFx>,
+        Res<net::FireVerdictState>,
+    ),
     mut host: ResMut<HostFxSystem>,
     mut cursor: ResMut<FxJournalCursor>,
     mut combat: ResMut<CombatFxDump>,
@@ -3177,10 +3222,33 @@ fn drain_pellet_fx(
     if pending.is_empty() {
         return;
     }
-    for (generation, record) in pending.take() {
+    for (world, domain, record) in pending.take() {
+        if world != *generation {
+            continue;
+        }
+        let occurrence = FireFxOccurrence::Impact {
+            pellet: record.pellet,
+            segment: record.segment,
+            surface: record.surf_type,
+            target: playerstate_iw4::ENTITYNUM_NONE,
+            flesh: record.flesh_flags,
+        };
+        let now = host.0.msec_now;
+        if !occurrences.may_present_cause(
+            world,
+            timeline.timeline(),
+            domain,
+            record.fire_cause,
+            occurrence,
+            now,
+            &verdicts,
+        ) {
+            continue;
+        }
+        occurrences.presented_cause(record.fire_cause, occurrence, now);
         let bound = weapons
             .as_deref()
-            .and_then(|weapons| weapons.for_event(generation).ok());
+            .and_then(|weapons| weapons.for_event(world).ok());
         cursor.pellet_played = cursor.pellet_played.saturating_add(1);
         play_pellet_segment(
             record.attacker,

@@ -23,8 +23,7 @@ pub struct WeaponScriptSounds {
 pub struct SimWeaponRow {
     pub wire_id: u32,
     pub scales: (f32, f32, f32),
-    pub combat: WeaponCombatFacts,
-    pub runnable: bool,
+    pub execution: Result<WeaponCombatFacts, String>,
     pub transition_group: u32,
     pub penetration: weapon_iw4::BulletPenFacts,
     pub script_name: String,
@@ -42,6 +41,7 @@ pub struct SimWeaponContent {
     pub(crate) weapon_def_scales: Vec<(f32, f32, f32)>,
     pub(crate) weapon_combat: Vec<WeaponCombatFacts>,
     pub(crate) weapon_runnable: Vec<bool>,
+    execution_refusals: Vec<Option<String>>,
     pub(crate) weapon_transition_groups: Vec<u32>,
     pub(crate) bullet_pen: Vec<weapon_iw4::BulletPenFacts>,
     pub(crate) pen_table: weapon_iw4::PenetrationDepthTable,
@@ -70,6 +70,7 @@ impl SimWeaponContent {
             weapon_def_scales: Default::default(),
             weapon_combat: Default::default(),
             weapon_runnable: Default::default(),
+            execution_refusals: Default::default(),
             weapon_transition_groups: Default::default(),
             bullet_pen: Default::default(),
             pen_table: Default::default(),
@@ -104,8 +105,14 @@ impl SimWeaponContent {
                 return Err(SimWeaponContentRefusal::NonDenseRows);
             }
             result.weapon_def_scales.push(row.scales);
-            result.weapon_combat.push(row.combat);
-            result.weapon_runnable.push(row.runnable);
+            let (combat, refusal) = match row.execution {
+                Ok(combat) if row.wire_id != 0 => (combat, None),
+                Ok(_) => (WeaponCombatFacts::none(), Some("unarmed".to_owned())),
+                Err(reason) => (WeaponCombatFacts::none(), Some(reason)),
+            };
+            result.weapon_runnable.push(refusal.is_none());
+            result.weapon_combat.push(combat);
+            result.execution_refusals.push(refusal);
             result.weapon_transition_groups.push(row.transition_group);
             result.bullet_pen.push(row.penetration);
             result.weapon_world_models.push(row.world_model);
@@ -129,6 +136,17 @@ impl SimWeaponContent {
         result.weapon_script_names = names.into();
         result.weapon_setups = setups.into();
         Ok(Arc::new(result))
+    }
+
+    pub fn is_runnable(&self, id: u32) -> bool {
+        self.weapon_runnable
+            .get(id as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn execution_refusal(&self, id: u32) -> Option<&str> {
+        self.execution_refusals.get(id as usize)?.as_deref()
     }
 
     pub fn combat(&self) -> &[WeaponCombatFacts] {

@@ -941,9 +941,8 @@ impl<'a> RemotePoseFrame<'a> {
                     job.camouflage = weapons.and_then(|registry| {
                         registry
                             .registry()
-                            .material_camouflages_of(weapon)
-                            .iter()
-                            .find(|camo| camo.slot == sample.weapon_model)
+                            .select_appearance(weapon, sample.weapon_model)
+                            .and_then(|appearance| appearance.material_camouflage())
                     });
                     job.dest = take_unique_geom(pose_hashes, persist_key);
                     pending.push(job);

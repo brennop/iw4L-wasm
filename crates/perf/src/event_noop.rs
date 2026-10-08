@@ -21,6 +21,7 @@ pub fn player_tick(
 }
 pub fn death(_: u32, _: Option<u32>, _: u8, _: u32) {}
 pub fn owner_shot(_: &str, _: u32, _: u32) {}
+pub fn owner_impact(_: &str, _: u32, _: u32, _: u16, _: u16) {}
 pub fn net_leg(_: &str, _: u32, _: u32) {}
 pub fn net_path(_: &str, _: u64, _: u64, _: u64, _: u64, _: u64) {}
 pub fn projectile(_: u32) {}

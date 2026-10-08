@@ -333,8 +333,8 @@ pub fn apply_prepared_match(
             sim.set_local_player_profile(profile);
         }
         content.set_player_kit_collisions(
-            player_kit_collision(soldiers.side(false).ok().map(Arc::as_ref)),
-            player_kit_collision(soldiers.side(true).ok().map(Arc::as_ref)),
+            player_kit_collision(soldiers.side(false).ok().map(Arc::as_ref))?,
+            player_kit_collision(soldiers.side(true).ok().map(Arc::as_ref))?,
         );
         if let Some(Ok(tree)) = player_anim_sources.compiled() {
             for axis in [false, true] {
@@ -549,8 +549,7 @@ pub fn apply_prepared_match(
         let manifest = SessionContentManifest::build(
             &prepared_map,
             weapons.registry(),
-            sim_weapons.content().combat(),
-            sim_weapons.content().equipment(),
+            &sim_weapons,
             sim.content_digest(),
         )
         .map_err(|error| InstallRefusal::new(format!("Invalid content manifest: {error:?}")))?;
@@ -937,17 +936,7 @@ fn preflight_match_install(
             }
         }
         for (from, to) in iw4.weapon_pairs(realm) {
-            let weapon = (1..weapons.registry().len() as u32).find(|&id| {
-                weapons.registry().identity_namespace_of(id) == prepared_map.namespace
-                    && weapons.registry().script_name_of(id) == to
-                    && [
-                        weapons.registry().gun_xmodel_of(id),
-                        weapons.registry().hand_xmodel_of(id),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .all(|model| fpv_meshes.0.get(namespace, model).is_some())
-            });
+            let weapon = objective_weapon_binding(weapons.registry(), namespace, to);
             match weapon {
                 Some(id) => {
                     objective_weapons.push((from.to_owned(), id));
@@ -1172,21 +1161,41 @@ pub fn install_script_model_id(content: asset_world::ScriptModelId) -> sim::Scri
     sim::ScriptModelId::from_authored_source_ordinal(content.source_ordinal())
 }
 
+fn objective_weapon_binding(
+    registry: &WeaponRegistry,
+    family: asset_core::FamilyId,
+    script_name: &str,
+) -> Option<u32> {
+    registry
+        .published_weapons()
+        .find(|weapon| {
+            let id = weapon.wire_id();
+            registry.identity_namespace_of(id) == Some(family)
+                && registry.script_name_of(id) == script_name
+                && [false, true]
+                    .into_iter()
+                    .all(|axis| registry.fpv_assemblies_of(id, axis).is_some())
+        })
+        .map(|weapon| weapon.wire_id())
+}
+
 fn player_kit_collision(
     soldier: Option<&asset_game::SoldierPresentation>,
-) -> sim::PlayerKitCollision {
+) -> Result<sim::PlayerKitCollision, InstallRefusal> {
     let Some(soldier) = soldier else {
-        return sim::PlayerKitCollision::default();
+        return Ok(sim::PlayerKitCollision::default());
     };
-    sim::PlayerKitCollision {
+    let head = soldier.head().map_err(|reason| {
+        InstallRefusal::new(format!("soldier head collision refused: {reason}"))
+    })?;
+    Ok(sim::PlayerKitCollision {
         body_key: soldier.kit().body.clone(),
         body: soldier.body().skel.retained_capability().map(Arc::new),
         head_key: soldier.kit().head.clone().unwrap_or_default(),
-        head: soldier
-            .head()
-            .and_then(|head| head.skel.retained_capability())
+        head: head
+            .and_then(|head| head.entry().skel.retained_capability())
             .map(Arc::new),
-    }
+    })
 }
 
 fn match_kind(
@@ -1452,8 +1461,6 @@ fn install_clip_and_player(
             "Simulation weapon registry owner mismatch",
         ));
     }
-    let combat = sim_weapons.content().combat();
-    let equipment = sim_weapons.content().equipment();
     let clip = clip.ok_or_else(|| InstallRefusal::new("Required collision geometry is missing"))?;
     let static_models = &clip.static_models;
     let count = clip.brushes.len();
@@ -1590,7 +1597,7 @@ fn install_clip_and_player(
     let projected: Vec<AuthoritativeClassProjection> = rows
         .iter()
         .enumerate()
-        .map(|(index, row)| project_class(index as u32, row, weapons, combat, equipment))
+        .map(|(index, row)| project_class(index as u32, row, weapons, sim_weapons))
         .collect();
     let lock_reasons: Vec<Option<String>> = projected
         .iter()
@@ -1602,7 +1609,7 @@ fn install_clip_and_player(
         .enumerate()
         .map(|(index, preset)| {
             let row = ClassRow::from(&preset.into());
-            project_class(index as u32, &row, weapons, combat, equipment).def
+            project_class(index as u32, &row, weapons, sim_weapons).def
         })
         .filter(|class| !class.locked)
         .collect();

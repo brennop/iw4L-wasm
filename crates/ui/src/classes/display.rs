@@ -6,6 +6,17 @@ pub fn localized(loc: &asset_game::LocalizeCatalog, key: &str, fallback: &str) -
         .to_owned()
 }
 
+pub fn class_name(name: &str) -> String {
+    if frame::showcase_classes()
+        .iter()
+        .any(|preset| preset.name == name)
+    {
+        name.replace('_', " ").to_ascii_uppercase()
+    } else {
+        name.to_owned()
+    }
+}
+
 pub fn category_label(folder: ClassPickerFolder, loc: &asset_game::LocalizeCatalog) -> String {
     folder.category.map_or_else(
         || localized(loc, "MENU_EQUIPMENT_CAPS", "Equipment"),
@@ -32,7 +43,13 @@ pub fn label(
             .unwrap_or(presentation.fallback_label())
             .to_owned();
     }
-    key.to_owned()
+    if key.contains('+') {
+        asset_game::CacItemPresentation::prepare_attachment(key)
+    } else {
+        asset_game::CacItemPresentation::prepare_weapon(key)
+    }
+    .fallback_label()
+    .to_owned()
 }
 
 pub fn preview_image(key: &str, catalog: &ClassLoadoutCatalog) -> String {

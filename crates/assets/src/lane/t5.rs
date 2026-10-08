@@ -238,8 +238,10 @@ impl ZoneLane for T5Lane {
         let map_xmodels = std::mem::take(&mut sink.map_xmodels);
         let bodies = std::mem::take(&mut sink.bodies);
         let fpv_meshes = std::mem::take(&mut sink.fpv_meshes);
+        let mut trees = asset_transport::NamespaceTrees::default();
+        trees.adopt_zone(path);
         match decode_material_color_maps(
-            path,
+            &trees,
             &mut materials,
             &stage,
             crate::session_load::load_pool(),

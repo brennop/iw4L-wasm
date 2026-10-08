@@ -244,7 +244,10 @@ pub fn prepare_model_materials(
     }
     if let Some(weapons) = weapons.as_deref() {
         for id in 1..=weapons.registry().len() as u32 {
-            for camo in weapons.registry().material_camouflages_of(id) {
+            for appearance in weapons.registry().appearances_of(id) {
+                let Some(camo) = appearance.material_camouflage() else {
+                    continue;
+                };
                 for (_, key) in &camo.materials {
                     if by_key.contains_key(key) {
                         continue;

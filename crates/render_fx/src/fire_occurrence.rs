@@ -9,6 +9,13 @@ const RETENTION_MS: i32 = 5000;
 pub enum FireFxOccurrence {
     Muzzle,
     Brass,
+    Impact {
+        pellet: u16,
+        segment: u16,
+        surface: u8,
+        target: i32,
+        flesh: u8,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -31,9 +38,30 @@ impl PresentedFireFx {
         if generation != event.world || timeline != event.timeline {
             return false;
         }
-        if event.domain == net::EntityEventDomain::Predicted
-            && event.payload.fire_cause.is_some_and(|cause| {
-                verdicts.status(event.world, cause) == net::PredictedFireStatus::Refused
+        self.may_present_cause(
+            generation,
+            timeline,
+            event.domain,
+            event.payload.fire_cause,
+            occurrence,
+            now,
+            verdicts,
+        )
+    }
+
+    pub fn may_present_cause(
+        &mut self,
+        generation: frame::WorldGeneration,
+        timeline: u64,
+        domain: net::EntityEventDomain,
+        cause: Option<sim::FireCause>,
+        occurrence: FireFxOccurrence,
+        now: i32,
+        verdicts: &net::FireVerdictState,
+    ) -> bool {
+        if domain == net::EntityEventDomain::Predicted
+            && cause.is_some_and(|cause| {
+                verdicts.status(generation, cause) == net::PredictedFireStatus::Refused
             })
         {
             return false;
@@ -47,7 +75,7 @@ impl PresentedFireFx {
             let age = now.wrapping_sub(*at);
             age < RETENTION_MS
         });
-        let Some(cause) = event.payload.fire_cause else {
+        let Some(cause) = cause else {
             return true;
         };
         if self.presented.contains_key(&(cause, occurrence)) {
@@ -66,7 +94,16 @@ impl PresentedFireFx {
         occurrence: FireFxOccurrence,
         now: i32,
     ) {
-        if let Some(cause) = event.payload.fire_cause {
+        self.presented_cause(event.payload.fire_cause, occurrence, now);
+    }
+
+    pub fn presented_cause(
+        &mut self,
+        cause: Option<sim::FireCause>,
+        occurrence: FireFxOccurrence,
+        now: i32,
+    ) {
+        if let Some(cause) = cause {
             self.presented.insert((cause, occurrence), now);
         }
     }

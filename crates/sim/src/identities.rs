@@ -39,6 +39,22 @@ pub struct FireCause {
     pub hand: u8,
 }
 
+impl FireCause {
+    pub fn combat_seed(self, root: u64) -> u32 {
+        let mut seed = root;
+        for value in [
+            self.client.0,
+            self.life.0,
+            self.command.0,
+            u32::from(self.ordinal),
+            u32::from(self.hand),
+        ] {
+            seed = mix_root_domain(seed ^ u64::from(value), RngDomain::Combat);
+        }
+        MatchRng::new(seed).next_u32()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingBrass {
     pub cause: Option<FireCause>,

@@ -2,6 +2,9 @@ use super::*;
 
 impl WeaponBuild {
     pub fn resolve_fpv_mesh_edges(&mut self, fpv: &crate::FpvMeshCatalog) {
+        self.registry.fpv_catalog_identity = fpv.identity();
+        self.registry.alternate_fpv.clear();
+        self.registry.fpv_clip_tracks = Arc::default();
         for row in &mut self.registry.rows {
             row.gun_xmodel_edge = row.preparation.bind_fpv(
                 WeaponComponent::ViewModel,
@@ -36,10 +39,8 @@ impl WeaponBuild {
                         .bind_fpv(WeaponComponent::ViewModel, Some(name), fpv)
                 })
                 .collect();
-            if !row.gun_xmodel_edge.is_bound() {
-                row.fpv_soldiers = [None, None];
-                row.fpv_assemblies = [None, None];
-            }
+            row.fpv_soldiers = [None, None];
+            row.fpv_assemblies = [None, None];
             row.fpv_mount_plan = row.gun_xmodel_edge.bound_index().and_then(|gun| {
                 let attachments: Option<Vec<_>> = row
                     .attachment_view_model_edges
@@ -101,16 +102,17 @@ impl WeaponBuild {
         fpv: &crate::FpvMeshCatalog,
         soldiers: &crate::SoldierPresentations,
     ) {
-        let mesh_owner_matches = fpv.identity() != 0 && soldiers.mesh_identity() == fpv.identity();
+        self.registry.alternate_fpv.clear();
         for row in &mut self.registry.rows {
-            if !mesh_owner_matches || row.component_namespace(WeaponComponent::Hands).is_none() {
+            row.fpv_assemblies = [None, None];
+        }
+        let mesh_owner_matches = fpv.identity() != 0
+            && self.registry.fpv_catalog_identity == fpv.identity()
+            && soldiers.mesh_identity() == fpv.identity();
+        for row in &mut self.registry.rows {
+            if !mesh_owner_matches {
                 row.fpv_soldiers = std::array::from_fn(|_| {
-                    Some(Err(if mesh_owner_matches {
-                        "weapon hands component is unsupported"
-                    } else {
-                        "soldier mesh owner differs from FPV catalog"
-                    }
-                    .into()))
+                    Some(Err("soldier mesh owner differs from FPV catalog".into()))
                 });
                 continue;
             }
@@ -138,6 +140,17 @@ impl WeaponBuild {
         fpv: &crate::FpvMeshCatalog,
         xanims: &crate::XAnimCatalog,
     ) -> FpvAssemblyCensus {
+        if self.registry.fpv_catalog_identity != fpv.identity() {
+            for row in &mut self.registry.rows {
+                row.fpv_assemblies = std::array::from_fn(|_| {
+                    Some(Err(
+                        "FPV mount plan belongs to another mesh publication".into()
+                    ))
+                });
+            }
+            self.registry.alternate_fpv.clear();
+            return FpvAssemblyCensus::default();
+        }
         let mut shared: HashMap<crate::FpvAssemblyKey, Result<Arc<crate::FpvAssembly>, String>> =
             HashMap::new();
         let mut skeletons = crate::FpvSkeletons::default();

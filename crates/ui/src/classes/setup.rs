@@ -143,8 +143,10 @@ impl Default for ClassLoadoutCatalog {
 impl ClassLoadoutCatalog {
     pub fn from_weapon_registry(registry: std::sync::Arc<asset_game::WeaponRegistry>) -> Self {
         let families = registry.weapon_families();
+        let offered: std::collections::HashSet<_> =
+            families.offered().map(|family| &family.key).collect();
         let mut catalog = Self::default();
-        for family in families.offered() {
+        for family in families.families() {
             let key = family.key.asset_key();
             catalog
                 .presentation
@@ -182,6 +184,9 @@ impl ClassLoadoutCatalog {
                         },
                     ),
                 );
+            }
+            if !offered.contains(&family.key) {
+                continue;
             }
             let offer = frame::CacWeaponOffer {
                 key,

@@ -689,6 +689,9 @@ pub(crate) fn on_entity_bullet_hit(
     scene: Option<Res<WorldScene>>,
     entity_marks: Res<EntityMarks>,
 ) {
+    if hit.event.domain == net::EntityEventDomain::Predicted {
+        return;
+    }
     let weapons = weapons
         .as_deref()
         .and_then(|weapons| weapons.for_event(hit.event.world).ok());

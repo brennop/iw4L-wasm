@@ -53,6 +53,7 @@ pub struct EntityEventPayload {
     pub fire_cause: Option<crate::FireCause>,
 
     pub pellet: u16,
+    pub segment: u16,
     pub hand: u8,
     pub origin: [f32; 3],
     pub origin2: [f32; 3],
@@ -78,8 +79,10 @@ pub struct PelletFxRecord {
     pub weapon: u32,
 
     pub correlation: u32,
+    pub fire_cause: Option<crate::FireCause>,
 
     pub pellet: u16,
+    pub segment: u16,
 
     pub hand: u8,
 
