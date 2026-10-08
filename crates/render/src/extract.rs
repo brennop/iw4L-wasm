@@ -191,7 +191,7 @@ pub fn seal_render_frame(
         insert_empty_colour(&mut commands);
         return;
     };
-    let generation = runtime.catalog.generation_id;
+    let generation = runtime.catalog.generation_id();
     let world_generation = world_generation
         .as_ref()
         .map(|generation| **generation)
@@ -744,6 +744,7 @@ pub fn extract_postfx(
                 .map(|film| render_gpu::ExtractedFilm {
                     name: film.name,
                     generation: film.generation,
+                    catalog: std::sync::Arc::clone(&runtime.as_ref().expect("film owner").catalog),
                     port: render_gpu::AdmittedExactPort {
                         id: film.port.id(),
                         abi: film.port.abi().clone(),
@@ -764,6 +765,7 @@ pub fn extract_postfx(
             film: render_gpu::ExtractedFilm {
                 name: blood.film.name,
                 generation: blood.film.generation,
+                catalog: std::sync::Arc::clone(&runtime.as_ref().expect("blood owner").catalog),
                 port: render_gpu::AdmittedExactPort {
                     id: blood.film.port.id(),
                     abi: blood.film.port.abi().clone(),
@@ -830,7 +832,7 @@ pub fn extract_geometry(
         .as_ref()
         .map(|stats| stats.g0_world_surfs.clone())
         .unwrap_or_default();
-    let generation = runtime.catalog.generation_id;
+    let generation = runtime.catalog.generation_id();
     let world_v = world
         .as_ref()
         .map_or(0, |plan| plan.decoded_vertices().len());

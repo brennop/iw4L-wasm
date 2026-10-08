@@ -203,6 +203,7 @@ pub struct WorldScene {
     pub smodel_lighting_samples: Vec<WorldSmodelLightingSample>,
 
     pub light_grid: Option<asset_model::OwnedLightGrid>,
+    pub(crate) material_world: asset_material::MaterialWorldBindingInputs,
 
     pub model_lighting_image: Option<Handle<Image>>,
     pub model_lighting_dims: Option<lighting_iw4::ModelLightingAtlasDims>,
@@ -212,6 +213,8 @@ pub struct WorldScene {
     pub radius: f32,
 
     pub world_bounds: Option<[f32; 6]>,
+
+    pub sun_sample_size_near: f32,
 
     pub cull: Option<WorldCull>,
 
@@ -710,11 +713,18 @@ impl WorldScene {
             dyn_ent_brushes: Vec::new(),
             smodel_lighting_samples: Vec::new(),
             light_grid: None,
+            material_world: super::world_bindings::prepare(
+                None,
+                asset_model::LightGridColorEncoding::Rgb8,
+                None,
+                None,
+            ),
             model_lighting_image: None,
             model_lighting_dims: None,
             center: (min + max) * 0.5,
             radius: ((max - min).length() * 0.5).max(1.0),
             world_bounds: None,
+            sun_sample_size_near: asset_world::WorldDrawPolicy::iw4().sun_sample_size_near,
             cull: None,
             intermission_view: None,
             fx_glass: None,
@@ -810,11 +820,18 @@ impl WorldScene {
             dyn_ent_brushes: Vec::new(),
             smodel_lighting_samples: draw.smodel_lighting_samples,
             light_grid: None,
+            material_world: super::world_bindings::prepare(
+                None,
+                asset_model::LightGridColorEncoding::Rgb8,
+                None,
+                None,
+            ),
             model_lighting_image: None,
             model_lighting_dims: None,
             center: (min + max) * 0.5,
             radius: ((max - min).length() * 0.5).max(1.0),
             world_bounds: None,
+            sun_sample_size_near: asset_world::WorldDrawPolicy::iw4().sun_sample_size_near,
             cull: None,
             intermission_view: None,
             fx_glass: None,
@@ -926,6 +943,7 @@ impl WorldScene {
         catalog: &crate::assemble::drawsurf::RuntimeMaterialCatalog,
     ) -> Result<(), asset_world::SurfaceMaterialStampError> {
         let baked: Vec<Option<dpvs_iw4::GfxDrawSurf>> = catalog
+            .parts()
             .materials
             .iter()
             .map(|material| {
@@ -1254,7 +1272,7 @@ pub fn world_scene_from_draw(
     }
     if let crate::assemble::drawsurf::RuntimeSortedMaterialTable::BuildFailed(
         crate::assemble::drawsurf::CatalogBuildError::ShaderIdentityMissing { material, slot },
-    ) = &runtime_material_catalog.sorted_materials
+    ) = &runtime_material_catalog.parts().sorted_materials
     {
         let name = global_materials
             .materials
@@ -1551,6 +1569,7 @@ pub fn world_scene_from_draw(
     );
     scene.fx_glass = fx_glass;
     scene.world_bounds = world_bounds;
+    scene.sun_sample_size_near = policy.sun_sample_size_near;
     scene.reflection_probe_origins = reflection_probe_origins;
     scene.runtime_material_catalog = std::sync::Arc::new(runtime_material_catalog);
     if let Some(cull) = scene.cull.as_mut() {
@@ -1565,7 +1584,7 @@ pub fn world_scene_from_draw(
     diag::info!(
         World,
         "canonical materials: n={} batch_mat={} smodel_mat={} (MaterialIndex into decoded catalog; runtime is derived)",
-        scene.runtime_material_catalog.materials.len(),
+        scene.runtime_material_catalog.parts().materials.len(),
         scene
             .batches
             .iter()
@@ -1577,6 +1596,17 @@ pub fn world_scene_from_draw(
             .flat_map(|mesh| mesh.lod_surfaces.iter().flatten())
             .filter(|surface| surface.material.is_some())
             .count(),
+    );
+    scene.material_world = super::world_bindings::prepare(
+        world.source_namespace,
+        world
+            .light_grid
+            .as_ref()
+            .map_or(asset_model::LightGridColorEncoding::Rgb8, |grid| {
+                grid.color_encoding
+            }),
+        draw.t6_exposure,
+        draw.sky_dynamic_intensity,
     );
     scene.light_grid = world.light_grid;
     scene.sky_model = sky_model;

@@ -473,7 +473,7 @@ fn xmodel_lane_layout_hash(
     thermal: &super::thermal_body::ThermalBodySelection,
 ) -> u64 {
     let mut id = super::list::CONTENT_ID_SEED;
-    super::list::mix_content_id(&mut id, catalog.generation_id.0);
+    super::list::mix_content_id(&mut id, catalog.generation_id().get());
     super::list::mix_content_id(&mut id, xmodel.topology_revision);
     super::list::mix_content_id(&mut id, xmodel.draws.len() as u64);
     for draw in &xmodel.draws {
@@ -2513,7 +2513,7 @@ pub(crate) fn rebuild_static_draw_lane(
     let eye = prepared.as_ref().filter(|v| v.ready).map(|v| v.eye);
     let lod_args = lod_ramp.args();
     let eye_key = eye_lod_reuse_key(eye, lod_args);
-    let generation_hold = list.generation_id == runtime.catalog.generation_id
+    let generation_hold = list.generation_id == runtime.catalog.generation_id()
         && list.world_generation == world_generation;
     let reuse = static_list_reusable(
         list.last_static,
@@ -2523,7 +2523,7 @@ pub(crate) fn rebuild_static_draw_lane(
         generation_hold,
         !list.static_items.is_empty(),
     );
-    list.generation_id = runtime.catalog.generation_id;
+    list.generation_id = runtime.catalog.generation_id();
     list.world_generation = world_generation;
     if reuse {
         list.census.rebuild_skip = 1;
@@ -3022,7 +3022,7 @@ pub fn bake_sun_shadow_caster_plan(
     smodel_ids: &mut Vec<u16>,
 ) -> SunShadowCasterPlan {
     let mut plan = SunShadowCasterPlan {
-        generation_id: catalog.generation_id,
+        generation_id: catalog.generation_id(),
         ..Default::default()
     };
     let mut queues = SmodelBucketEmitQueues::default();

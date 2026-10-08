@@ -53,6 +53,7 @@ pub fn build_sky_model_draw_plan(
         };
         let Some(ordinal) = scene
             .runtime_material_catalog
+            .parts()
             .sorted_materials
             .ordinal_for_asset_id(authored.order())
         else {

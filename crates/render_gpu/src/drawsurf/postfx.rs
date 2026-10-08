@@ -23,6 +23,7 @@ use std::collections::HashMap;
 pub struct ExtractedFilm {
     pub name: &'static str,
     pub generation: MaterialGenerationId,
+    pub catalog: std::sync::Arc<render_material::RuntimeMaterialCatalog>,
     pub port: AdmittedExactPort,
     pub shader: Handle<bevy::shader::Shader>,
     pub shell: StableMaterialShell,
@@ -748,11 +749,12 @@ fn draw_postfx(
                 }
             }
             let execution =
-                rebind_stable_material(&ready.film.shell, ready.film.generation, &sources)
-                    .map_err(|cause| PostFxSubmitRefusal::Execute {
+                rebind_stable_material(&ready.film.shell, &ready.film.catalog, &sources).map_err(
+                    |cause| PostFxSubmitRefusal::Execute {
                         material: step.name,
                         cause,
-                    })?;
+                    },
+                )?;
             let Some(pass) = execution.pass(0).filter(|_| execution.pass_count() == 1) else {
                 return Err(PostFxSubmitRefusal::PassCount);
             };
@@ -956,7 +958,7 @@ fn draw_postfx(
         pass.draw_indexed(0..6, 0, 0..1);
     }
     span.end(encoder);
-    let state = (gpu.prepared[0].film.generation.0, active, targets.size);
+    let state = (gpu.prepared[0].film.generation.get(), active, targets.size);
     if submitted.as_ref() != Some(&state) || refusal.is_some() {
         diag::info!(
             World,

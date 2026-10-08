@@ -1,10 +1,18 @@
 use super::*;
+mod common;
+mod iw4;
+mod iw5;
+mod t5;
+mod t6;
+use common::native_curve;
 
 struct CueSemantics {
     spatial: Option<Result<SpatialPlaybackPolicy, SpatialPolicyFailure>>,
     limits: [VoiceLimit; 2],
     group: GroupSelection,
     zero_volume_unity: bool,
+    speaker_gains: Option<[[f32; 2]; 2]>,
+    mixer_group_supported: bool,
     streamed_decode: crate::StreamedDecodePolicy,
     secondary: (SecondaryActivation, SecondaryPolicySource),
 }
@@ -19,154 +27,25 @@ trait CueCompiler {
     fn prepare(&self, row: &CapturedAlias, channel: Option<&EntChannel>) -> CueSemantics;
 }
 
-struct IwCueCompiler {
-    namespace: AssetNamespace,
-}
-struct T5CueCompiler;
-struct T6CueCompiler;
-
-impl CueCompiler for IwCueCompiler {
-    fn prepare(&self, row: &CapturedAlias, channel: Option<&EntChannel>) -> CueSemantics {
-        CueSemantics {
-            spatial: match channel {
-                Some(info) if info.is_3d => Some(native_curve(row)),
-                Some(_) => None,
-                None => Some(Err(SpatialPolicyFailure::MissingChannel(self.namespace))),
-            },
-            limits: [VoiceLimit::default(); 2],
-            group: if self.namespace == AssetNamespace::Iw5 {
-                row.vol_mod_index
-                    .map_or(GroupSelection::Ungrouped, GroupSelection::Index)
-            } else {
-                GroupSelection::Ungrouped
-            },
-            zero_volume_unity: true,
-            streamed_decode: crate::StreamedDecodePolicy::Detected,
-            secondary: (
-                SecondaryActivation::OnPrimaryPrepared,
-                SecondaryPolicySource::PrimaryPreparedCompatibility,
-            ),
-        }
-    }
-}
-
-impl CueCompiler for T5CueCompiler {
-    fn prepare(&self, row: &CapturedAlias, _channel: Option<&EntChannel>) -> CueSemantics {
-        CueSemantics {
-            spatial: match row.flags {
-                Some(flags) if flags & 2 != 0 => Some(native_curve(row)),
-                Some(_) => None,
-                None => Some(Err(SpatialPolicyFailure::Unsupported(AssetNamespace::T5))),
-            },
-            limits: [
-                t5_limit(row, 25, row.limit_count, false),
-                t5_limit(row, 27, row.entity_limit_count, true),
-            ],
-            group: row.flags.map_or(GroupSelection::Unknown, |flags| {
-                GroupSelection::Index((flags >> 16) & 0x3f)
-            }),
-            zero_volume_unity: false,
-            streamed_decode: crate::StreamedDecodePolicy::WmaContainerWithWaveCompatibility,
-            secondary: (
-                SecondaryActivation::OnResolution,
-                SecondaryPolicySource::T5IndependentCompatibility,
-            ),
-        }
-    }
-}
-
-impl CueCompiler for T6CueCompiler {
-    fn prepare(&self, _row: &CapturedAlias, _channel: Option<&EntChannel>) -> CueSemantics {
-        CueSemantics {
-            spatial: Some(Err(SpatialPolicyFailure::Unsupported(AssetNamespace::T6))),
-            limits: [VoiceLimit::default(); 2],
-            group: GroupSelection::Ungrouped,
-            zero_volume_unity: true,
-            streamed_decode: crate::StreamedDecodePolicy::Detected,
-            secondary: (
-                SecondaryActivation::OnPrimaryPrepared,
-                SecondaryPolicySource::PrimaryPreparedCompatibility,
-            ),
-        }
-    }
-}
-
-fn native_curve(row: &CapturedAlias) -> Result<SpatialPlaybackPolicy, SpatialPolicyFailure> {
-    let curve = row
-        .volume_falloff
-        .as_ref()
-        .filter(|curve| !curve.knots.is_empty())
-        .ok_or(SpatialPolicyFailure::MissingFalloffCurve)?;
-    if !row.dist_min.is_finite()
-        || !row.dist_max.is_finite()
-        || curve
-            .knots
-            .iter()
-            .chain(row.near_falloff.iter().flat_map(|near| near.knots.iter()))
-            .any(|(x, y)| !x.is_finite() || !y.is_finite())
-    {
-        return Err(SpatialPolicyFailure::InvalidFalloffCurve);
-    }
-    let pack = |knots: &[(f32, f32)]| -> Arc<[[f32; 2]]> {
-        knots
-            .iter()
-            .take(asset_iw4::SND_CURVE_MAX_KNOTS)
-            .map(|&(x, y)| [x, y])
-            .collect::<Vec<_>>()
-            .into()
-    };
-    Ok(SpatialPlaybackPolicy {
-        dist_min: row.dist_min,
-        dist_max: row.dist_max,
-        knots: pack(&curve.knots),
-        near_knots: row.near_falloff.as_ref().map(|curve| pack(&curve.knots)),
-    })
-}
-
-fn t5_limit(row: &CapturedAlias, shift: u32, count: Option<u8>, per_emitter: bool) -> VoiceLimit {
-    let Some(count) = count else {
-        return VoiceLimit::default();
-    };
-    let mode = match (row.flags.unwrap_or(0) >> shift) & 3u32 {
-        1 => VoiceLimitMode::Oldest,
-        2 => VoiceLimitMode::Reject,
-        3 => VoiceLimitMode::Priority,
-        _ => VoiceLimitMode::Unlimited,
-    };
-    VoiceLimit {
-        mode,
-        count: if mode == VoiceLimitMode::Oldest {
-            count.max(1)
-        } else {
-            count
-        },
-        per_emitter,
-        source: if row.flags.is_none() {
-            VoiceLimitSource::UnknownFlagsUnlimitedCompatibility
-        } else if mode == VoiceLimitMode::Oldest && count == 0 {
-            VoiceLimitSource::ZeroOldestCountOneCompatibility
-        } else {
-            VoiceLimitSource::Native
-        },
-    }
-}
-
 pub(super) fn compile(
-    sound: &CapturedSound,
+    catalog: &crate::SoundCatalog,
+    alias: usize,
     variant: usize,
-    row: &CapturedAlias,
-    channels: Option<&[EntChannel]>,
-    group_volumes: Option<&[Result<f32, crate::MixerGroupError>]>,
-) -> AliasPlaybackPolicy {
+) -> Option<AliasPlaybackPolicy> {
+    let sound = catalog.sound_at(alias)?;
+    let row = sound.aliases.get(variant)?;
     let namespace = AssetNamespace::from_zone_game(sound.game);
+    let channels = catalog.channels_in(namespace);
+    let group_volumes = catalog.mixer_group_volumes_in(namespace);
     let channel = sound
         .ent_channel(variant)
         .map(|id| ChannelKey { namespace, id });
     let channel_info = channel.and_then(|key| channels?.get(key.id as usize));
     let compiler: &dyn CueCompiler = match namespace {
-        AssetNamespace::Iw4 | AssetNamespace::Iw5 => &IwCueCompiler { namespace },
-        AssetNamespace::T5 => &T5CueCompiler,
-        AssetNamespace::T6 => &T6CueCompiler,
+        AssetNamespace::Iw4 => &iw4::Iw4CueCompiler,
+        AssetNamespace::Iw5 => &iw5::Iw5CueCompiler,
+        AssetNamespace::T5 => &t5::T5CueCompiler,
+        AssetNamespace::T6 => &t6::T6CueCompiler,
     };
     let semantics = compiler.prepare(row, channel_info);
     let group_gain = match semantics.group {
@@ -186,17 +65,18 @@ pub(super) fn compile(
         GroupSelection::Unknown => GroupGainPolicy::UnknownIndexUnityCompatibility,
         GroupSelection::Ungrouped => GroupGainPolicy::Ungrouped,
     };
-    AliasPlaybackPolicy {
+    Some(AliasPlaybackPolicy {
         namespace,
         looping: LoopingPolicy::compile(row.is_looping()),
         streamed_decode: semantics.streamed_decode,
         composition: CueCompositionPolicy::compile(
-            namespace,
             row,
+            semantics.mixer_group_supported,
+            semantics.speaker_gains,
             semantics.secondary.0,
             semantics.secondary.1,
         ),
-        stereo_speaker_gains: stereo_speaker_gains(namespace, row),
+        stereo_speaker_gains: semantics.speaker_gains,
         loaded_binding_origin: row.loaded_binding_origin,
         channel,
         channel_admission: channel
@@ -220,13 +100,14 @@ pub(super) fn compile(
         } else {
             ScalarRangePolicy::Authored([row.pitch_min, row.pitch_max])
         },
-    }
+    })
 }
 
 impl CueCompositionPolicy {
     fn compile(
-        namespace: AssetNamespace,
         row: &CapturedAlias,
+        mixer_group_supported: bool,
+        speaker_gains: Option<[[f32; 2]; 2]>,
         activation: SecondaryActivation,
         source: SecondaryPolicySource,
     ) -> Self {
@@ -249,17 +130,17 @@ impl CueCompositionPolicy {
         if let Some(name) = row.chain.as_ref().filter(|name| !name.is_empty()) {
             unsupported.push(UnsupportedCueFeature::Chain(name.clone()));
         }
-        if !matches!(namespace, AssetNamespace::Iw4 | AssetNamespace::Iw5)
+        if !mixer_group_supported
             && let Some(name) = row.mixer_group.as_ref().filter(|name| !name.is_empty())
         {
             unsupported.push(UnsupportedCueFeature::MixerGroup(name.clone()));
         }
-        if stereo_speaker_gains(namespace, row).is_none()
+        if speaker_gains.is_none()
             && let Some(name) = row.speaker_map.as_ref().filter(|name| !name.is_empty())
         {
             unsupported.push(UnsupportedCueFeature::SpeakerMap(name.clone()));
         }
-        if row.stereo_speaker_gains.is_some() && stereo_speaker_gains(namespace, row).is_none() {
+        if row.stereo_speaker_gains.is_some() && speaker_gains.is_none() {
             unsupported.push(UnsupportedCueFeature::SpeakerGains);
         }
         Self {
@@ -267,14 +148,4 @@ impl CueCompositionPolicy {
             unsupported: unsupported.into(),
         }
     }
-}
-
-fn stereo_speaker_gains(namespace: AssetNamespace, row: &CapturedAlias) -> Option<[[f32; 2]; 2]> {
-    row.stereo_speaker_gains.filter(|gains| {
-        matches!(namespace, AssetNamespace::Iw4 | AssetNamespace::Iw5)
-            && gains
-                .iter()
-                .flatten()
-                .all(|gain| gain.is_finite() && *gain >= 0.0)
-    })
 }

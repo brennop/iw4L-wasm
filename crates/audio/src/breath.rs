@@ -85,7 +85,7 @@ pub(crate) fn update(
     let selection = ps.and_then(|ps| {
         let policy = weapons
             .as_ref()?
-            .0
+            .registry()
             .semantic_policy_of(playerstate_iw4::get_viewmodel_weapon_index(ps))?;
         Some((policy.cue_namespace.namespace(), policy.breath_cues))
     });

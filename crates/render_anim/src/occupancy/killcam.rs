@@ -130,7 +130,11 @@ pub(super) fn classify_view(
     let entity = snapshot.meta.entities.iter().find(|e| e.number == number);
     let projectile = snapshot.projectiles.iter().find(|p| p.entnum == number);
     let mode = if let Some(p) = projectile {
-        let facts = weapons.and_then(|w| w.0.event_facts_of(p.weapon));
+        let facts = weapons.and_then(|w| {
+            w.snapshot_weapon(presented.weapon_epoch(), p.weapon)
+                .ok()
+                .and_then(|weapon| weapon.event_facts())
+        });
         match facts
             .map(|f| f.projectile_camera())
             .unwrap_or(asset_game::ProjectileCameraPolicy::Missile)
@@ -224,7 +228,11 @@ impl KillcamCamera {
         if let Some(p) = projectile {
             self.rest_ground = entity.is_some_and(|e| e.ground_entity_num != ENTITYNUM_NONE)
                 && weapons
-                    .and_then(|w| w.0.event_facts_of(p.weapon))
+                    .and_then(|w| {
+                        w.snapshot_weapon(presented.weapon_epoch(), p.weapon)
+                            .ok()
+                            .and_then(|weapon| weapon.event_facts())
+                    })
                     .is_some_and(|f| f.rests_on_ground());
         }
         let look_at = if ps.kill_cam_look_at_entity == ENTITYNUM_NONE {

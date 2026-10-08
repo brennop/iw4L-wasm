@@ -38,10 +38,10 @@ pub use match_load::{
 };
 pub use plugin::AssetPlugin;
 pub use prepared::{
-    MapFacts, MatchMaterials, MatchType10SoundHints, PreparedBodies, PreparedBodyClips,
-    PreparedDestructibleDeath, PreparedFpvMeshes, PreparedGaps, PreparedLocalizedStrings,
-    PreparedMap, PreparedProjectileMeshes, PreparedWeapons, PreparedWorldWeapons, PreparedXAnims,
-    PreparedXModelWalkCensus, SessionCompass,
+    BoundWeapons, MapFacts, MatchMaterials, MatchType10SoundHints, PreparedBodies,
+    PreparedBodyClips, PreparedDestructibleDeath, PreparedFpvMeshes, PreparedGaps,
+    PreparedLocalizedStrings, PreparedMap, PreparedProjectileMeshes, PreparedWeapons,
+    PreparedWorldWeapons, PreparedXAnims, PreparedXModelWalkCensus, SessionCompass,
 };
 pub use session_load::{
     MatchLoadOutcome, MatchMaterialSeed, PreparedMatch, PreparedWorld, ShellCommon,

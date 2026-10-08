@@ -80,7 +80,8 @@ impl From<crate::clip_store::ClipError> for StartFailure {
             crate::clip_store::ClipError::InvalidPcm(reason) => Self::InvalidPcm(reason),
             crate::clip_store::ClipError::RequestLimit => Self::MediaRequestLimit,
             crate::clip_store::ClipError::UnsupportedCodec(codec) => Self::UnsupportedCodec(codec),
-            crate::clip_store::ClipError::MetadataMismatch => Self::MediaMetadataMismatch,
+            crate::clip_store::ClipError::MetadataMismatch
+            | crate::clip_store::ClipError::ForeignOwner => Self::MediaMetadataMismatch,
             crate::clip_store::ClipError::Read => Self::MediaReadFailed,
             _ => Self::DecodeFailed,
         }

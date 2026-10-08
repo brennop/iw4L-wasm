@@ -229,7 +229,7 @@ pub(crate) fn update_script_menus(
                 .as_ref()
                 .is_some_and(|a| a.client.kb.scores.active),
         classes: input.classes.as_deref(),
-        weapons: input.weapons.as_ref().map(|w| w.0.as_ref()),
+        weapons: input.weapons.as_ref().map(|w| w.registry().as_ref()),
         emp_jammed: in_game
             && presented
                 .player(local.0)

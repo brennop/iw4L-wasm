@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use asset_game::{CapturedStringTable, MenuCatalog};
-use assets::{PreparedLocalizedStrings, PreparedWeapons, SessionCompass};
+use assets::{BoundWeapons, PreparedLocalizedStrings, PreparedWeapons, SessionCompass};
 use bevy::prelude::*;
 use bevy::ui::{Display, FocusPolicy};
 use hud_iw4::{
@@ -73,7 +73,7 @@ fn hide(pass: &mut HudTessPass) {
 }
 
 struct WeaponbarExprHost<'a> {
-    weapons: Option<&'a PreparedWeapons>,
+    weapons: Option<&'a BoundWeapons<'a>>,
     ps: Option<&'a PlayerState>,
     input: Option<&'a frame::HudInputView>,
     ms: i32,
@@ -304,7 +304,7 @@ impl ExprHost for WeaponbarExprHost<'_> {
 
 struct OwnerDrawState<'a> {
     ps: &'a PlayerState,
-    weapons: Option<&'a PreparedWeapons>,
+    weapons: Option<&'a BoundWeapons<'a>>,
     ammo: Option<WeaponbarAmmo>,
     name: Option<String>,
     select_time: i32,
@@ -475,14 +475,14 @@ fn paint_offhand(
     let Some(index) = offhand_weapon_index(state.ps, weapons, class) else {
         return OwnerDrawPaint::Painted;
     };
-    let Some(image) = weapons.0.hud_icon_image_of(index) else {
+    let Some(image) = weapons.registry().hud_icon_image_of(index) else {
         return OwnerDrawPaint::Gap(ChromeGapKind::MaterialExp);
     };
     push_owner_pic(
         args,
         image.to_owned(),
         weapons
-            .0
+            .registry()
             .hud_icon_namespace_of(index)
             .expect("owned weapon has a namespace"),
         args.color,
@@ -553,13 +553,13 @@ fn background_stem(background: &str) -> Option<String> {
     }
 }
 
-fn ads_javelin(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
+fn ads_javelin(ps: &PlayerState, weapons: &BoundWeapons<'_>) -> bool {
     let viewmodel = get_viewmodel_weapon_index(ps);
     viewmodel > 0
         && ps.f_weapon_pos_frac == 1.0
         && weapons
-            .0
-            .hud_facts_of(viewmodel)
+            .row(viewmodel)
+            .and_then(|weapon| weapon.hud_facts())
             .is_some_and(|facts| facts.guided_overlay())
 }
 
@@ -591,7 +591,11 @@ impl HudPlayerVisInput<'_> {
             };
         };
         let snapshot = presented.snapshot();
-        let weapons = self.weapons.as_deref();
+        let bound = self
+            .weapons
+            .as_deref()
+            .and_then(|weapons| weapons.for_snapshot(presented.weapon_epoch()).ok());
+        let weapons = bound.as_ref();
         HudPlayerVis {
             ui_active,
             flashbanged: is_flashbanged(
@@ -604,7 +608,8 @@ impl HudPlayerVisInput<'_> {
             ) != 0,
             weapon_script: weapons
                 .map(|w| {
-                    w.0.script_name_of(get_viewmodel_weapon_index(ps))
+                    w.registry()
+                        .script_name_of(get_viewmodel_weapon_index(ps))
                         .to_owned()
                 })
                 .unwrap_or_default(),
@@ -625,7 +630,7 @@ impl HudPlayerVisInput<'_> {
 
 fn weapon_lock_view(
     ps: &PlayerState,
-    weapons: &PreparedWeapons,
+    weapons: &BoundWeapons<'_>,
     meta: Option<&sim::ClientSnapshotMeta>,
     time_ms: i32,
     projection: Option<&Projection>,
@@ -695,6 +700,9 @@ pub(crate) fn update_weaponbar(
     cg_clock: Res<FrameClock>,
     client_input: WeaponbarInput,
 ) {
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_snapshot(presented.weapon_epoch()).ok());
     if !surface.is_ready() {
         return;
     }
@@ -725,11 +733,11 @@ pub(crate) fn update_weaponbar(
     let viewmodel = get_viewmodel_weapon_index(ps);
     let weapon_script = weapons
         .as_ref()
-        .map(|w| w.0.script_name_of(viewmodel))
+        .map(|w| w.registry().script_name_of(viewmodel))
         .unwrap_or_default();
     let name = localized_weapon_name(
         selected_weapon_index(ps, client_input.select.index),
-        weapons.as_deref(),
+        weapons.as_ref(),
         strings.as_deref(),
         &mut gaps,
     );
@@ -743,7 +751,7 @@ pub(crate) fn update_weaponbar(
         .map(|w| offhand_ammo(ps, w, ps.offhand_secondary))
         .unwrap_or(0);
     let mut host = WeaponbarExprHost {
-        weapons: weapons.as_deref(),
+        weapons: weapons.as_ref(),
         ps: Some(ps),
         input: client_input.input.as_deref(),
         ms: milliseconds() as i32,
@@ -772,7 +780,7 @@ pub(crate) fn update_weaponbar(
         weapon_script,
         lock: Some(
             weapons
-                .as_deref()
+                .as_ref()
                 .map(|weapons| {
                     weapon_lock_view(
                         ps,
@@ -793,7 +801,7 @@ pub(crate) fn update_weaponbar(
     let north_yaw = compass.as_ref().and_then(|c| c.north_yaw).unwrap_or(0.0);
     let owner_state = OwnerDrawState {
         ps,
-        weapons: weapons.as_deref(),
+        weapons: weapons.as_ref(),
         ammo,
         name,
         select_time: client_input.select.time,
@@ -1001,18 +1009,18 @@ pub(crate) fn update_weaponbar(
 fn action_slot_weapon(
     ps: &PlayerState,
     slot: i32,
-    weapons: Option<&PreparedWeapons>,
+    weapons: Option<&BoundWeapons<'_>>,
 ) -> Option<u32> {
     let slot = usize::try_from(slot).ok()?;
     if ps.weap_flags & 2 != 0 {
         return None;
     }
     if ps.action_slot_type.get(slot) == Some(&2) {
-        let weapons = &weapons?.0;
-        let weapon = if weapons.hud_facts_of(ps.weapon)?.is_alternate() {
+        let weapons = weapons?;
+        let weapon = if weapons.row(ps.weapon)?.hud_facts()?.is_alternate() {
             ps.weapon_primary
         } else {
-            weapons.alternate_of(ps.weapon)
+            weapons.registry().alternate_of(ps.weapon)
         };
         return (weapon != 0).then_some(weapon);
     }
@@ -1052,7 +1060,7 @@ fn paint_action_slot(
     let Some(weapons) = state.weapons else {
         return OwnerDrawPaint::Gap(ChromeGapKind::MaterialExp);
     };
-    let Some((material, ratio)) = weapons.0.dpad_icon_of(weapon) else {
+    let Some((material, ratio)) = weapons.registry().dpad_icon_of(weapon) else {
         return OwnerDrawPaint::Gap(ChromeGapKind::MaterialExp);
     };
 
@@ -1070,14 +1078,14 @@ fn paint_action_slot(
         &args,
         material.to_owned(),
         weapons
-            .0
-            .namespace_of(weapon)
+            .registry()
+            .component_namespace_of(weapon, asset_game::WeaponComponent::Material)
             .expect("owned weapon namespace"),
         args.color,
         Draw2dOp::StretchPic,
         frame,
     );
-    if let Some(atlas) = weapons.0.dpad_icon_atlas_of(weapon) {
+    if let Some(atlas) = weapons.registry().dpad_icon_atlas_of(weapon) {
         let [s0, t0, s1, t1] = action_slot_atlas_uv(atlas, state.cg_time);
         if let Some(cmd) = frame.list.cmds.get_mut(cmd_index) {
             cmd.s0 = s0;

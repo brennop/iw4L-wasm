@@ -255,7 +255,7 @@ pub fn place(
         scene.model_lighting_image = Some(atlas.image.clone());
         scene.model_lighting_dims = Some(atlas.dims);
         commands.insert_resource(crate::assemble::drawsurf::RuntimeImageHandles::from_pools(
-            scene.runtime_material_catalog.generation_id,
+            scene.runtime_material_catalog.generation_id(),
             exact_material_handles,
             scene.exact_material_names.clone(),
             reflection_probe_handles,

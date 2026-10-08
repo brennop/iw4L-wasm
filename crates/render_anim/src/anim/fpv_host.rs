@@ -19,6 +19,8 @@ pub struct PendingFpvSpawn(pub Option<PendingFpvSpawnRequest>);
 
 #[derive(Clone, Debug)]
 pub struct PendingFpvSpawnRequest {
+    pub weapon_handle: asset_game::WeaponHandle,
+    pub parent_handle: Option<asset_game::WeaponHandle>,
     pub gun_index: FpvMeshIndex,
     pub catalog_id: u64,
     pub weapon_id: u32,

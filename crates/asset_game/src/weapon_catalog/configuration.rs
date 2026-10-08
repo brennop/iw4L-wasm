@@ -9,70 +9,31 @@ pub(crate) trait WeaponConfigurationCompiler {
     ) -> Result<u32, ConfigurationRefusal>;
 }
 
+mod common;
+mod iw4;
+mod iw5;
+mod t5;
+mod t6;
+
 pub(super) fn authored_name(key: &FamilyKey, attachments: &[String]) -> String {
-    if attachments.is_empty() {
-        return key.base.clone();
-    }
-    if key.namespace == AssetNamespace::T5 && attachments == ["dw"] {
-        return format!("{}dw", key.base);
-    }
-    format!("{}_{}", key.base, attachments.join("_"))
-}
-
-struct AuthoredConfiguration<'a>(&'a WeaponRegistry);
-struct Iw5Configuration<'a>(&'a WeaponRegistry);
-
-impl WeaponConfigurationCompiler for AuthoredConfiguration<'_> {
-    fn compile(
-        &self,
-        family: &WeaponFamily,
-        selection: &WeaponSelection,
-    ) -> Result<u32, ConfigurationRefusal> {
-        let name = authored_name(&family.key, &selection.attachments);
-        let id = self
-            .0
-            .by_namespaced
-            .get(&(family.key.namespace, name.clone()))
-            .copied()
-            .ok_or_else(|| ConfigurationRefusal::MissingContent(format!("{name}_mp")))?;
-        self.0.configuration_admission(id)?;
-        Ok(id)
+    match key.namespace {
+        AssetNamespace::Iw4 => iw4::authored_name(&key.base, attachments),
+        AssetNamespace::Iw5 => common::joined_name(&key.base, attachments),
+        AssetNamespace::T5 => t5::authored_name(&key.base, attachments),
+        AssetNamespace::T6 => t6::authored_name(&key.base, attachments),
     }
 }
 
-impl WeaponConfigurationCompiler for Iw5Configuration<'_> {
-    fn compile(
-        &self,
-        family: &WeaponFamily,
-        selection: &WeaponSelection,
-    ) -> Result<u32, ConfigurationRefusal> {
-        if selection.attachments.is_empty() {
-            return AuthoredConfiguration(self.0).compile(family, selection);
-        }
-        let base = family.base.ok_or_else(|| {
-            ConfigurationRefusal::MissingContent(format!("{}_mp", family.key.base))
-        })?;
-        let slots = self
-            .0
-            .resolve_iw5_attachment_slots(base, &selection.attachments)?;
-        self.0
-            .iw5_primary_attachment_assets(base, slots)
-            .ok_or_else(|| ConfigurationRefusal::MissingContent(self.0.name_of(base).into()))?;
-        let id = self
-            .0
-            .configurations
-            .get(selection)
-            .copied()
-            .ok_or_else(|| {
-                ConfigurationRefusal::MissingContent(format!(
-                    "{} {}",
-                    family.key,
-                    selection.attachments.join(" ")
-                ))
-            })?;
-        self.0.configuration_admission(id)?;
-        Ok(id)
+pub(crate) fn authored_attachments(key: &FamilyKey, name: &str) -> Option<Vec<String>> {
+    let name = name.strip_suffix("_mp").unwrap_or(name);
+    if name == key.base {
+        return Some(Vec::new());
     }
+    if key.namespace == AssetNamespace::T5 && name == t5::authored_name(&key.base, &["dw".into()]) {
+        return Some(vec!["dw".into()]);
+    }
+    let rest = name.strip_prefix(&key.base)?.strip_prefix('_')?;
+    Some(rest.split('_').map(str::to_owned).collect())
 }
 
 impl WeaponConfigurationCompiler for WeaponRegistry {
@@ -82,14 +43,21 @@ impl WeaponConfigurationCompiler for WeaponRegistry {
         selection: &WeaponSelection,
     ) -> Result<u32, ConfigurationRefusal> {
         let compiler: &dyn WeaponConfigurationCompiler = match family.key.namespace {
-            AssetNamespace::Iw5 => &Iw5Configuration(self),
-            _ => &AuthoredConfiguration(self),
+            AssetNamespace::Iw4 => &iw4::Iw4Configuration(self),
+            AssetNamespace::Iw5 => &iw5::Iw5Configuration(self),
+            AssetNamespace::T5 => &t5::T5Configuration(self),
+            AssetNamespace::T6 => &t6::T6Configuration(self),
         };
         compiler.compile(family, selection)
     }
 }
 
 impl crate::weapon_families::FamilyContent for WeaponRegistry {
+    fn published_handle(&self, id: u32) -> Option<crate::WeaponHandle> {
+        self.bind_published_row(id)
+            .ok()
+            .map(|weapon| weapon.handle())
+    }
     fn lookup(&self, namespace: crate::AssetNamespace, name: &str) -> Option<u32> {
         self.by_namespaced
             .get(&(namespace, normalize_weapon_name(name)))
@@ -112,7 +80,9 @@ impl crate::weapon_families::FamilyContent for WeaponRegistry {
     }
 
     fn names_in(&self, namespace: crate::AssetNamespace) -> Vec<(u32, String)> {
-        (1..=self.len() as u32)
+        self.published_weapons()
+            .map(|weapon| weapon.wire_id())
+            .filter(|&id| id != 0)
             .filter(|&id| self.identity_namespace_of(id) == Some(namespace))
             .filter(|&id| self.iw5_configuration_of(id).is_none())
             .map(|id| (id, normalize_weapon_name(self.name_of(id))))
@@ -133,30 +103,37 @@ pub(super) fn compile_completion_names(registry: &WeaponRegistry) -> Vec<String>
         })
         .map(|family| family.key.short())
         .collect();
-    names.extend((1..registry.len() as u32).filter_map(|id| {
-        if registry.describe_configuration(id).is_some()
-            || registry.gun_xmodel_of(id).is_none()
-            || registry.configuration_admission(id).is_err()
-        {
-            return None;
-        }
-        let facts = registry.hud_facts_of(id)?;
-        if !facts.is_primary() || facts.offhand_class != 0 {
-            return None;
-        }
-        let key = crate::FamilyKey::new(registry.namespace_of(id)?, registry.name_of(id));
-        if registry.weapon_families().families().iter().any(|family| {
-            family.key.namespace == key.namespace
-                && (key.base == family.key.base
-                    || key
-                        .base
-                        .strip_prefix(&family.key.base)
-                        .is_some_and(|suffix| suffix.starts_with('_') || suffix == "dw"))
-        }) {
-            return None;
-        }
-        Some(key.short())
-    }));
+    names.extend(
+        registry
+            .published_weapons()
+            .filter(|weapon| weapon.wire_id() != 0)
+            .filter_map(|weapon| {
+                let id = weapon.wire_id();
+                if registry.describe_configuration(id).is_some()
+                    || registry.gun_xmodel_of(id).is_none()
+                    || registry.configuration_admission(id).is_err()
+                {
+                    return None;
+                }
+                let facts = weapon.hud_facts()?;
+                if !facts.is_primary() || facts.offhand_class != 0 {
+                    return None;
+                }
+                let key =
+                    crate::FamilyKey::new(registry.host_namespace_of(id)?, registry.name_of(id));
+                if registry.weapon_families().families().iter().any(|family| {
+                    family.key.namespace == key.namespace
+                        && (key.base == family.key.base
+                            || key
+                                .base
+                                .strip_prefix(&family.key.base)
+                                .is_some_and(|suffix| suffix.starts_with('_') || suffix == "dw"))
+                }) {
+                    return None;
+                }
+                Some(key.short())
+            }),
+    );
     names.sort();
     names.dedup();
     names

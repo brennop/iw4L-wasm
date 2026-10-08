@@ -1,7 +1,10 @@
 # Compiled cue and media policies
 
 `SoundCatalog::publish` selects an internal family cue compiler for each source
-variant. The catalog owns the compiled policies for its revision. Changing
+variant. The catalog owns the compiled policies for its revision. Explicit IW4/IW5/T5/T6
+adapters select semantics; the common compiler uses the catalog-owned channel/group
+context. Private sound handles bind actual aliases and media; forged handles,
+foreign banks and metadata relabeling cannot authorize playback. Changing
 aliases, channels or mixer groups requires publication again; existing audio
 work retains its bank and checks scope/epoch and media bank revision.
 

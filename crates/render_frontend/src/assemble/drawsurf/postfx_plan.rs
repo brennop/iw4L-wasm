@@ -98,6 +98,7 @@ fn postfx_material_location<'a>(
 ) -> Result<(&'a RuntimeMaterial, usize, &'a RuntimeTechnique), PostFxAdmissionRefusal> {
     let name = asset_core::AssetRef::bare_name(material_name);
     let material = catalog
+        .parts()
         .materials
         .iter()
         .find(|material| material.name == name)
@@ -115,6 +116,7 @@ fn postfx_material_location<'a>(
     let set_i = usize::try_from(set.0)
         .map_err(|_| PostFxAdmissionRefusal::TechniqueSetOutOfRange { set })?;
     let technique_set = catalog
+        .parts()
         .technique_sets
         .get(set_i)
         .ok_or(PostFxAdmissionRefusal::TechniqueSetOutOfRange { set })?;
@@ -397,7 +399,7 @@ fn admit_unlit_2d(
     };
     Ok(RuntimePostFx {
         name: material_name,
-        generation: catalog.generation_id,
+        generation: catalog.generation_id(),
         port,
         shader: shader.clone(),
         shell,

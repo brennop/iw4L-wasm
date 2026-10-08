@@ -181,89 +181,16 @@ pub(super) trait MaterialCompiler {
     }
 }
 
-struct LinearCompiler;
-struct GammaCompiler;
-struct DxbcCompiler;
-
-impl MaterialCompiler for LinearCompiler {
-    fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState {
-        render_material::compile_material_state(AssetNamespace::Iw4, words)
-    }
-    fn color_space(&self, _slot: u8) -> PassColorSpace {
-        PassColorSpace::Linear
-    }
-    fn hardware_shadow_compare(&self) -> bool {
-        false
-    }
-}
-
-impl MaterialCompiler for GammaCompiler {
-    fn draw_rules(
-        &self,
-        material: &crate::AuthoredMaterial,
-        _unlit: bool,
-    ) -> render_material::MaterialDrawRules {
-        render_material::MaterialDrawRules {
-            colour_camera_region: if material.camera_region == 3 {
-                asset_iw4::CAMERA_REGION_NONE
-            } else {
-                material.camera_region
-            },
-            smodel_colour_emits: fastfile_t5::state_bits::smodel_camera_emits(
-                material.info_game_flags,
-                material.camera_region,
-            ),
-            unlit_sky: false,
-            postfx_host_supported: false,
-        }
-    }
-    fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState {
-        render_material::compile_material_state(AssetNamespace::T5, words)
-    }
-    fn color_space(&self, slot: u8) -> PassColorSpace {
-        if lighting_iw4::is_lit_remap_slot(slot) {
-            PassColorSpace::GammaEncoded
-        } else {
-            PassColorSpace::Unknown
-        }
-    }
-    fn hardware_shadow_compare(&self) -> bool {
-        true
-    }
-}
-
-impl MaterialCompiler for DxbcCompiler {
-    fn draw_rules(
-        &self,
-        material: &crate::AuthoredMaterial,
-        unlit: bool,
-    ) -> render_material::MaterialDrawRules {
-        render_material::MaterialDrawRules {
-            colour_camera_region: material.camera_region,
-            smodel_colour_emits: true,
-            unlit_sky: unlit
-                && matches!(
-                    material.sort_key,
-                    asset_iw4::SORT_KEY_SKY | asset_iw4::SORT_KEY_SKYBOX
-                ),
-            postfx_host_supported: false,
-        }
-    }
-    fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState {
-        render_material::compile_material_state(AssetNamespace::T6, words)
-    }
-    fn color_space(&self, _slot: u8) -> PassColorSpace {
-        PassColorSpace::Unknown
-    }
-    fn hardware_shadow_compare(&self) -> bool {
-        false
-    }
-}
+mod iw4;
+mod iw5;
+mod t5;
+mod t6;
 
 pub(super) fn compiler_for(namespace: AssetNamespace) -> &'static dyn MaterialCompiler {
     match namespace {
-        AssetNamespace::Iw4 | AssetNamespace::Iw5 => &LinearCompiler,
-        AssetNamespace::T5 => &GammaCompiler,
-        AssetNamespace::T6 => &DxbcCompiler,
+        AssetNamespace::Iw4 => &iw4::Iw4Compiler,
+        AssetNamespace::Iw5 => &iw5::Iw5Compiler,
+        AssetNamespace::T5 => &t5::T5Compiler,
+        AssetNamespace::T6 => &t6::T6Compiler,
     }
 }

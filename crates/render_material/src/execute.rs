@@ -337,6 +337,7 @@ pub fn resolve_sorted_material(
 ) -> Result<&RuntimeMaterial, MaterialRefusal> {
     if let Some(material_id) = key.material_id {
         return catalog
+            .parts()
             .materials
             .get(usize::from(material_id.0))
             .filter(|material| material.asset_id == material_id)
@@ -345,7 +346,7 @@ pub fn resolve_sorted_material(
             });
     }
     let ordinal = key.rank;
-    let material_id = match &catalog.sorted_materials {
+    let material_id = match &catalog.parts().sorted_materials {
         RuntimeSortedMaterialTable::Missing => {
             return Err(MaterialRefusal::SortedMaterialTableMissing);
         }
@@ -365,6 +366,7 @@ pub fn resolve_sorted_material(
         )?,
     };
     catalog
+        .parts()
         .materials
         .get(usize::from(material_id.0))
         .ok_or(MaterialRefusal::MaterialOutOfRange {
@@ -385,7 +387,7 @@ pub fn add_surf_has_technique(
         RemapResolution::Resolved(set) => set,
         RemapResolution::Missing { .. } | RemapResolution::Cycle { .. } => return true,
     };
-    let Some(set) = catalog.technique_sets.get(set_id.0 as usize) else {
+    let Some(set) = catalog.parts().technique_sets.get(set_id.0 as usize) else {
         return true;
     };
     set.technique(tech_type).is_some()
@@ -409,6 +411,7 @@ pub fn resolve_material_technique(
         }
     };
     let set = catalog
+        .parts()
         .technique_sets
         .get(set_id.0 as usize)
         .ok_or_else(|| {
@@ -477,6 +480,7 @@ fn world_vert_decl_from_resolved(
         }
     };
     catalog
+        .parts()
         .technique_sets
         .get(set_id.0 as usize)
         .map(|set| {
@@ -687,10 +691,10 @@ fn validate_prepared_generation(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
 ) -> Result<(), MaterialRefusal> {
-    if prepared.generation_id() != catalog.generation_id {
+    if prepared.generation_id() != catalog.generation_id() {
         return Err(MaterialRefusal::StaleMaterialGeneration {
             retained: prepared.generation_id(),
-            current: catalog.generation_id,
+            current: catalog.generation_id(),
         });
     }
     Ok(())
@@ -821,7 +825,7 @@ pub fn execute_material_with_shell(
         arm,
         vertex_type,
         shell: Arc::new(StableMaterialShell {
-            generation_id: catalog.generation_id,
+            generation_id: catalog.generation_id(),
             material_id: material.asset_id,
             source_selection: technique.source_selection,
             tech_type,
@@ -907,7 +911,7 @@ pub fn capture_stable_shell(
     let (material, technique) = resolve_material_technique(catalog, key, tech_type).ok()?;
     let prepared_tech = prepared.technique(material.asset_id, tech_type)?;
     let shell = &execution.shell;
-    if shell.generation_id != catalog.generation_id
+    if shell.generation_id != catalog.generation_id()
         || shell.material_id != material.asset_id
         || shell.tech_type != tech_type
         || shell.vertex_type != vertex_type
@@ -928,11 +932,11 @@ pub fn capture_stable_shell(
 
 pub fn rebind_stable_material(
     shell: &StableMaterialShell,
-    generation: crate::MaterialGenerationId,
+    catalog: &RuntimeMaterialCatalog,
     code_sources: &impl CodeSourceLookup,
 ) -> Result<MaterialExecution, MaterialRefusal> {
     let mut execution = MaterialExecution::vacant();
-    execution.rebind_into(&Arc::new(shell.clone()), generation, code_sources)?;
+    execution.rebind_into(&Arc::new(shell.clone()), catalog, code_sources)?;
     Ok(execution)
 }
 
@@ -1001,9 +1005,10 @@ impl MaterialExecution {
     pub fn rebind_into(
         &mut self,
         shell: &Arc<StableMaterialShell>,
-        generation: crate::MaterialGenerationId,
+        catalog: &RuntimeMaterialCatalog,
         code_sources: &impl CodeSourceLookup,
     ) -> Result<(), MaterialRefusal> {
+        let generation = catalog.generation_id();
         if shell.generation_id != generation {
             return Err(MaterialRefusal::StaleMaterialGeneration {
                 retained: shell.generation_id,

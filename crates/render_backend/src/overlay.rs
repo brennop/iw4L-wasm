@@ -5,8 +5,8 @@ pub use render_frame::code_math::{
 };
 use render_frame::{LightAttenuationBind, OutdoorLookup};
 use render_material::{
-    CompiledConstantOverlay, MaterialGenerationId, MaterialRefusal, RuntimeCodeSources,
-    RuntimeImageId,
+    CompiledConstantOverlay, MaterialRefusal, RuntimeCodeSources, RuntimeImageId,
+    RuntimeMaterialCatalog,
 };
 
 pub const CODE_LIGHT_POSITION: u16 = lighting_iw4::CONST_SRC_CODE_LIGHT_POSITION;
@@ -327,7 +327,7 @@ pub fn apply_shadowable_light(
     lights: &[lighting_iw4::GfxLightPack],
     attenuation: &[LightAttenuationBind],
     local_light_bindings: &[CompiledConstantOverlay],
-    generation: MaterialGenerationId,
+    catalog: &RuntimeMaterialCatalog,
     eye: Vec3,
     spot_receivers: &[Option<render_frame::SpotShadowReceiver>],
 ) -> Result<(), MaterialRefusal> {
@@ -348,7 +348,7 @@ pub fn apply_shadowable_light(
         let bindings = local_light_bindings
             .get(usize::from(index))
             .ok_or(MaterialRefusal::MissingLightBindings { scene_light: index })?;
-        bindings.validate_generation(generation)?;
+        bindings.validate_generation(catalog)?;
         Some(bindings)
     };
     match packed {
@@ -407,7 +407,7 @@ pub fn apply_shadowable_light(
         );
     }
     if let Some(bindings) = bindings {
-        bindings.apply(generation, sources)?;
+        bindings.apply(catalog, sources)?;
     }
     Ok(())
 }

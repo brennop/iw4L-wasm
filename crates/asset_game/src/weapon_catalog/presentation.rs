@@ -162,13 +162,13 @@ impl WeaponWorldFacts {
 }
 
 impl WeaponRegistry {
-    pub fn hud_facts_of(&self, id: u32) -> Option<WeaponHudFacts> {
+    pub(crate) fn hud_facts_of(&self, id: u32) -> Option<WeaponHudFacts> {
         self.rows.get(id as usize)?.hud
     }
-    pub fn event_facts_of(&self, id: u32) -> Option<WeaponEventFacts> {
+    pub(crate) fn event_facts_of(&self, id: u32) -> Option<WeaponEventFacts> {
         self.rows.get(id as usize)?.events
     }
-    pub fn world_facts_of(&self, id: u32) -> Option<WeaponWorldFacts> {
+    pub(crate) fn world_facts_of(&self, id: u32) -> Option<WeaponWorldFacts> {
         self.rows.get(id as usize)?.world
     }
 }

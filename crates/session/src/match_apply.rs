@@ -200,6 +200,7 @@ pub fn apply_prepared_match(
 
     let plan = match preflight_match_install(
         prepared,
+        load_key,
         &zone,
         mode_selection.as_deref(),
         rules.as_deref(),
@@ -319,12 +320,12 @@ pub fn apply_prepared_match(
                 .unwrap_or(sim::LocalPlayerProfile::default());
             sim.set_local_player_profile(profile);
         }
-        content.set_weapon_def_scales(weapons.0.scales_table());
-        let combat = combat_table::from_registry(&weapons.0, lochit_table);
+        content.set_weapon_def_scales(weapons.registry().scales_table());
+        let combat = combat_table::from_registry(weapons.registry(), lochit_table);
         content.set_weapon_combat_table(combat.clone());
-        content.set_weapon_runnable_table(weapons.0.runnable_table());
-        content.set_weapon_transition_groups(weapons.0.configuration_transition_groups());
-        content.set_bullet_pen_facts(combat_table::pen_from_registry(&weapons.0));
+        content.set_weapon_runnable_table(weapons.registry().runnable_table());
+        content.set_weapon_transition_groups(weapons.registry().configuration_transition_groups());
+        content.set_bullet_pen_facts(combat_table::pen_from_registry(weapons.registry()));
         content.set_penetration_table(pen_table);
         content.set_pen_table_loaded(pen_table_loaded);
         content.set_player_kit_collisions(
@@ -382,26 +383,26 @@ pub fn apply_prepared_match(
                 .clip(asset_core::AssetNamespace::Iw4, name)
                 .map(|clip| (*clip).clone())
         }));
-        content.set_weapon_script_names(weapons.0.script_names_table());
+        content.set_weapon_script_names(weapons.registry().script_names_table());
         content.set_weapon_script_aliases(objective_weapons);
-        content.set_vehicle_turrets(weapons.0.vehicle_turrets());
+        content.set_vehicle_turrets(weapons.registry().vehicle_turrets());
         content.set_vehicle_accel(
             weapons
-                .0
+                .registry()
                 .vehicle_accel()
                 .map(|(name, accel)| (name.to_owned(), accel)),
         );
         content.set_vehicle_compass(
             weapons
-                .0
+                .registry()
                 .vehicle_compass()
                 .map(|(name, icons, size)| (name.to_owned(), (icons.clone(), size))),
         );
-        let script_names = weapons.0.script_names_table();
+        let script_names = weapons.registry().script_names_table();
         content.set_weapon_setups(
             (0..script_names.len() as u32)
                 .map(|id| {
-                    let selection = weapons.0.describe_configuration(id)?;
+                    let selection = weapons.registry().describe_configuration(id)?;
                     let family = selection.family.as_ref()?;
                     Some(sim::WeaponSetup {
                         realm: match family.namespace {
@@ -421,12 +422,18 @@ pub fn apply_prepared_match(
                 .collect(),
         );
         content.set_shield_models(
-            (0..=weapons.0.len())
+            (0..=weapons.registry().len())
                 .map(|index| {
                     let weapon = index as u32;
-                    (weapons.0.world_facts_of(weapon)?.is_shield()).then_some(())?;
+                    (weapons
+                        .registry()
+                        .bind_published_row(weapon)
+                        .ok()
+                        .and_then(|weapon| weapon.world_facts())?
+                        .is_shield())
+                    .then_some(())?;
                     weapons
-                        .0
+                        .registry()
                         .world_model_entry(weapon, &world_weapons.0)?
                         .skel
                         .retained_capability()
@@ -434,20 +441,22 @@ pub fn apply_prepared_match(
                 })
                 .collect(),
         );
-        content.set_weapon_world_models(weapons.0.world_models_table());
-        content.set_weapon_projectile_models(weapons.0.projectile_models_table());
-        content.set_weapon_melee_only(combat_table::melee_only_from_registry(&weapons.0));
-        content.set_weapon_script_sounds(combat_table::script_sounds_from_registry(&weapons.0));
+        content.set_weapon_world_models(weapons.registry().world_models_table());
+        content.set_weapon_projectile_models(weapons.registry().projectile_models_table());
+        content.set_weapon_melee_only(combat_table::melee_only_from_registry(weapons.registry()));
+        content.set_weapon_script_sounds(combat_table::script_sounds_from_registry(
+            weapons.registry(),
+        ));
         install_team_voice_prefixes(&mut content, catalog.as_deref(), identity.as_deref(), &zone);
         install_shocks(&mut content, catalog.as_deref(), &map_shocks);
-        let equipment = combat_table::equipment_from_registry(&weapons.0);
+        let equipment = combat_table::equipment_from_registry(weapons.registry());
         content.set_equipment_runtime_table(equipment.clone());
         let mut primary = Vec::new();
         let mut secondary = Vec::new();
         let mut lethal = Vec::new();
         let mut tactical = Vec::new();
         let mut excluded = Vec::new();
-        let families = weapons.0.weapon_families();
+        let families = weapons.registry().weapon_families();
         for family in families.offered() {
             let offer = CacWeaponOffer {
                 key: family.key.asset_key(),
@@ -503,7 +512,7 @@ pub fn apply_prepared_match(
             }),
             airstrike_height,
             &prepared_map.spawns,
-            &weapons.0,
+            weapons.registry(),
             &combat,
             &equipment,
             &mut sim_cam,
@@ -588,7 +597,7 @@ pub fn apply_prepared_match(
 
         let manifest = SessionContentManifest::build(
             &prepared_map,
-            &weapons.0,
+            weapons.registry(),
             &combat,
             &equipment,
             sim.content_digest(),
@@ -845,6 +854,7 @@ fn script_refusal(
 
 fn preflight_match_install(
     mut prepared: assets::PreparedMatch,
+    load_key: frame::LocalLoadKey,
     zone: &str,
     mode_selection: Option<&sim::HostGameModeSelection>,
     rules: Option<&frame::HostMatchRules>,
@@ -881,13 +891,13 @@ fn preflight_match_install(
                 names
             }),
     );
-    let weapons = PreparedWeapons(prepared.weapons);
-    let fpv_meshes = PreparedFpvMeshes(prepared.fpv_meshes);
+    let weapons = PreparedWeapons::for_match(prepared.weapons, load_key);
+    let fpv_meshes = PreparedFpvMeshes(Arc::new(prepared.fpv_meshes));
     let bodies = assets::PreparedBodies(prepared.bodies);
-    let world_weapons = assets::PreparedWorldWeapons(prepared.world_weapons);
+    let world_weapons = assets::PreparedWorldWeapons(Arc::new(prepared.world_weapons));
     let projectile_meshes = assets::PreparedProjectileMeshes(prepared.projectile_meshes);
     let xmodel_walk = std::mem::take(&mut prepared.xmodel_walk);
-    let xanims = PreparedXAnims(prepared.xanims);
+    let xanims = PreparedXAnims(Arc::new(prepared.xanims));
     let death = PreparedDestructibleDeath(std::mem::take(&mut prepared.destructible_death));
     log_destructible_death_assets(&death);
     let player_anim_sources = prepared.player_anim_sources;
@@ -958,13 +968,16 @@ fn preflight_match_install(
             }
         }
         for (from, to) in iw4.weapon_pairs(realm) {
-            let weapon = (1..weapons.0.len() as u32).find(|&id| {
-                weapons.0.identity_namespace_of(id) == prepared_map.namespace
-                    && weapons.0.script_name_of(id) == to
-                    && [weapons.0.gun_xmodel_of(id), weapons.0.hand_xmodel_of(id)]
-                        .into_iter()
-                        .flatten()
-                        .all(|model| fpv_meshes.0.get(namespace, model).is_some())
+            let weapon = (1..weapons.registry().len() as u32).find(|&id| {
+                weapons.registry().identity_namespace_of(id) == prepared_map.namespace
+                    && weapons.registry().script_name_of(id) == to
+                    && [
+                        weapons.registry().gun_xmodel_of(id),
+                        weapons.registry().hand_xmodel_of(id),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .all(|model| fpv_meshes.0.get(namespace, model).is_some())
             });
             match weapon {
                 Some(id) => {

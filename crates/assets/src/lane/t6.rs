@@ -249,7 +249,7 @@ fn capture_sounds(
         filled.iter().filter(|name| names.contains(*name)).count(),
         names.len(),
         filled.iter().filter(|name| !names.contains(*name)).count(),
-        catalog.loaded.len(),
+        catalog.loaded_sounds().len(),
         banks.len(),
         gaps.len()
     ));
@@ -1459,6 +1459,7 @@ fn native_material_seed(
     use asset_world::world_t6::Reader;
     let h = &material.header;
     let seed = materials.link_material(asset_material::AuthoredMaterial {
+        t6_preparation: None,
         name: asset_core::AssetRef::Real(name.to_owned()),
         namespace: asset_core::AssetNamespace::T6,
         technique_set: asset_core::AssetRef::Real(
@@ -1479,7 +1480,7 @@ fn native_material_seed(
         camera_region: if is_sky {
             asset_iw4::CAMERA_REGION_LIT_OPAQUE
         } else {
-            h[88]
+            camera_region(h[88])
         },
         state_bits: Vec::new(),
         state_bits_entry: None,
@@ -1492,6 +1493,16 @@ fn native_material_seed(
         zone: asset_core::ZoneOwner::from_zone_path(path),
     });
     Ok(seed)
+}
+
+fn camera_region(t6: u8) -> u8 {
+    match t6 {
+        0 | 2 | 6 => asset_iw4::CAMERA_REGION_LIT_OPAQUE,
+        1 => asset_iw4::CAMERA_REGION_LIT_TRANS,
+        3..=5 => asset_iw4::CAMERA_REGION_EMISSIVE,
+        7 => asset_iw4::CAMERA_REGION_DEPTH_HACK,
+        _ => asset_iw4::CAMERA_REGION_NONE,
+    }
 }
 
 fn capture_bodies(
@@ -1583,7 +1594,7 @@ fn capture_bodies(
                 native_material_seed(path, material_name, material, &set.name, false, materials)?;
             let row = materials
                 .t6_material(
-                    seed,
+                    asset_material::t6_techset::T6MaterialSource::NativeSeed(seed),
                     material_name,
                     set,
                     &native.textures,
@@ -1592,7 +1603,7 @@ fn capture_bodies(
                     T6Draw::Lit,
                     report,
                 )
-                .ok_or("T6 body material link failed")?;
+                .map_err(|e| format!("T6 body material link failed: {e:?}"))?;
             let row = WalkLocalMaterialIndex::from_walk(row);
             bound.insert(material_name.to_owned(), row);
             rows.push(Some(row));
@@ -1917,7 +1928,7 @@ impl ZoneLane for T6Lane {
                     )?;
                     let row = materials
                         .t6_material(
-                            seed,
+                            asset_material::t6_techset::T6MaterialSource::NativeSeed(seed),
                             &name,
                             set,
                             &native.textures,
@@ -1926,7 +1937,7 @@ impl ZoneLane for T6Lane {
                             T6Draw::Lit,
                             &mut report,
                         )
-                        .ok_or("T6 material link failed")?;
+                        .map_err(|e| format!("T6 material link failed: {e:?}"))?;
                     layer_formats.insert(row, set.world_vert_format);
                     material_rows.insert(name, row);
                     row
@@ -2314,7 +2325,7 @@ impl ZoneLane for T6Lane {
                 map_xmodel_scene_assets,
                 script_model_instances,
                 smodel_lighting_samples,
-                policy: WorldDrawPolicy::iw4(),
+                policy: WorldDrawPolicy::t6(),
                 intermission_view: asset_world::parse_intermission_view(entities),
                 exp_fog,
                 t6_film_grade,
@@ -2349,7 +2360,7 @@ impl ZoneLane for T6Lane {
             Err(error) => {
                 stage.fail();
                 LoadedWorld::with_gap(
-                    WorldDrawPolicy::iw4(),
+                    WorldDrawPolicy::t6(),
                     PreparedCapability::PreparedWorld,
                     error,
                     None,

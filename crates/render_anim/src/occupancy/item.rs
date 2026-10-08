@@ -18,114 +18,8 @@ use render_scene::{
 
 pub const ITEM_LIGHTING_Z_OFS: f32 = 4.0;
 
-struct ItemComposition {
-    name: String,
-    model: assets::WorldWeaponIndex,
-    attachments: Vec<assets::WorldWeaponIndex>,
-    key: String,
-    dobj: xmodel_runtime::DObj,
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct PreparedItemCompositions {
-    owner: Option<(std::sync::Arc<asset_game::WeaponRegistry>, u64)>,
-    by_weapon: std::collections::HashMap<u32, Option<std::sync::Arc<ItemComposition>>>,
-}
-
-impl PreparedItemCompositions {
-    pub(crate) fn clear(&mut self) {
-        self.owner = None;
-        self.by_weapon.clear();
-    }
-    fn owned_by(
-        &self,
-        weapons: &assets::PreparedWeapons,
-        world: &assets::PreparedWorldWeapons,
-    ) -> bool {
-        self.owner.as_ref().is_some_and(|(registry, identity)| {
-            registry.revision() == weapons.0.revision() && *identity == world.0.identity()
-        })
-    }
-
-    fn reset_for(
-        &mut self,
-        weapons: &assets::PreparedWeapons,
-        world: &assets::PreparedWorldWeapons,
-    ) {
-        if !self.owned_by(weapons, world) {
-            self.by_weapon.clear();
-            self.owner = Some((std::sync::Arc::clone(&weapons.0), world.0.identity()));
-        }
-    }
-
-    fn prepare(
-        &mut self,
-        world: &asset_model::WorldWeaponCatalog,
-        weapon: u32,
-    ) -> Option<std::sync::Arc<ItemComposition>> {
-        let (registry, identity) = self.owner.as_ref()?;
-        if *identity != world.identity() {
-            return None;
-        }
-        self.by_weapon
-            .entry(weapon)
-            .or_insert_with(|| {
-                if let Err(refusal) = registry.configuration_admission(weapon) {
-                    diag::warn!(
-                        World,
-                        "dropped item weapon {weapon}: configuration refused: {refusal:?}"
-                    );
-                    return None;
-                }
-                let composition = compose_item(registry, world, weapon).map(std::sync::Arc::new);
-                if composition.is_none() {
-                    diag::warn!(
-                        World,
-                        "dropped item weapon {weapon}: world composition dependencies refused"
-                    );
-                }
-                composition
-            })
-            .clone()
-    }
-}
-
-fn compose_item(
-    registry: &asset_game::WeaponRegistry,
-    catalog: &asset_model::WorldWeaponCatalog,
-    weapon: u32,
-) -> Option<ItemComposition> {
-    let entry = registry.world_model_entry(weapon, catalog)?;
-    let model_index = registry.world_model_edge_of(weapon)?.bound_index()?;
-    let pose = entry.skel.pose.as_ref()?;
-    let attachments = crate::anim::remote_body::world_attachments(registry, catalog, weapon);
-    let mut key = entry.skel.name.clone();
-    let mut dobj_models = vec![(pose, None)];
-    let mut attachment_models = Vec::with_capacity(attachments.len());
-    for attachment in &attachments {
-        let Some(pose) = attachment.entry.skel.pose.as_ref() else {
-            continue;
-        };
-        key.push('+');
-        key.push_str(&attachment.entry.skel.name);
-        attachment_models.push(attachment.index);
-        dobj_models.push((
-            pose,
-            Some(xmodel_runtime::Attach {
-                parent_model: 0,
-                tag: attachment.tag.to_owned(),
-            }),
-        ));
-    }
-    let dobj = xmodel_runtime::DObj::build(&dobj_models).ok()?;
-    Some(ItemComposition {
-        name: entry.skel.name.clone(),
-        model: assets::WorldWeaponIndex::from_order(model_index),
-        attachments: attachment_models,
-        key,
-        dobj,
-    })
-}
+use crate::anim::world_weapon::ItemComposition;
+pub(crate) use crate::anim::world_weapon::PreparedItemCompositions;
 
 #[derive(Resource, Default)]
 struct ItemOccupancy {
@@ -297,7 +191,15 @@ fn occupy_item_scene_ents(
         if hide_scavenger && item_is_scavenger(snapshot, es.number) {
             continue;
         }
-        let Some(composition) = compositions.prepare(catalog, weapon) else {
+        let Some(handle) = weapons
+            .for_snapshot(presented_inner.weapon_epoch())
+            .ok()
+            .and_then(|owner| owner.row(weapon))
+            .map(|weapon| weapon.handle())
+        else {
+            continue;
+        };
+        let Ok(composition) = compositions.prepare(weapons, world, handle, 0) else {
             continue;
         };
         let Some(entry) = catalog.get_at(composition.model.order()) else {
@@ -345,14 +247,16 @@ fn occupy_item_scene_ents(
 
 fn pose_items(
     occupancy: Res<ItemOccupancy>,
+    weapons: Option<Res<assets::PreparedWeapons>>,
     world_weapons: Option<Res<assets::PreparedWorldWeapons>>,
     gfx: Res<HostGfxScene>,
     mut product: ResMut<ItemPoseProduct>,
 ) {
     product.owners.clear();
-    if world_weapons
-        .as_ref()
-        .is_some_and(|value| value.is_changed())
+    if weapons.as_ref().is_some_and(|weapons| weapons.is_changed())
+        || world_weapons
+            .as_ref()
+            .is_some_and(|value| value.is_changed())
     {
         product.assets.clear();
     }
@@ -371,6 +275,13 @@ fn pose_items(
             continue;
         }
         let composition = &row.composition;
+        if weapons
+            .as_deref()
+            .zip(world_weapons.as_deref())
+            .is_none_or(|(w, c)| !composition.owned_by(w, c))
+        {
+            continue;
+        }
         let asset_index = if let Some(index) = product
             .assets
             .iter()
@@ -465,7 +376,7 @@ fn append_item_draws(
     let (Some(catalog), Some(_), Some(tess)) = (catalog, atlas_ref, tess.as_deref()) else {
         unreachable!("required item draw resources checked above");
     };
-    let material_generation = tess.catalog.generation_id;
+    let material_generation = tess.catalog().generation_id();
     let generation_changed = world_weapons_changed
         || atlas_changed
         || tess_changed
@@ -498,7 +409,7 @@ fn append_item_draws(
                         return None;
                     }
                     let key = entry.material_keys.get(surface.surface_index)?.as_ref()?;
-                    model_materials.material(&tess.catalog, key).cloned()
+                    model_materials.material(&tess.catalog(), key).cloned()
                 })
                 .collect();
             if materials.iter().all(Option::is_none) {

@@ -191,7 +191,7 @@ impl WeaponCombatProjection {
 }
 
 impl WeaponRegistry {
-    pub fn combat_facts_of(
+    pub(crate) fn combat_facts_of(
         &self,
         id: u32,
         rules: WeaponHostRules,

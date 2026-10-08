@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anim_iw4::{DOBJ_RADIUS_PARENT_ROOT, compute_bounds_radius};
-use assets::PreparedFpvMeshes;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use frame::{LifeFrontPublished, PresentedPublished, ViewSubject, WorkerCmdSet};
@@ -14,7 +13,9 @@ use crate::anim::fpv::{
     local_shot_identity,
 };
 use crate::anim::fpv_host::{FpvGenerateArgs, FpvPoseKind, FpvPoseRefuse, generate_fpv_pose};
-use crate::anim::fpv_prepared::{FpvWeaponSlot, FpvWeaponTable, FpvWeaponView, PreparedFpv};
+use crate::anim::fpv_prepared::{
+    FpvOwnerInputs, FpvWeaponSlot, FpvWeaponTable, FpvWeaponView, PreparedFpv,
+};
 use crate::anim::fpv_rig::PreparedFpvRig;
 use crate::anim::scene_submission::{AnimDObjSceneSubmission, AnimSceneSubmit};
 use crate::anim::viewmodel_controller::ViewmodelController;
@@ -75,9 +76,18 @@ pub struct SessionFpvMeshesHandles {
     pub catalog_id: u64,
     pub axis: bool,
     pub view: Arc<FpvWeaponView>,
+    pub(crate) table: Arc<FpvWeaponTable>,
     pub fpv: EquippedFpv,
     pub(crate) active_rig: Option<Arc<PreparedFpvRig>>,
     pub(crate) material_catalog: Arc<RuntimeMaterialCatalog>,
+}
+
+fn same_clips(a: &asset_game::WeaponAnimations, b: &asset_game::WeaponAnimations) -> bool {
+    (0..asset_game::WEAPON_ANIM_SLOTS).all(|slot| match (a.clip_at(slot), b.clip_at(slot)) {
+        (None, None) => true,
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        _ => false,
+    })
 }
 
 fn same_compositions(a: &asset_game::FpvSideAssemblies, b: &asset_game::FpvSideAssemblies) -> bool {
@@ -103,7 +113,7 @@ fn same_material_catalog(
     owned: &Arc<RuntimeMaterialCatalog>,
     current: Option<&render_scene::TessMaterials>,
 ) -> bool {
-    current.is_some_and(|current| Arc::ptr_eq(owned, &current.catalog))
+    current.is_some_and(|current| Arc::ptr_eq(owned, &current.catalog()))
 }
 
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
@@ -196,6 +206,7 @@ fn fpv_rocket_should_attach(
 #[derive(SystemParam)]
 pub struct SpawnPendingFpvInputs<'w> {
     prepared: Res<'w, PreparedFpv>,
+    owners: FpvOwnerInputs<'w>,
     tess: Res<'w, render_scene::TessMaterials>,
     presented: Res<'w, PresentedSnapshot>,
     local: Res<'w, LocalPresentClient>,
@@ -215,6 +226,7 @@ pub fn spawn_pending_fpv(
 ) {
     let SpawnPendingFpvInputs {
         prepared,
+        owners,
         tess,
         presented,
         local,
@@ -229,6 +241,17 @@ pub fn spawn_pending_fpv(
         pending.0 = Some(request);
         return;
     };
+    let Some(bound_table) = owners.bind(table) else {
+        return;
+    };
+    if owners.handles(
+        presented.weapon_epoch(),
+        request.weapon_id,
+        request.parent_weapon,
+    ) != Some((request.weapon_handle, request.parent_handle))
+    {
+        return;
+    }
     let instance_started = web_time::Instant::now();
     cursor.0.forget_weap_anim();
     for entity in &existing_fpv {
@@ -252,14 +275,14 @@ pub fn spawn_pending_fpv(
     let ffa_team = meta.and_then(|m| m.ffa_team);
     let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
     let axis = asset_model::kit_assignment_is_axis(client_state_team, ffa_team);
-    let view = match table.slot(request.weapon_id, request.parent_weapon, axis) {
-        FpvWeaponSlot::Ready(view) => Arc::clone(view),
-        FpvWeaponSlot::Refused(cause) => {
+    let view = match bound_table.slot(request.weapon_handle, request.parent_handle, axis) {
+        Ok(FpvWeaponSlot::Ready(view)) => Arc::clone(view),
+        Ok(FpvWeaponSlot::Refused(cause)) => {
             gaps.raise(cause.clone());
             status.0 = Some(FpvState::Blocked(cause.clone()));
             return;
         }
-        FpvWeaponSlot::Absent => {
+        Ok(FpvWeaponSlot::Absent) | Err(_) => {
             let cause = RenderGapCause::FpvGunXModelUnresolved {
                 weapon_id: request.weapon_id,
             };
@@ -326,6 +349,7 @@ pub fn spawn_pending_fpv(
         weapon_id: request.weapon_id,
         parent_weapon: request.parent_weapon,
         catalog_id: request.catalog_id,
+        table: Arc::clone(table),
         axis,
         fpv: EquippedFpv::new(
             view.gun_name.clone(),
@@ -410,9 +434,10 @@ pub fn occupy_fpv_scene(
     kick: Option<Res<SessionViewKick>>,
     session_vm: Option<Res<SessionViewmodel>>,
     tess: Option<Res<render_scene::TessMaterials>>,
-    fpv_meshes: Option<Res<PreparedFpvMeshes>>,
+    owners: FpvOwnerInputs,
 ) {
     let (view, settings) = view_settings;
+    let fpv_meshes = owners.meshes.as_ref();
     if presented.viewweapon_player(local.0).is_none()
         || presented_is_third_person(
             &presented,
@@ -437,7 +462,9 @@ pub fn occupy_fpv_scene(
     let Some(session) = session_vm.as_ref().and_then(|s| s.0.as_ref()) else {
         return;
     };
-    if !same_material_catalog(&session.material_catalog, tess.as_deref()) {
+    if !same_material_catalog(&session.material_catalog, tess.as_deref())
+        || owners.bind(&session.table).is_none()
+    {
         return;
     }
     let lighting = viewmodel_lighting_origin(
@@ -508,7 +535,7 @@ pub fn tick_fpv_viewmodel(
     ),
     mut cursor: ResMut<FpvPresentCursor>,
     prepared: Res<PreparedFpv>,
-    fpv_meshes: Option<Res<PreparedFpvMeshes>>,
+    owners: FpvOwnerInputs,
     mut session_vm: ResMut<SessionViewmodel>,
     tess: Option<Res<render_scene::TessMaterials>>,
     mut settled: ResMut<FpvHeldSettled>,
@@ -520,6 +547,7 @@ pub fn tick_fpv_viewmodel(
     view_settings: (Res<ViewSubject>, Res<frame::GameSettings>),
 ) {
     let (view, settings) = view_settings;
+    let fpv_meshes = owners.meshes.as_ref();
     let table = prepared.table().map(|table| &**table);
     pending_notes.batch = None;
     bolts.clear();
@@ -542,7 +570,9 @@ pub fn tick_fpv_viewmodel(
         product.kind = FpvPoseKind::Hide;
         return;
     };
-    if !same_material_catalog(&session.material_catalog, tess.as_deref()) {
+    if !same_material_catalog(&session.material_catalog, tess.as_deref())
+        || owners.bind(&session.table).is_none()
+    {
         diag::warn!(
             Fpv,
             "fpv: material catalog changed; retiring stale rig and bindings"
@@ -587,17 +617,39 @@ pub fn tick_fpv_viewmodel(
             if let Some(table) = table {
                 match table.gun_index(weapon) {
                     Some(gun_index) if gun_index == session.fpv.gun_index => {
-                        let same = match table.slot(weapon, ps.weapon_primary, session.axis) {
-                            FpvWeaponSlot::Ready(next) => {
+                        let handles =
+                            owners.handles(presented.weapon_epoch(), weapon, ps.weapon_primary);
+                        let next = owners.bind(table).and_then(|bound| {
+                            handles.and_then(|(weapon, parent)| {
+                                bound.slot(weapon, parent, session.axis).ok()
+                            })
+                        });
+                        let same = match next {
+                            Some(FpvWeaponSlot::Ready(next)) => {
                                 same_compositions(&next.assemblies, &session.view.assemblies)
+                                    && same_clips(&next.right, &session.view.right)
+                                    && match (&next.left, &session.view.left) {
+                                        (None, None) => true,
+                                        (Some(a), Some(b)) => same_clips(a, b),
+                                        _ => false,
+                                    }
                             }
                             _ => false,
                         };
                         if same {
+                            if let Some(FpvWeaponSlot::Ready(next)) = next {
+                                session.view = Arc::clone(next);
+                            }
                             session.weapon_id = weapon;
                             session.parent_weapon = ps.weapon_primary;
                         } else {
+                            let Some((weapon_handle, parent_handle)) = handles else {
+                                product.kind = FpvPoseKind::Hide;
+                                return;
+                            };
                             pending.0 = Some(PendingFpvSpawnRequest {
+                                weapon_handle,
+                                parent_handle,
                                 gun_index,
                                 catalog_id: fpv.0.identity(),
                                 weapon_id: weapon,
@@ -608,7 +660,15 @@ pub fn tick_fpv_viewmodel(
                         }
                     }
                     Some(gun_index) => {
+                        let Some((weapon_handle, parent_handle)) =
+                            owners.handles(presented.weapon_epoch(), weapon, ps.weapon_primary)
+                        else {
+                            product.kind = FpvPoseKind::Hide;
+                            return;
+                        };
                         pending.0 = Some(PendingFpvSpawnRequest {
+                            weapon_handle,
+                            parent_handle,
                             gun_index,
                             catalog_id: fpv.0.identity(),
                             weapon_id: weapon,
@@ -792,7 +852,7 @@ fn skin_fpv_geometry(
     product: Res<FpvPoseProduct>,
     session_vm: Option<Res<SessionViewmodel>>,
     tess: Option<Res<render_scene::TessMaterials>>,
-    fpv_meshes: Option<Res<PreparedFpvMeshes>>,
+    owners: FpvOwnerInputs,
     mut fpv_plan: ResMut<crate::FpvDrawPlan>,
     mut status: ResMut<FpvStatusGap>,
     gaps: Res<RenderPresentationGaps>,
@@ -805,6 +865,7 @@ fn skin_fpv_geometry(
         ),
     >,
 ) {
+    let fpv_meshes = owners.meshes.as_ref();
     fpv_plan.drawgun = product.drawgun;
     let handle = fpv_plan.lighting_handle;
     match &product.kind {
@@ -819,6 +880,7 @@ fn skin_fpv_geometry(
             let session = session_vm.as_ref().and_then(|session| session.0.as_ref());
             if !session.is_some_and(|session| {
                 same_material_catalog(&session.material_catalog, tess.as_deref())
+                    && owners.bind(&session.table).is_some()
             }) {
                 crate::clear_fpv_draw_plan(&mut fpv_plan, handle);
                 return;
@@ -844,7 +906,10 @@ fn skin_fpv_geometry(
                 fpv_plan.camo = product.camo;
             }
             if let Some(rows) = fpv_plan.packed_rows_mut() {
-                rig.skin_into(&catalog.0, &frame.poses, rows);
+                if !rig.skin_into(&frame.poses, rows) {
+                    crate::clear_fpv_draw_plan(&mut fpv_plan, handle);
+                    return;
+                }
             }
             fpv_plan.revisions.bump_vertices();
             fpv_plan.geometry_ok = !fpv_plan.draws().is_empty();

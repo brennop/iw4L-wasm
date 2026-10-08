@@ -50,7 +50,7 @@ impl WeaponFpvFacts {
     pub(super) fn prepare(
         f: WeaponBodyFacts,
         right_idle_bound: bool,
-        namespace: crate::AssetNamespace,
+        ads_overlay: crate::AdsOverlayConvention,
     ) -> Self {
         Self {
             ads_aim_pitch: f.ads_aim_pitch,
@@ -79,7 +79,7 @@ impl WeaponFpvFacts {
             sway: f.sway,
             motion_tracker: f.motion_tracker,
             inherits_perks: f.inherits_perks,
-            ads_overlay: crate::AdsOverlayConvention::from_namespace(namespace.content()),
+            ads_overlay,
             alternate: f.inventory_type == 3,
             dual_animation: !f.no_dual_wield && right_idle_bound,
         }
@@ -87,7 +87,7 @@ impl WeaponFpvFacts {
 }
 
 impl WeaponRegistry {
-    pub fn fpv_facts_of(&self, id: u32) -> Option<WeaponFpvFacts> {
+    pub(crate) fn fpv_facts_of(&self, id: u32) -> Option<WeaponFpvFacts> {
         self.rows.get(id as usize)?.fpv
     }
 }

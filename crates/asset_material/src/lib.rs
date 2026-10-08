@@ -1,8 +1,9 @@
 mod material_bindings;
 pub use material_bindings::{
     MaterialFogInputs, MaterialFogSunInputs, MaterialFogVolumeInputs, MaterialFrameBindingInputs,
-    MaterialLightOverrides, MaterialLocalLightInputs, MaterialSunInputs, PreparedMaterialBindings,
-    StaleMaterialBindings, compile_material_bindings, fog_color_linear_and_gamma,
+    MaterialLightOverrides, MaterialLocalLightInputs, MaterialSunInputs,
+    MaterialWorldBindingInputs, PreparedMaterialBindings, StaleMaterialBindings,
+    compile_material_bindings, fog_color_linear_and_gamma,
 };
 mod material_compile;
 pub use material_compile::compile_material_catalog;

@@ -203,7 +203,7 @@ fn update_channel_mix(
                 let Some(bank) = bank.as_ref() else {
                     continue;
                 };
-                let Some(channels) = bank.0.ent_channels.get(&namespace) else {
+                let Some(channels) = bank.0.channels_in(namespace) else {
                     diag::warn!(
                         Audio,
                         "audio: no channel volume policy for namespace={namespace:?}"

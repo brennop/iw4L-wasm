@@ -922,7 +922,7 @@ pub(crate) fn open_frame_products(
     inputs.world_generation = world_generation
         .map(|generation| *generation)
         .unwrap_or_default();
-    inputs.catalog_generation = generation.catalog.generation_id;
+    inputs.catalog_generation = generation.catalog.generation_id();
     inputs.inv_image_height = lighting.as_ref().and_then(|lighting| {
         lighting_iw4::model_lighting_inv_image_height(lighting.dims.image_height)
     });
@@ -1011,7 +1011,7 @@ pub(crate) fn open_frame_products(
         inputs.local_light_bindings.push(
             bindings
                 .prepare_local_light(
-                    generation_id,
+                    &generation.catalog,
                     (index != 0).then_some(&light_inputs),
                     mat_frame.view_origin,
                     mat_frame.float_time,
@@ -1342,7 +1342,7 @@ pub(crate) fn bake_static_sun_shadow_casters(
         casters.smodel_ids = smodel_ids;
         casters.bsp_ids_far = bsp_ids_far;
         casters.smodel_ids_far = smodel_ids_far;
-        if casters.generation_id != generation.catalog.generation_id {
+        if casters.generation_id != generation.catalog.generation_id() {
             staged.visibility_counts = [
                 sun_surface_vis[0].iter().filter(|&&b| b != 0).count(),
                 sun_surface_vis[1].iter().filter(|&&b| b != 0).count(),
@@ -1513,7 +1513,7 @@ pub(crate) fn execute_sun_product(
     product.sun_near_n = casters.sun_near_n;
     let stamp = SunPackStamp {
         membership: caster_membership(&product.ordered_draws, product.sun_near_n),
-        catalog: inputs.catalog_generation.0,
+        catalog: inputs.catalog_generation.get(),
         world_generation: inputs.world_generation.0,
         world_verts,
         world_range_n: world_ranges.len(),
@@ -1685,7 +1685,7 @@ pub(crate) fn execute_spot_product(
     product.ordered_draws = std::mem::take(&mut spot_casters.items);
     let stamp = SpotFillStamp {
         membership: caster_membership(&product.ordered_draws, 0),
-        catalog: inputs.catalog_generation.0,
+        catalog: inputs.catalog_generation.get(),
         slot_n: spot_casters.packed.len(),
     };
     if try_reuse_spot_compact(product, persist, *last_stamp, stamp, retained.generation_id) {
@@ -1760,7 +1760,7 @@ pub(crate) fn execute_camera_products(
         fx_membership: fx_lane.membership_revision,
         xmodel_payload: xmodel_lane.payload_revision,
         fx_payload: fx_lane.payload_revision,
-        catalog: inputs.catalog_generation.0,
+        catalog: inputs.catalog_generation.get(),
         world_generation: inputs.world_generation.0,
         colour_tech: draw_method.tech_type().0,
         emissive_tech: draw_method.emissive_tech_type().0,

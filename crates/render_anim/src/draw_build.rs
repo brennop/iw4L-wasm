@@ -26,6 +26,7 @@ pub fn body_lit_pass_material(
         .material_for_key(material_key)
         .and_then(|material| {
             catalog
+                .parts()
                 .sorted_materials
                 .ordinal_for_asset_id(usize::from(material.asset_id.0))
         })

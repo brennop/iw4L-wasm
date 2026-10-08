@@ -390,6 +390,7 @@ pub enum TechsetResolve<'a> {
 
 #[derive(Clone, Debug)]
 pub struct AuthoredMaterial {
+    pub t6_preparation: Option<crate::t6_techset::T6MaterialPreparation>,
     pub name: AssetRef,
 
     pub namespace: crate::AssetNamespace,
@@ -580,49 +581,6 @@ impl MaterialCatalog {
             || !self.techsets.is_empty();
         self.link_reused_materials = 0;
         self.link_reused_images = 0;
-    }
-
-    pub fn stand_in_material(
-        &mut self,
-        donor: usize,
-        name: &str,
-        textures: StandInTextures,
-    ) -> Option<usize> {
-        let mut material = self.materials.get(donor)?.clone();
-        material.name = AssetRef::Real(name.to_owned());
-        let namespace = material.namespace;
-        for binding in &mut material.textures {
-            let slot = match binding.semantic {
-                TS_COLOR_MAP => &textures.color,
-                TS_NORMAL_MAP => &textures.normal,
-                TS_SPECULAR_MAP => &textures.specular,
-                _ => continue,
-            };
-            let Some((image_name, image, srgb)) = slot else {
-                continue;
-            };
-            let incoming = AuthoredImage {
-                namespace,
-                name: AssetRef::Real(image_name.clone()),
-                map_type: 3,
-                semantic: binding.semantic,
-                category: 0,
-                use_srgb_reads: *srgb,
-                width: image.width() as u16,
-                height: image.height() as u16,
-                depth: 1,
-                level_count: image.texture_descriptor.mip_level_count as u8,
-                format: 0,
-                payload: Arc::new(Vec::new()),
-                decoded: Some(image.clone()),
-                common_owned: false,
-                decoded_variant: None,
-                decoded_by: None,
-                pending_decode: None,
-            };
-            binding.image = Some(self.link_image(incoming));
-        }
-        Some(self.link_material(material))
     }
 
     pub fn link_image(&mut self, incoming: AuthoredImage) -> usize {
@@ -1518,6 +1476,7 @@ impl MaterialCatalog {
             )
         });
         Some(self.take_material_slot(AuthoredMaterial {
+            t6_preparation: None,
             name,
             namespace: self.capture_ns,
             technique_set_edge: if technique_set.name.is_empty() {
@@ -2519,6 +2478,7 @@ impl MaterialCatalog {
         }
         Some(
             self.take_material_slot(AuthoredMaterial {
+                t6_preparation: None,
                 name,
                 namespace: self.capture_ns,
                 technique_set_edge: if technique_set.name.is_empty() {
@@ -2854,6 +2814,7 @@ impl MaterialCatalog {
             .as_ref()
             .map(crate::iw5_tech_map::remap_state_bits_entry);
         Some(self.take_material_slot(AuthoredMaterial {
+            t6_preparation: None,
             name,
             namespace: self.capture_ns,
             technique_set_edge: if technique_set.name.is_empty() {

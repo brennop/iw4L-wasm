@@ -433,6 +433,7 @@ impl ZoneLane for T5Lane {
                     sound: map_sound,
                     materials: map_materials,
                     world: PreparedWorld {
+                        source_namespace: Some(asset_core::AssetNamespace::T5),
                         draw: Some(draw),
                         dynamic_light: None,
                         static_model_meshes,
@@ -783,7 +784,7 @@ fn absorb_localized_map_sound(path: &Path, catalog: &mut asset_audio::SoundCatal
         let walked = fastfile_t5::load_zone(&mut stream, &mut sink).map(|_| ());
         let sound = sink.sound.take().ok_or("sound capture dropped")?;
         let part = sound.finish(walked.map_err(|e| e.to_string()))?;
-        let aliases = part.sounds.len();
+        let aliases = part.sounds().len();
         Ok((part, aliases))
     };
     match walk() {

@@ -260,17 +260,21 @@ pub struct CompiledConstantOverlay {
 }
 
 pub fn compile_constant_overlay(
-    generation: crate::MaterialGenerationId,
+    catalog: &crate::RuntimeMaterialCatalog,
     rows: Vec<(u16, [u32; 4])>,
 ) -> CompiledConstantOverlay {
-    CompiledConstantOverlay { generation, rows }
+    CompiledConstantOverlay {
+        generation: catalog.generation_id(),
+        rows,
+    }
 }
 
 impl CompiledConstantOverlay {
     pub fn validate_generation(
         &self,
-        generation: crate::MaterialGenerationId,
+        catalog: &crate::RuntimeMaterialCatalog,
     ) -> Result<(), crate::MaterialRefusal> {
+        let generation = catalog.generation_id();
         if self.generation != generation {
             return Err(crate::MaterialRefusal::StaleMaterialGeneration {
                 retained: self.generation,
@@ -281,10 +285,10 @@ impl CompiledConstantOverlay {
     }
     pub fn apply(
         &self,
-        generation: crate::MaterialGenerationId,
+        catalog: &crate::RuntimeMaterialCatalog,
         sources: &mut RuntimeCodeSources,
     ) -> Result<(), crate::MaterialRefusal> {
-        self.validate_generation(generation)?;
+        self.validate_generation(catalog)?;
         for &(index, row) in &self.rows {
             sources.set_constant_rows(index, &[row]);
         }

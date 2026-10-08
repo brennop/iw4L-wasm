@@ -442,7 +442,7 @@ fn read_dpvs(load: &ZoneLoad, asset: &LoadedAsset) -> Result<DpvsWorldData, Stri
                 neighbor: neighbor as u16,
                 vert_start: start,
                 vert_count: vc,
-                hull_axis: None,
+                hull_axis: Some([r.xyz(q.at(44))?, r.xyz(q.at(56))?]),
             });
         }
         out.portals_per_cell.push(owned);

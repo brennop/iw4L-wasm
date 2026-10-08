@@ -41,7 +41,19 @@ pub struct PendingPresentedEntityEvents {
 }
 
 #[derive(Resource, Default)]
-pub struct PendingPelletFx(pub Vec<sim::PelletFxRecord>);
+pub struct PendingPelletFx(Vec<(frame::WorldGeneration, sim::PelletFxRecord)>);
+
+impl PendingPelletFx {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn take(&mut self) -> Vec<(frame::WorldGeneration, sim::PelletFxRecord)> {
+        core::mem::take(&mut self.0)
+    }
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
 
 fn collect_received_entity_events(
     last_tick: Option<sim::Tick>,
@@ -533,7 +545,18 @@ pub fn reconcile_prediction(
             continue;
         }
         perf::net_leg("snap_adopt", tick.snapshot.tick.0, 0);
-        pellet_fx.0.append(&mut tick.snapshot.meta.pellet_fx);
+        let match_key = crate::signon::live_match_key(reliable.bridge.as_deref());
+        if !match_key.is_none()
+            && tick.snapshot.meta.world_objects.map_round_epoch == match_key.match_epoch
+        {
+            pellet_fx.0.extend(
+                tick.snapshot
+                    .meta
+                    .pellet_fx
+                    .drain(..)
+                    .map(|record| (*reliable.generation, record)),
+            );
+        }
         reliable.apply(local.0, &tick.frame.reliable);
         let ack = tick.ack_for(local.0);
         if let Some(acked) = ack {
@@ -1882,7 +1905,7 @@ pub fn reset_cgame_on_match_torn_down(
     *select = WeaponSelect::default();
 
     *entity_events = PendingPresentedEntityEvents::default();
-    pellet_fx.0.clear();
+    pellet_fx.clear();
     *entity_event_cursor = crate::EntityEventCursor::default();
     fire_verdicts.clear();
     fire_state.clear();

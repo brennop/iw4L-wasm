@@ -50,7 +50,13 @@ pub(super) fn update(
             })
             .and_then(|e| u32::try_from(e.index).ok())
             .filter(|&w| w != 0)
-            .and_then(|w| weapons.as_ref()?.0.hud_facts_of(w))
+            .and_then(|w| {
+                weapons
+                    .as_ref()?
+                    .snapshot_weapon(presented.weapon_epoch(), w)
+                    .ok()
+                    .and_then(|weapon| weapon.hud_facts())
+            })
             .is_some_and(|f| f.thermal_scope);
     let direction = if ps.f_weapon_pos_frac > kick.last_weapon_pos_frac {
         true
@@ -71,14 +77,19 @@ pub(super) fn update(
                 .as_ref()
                 .and_then(|w| {
                     let index = get_viewmodel_weapon_index(ps);
-                    let f = w.0.hud_facts_of(index)?;
+                    let f = w
+                        .snapshot_weapon(presented.weapon_epoch(), index)
+                        .ok()
+                        .and_then(|weapon| weapon.hud_facts())?;
                     let zoom = hud_iw4::get_weap_reticle_zoom(
                         ps.f_weapon_pos_frac,
                         direction,
                         &hud_iw4::WeaponAdsOverlayFacts {
                             ads_zoom_in_frac: f.ads_zoom_in_frac,
                             ads_zoom_out_frac: f.ads_zoom_out_frac,
-                            overlay_material: u32::from(w.0.overlay_material_of(index).is_some()),
+                            overlay_material: u32::from(
+                                w.registry().overlay_material_of(index).is_some(),
+                            ),
                             overlay_reticle: f.overlay_reticle,
                             ..default()
                         },
@@ -117,7 +128,9 @@ pub(super) fn update(
     let instant_thermal = thermal
         && scoped
         && weapons.as_ref().is_some_and(|w| {
-            w.0.namespace_of(get_viewmodel_weapon_index(ps)) == Some(asset_core::AssetNamespace::T5)
+            w.registry()
+                .identity_namespace_of(get_viewmodel_weapon_index(ps))
+                == Some(asset_core::AssetNamespace::T5)
         });
     let thermal_blend = if thermal && !instant_thermal {
         if scoped {

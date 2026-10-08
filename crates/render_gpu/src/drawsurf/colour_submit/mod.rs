@@ -1997,7 +1997,7 @@ fn material_refusal_class(cause: &MaterialRefusal) -> &'static str {
 }
 
 pub fn dump_sorted_material_names(catalog: &RuntimeMaterialCatalog) -> Vec<String> {
-    match &catalog.sorted_materials {
+    match &catalog.parts().sorted_materials {
         RuntimeSortedMaterialTable::Ready {
             asset_ids_by_ordinal,
             ..
@@ -2005,6 +2005,7 @@ pub fn dump_sorted_material_names(catalog: &RuntimeMaterialCatalog) -> Vec<Strin
             .iter()
             .map(|id| {
                 catalog
+                    .parts()
                     .materials
                     .get(usize::from(id.0))
                     .map(|material| material.name.clone())
@@ -2019,6 +2020,7 @@ pub fn dump_sorted_material_names(catalog: &RuntimeMaterialCatalog) -> Vec<Strin
 
 pub fn dump_shader_program_names(catalog: &RuntimeMaterialCatalog) -> Vec<Option<String>> {
     catalog
+        .parts()
         .shader_programs
         .iter()
         .map(|slot| slot.as_ref().map(|program| program.name.clone()))
@@ -5023,7 +5025,7 @@ fn prepare_shadowmap_sun(
     if draw_sun_shadow_map_forced(0, None).is_none() {
         return PreparedSunWork::done(SunShadowSubmit::refused("ShadowmapSunPartitionMissing"));
     }
-    let generation = extracted.world.generation.0;
+    let generation = extracted.world.generation.get();
 
     let ShadowExecScratch {
         executor: shadow_exec_executor,

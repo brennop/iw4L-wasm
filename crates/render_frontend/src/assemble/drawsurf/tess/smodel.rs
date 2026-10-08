@@ -571,15 +571,17 @@ pub(crate) fn build_smodel_gpu_plan(
 
     plan.authored_placement_indices.resize(slot_count, None);
     let (exact, _, probes) = job.tess_image_handles();
-    let sorted_ordinals: Vec<Option<u32>> = (0..scene.runtime_material_catalog.materials.len())
-        .map(|id| {
-            scene
-                .runtime_material_catalog
-                .sorted_materials
-                .ordinal_for_asset_id(id)
-                .map(crate::assemble::drawsurf::SortedMaterialOrdinal::get)
-        })
-        .collect();
+    let sorted_ordinals: Vec<Option<u32>> =
+        (0..scene.runtime_material_catalog.parts().materials.len())
+            .map(|id| {
+                scene
+                    .runtime_material_catalog
+                    .parts()
+                    .sorted_materials
+                    .ordinal_for_asset_id(id)
+                    .map(crate::assemble::drawsurf::SortedMaterialOrdinal::get)
+            })
+            .collect();
     let sorted_ordinal = |asset_id: Option<assets::MaterialIndex>| {
         asset_id.and_then(|id| sorted_ordinals.get(id.order()).copied().flatten())
     };

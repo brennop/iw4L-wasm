@@ -109,7 +109,11 @@ pub(crate) fn update_reticle(
         hide_all(&mut quads);
         return;
     };
-    let Some(facts) = weapons.0.hud_facts_of(viewmodel_index) else {
+    let Some(facts) = weapons
+        .snapshot_weapon(presented.weapon_epoch(), viewmodel_index)
+        .ok()
+        .and_then(|weapon| weapon.hud_facts())
+    else {
         gaps.raise(GapCause::ReticleWeaponNotInCatalog { viewmodel_index });
         hide_all(&mut quads);
         return;
@@ -189,7 +193,7 @@ pub(crate) fn update_reticle(
         return;
     }
 
-    let Some(assets) = weapons.0.reticle_of(viewmodel_index) else {
+    let Some(assets) = weapons.registry().reticle_of(viewmodel_index) else {
         gaps.raise(GapCause::ReticleNoAuthoredMaterials { viewmodel_index });
         hide_all(&mut quads);
         return;
@@ -246,8 +250,8 @@ pub(crate) fn update_reticle(
     };
 
     let weapon_ns = weapons
-        .0
-        .namespace_of(viewmodel_index)
+        .registry()
+        .component_namespace_of(viewmodel_index, asset_game::WeaponComponent::Material)
         .unwrap_or(crate::images::HUD_CHROME_NAMESPACE);
     let center = resolve_slot(
         ReticleSlot::Center,

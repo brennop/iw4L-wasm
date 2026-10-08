@@ -377,9 +377,9 @@ impl PreparedMaterialTable {
         catalog: &RuntimeMaterialCatalog,
         mut admit: impl FnMut(&RuntimePass, u8) -> Option<AdmittedPortFacts>,
     ) -> Self {
-        let mut materials = Vec::with_capacity(catalog.materials.len());
+        let mut materials = Vec::with_capacity(catalog.parts().materials.len());
         let mut shared = SharedPacks::default();
-        for material in &catalog.materials {
+        for material in &catalog.parts().materials {
             materials.push(prepare_one_material(
                 catalog,
                 &mut admit,
@@ -389,7 +389,7 @@ impl PreparedMaterialTable {
         }
         let census = count_prepared_table(&materials);
         Self {
-            generation_id: catalog.generation_id,
+            generation_id: catalog.generation_id(),
             materials,
             census,
         }
@@ -552,7 +552,7 @@ fn prepare_one_material(
             return PreparedMaterial { tech };
         }
     };
-    let Some(set) = catalog.technique_sets.get(set_id.0 as usize) else {
+    let Some(set) = catalog.parts().technique_sets.get(set_id.0 as usize) else {
         return PreparedMaterial { tech };
     };
     let Some(entries) = material.state_bits_entry.as_ref() else {

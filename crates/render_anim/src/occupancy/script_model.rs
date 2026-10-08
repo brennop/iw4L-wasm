@@ -808,7 +808,7 @@ fn commit_script_model_draw_plan(
         return;
     };
 
-    let material_generation = tess.catalog.generation_id;
+    let material_generation = tess.catalog().generation_id();
 
     let catalog_reset = assets.is_changed()
         || atlas.is_changed()
@@ -838,7 +838,9 @@ fn commit_script_model_draw_plan(
                 .iter()
                 .zip(posed.authored.iter().copied())
                 .map(|(_surface, authored)| {
-                    model_materials.authored(&tess.catalog, authored?).cloned()
+                    model_materials
+                        .authored(&tess.catalog(), authored?)
+                        .cloned()
                 })
                 .collect::<Vec<_>>();
             append_or_overwrite_script_model(

@@ -72,7 +72,7 @@ use crate::{
 struct WeaponFireFx(net::EntityWeaponFire);
 
 #[derive(Message)]
-struct BulletHitFx(sim::EntityEventPayload);
+struct BulletHitFx(net::DispatchedEntityEvent);
 
 struct FxFrameTransaction {
     outcome: FxFrameOutcome,
@@ -1977,6 +1977,7 @@ pub(crate) fn code_mesh_bind_asset(
     let color = color_images.colors_by_asset.get(&asset_id).cloned();
     let Some(ordinal) = runtime
         .catalog
+        .parts()
         .sorted_materials
         .ordinal_for_asset_id(asset_id)
     else {
@@ -2067,6 +2068,9 @@ fn publish_weapon_fire(
     mut cursor: ResMut<FxJournalCursor>,
     mut combat: ResMut<CombatFxDump>,
 ) {
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(fire.event.world).ok());
     pending.write(WeaponFireFx(*fire));
     let eyes = match *view {
         ViewSubject::Seat {
@@ -2098,22 +2102,28 @@ fn publish_weapon_fire(
         .is_some_and(|identity| gate.skip_self_fpv(identity.number()));
     let last_shot = is_weapon_fire_last_shot_event(fire.event.event);
     let alias = identities.get(fire.entity).ok().and_then(|_| {
-        let weapons = weapons.as_deref()?;
+        let weapons = weapons.as_ref()?;
         let bank = sound_bank.as_deref()?;
         let weapon = fire.event.payload.weapon;
         audio::select_cg_fire_alias(
             last_shot,
             player_view,
-            weapons
-                .0
-                .weapon_sound_alias(weapon, asset_game::WeaponSoundSlot::Fire, &bank.0),
-            weapons
-                .0
-                .weapon_sound_alias(weapon, asset_game::WeaponSoundSlot::FirePlayer, &bank.0),
-            weapons
-                .0
-                .weapon_sound_alias(weapon, asset_game::WeaponSoundSlot::FireLast, &bank.0),
-            weapons.0.weapon_sound_alias(
+            weapons.registry().weapon_sound_alias(
+                weapon,
+                asset_game::WeaponSoundSlot::Fire,
+                &bank.0,
+            ),
+            weapons.registry().weapon_sound_alias(
+                weapon,
+                asset_game::WeaponSoundSlot::FirePlayer,
+                &bank.0,
+            ),
+            weapons.registry().weapon_sound_alias(
+                weapon,
+                asset_game::WeaponSoundSlot::FireLast,
+                &bank.0,
+            ),
+            weapons.registry().weapon_sound_alias(
                 weapon,
                 asset_game::WeaponSoundSlot::FireLastPlayer,
                 &bank.0,
@@ -2140,8 +2150,13 @@ fn publish_weapon_fire(
                 0,
             )),
             namespace: weapons
-                .as_deref()
-                .and_then(|w| w.0.namespace_of(fire.event.payload.weapon))
+                .as_ref()
+                .and_then(|w| {
+                    w.registry().component_namespace_of(
+                        fire.event.payload.weapon,
+                        asset_game::WeaponComponent::Sound,
+                    )
+                })
                 .unwrap_or(asset_core::AssetNamespace::Iw4),
             alias: alias.to_owned(),
             origin_inches: (!player_view).then_some(sound_origin),
@@ -2187,10 +2202,13 @@ fn drain_weapon_fire_fx(
 ) {
     let (view, settings) = view_settings;
     for fire in pending.read().map(|record| record.0) {
+        let weapons = weapons
+            .as_deref()
+            .and_then(|weapons| weapons.for_event(fire.event.world).ok());
         let msec = host.0.msec_now;
         let combat_fx = weapons
-            .as_deref()
-            .and_then(|weapons| weapons.0.combat_fx_of(fire.event.payload.weapon));
+            .as_ref()
+            .and_then(|weapons| weapons.registry().combat_fx_of(fire.event.payload.weapon));
 
         let eyes = match *view {
             ViewSubject::Seat {
@@ -2275,8 +2293,12 @@ fn drain_weapon_fire_fx(
                 cursor.muzzle_gap = muzzle_gap;
             }
             let delayed_brass = weapons
-                .as_deref()
-                .and_then(|weapons| weapons.0.event_facts_of(fire.event.payload.weapon))
+                .as_ref()
+                .and_then(|weapons| {
+                    weapons
+                        .row(fire.event.payload.weapon)
+                        .and_then(|weapon| weapon.event_facts())
+                })
                 .is_some_and(|facts| facts.bolt_action);
             if !delayed_brass
                 && occurrences.may_present(
@@ -2309,19 +2331,20 @@ fn drain_weapon_fire_fx(
             cursor.muzzle_gap = cursor.muzzle_gap.saturating_add(1);
             cursor.brass_gap = cursor.brass_gap.saturating_add(1);
         }
-        if let Some(facts) = weapons
-            .as_deref()
-            .and_then(|weapons| weapons.0.event_facts_of(fire.event.payload.weapon))
-            && fire_weapon_fx_should_client_trace(facts.impact_type)
+        if let Some(facts) = weapons.as_ref().and_then(|weapons| {
+            weapons
+                .row(fire.event.payload.weapon)
+                .and_then(|weapon| weapon.event_facts())
+        }) && fire_weapon_fx_should_client_trace(facts.impact_type)
         {
             combat.last_impact_miss_why = Some("authority_segments".into());
         }
 
         let local_number = i32::try_from(local.0.0).unwrap_or(-1);
-        let hide_fire_ping = weapons.as_deref().is_some_and(|weapons| {
+        let hide_fire_ping = weapons.as_ref().is_some_and(|weapons| {
             weapons
-                .0
-                .event_facts_of(fire.event.payload.weapon)
+                .row(fire.event.payload.weapon)
+                .and_then(|weapon| weapon.event_facts())
                 .is_some_and(|facts| facts.hides_fire_ping())
         });
         if fire.event.payload.number != local_number && !player_view && !hide_fire_ping {
@@ -2363,6 +2386,9 @@ fn eject_brass(
     mut combat: ResMut<CombatFxDump>,
     fx_world: FxSceneAccess,
 ) {
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(brass.event.world).ok());
     let (local, presented, view, settings) = local_view;
     let msec = host.0.msec_now;
     if !occurrences.may_present(
@@ -2383,8 +2409,8 @@ fn eject_brass(
         settings.third_person,
     );
     let combat_fx = weapons
-        .as_deref()
-        .and_then(|weapons| weapons.0.combat_fx_of(brass.event.payload.weapon));
+        .as_ref()
+        .and_then(|weapons| weapons.registry().combat_fx_of(brass.event.payload.weapon));
     let player_view = identities
         .get(brass.entity)
         .ok()
@@ -2442,7 +2468,7 @@ fn tick_missile_present_state(
     };
     let Some(weapons) = weapons
         .as_deref()
-        .map(|prepared| &prepared.0)
+        .map(|prepared| prepared.registry())
         .filter(|registry| !registry.is_empty())
     else {
         return;
@@ -2583,7 +2609,10 @@ fn tick_missile_present_state(
                         sounds.write(audio::WeaponSound {
                             event: None,
                             namespace: weapons
-                                .namespace_of(row.weapon)
+                                .component_namespace_of(
+                                    row.weapon,
+                                    asset_game::WeaponComponent::Sound,
+                                )
                                 .unwrap_or(asset_core::AssetNamespace::Iw4),
                             alias: alias.to_owned(),
                             origin_inches: Some(row.origin),
@@ -2613,15 +2642,22 @@ fn explosion(
     mut combat: ResMut<CombatFxDump>,
     fx_world: FxSceneAccess,
 ) {
+    let weapons = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(explosion.event.world).ok());
     let msec = host.0.msec_now;
     let payload = explosion.event.payload;
     let impact_type = weapons
-        .as_deref()
-        .and_then(|weapons| weapons.0.event_facts_of(payload.weapon))
+        .as_ref()
+        .and_then(|weapons| {
+            weapons
+                .row(payload.weapon)
+                .and_then(|weapon| weapon.event_facts())
+        })
         .map(|facts| facts.impact_type);
     let combat_fx = weapons
-        .as_deref()
-        .and_then(|weapons| weapons.0.combat_fx_of(payload.weapon));
+        .as_ref()
+        .and_then(|weapons| weapons.registry().combat_fx_of(payload.weapon));
     combat.last_weapon_explosion_edge = combat_fx.map(|fx| fx.explosion.edge_kind().to_owned());
     let slot = combat_fx.and_then(|fx| fx.explosion_present());
     let names = explosion_fx_names(
@@ -2677,10 +2713,10 @@ fn explosion(
         cursor.explosion_gap = cursor.explosion_gap.saturating_add(1);
     }
     let alias = weapons
-        .as_deref()
+        .as_ref()
         .zip(sound_bank.as_deref())
         .and_then(|(weapons, bank)| {
-            weapons.0.weapon_sound_alias(
+            weapons.registry().weapon_sound_alias(
                 payload.weapon,
                 asset_game::WeaponSoundSlot::ProjectileExplosion,
                 &bank.0,
@@ -2695,8 +2731,11 @@ fn explosion(
                 0,
             )),
             namespace: weapons
-                .as_deref()
-                .and_then(|w| w.0.namespace_of(payload.weapon))
+                .as_ref()
+                .and_then(|w| {
+                    w.registry()
+                        .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)
+                })
                 .unwrap_or(asset_core::AssetNamespace::Iw4),
             alias: alias.to_owned(),
             origin_inches: Some(payload.origin),
@@ -2724,11 +2763,11 @@ fn stop_killcam_explosion_fx(
     let delta_time = prediction.0.predicted_local().map_or(0, |ps| ps.delta_time);
     let newer_than = host.0.msec_now.wrapping_sub(delta_time);
     for name in KILLCAM_FX_REMOVAL_WEAPONS {
-        let Ok(Some(weapon)) = weapons.0.resolve_index(name) else {
+        let Ok(Some(weapon)) = weapons.registry().resolve_index(name) else {
             continue;
         };
         let Some(effect) = weapons
-            .0
+            .registry()
             .combat_fx_of(weapon)
             .and_then(|fx| fx.explosion_present())
             .and_then(|name| name.resolve(&catalog.0))
@@ -3053,7 +3092,7 @@ fn play_fx(
 }
 
 fn play_fx_bullet_hit(hit: On<net::EntityBulletHit>, mut hits: MessageWriter<BulletHitFx>) {
-    hits.write(BulletHitFx(hit.event.payload));
+    hits.write(BulletHitFx(hit.event));
 }
 
 fn drain_bullet_hit_fx(
@@ -3075,7 +3114,10 @@ fn drain_bullet_hit_fx(
     fx_world: FxSceneAccess,
 ) {
     for hit in hits.read() {
-        let payload = hit.0;
+        let payload = hit.0.payload;
+        let bound = weapons
+            .as_deref()
+            .and_then(|weapons| weapons.for_event(hit.0.world).ok());
 
         let previous_mark_entity = host.0.spawn_mark_entity;
         host.0.spawn_mark_entity = u16::try_from(payload.other_entity_num)
@@ -3099,7 +3141,7 @@ fn drain_bullet_hit_fx(
             catalog.as_deref(),
             &mut elem_infos.0,
             impact_fx.as_deref(),
-            weapons.as_deref(),
+            bound.as_ref(),
             tracers.as_deref(),
             &mut tracer_world,
             &mut gate,
@@ -3132,10 +3174,13 @@ fn drain_pellet_fx(
     mut combat: ResMut<CombatFxDump>,
     fx_world: FxSceneAccess,
 ) {
-    if pending.0.is_empty() {
+    if pending.is_empty() {
         return;
     }
-    for record in core::mem::take(&mut pending.0) {
+    for (generation, record) in pending.take() {
+        let bound = weapons
+            .as_deref()
+            .and_then(|weapons| weapons.for_event(generation).ok());
         cursor.pellet_played = cursor.pellet_played.saturating_add(1);
         play_pellet_segment(
             record.attacker,
@@ -3155,7 +3200,7 @@ fn drain_pellet_fx(
             catalog.as_deref(),
             &mut elem_infos.0,
             impact_fx.as_deref(),
-            weapons.as_deref(),
+            bound.as_ref(),
             tracers.as_deref(),
             &mut tracer_world,
             &mut gate,

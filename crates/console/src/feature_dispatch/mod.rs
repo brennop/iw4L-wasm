@@ -112,13 +112,17 @@ pub(crate) fn route_debug_feature_commands(
                         continue;
                     }
                     let (camo, attachments) = crate::weapon_dispatch::split_camo(&attachments);
-                    match crate::weapon_dispatch::resolve_give_id(&weapons.0, &weapon, &attachments)
-                        .and_then(|weapon_id| {
-                            let model = camo.map_or(Ok(0), |camo| {
-                                crate::weapon_dispatch::camo_slot(&weapons.0, weapon_id, camo)
-                            })?;
-                            Ok((weapon_id, model))
-                        }) {
+                    match crate::weapon_dispatch::resolve_give_id(
+                        weapons.registry(),
+                        &weapon,
+                        &attachments,
+                    )
+                    .and_then(|weapon_id| {
+                        let model = camo.map_or(Ok(0), |camo| {
+                            crate::weapon_dispatch::camo_slot(weapons.registry(), weapon_id, camo)
+                        })?;
+                        Ok((weapon_id, model))
+                    }) {
                         Ok((weapon_id, model)) => {
                             let request_id = give_seq.allocate();
                             if let Err(error) = inbox.push(
@@ -135,7 +139,7 @@ pub(crate) fn route_debug_feature_commands(
                             echo(
                                 format!(
                                     "bot give: queued {} id={weapon_id} on {} request_id={request_id}",
-                                    weapons.0.configuration_label(weapon_id),
+                                    weapons.registry().configuration_label(weapon_id),
                                     id.0
                                 ),
                                 console,

@@ -20,11 +20,11 @@ pub mod vertex_layout;
 pub use argument::RuntimeArgumentBinding;
 pub use catalog::{
     CatalogBuildError, MaterialAssetId, MaterialDrawRules, MaterialGenerationId, PortId,
-    RemapResolution, RuntimeImageId, RuntimeMaterial, RuntimeMaterialCatalog, RuntimePass,
-    RuntimeProgramIdentity, RuntimeShaderPair, RuntimeShaderProgram, RuntimeShaderProgramId,
-    RuntimeSortedMaterialTable, RuntimeTechnique, RuntimeTechniqueSet, RuntimeTechniqueSetId,
-    RuntimeTextureBinding, SortedMaterialOrdinal, SourceTechniqueSelection, TECHNIQUE_SLOT_COUNT,
-    TechniqueSelectionPolicy, sort_band, sort_pass_args,
+    RemapResolution, RuntimeImageId, RuntimeMaterial, RuntimeMaterialBuild, RuntimeMaterialCatalog,
+    RuntimePass, RuntimeProgramIdentity, RuntimeShaderPair, RuntimeShaderProgram,
+    RuntimeShaderProgramId, RuntimeSortedMaterialTable, RuntimeTechnique, RuntimeTechniqueSet,
+    RuntimeTechniqueSetId, RuntimeTextureBinding, SortedMaterialOrdinal, SourceTechniqueSelection,
+    TECHNIQUE_SLOT_COUNT, TechniqueSelectionPolicy, sort_band, sort_pass_args,
 };
 pub use code_sources::{
     CodeSourceError, CodeSourceLookup, CompiledConstantOverlay, LayeredCodeSources,

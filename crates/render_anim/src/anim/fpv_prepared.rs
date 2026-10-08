@@ -3,11 +3,9 @@ use std::sync::Arc;
 
 use asset_anim::XAnimCatalog;
 use asset_core::AssetNamespace;
-use asset_game::{
-    FpvSideAssemblies, WEAPON_ANIM_SLOTS, WeaponAnimations, WeaponFpvFacts, WeaponRegistry,
-};
+use asset_game::{WEAPON_ANIM_SLOTS, WeaponAnimations, WeaponFpvFacts};
 use asset_material::TS_COLOR_MAP;
-use asset_model::{FpvHands, FpvMeshCatalog};
+use asset_model::FpvMeshCatalog;
 use assets::{AssetEdge, FpvMeshIndex, PreparedFpvMeshes, PreparedWeapons, PreparedXAnims};
 use bevy::prelude::*;
 use render_material::{RuntimeMaterialCatalog, RuntimeSortedMaterialTable};
@@ -23,169 +21,14 @@ const PREPARE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_mill
 
 const NO_COLOUR_MAP: &str = "technique samples no colour map";
 
-#[derive(Default)]
-pub struct FpvRigSet {
-    bare: [Option<Arc<PreparedFpvRig>>; 2],
-    rocket: [Option<Arc<PreparedFpvRig>>; 2],
-    melee: [Option<Arc<PreparedFpvRig>>; 2],
-    ads: [Option<Arc<PreparedFpvRig>>; 2],
-    jammed: [Option<Arc<PreparedFpvRig>>; 2],
-}
-
-impl FpvRigSet {
-    pub fn pick(
-        &self,
-        rocket: bool,
-        dual: bool,
-        melee: bool,
-        ads: bool,
-        jammed: bool,
-    ) -> Option<&Arc<PreparedFpvRig>> {
-        let hand = usize::from(dual);
-        if melee && let Some(rig) = &self.melee[hand] {
-            return Some(rig);
-        }
-        if ads && let Some(rig) = &self.ads[hand] {
-            return Some(rig);
-        }
-        match (rocket, &self.rocket[hand]) {
-            (true, Some(rig)) => Some(rig),
-            _ if jammed && let Some(rig) = &self.jammed[hand] => Some(rig),
-            _ => self.bare[hand].as_ref(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct FpvViewCensus {
-    pub gun_colormap_skip_n: u32,
-    pub gun_colormap_skip_names: Vec<String>,
-    pub mat_hints: Vec<String>,
-}
-
-pub struct FpvWeaponView {
-    pub gun_name: String,
-    pub gun_index: FpvMeshIndex,
-    pub hands: FpvHands,
-    pub hands_index: FpvMeshIndex,
-    pub namespace: AssetNamespace,
-    pub assemblies: FpvSideAssemblies,
-    pub right: WeaponAnimations,
-    pub left: Option<WeaponAnimations>,
-    pub idle_name: Option<String>,
-    pub rigs: FpvRigSet,
-    pub census: FpvViewCensus,
-    pub camos: Vec<(u8, Arc<HashMap<usize, SmodelPassMaterial>>)>,
-}
-
-impl FpvWeaponView {
-    pub fn camo(&self, slot: u8) -> Option<&Arc<HashMap<usize, SmodelPassMaterial>>> {
-        self.camos
-            .iter()
-            .find(|(own, _)| *own == slot)
-            .map(|(_, swaps)| swaps)
-    }
-}
-
-pub enum FpvWeaponSlot {
-    Absent,
-    Ready(Arc<FpvWeaponView>),
-    Refused(RenderGapCause),
-}
-
-static ABSENT_SLOT: FpvWeaponSlot = FpvWeaponSlot::Absent;
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FpvPreparationCensus {
-    pub models: usize,
-    pub layouts: usize,
-    pub compositions: usize,
-    pub rigs: usize,
-    pub materials: usize,
-    pub elapsed_ms: f64,
-}
-
-pub struct FpvWeaponTable {
-    material_catalog: Arc<RuntimeMaterialCatalog>,
-    catalog_id: u64,
-    facts: Vec<Option<WeaponFpvFacts>>,
-    hud_iris: Vec<bool>,
-    melee: Vec<u32>,
-    guns: Vec<Option<FpvMeshIndex>>,
-    slots: Vec<[FpvWeaponSlot; 2]>,
-    alternate_slots: HashMap<(u32, u32), [FpvWeaponSlot; 2]>,
-    census: FpvPreparationCensus,
-}
-
-impl FpvWeaponTable {
-    pub fn census(&self) -> FpvPreparationCensus {
-        self.census
-    }
-
-    pub fn material_catalog(&self) -> &Arc<RuntimeMaterialCatalog> {
-        &self.material_catalog
-    }
-
-    pub fn catalog_id(&self) -> u64 {
-        self.catalog_id
-    }
-
-    pub fn facts_of(&self, weapon: u32) -> Option<WeaponFpvFacts> {
-        self.facts.get(weapon as usize).copied().flatten()
-    }
-
-    pub fn overlay_is_hud_iris(&self, weapon: u32) -> bool {
-        self.hud_iris.get(weapon as usize).copied().unwrap_or(false)
-    }
-
-    pub fn melee_weapon_of(&self, weapon: u32) -> u32 {
-        self.melee.get(weapon as usize).copied().unwrap_or(weapon)
-    }
-
-    pub fn gun_index(&self, weapon: u32) -> Option<FpvMeshIndex> {
-        self.guns.get(weapon as usize).copied().flatten()
-    }
-
-    pub fn motion_tracker(&self, weapon: u32, parent: u32) -> bool {
-        self.facts_of(weapon).is_some_and(|facts| {
-            facts.motion_tracker
-                || (facts.is_alternate()
-                    && self
-                        .facts_of(parent)
-                        .is_some_and(|parent| parent.motion_tracker))
-        })
-    }
-
-    pub fn slot(&self, weapon: u32, parent: u32, axis: bool) -> &FpvWeaponSlot {
-        if parent != 0 && self.facts_of(weapon).is_some_and(|f| f.is_alternate()) {
-            return self
-                .alternate_slots
-                .get(&(weapon, parent))
-                .map_or(&ABSENT_SLOT, |s| &s[usize::from(axis)]);
-        }
-        self.slots
-            .get(weapon as usize)
-            .map_or(&ABSENT_SLOT, |sides| &sides[usize::from(axis)])
-    }
-}
-
-struct FpvPreparationOwner {
-    materials: Arc<RuntimeMaterialCatalog>,
-    images: Arc<Vec<Option<Handle<Image>>>>,
-    weapons: Arc<WeaponRegistry>,
-    catalog_id: u64,
-    atlas: Option<bevy::asset::AssetId<Image>>,
-}
-
-impl FpvPreparationOwner {
-    fn same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.materials, &other.materials)
-            && Arc::ptr_eq(&self.images, &other.images)
-            && Arc::ptr_eq(&self.weapons, &other.weapons)
-            && self.catalog_id == other.catalog_id
-            && self.atlas == other.atlas
-    }
-}
+#[path = "fpv_table.rs"]
+mod table;
+pub use table::FpvOwnerInputs;
+use table::FpvPreparationOwner;
+pub use table::{
+    BoundFpvTable, FpvBindingRefusal, FpvPreparationCensus, FpvRigSet, FpvViewCensus,
+    FpvWeaponSlot, FpvWeaponTable, FpvWeaponView,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FpvPreparationStage {
@@ -245,7 +88,7 @@ impl PreparedFpv {
         self.job.is_none()
             && self
                 .table()
-                .is_some_and(|table| Arc::ptr_eq(&table.material_catalog, materials))
+                .is_some_and(|table| Arc::ptr_eq(table.material_catalog(), materials))
     }
 
     pub fn clear(&mut self) {
@@ -266,151 +109,9 @@ fn composition_key(composition: &Arc<PreparedFpvComposition>) -> usize {
     Arc::as_ptr(composition) as usize
 }
 
-#[allow(clippy::too_many_arguments)]
-fn admit_surface(
-    global: &RuntimeMaterialCatalog,
-    images: &[Option<Handle<Image>>],
-    entry: &asset_model::FpvMeshEntry,
-    surface_index: usize,
-    lighting: &WorldModelLightingAtlas,
-    admission: &mut FpvMaterialAdmission,
-    image_cache: &mut HashMap<u32, Handle<Image>>,
-) -> FpvSurfaceVerdict {
-    let edge = entry
-        .material_edges
-        .get(surface_index)
-        .copied()
-        .unwrap_or(AssetEdge::Absent);
-    let leftover = entry
-        .material_keys
-        .get(surface_index)
-        .and_then(|key| Some(key.as_ref()?.name.as_str()))
-        .unwrap_or("-");
-    let refused = |material: &str, cause: &'static str| FpvSurfaceVerdict::Refused {
-        material: material.to_owned(),
-        cause,
-    };
-    let bound = match edge {
-        AssetEdge::Absent => return FpvSurfaceVerdict::Inapplicable("no material"),
-        AssetEdge::Unresolved(_) => return refused(leftover, edge.edge_kind()),
-        AssetEdge::Bound(_) => match edge.bound_index() {
-            Some(bound) => bound,
-            None => return refused(leftover, "bound edge without an index"),
-        },
-    };
-    let Some(present_name) = entry.material_present_name(surface_index) else {
-        return refused(leftover, "bound material has no name");
-    };
-    admit_material(
-        global,
-        images,
-        bound,
-        present_name,
-        lighting,
-        admission,
-        image_cache,
-    )
-}
-
-fn admit_material(
-    global: &RuntimeMaterialCatalog,
-    images: &[Option<Handle<Image>>],
-    mat_i: usize,
-    present_name: &str,
-    lighting: &WorldModelLightingAtlas,
-    admission: &mut FpvMaterialAdmission,
-    image_cache: &mut HashMap<u32, Handle<Image>>,
-) -> FpvSurfaceVerdict {
-    use lighting_iw4::{
-        MODEL_LIGHTING_INV_ATLAS_WIDTH, MODEL_LIGHTING_VOLUME_W, model_lighting_inv_image_height,
-        model_lighting_lookup_scale,
-    };
-
-    let refused = |material: &str, cause: &'static str| FpvSurfaceVerdict::Refused {
-        material: material.to_owned(),
-        cause,
-    };
-    if let Some(&row) = admission.by_authored.get(&mat_i) {
-        return FpvSurfaceVerdict::Admitted(row);
-    }
-    let Some(authored) = global.materials.get(mat_i) else {
-        return refused(present_name, "material outside the session catalog");
-    };
-    let Some(ordinal) = global.ordinal_for_asset_id(assets::MaterialIndex::from_order(mat_i))
-    else {
-        return refused(present_name, "material has no sorted ordinal");
-    };
-    let Some(color_image) = authored
-        .textures
-        .iter()
-        .find_map(|(_, texture)| texture.filter(|binding| binding.semantic == TS_COLOR_MAP))
-        .map(|binding| binding.image.0)
-    else {
-        return FpvSurfaceVerdict::Inapplicable(NO_COLOUR_MAP);
-    };
-    let mut image = |image_index: u32| -> Option<Handle<Image>> {
-        if let Some(cached) = image_cache.get(&image_index) {
-            return Some(cached.clone());
-        }
-        let handle = images.get(image_index as usize).cloned().flatten()?;
-        image_cache.insert(image_index, handle.clone());
-        Some(handle)
-    };
-    let Some(color) = image(color_image) else {
-        return refused(present_name, "colour map not uploaded");
-    };
-    let specular = authored
-        .textures
-        .iter()
-        .find_map(|(_, texture)| {
-            texture.filter(|binding| binding.semantic == asset_material::TS_SPECULAR_MAP)
-        })
-        .and_then(|binding| image(binding.image.0));
-
-    const ENV_MAP_PARMS: u32 = 1_033_475_292;
-    let env_map_parms = authored
-        .constants
-        .iter()
-        .find(|(hash, _)| *hash == ENV_MAP_PARMS)
-        .map(|(_, words)| words.map(f32::from_bits))
-        .unwrap_or([0.0; 4]);
-    let Some(inv_h) = model_lighting_inv_image_height(lighting.dims.image_height) else {
-        return refused(present_name, "model lighting atlas has no rows");
-    };
-    let scale = model_lighting_lookup_scale(inv_h);
-    let cull_mode = authored
-        .pass_states
-        .first()
-        .and_then(|state| match state.cull() {
-            1 => Some(bevy::render::render_resource::Face::Back),
-            2 => Some(bevy::render::render_resource::Face::Front),
-            _ => None,
-        });
-    let material = SmodelPassMaterial {
-        model_lighting_required: true,
-        color: Some(color),
-        specular,
-        probe: None,
-        atlas: Some(lighting.image.clone()),
-        alpha_mode: AlphaMode::Opaque,
-        draw_mode: None,
-        cull_mode,
-        env_map_parms,
-        lighting_lookup_scale: [scale.u, scale.v, scale.w, scale.q],
-        atlas_lookup: [
-            MODEL_LIGHTING_INV_ATLAS_WIDTH as f32,
-            inv_h,
-            MODEL_LIGHTING_VOLUME_W,
-            0.0,
-        ],
-        sort_key: authored.sort_key,
-        material_sorted_index: Some(ordinal.get()),
-    };
-    let row = admission.materials.len() as u32;
-    admission.materials.push(material);
-    admission.by_authored.insert(mat_i, row);
-    FpvSurfaceVerdict::Admitted(row)
-}
+#[path = "fpv_material.rs"]
+mod material;
+use material::{admit_material, admit_surface};
 
 impl FpvPreparationJob {
     fn new(
@@ -560,9 +261,9 @@ impl FpvPreparationJob {
         let Some(&order) = self.models.get(self.next_model) else {
             if let Some(&bound) = self.camouflage_materials.get(self.next_camouflage) {
                 self.next_camouflage += 1;
-                let name = tess.catalog.materials[bound].name.as_str();
+                let name = tess.catalog().parts().materials[bound].name.as_str();
                 admit_material(
-                    &tess.catalog,
+                    &tess.catalog(),
                     &tess.material_images,
                     bound,
                     name,
@@ -583,7 +284,7 @@ impl FpvPreparationJob {
                 .surfaces_for_lod(0)
                 .map(|surface| {
                     let verdict = admit_surface(
-                        &tess.catalog,
+                        &tess.catalog(),
                         tess.material_images.as_ref(),
                         entry,
                         surface,
@@ -648,7 +349,8 @@ impl FpvPreparationJob {
                 self.tracks
                     .entry((key, order))
                     .or_insert_with(|| {
-                        compose_clip_tracks(assembly, order, registry.fpv_clip_tracks())
+                        let clip = self.owner.clips.clip_at(order)?;
+                        compose_clip_tracks(assembly, order, &clip, registry.fpv_clip_tracks())
                     })
                     .clone()
             })
@@ -680,6 +382,13 @@ impl FpvPreparationJob {
             dual,
             &self.admission,
             tracks,
+            Arc::clone(&self.owner.meshes),
+            [right, left].map(|orders| {
+                orders
+                    .iter()
+                    .map(|order| order.and_then(|order| self.owner.clips.clip_at(order)))
+                    .collect()
+            }),
         ));
         self.rigs.insert(key, Arc::clone(&rig));
         rig
@@ -807,7 +516,12 @@ impl FpvPreparationJob {
         } else {
             let id = self.next_weapon;
             self.next_weapon += 1;
-            self.facts.push(registry.fpv_facts_of(id));
+            self.facts.push(
+                registry
+                    .bind_published_row(id)
+                    .ok()
+                    .and_then(|weapon| weapon.fpv_facts()),
+            );
             self.hud_iris.push(registry.overlay_is_hud_iris(id));
             self.melee.push(registry.melee_weapon_of(id));
             (id, 0)
@@ -842,7 +556,9 @@ impl FpvPreparationJob {
 
         let right_edges = registry.sz_xanim_right_edges_of(id);
         let create_lr = registry
-            .fpv_facts_of(id)
+            .bind_published_row(id)
+            .ok()
+            .and_then(|weapon| weapon.fpv_facts())
             .is_some_and(|facts| facts.dual_animation());
         let right = if create_lr {
             WeaponAnimations::from_registry_edges(&registry, id, right_edges, xanims)
@@ -859,7 +575,9 @@ impl FpvPreparationJob {
             .and_then(|row| row[asset_iw4::size::weap_anim::IDLE].bound_index())
             .and_then(|order| xanims.clip_at(order))
             .map(|clip| clip.name.clone());
-        let namespace = registry.namespace_of(id).unwrap_or(AssetNamespace::Iw4);
+        let namespace = registry
+            .component_namespace_of(id, asset_game::WeaponComponent::ViewModel)
+            .unwrap_or(AssetNamespace::Iw4);
         let gun_name = fpv
             .get_at(gun_index.order())
             .map(|entry| entry.skel.name.clone())
@@ -873,7 +591,36 @@ impl FpvPreparationJob {
             .unwrap_or_else(Vec::new);
         debug_assert_eq!(right_orders.len(), WEAPON_ANIM_SLOTS);
 
+        let source_edges = if create_lr {
+            right_edges
+        } else {
+            registry.sz_xanim_edges_of(id)
+        };
+        let sources_match = source_edges
+            .into_iter()
+            .flatten()
+            .chain(
+                left.is_some()
+                    .then_some(left_edges)
+                    .flatten()
+                    .into_iter()
+                    .flatten(),
+            )
+            .filter_map(|edge| edge.bound_index())
+            .all(|order| {
+                let clip = xanims.clip_at(order);
+                registry
+                    .fpv_clip_tracks()
+                    .matches_clip(fpv.identity(), order, clip.as_deref())
+            });
         let sides: [FpvWeaponSlot; 2] = [false, true].map(|axis| {
+            if !sources_match {
+                return FpvWeaponSlot::Refused(RenderGapCause::FpvDependencyUnresolved {
+                    weapon_id: id,
+                    role: "FPV track publication",
+                    name: "clip or mesh source differs from the prepared mapping".into(),
+                });
+            }
             let (Some((hands, hands_index)), Some(assemblies)) = (
                 registry.fpv_hands_of(id, axis),
                 registry.fpv_assemblies_for(id, parent, axis),
@@ -1072,8 +819,7 @@ impl FpvPreparationJob {
             stage.done();
         }
         let table = FpvWeaponTable {
-            material_catalog: Arc::clone(&self.owner.materials),
-            catalog_id: self.owner.catalog_id,
+            owner: self.owner.clone(),
             facts: self.facts,
             hud_iris: self.hud_iris,
             melee: self.melee,
@@ -1094,8 +840,7 @@ fn refused_table(
     let registry = &owner.weapons;
     let weapon_n = registry.len() as u32;
     let mut table = FpvWeaponTable {
-        material_catalog: Arc::clone(&owner.materials),
-        catalog_id: owner.catalog_id,
+        owner: owner.clone(),
         facts: Vec::with_capacity(weapon_n as usize + 1),
         hud_iris: Vec::with_capacity(weapon_n as usize + 1),
         melee: Vec::with_capacity(weapon_n as usize + 1),
@@ -1105,7 +850,12 @@ fn refused_table(
         census: FpvPreparationCensus::default(),
     };
     for id in 0..=weapon_n {
-        table.facts.push(registry.fpv_facts_of(id));
+        table.facts.push(
+            registry
+                .bind_published_row(id)
+                .ok()
+                .and_then(|weapon| weapon.fpv_facts()),
+        );
         table.hud_iris.push(registry.overlay_is_hud_iris(id));
         table.melee.push(registry.melee_weapon_of(id));
         table.guns.push(
@@ -1156,14 +906,15 @@ pub fn prepare_fpv_compositions(inputs: PrepareFpvInputs, mut prepared: ResMut<P
         return;
     }
     let sorted_ready = matches!(
-        tess.catalog.sorted_materials,
+        tess.catalog().parts().sorted_materials,
         RuntimeSortedMaterialTable::Ready { .. }
     );
     let owner = FpvPreparationOwner {
-        materials: Arc::clone(&tess.catalog),
+        materials: Arc::clone(&tess.catalog()),
         images: Arc::clone(&tess.material_images),
-        weapons: Arc::clone(&weapons.0),
-        catalog_id: fpv_meshes.0.identity(),
+        weapons: Arc::clone(weapons.registry()),
+        meshes: Arc::clone(&fpv_meshes.0),
+        clips: Arc::clone(&xanims.0),
         atlas: lighting.as_ref().map(|atlas| atlas.image.id()),
     };
     if prepared.job.is_none()

@@ -636,6 +636,7 @@ impl ZoneLane for Iw4Lane {
                     sound: map_sound,
                     materials: map_materials,
                     world: PreparedWorld {
+                        source_namespace: Some(asset_core::AssetNamespace::Iw4),
                         draw: Some(draw),
                         dynamic_light: None,
                         static_model_meshes,

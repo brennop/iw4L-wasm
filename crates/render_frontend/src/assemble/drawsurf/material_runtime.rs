@@ -257,7 +257,7 @@ impl RuntimeProgramRegistry {
             ),
             usize,
         > = HashMap::new();
-        for (set_i, set) in catalog.technique_sets.iter().enumerate() {
+        for (set_i, set) in catalog.parts().technique_sets.iter().enumerate() {
             if only_sets.is_some_and(|sets| !sets.contains(&set_i)) {
                 continue;
             }
@@ -293,6 +293,7 @@ impl RuntimeProgramRegistry {
         pass_i: usize,
     ) -> Option<&'a RuntimePass> {
         catalog
+            .parts()
             .technique_sets
             .get(set_i)?
             .technique(tech_type)?

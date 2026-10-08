@@ -190,6 +190,7 @@ pub(super) async fn walk_prepared_match(
         common_fx_models.keep_referenced(&hints);
     }
     let common_fx_model_early_pruned = common_fx_model_full - common_fx_models.len();
+    world.source_namespace = map_namespace;
     report.append(&mut common_report);
 
     if facts.team_settings.allies.is_none() && facts.team_settings.axis.is_none() {
@@ -338,16 +339,6 @@ pub(super) async fn walk_prepared_match(
     fpv_meshes.set_map_namespace(map_namespace);
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     weapons.resolve_fpv_hands(&fpv_meshes, &bodies);
-    let assembly_started = web_time::Instant::now();
-    let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
-    report.push(format!(
-        "FPV assemblies: built={} kit sides linked={} refused={} clip track tables={} elapsed_ms={:.1}",
-        assemblies.built,
-        assemblies.linked,
-        assemblies.refused,
-        assemblies.clip_tables,
-        assembly_started.elapsed().as_secs_f64() * 1000.0,
-    ));
 
     world_weapons.seal_identity();
     weapons.resolve_world_model_edges(&world_weapons);
@@ -359,30 +350,6 @@ pub(super) async fn walk_prepared_match(
         world_model_edges.unresolved,
         world_model_edges.absent,
     ));
-    let dependency_gaps = weapons.dependency_gaps();
-    let selectable_gap_ids: std::collections::BTreeSet<_> = dependency_gaps
-        .iter()
-        .map(|gap| gap.id)
-        .filter(|&id| weapons.describe_configuration(id).is_some())
-        .collect();
-    report.push(format!(
-        "weapon dependency audit: {} gaps in {} definitions; selectable={}",
-        dependency_gaps.len(),
-        dependency_gaps
-            .iter()
-            .map(|gap| gap.id)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        selectable_gap_ids.len(),
-    ));
-    for gap in &dependency_gaps {
-        report.push(format!(
-            "weapon dependency gap: {} {} `{}`",
-            weapons.name_of(gap.id),
-            gap.kind,
-            gap.name
-        ));
-    }
     report.push(format!(
         "FPV map fanout: map={map_fpv_n} added={map_fpv_added} merged={} map_ns={map_namespace:?}",
         fpv_meshes.len()
@@ -652,6 +619,42 @@ pub(super) async fn walk_prepared_match(
         &mut projectile_meshes,
         &mut report,
     );
+    // Bind rigs and tracks to the finished mesh publication, after material linking.
+    let fpv_meshes = fpv_meshes.publish();
+    let assembly_started = std::time::Instant::now();
+    let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
+    report.push(format!(
+        "FPV assemblies: built={} kit sides linked={} refused={} clip track tables={} elapsed_ms={:.1}",
+        assemblies.built,
+        assemblies.linked,
+        assemblies.refused,
+        assemblies.clip_tables,
+        assembly_started.elapsed().as_secs_f64() * 1000.0,
+    ));
+    let dependency_gaps = weapons.dependency_gaps();
+    let selectable_gap_ids: std::collections::BTreeSet<_> = dependency_gaps
+        .iter()
+        .map(|gap| gap.id)
+        .filter(|&id| weapons.describe_configuration(id).is_some())
+        .collect();
+    report.push(format!(
+        "weapon dependency audit: {} gaps in {} definitions; selectable={}",
+        dependency_gaps.len(),
+        dependency_gaps
+            .iter()
+            .map(|gap| gap.id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        selectable_gap_ids.len(),
+    ));
+    for gap in &dependency_gaps {
+        report.push(format!(
+            "weapon dependency gap: {} {} `{}`",
+            weapons.name_of(gap.id),
+            gap.kind,
+            gap.name
+        ));
+    }
     report.push(
         "fx color maps handoff: n=0 bytes=0 (Bound GPU bind at spawn; no CPU clone sidecar; stub_aliases=0)"
             .into(),
@@ -755,7 +758,7 @@ pub(super) async fn walk_prepared_match(
         },
         clip: clip.map(Arc::new),
         weapons: Arc::new(weapons.publish()),
-        fpv_meshes: fpv_meshes.publish(),
+        fpv_meshes,
         bodies: Arc::new(bodies.publish()),
         world_weapons: world_weapons.publish(),
         projectile_meshes: projectile_meshes.publish(),
@@ -1127,7 +1130,7 @@ fn census_image_working_set(
     world: &PreparedWorld,
     global: &asset_material::MaterialDefinitions,
     map_ids: &[Option<usize>],
-    fpv_meshes: &FpvMeshBuild,
+    fpv_meshes: &asset_model::FpvMeshCatalog,
     tracers: &asset_game::TracerCatalog,
     report: &mut Vec<String>,
 ) {

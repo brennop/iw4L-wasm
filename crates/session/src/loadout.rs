@@ -31,7 +31,12 @@ pub fn resolve_class_weapon(
     let resolve = |selection: asset_game::WeaponSelection| {
         weapons
             .resolve_configuration(&selection, rules)
-            .map(|resolved| resolved.id)
+            .map(|resolved| {
+                weapons
+                    .bind(resolved.handle())
+                    .expect("resolved in this registry")
+                    .wire_id()
+            })
             .map_err(|refusal| format!("{name}:{}", refusal.code()))
     };
     if let Some(family) = asset_game::FamilyKey::parse(name)

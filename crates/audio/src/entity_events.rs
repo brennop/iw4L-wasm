@@ -173,7 +173,11 @@ fn entity_event_sound(
         );
         return;
     };
-    if weapons.0.sounds_of(sound.event.payload.weapon).is_none() {
+    if weapons
+        .registry()
+        .sounds_of(sound.event.payload.weapon)
+        .is_none()
+    {
         diag::warn!(
             Audio,
             "audio: entity sound weapon is unavailable (typed gap)"
@@ -184,7 +188,7 @@ fn entity_event_sound(
     // A missing player alias must not fall back to the world throw sound.
     if event == EntityEventKind::USE_OFFHAND
         && weapons
-            .0
+            .registry()
             .authored_weapon_sound(
                 sound.event.payload.weapon,
                 if player_view {
@@ -199,7 +203,7 @@ fn entity_event_sound(
     }
     let Some((namespace, alias)) = bank.as_deref().and_then(|bank| {
         selected_alias(
-            &weapons.0,
+            &weapons.registry(),
             &bank.0,
             sound.event.payload.weapon,
             event,
@@ -427,11 +431,14 @@ impl NotetrackSoundTable {
         let mut rumbles = HashMap::new();
         for weapon in 1..=weapons.len() as u32 {
             let namespace = weapons
-                .namespace_of(weapon)
+                .component_namespace_of(weapon, asset_game::WeaponComponent::Sound)
                 .unwrap_or(asset_core::AssetNamespace::Iw4);
             for (note, action) in weapons.notetrack_actions_of(weapon) {
                 let sound = action.sound_alias.as_deref().map(|alias| {
-                    match bank.index_in(namespace, alias) {
+                    match weapons
+                        .sound_namespace_for(weapon, alias)
+                        .and_then(|namespace| bank.index_in(namespace, alias))
+                    {
                         Some(index) => NotetrackSound::Bound(index),
                         None => {
                             unbound += 1;
@@ -502,10 +509,10 @@ pub(crate) fn bind_notetrack_sounds(
         }
         return;
     };
-    if table.owns(&bank.0, &weapons.0) {
+    if table.owns(&bank.0, &weapons.registry()) {
         return;
     }
-    *table = NotetrackSoundTable::bind(&bank.0, &weapons.0);
+    *table = NotetrackSoundTable::bind(&bank.0, &weapons.registry());
 }
 
 pub(crate) fn play_viewmodel_notetrack_messages(
@@ -522,7 +529,7 @@ pub(crate) fn play_viewmodel_notetrack_messages(
     let bound_bank = bank
         .as_deref()
         .zip(weapons.as_deref())
-        .filter(|(bank, weapons)| table.owns(&bank.0, &weapons.0))
+        .filter(|(bank, weapons)| table.owns(&bank.0, &weapons.registry()))
         .map(|(bank, _)| Arc::clone(&bank.0));
     for batch in notes.read() {
         if batch.generation != *generation
@@ -641,11 +648,11 @@ fn grenade_contact(
     let Some((namespace, alias)) = weapons.as_deref().and_then(|weapons| {
         let bank = bank.as_deref()?;
         let alias = weapons
-            .0
+            .registry()
             .bounce_sound_alias(payload.weapon, surf, &bank.0)?;
         let namespace = weapons
-            .0
-            .namespace_of(payload.weapon)
+            .registry()
+            .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)
             .unwrap_or(asset_core::AssetNamespace::Iw4);
         Some((namespace, alias))
     }) else {

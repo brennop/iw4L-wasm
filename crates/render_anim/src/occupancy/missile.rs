@@ -164,7 +164,13 @@ fn occupy_missile_scene_ents(
         .map(|clock| clock.time())
         .unwrap_or_else(|| snapshot.tick().map(sim::level_time_ms).unwrap_or(0));
     let at_time = snapshot.trajectory_time_ms(at_time);
-    let weapons_reg = weapons.as_ref().map(|w| &w.0).filter(|reg| !reg.is_empty());
+    let bound = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_snapshot(snapshot.weapon_epoch()).ok());
+    let weapons_reg = bound
+        .as_ref()
+        .map(|w| w.registry())
+        .filter(|reg| !reg.is_empty());
     let catalog = missile_pose_catalog(projectile_meshes.as_deref());
     let Some(catalog) = catalog else {
         return;
@@ -185,13 +191,11 @@ fn occupy_missile_scene_ents(
         if piloted.is_some() && row.authoritative_id() == piloted {
             continue;
         }
-        let model = weapons_reg.and_then(|reg| reg.projectile_model_of(row.weapon()));
-        let Some(name) = model else {
+        let Some((ns, name)) =
+            weapons_reg.and_then(|reg| reg.projectile_model_reference_of(row.weapon()))
+        else {
             continue;
         };
-        let ns = weapons_reg
-            .and_then(|reg| reg.namespace_of(row.weapon()))
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
         let Some(entry) = catalog.get(ns, name) else {
             continue;
         };
@@ -241,7 +245,8 @@ fn occupy_missile_scene_ents(
             weapon: row.weapon(),
             ignited: match row {
                 net::PresentedProjectile::Authoritative(p) => weapons_reg
-                    .and_then(|reg| reg.event_facts_of(p.weapon))
+                    .and_then(|reg| reg.bind_published_row(p.weapon).ok())
+                    .and_then(|weapon| weapon.event_facts())
                     .is_none_or(|facts| {
                         at_time >= p.spawn_time_ms.saturating_add(facts.ignition_delay_ms)
                     }),
@@ -271,10 +276,7 @@ fn occupy_missile_scene_ents(
             .find_map(|attached| {
                 let weapon = sim::weapon_model_attachment(&attached.model)?;
                 let reg = weapons_reg?;
-                let name = reg.projectile_model_of(weapon)?;
-                let ns = reg
-                    .namespace_of(weapon)
-                    .unwrap_or(asset_core::AssetNamespace::Iw4);
+                let (ns, name) = reg.projectile_model_reference_of(weapon)?;
                 Some((ns, name, catalog.get(ns, name)?))
             })
         else {
@@ -440,7 +442,7 @@ fn append_missile_draws(
             .map(|surface| {
                 let authored = entry.material_index(surface.surface_index)?;
                 prepared
-                    .projectile_material(&tess.catalog, authored)
+                    .projectile_material(&tess.catalog(), authored)
                     .cloned()
             })
             .collect();

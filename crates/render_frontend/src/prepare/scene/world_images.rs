@@ -642,7 +642,7 @@ fn reachable_exact_image_slots(
             ids.insert(index as u32);
         }
     }
-    for material in &catalog.materials {
+    for material in &catalog.parts().materials {
         for (_, texture) in &material.textures {
             if let Some(binding) = texture {
                 ids.insert(binding.image.0);

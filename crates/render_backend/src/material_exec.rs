@@ -357,7 +357,7 @@ fn overlay_draw_material(
         &runtime.frame.primary_lights,
         &runtime.frame.attenuation,
         &runtime.frame.local_light_bindings,
-        runtime.catalog.generation_id,
+        runtime.catalog,
         runtime.frame.view_origin,
         &runtime.frame.spot_receivers,
     )?;
@@ -738,7 +738,7 @@ impl MaterialRunExecutor {
         patch_instance_code: bool,
     ) -> Result<(), MaterialRefusal> {
         self.census.draws = self.census.draws.saturating_add(1);
-        self.retain_shells_for(view.catalog.generation_id);
+        self.retain_shells_for(view.catalog.generation_id());
         let scene_light = dpvs_iw4::GfxDrawSurf { packed: draw.key }.scene_light_index();
         if scene_light != 0
             && view
@@ -752,7 +752,7 @@ impl MaterialRunExecutor {
                 .local_light_bindings
                 .get(usize::from(scene_light))
                 .ok_or(MaterialRefusal::MissingLightBindings { scene_light })
-                .and_then(|bindings| bindings.validate_generation(view.catalog.generation_id));
+                .and_then(|bindings| bindings.validate_generation(view.catalog));
             if let Err(cause) = validation {
                 self.census.refused = self.census.refused.saturating_add(1);
                 return Err(cause);
@@ -848,7 +848,7 @@ impl MaterialRunExecutor {
             if let Some(entry) = shells.get(&shell_key) {
                 census.shell_hits = census.shell_hits.saturating_add(1);
                 let mut execution = recycled.unwrap_or_else(MaterialExecution::vacant);
-                match execution.rebind_into(&entry.shell, view.catalog.generation_id, &sources) {
+                match execution.rebind_into(&entry.shell, view.catalog, &sources) {
                     Ok(()) => Ok(execution),
                     Err(cause) => Err(cause),
                 }

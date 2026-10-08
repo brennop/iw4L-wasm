@@ -100,6 +100,7 @@ fn set_thread_cpus(_cpus: &[usize]) {}
 
 #[derive(Default, Clone)]
 pub struct PreparedWorld {
+    pub source_namespace: Option<asset_core::AssetNamespace>,
     pub draw: Option<WorldDraw>,
     pub dynamic_light: Option<asset_world::ResolvedLightDef>,
     pub static_model_meshes: Vec<asset_world::ModelMesh>,

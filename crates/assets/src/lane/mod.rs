@@ -151,7 +151,9 @@ pub(crate) enum CommonDependencyRefusal {
     ModelDonor {
         model: String,
         stand_in: &'static str,
+        fields: &'static [asset_material::t6_techset::T6MaterialFields],
     },
+    WeaponPreparation(asset_game::WeaponPreparationRefusal),
     EffectDonor {
         effect: &'static str,
     },

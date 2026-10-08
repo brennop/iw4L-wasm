@@ -216,8 +216,8 @@ fn queue_match_clips(
     }
     let mut set = MatchRequests::default();
     let mut aliases = 0usize;
-    for weapon in 1..=weapons.0.len() as u32 {
-        aliases += request_weapon_aliases(clips, &bank.0, &weapons.0, weapon, &mut set);
+    for weapon in 1..=weapons.registry().len() as u32 {
+        aliases += request_weapon_aliases(clips, &bank.0, &weapons.registry(), weapon, &mut set);
     }
     for alias in movement_prepare_names() {
         aliases += 1;
@@ -284,12 +284,14 @@ fn queue_match_clips(
         request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
     }
     let mut breath_policies = HashSet::new();
-    for weapon in 1..=weapons.0.len() as u32 {
+    for weapon in 1..=weapons.registry().len() as u32 {
         if weapons
-            .0
-            .hud_facts_of(weapon)
+            .registry()
+            .bind_published_row(weapon)
+            .ok()
+            .and_then(|weapon| weapon.hud_facts())
             .is_some_and(|facts| facts.can_hold_breath)
-            && let Some(policy) = weapons.0.semantic_policy_of(weapon)
+            && let Some(policy) = weapons.registry().semantic_policy_of(weapon)
             && breath_policies.insert((policy.cue_namespace.namespace(), policy.breath_cues))
         {
             let ns = policy.cue_namespace.namespace();
@@ -452,10 +454,7 @@ fn request_named(
     } else {
         set.resolved_aliases += 1;
     }
-    for key in keys
-        .into_iter()
-        .filter(|key| matches!(key, ClipKey::Loaded(_)))
-    {
+    for key in keys.into_iter().filter(|key| key.is_loaded()) {
         match clips.ready(&key) {
             Some(Err(
                 crate::clip_store::ClipError::RequestLimit
@@ -497,19 +496,22 @@ fn request_weapon_aliases(
     set: &mut MatchRequests,
 ) -> usize {
     let sounds = registry.sounds_of(weapon);
-    let ns = registry.namespace_of(weapon).unwrap_or(AssetNamespace::Iw4);
     let mut n = 0usize;
     if let Some(aliases) = sounds {
         for alias in aliases.reachable_aliases() {
             n += 1;
-            request_named(clips, bank, ns, alias, set);
+            if let Some(ns) = registry.sound_namespace_for(weapon, alias) {
+                request_named(clips, bank, ns, alias, set);
+            }
         }
     }
     let mut seen = HashSet::new();
     for alias in registry.notetrack_sound_aliases_of(weapon) {
         if seen.insert(alias) {
             n += 1;
-            request_named(clips, bank, ns, alias, set);
+            if let Some(ns) = registry.sound_namespace_for(weapon, alias) {
+                request_named(clips, bank, ns, alias, set);
+            }
         }
     }
     n

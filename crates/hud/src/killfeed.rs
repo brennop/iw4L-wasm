@@ -112,7 +112,7 @@ fn hide(pass: &mut HudTessPass) {
 
 fn pick_kill_icon(
     payload: &sim::EntityEventPayload,
-    weapons: Option<&PreparedWeapons>,
+    weapons: Option<&assets::BoundWeapons<'_>>,
 ) -> KillIconPick {
     let chrome = crate::images::HUD_CHROME_NAMESPACE;
 
@@ -133,15 +133,19 @@ fn pick_kill_icon(
         };
     }
     let weapon = payload.event_parm as u32;
-    let (ratio, flip) = match weapons.and_then(|reg| reg.0.hud_facts_of(weapon)) {
-        Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
-        None => (0, false),
-    };
+    let (ratio, flip) =
+        match weapons.and_then(|reg| reg.row(weapon).and_then(|weapon| weapon.hud_facts())) {
+            Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
+            None => (0, false),
+        };
     let (stem, namespace) = if let Some(reg) = weapons {
-        let ns = reg.0.namespace_of(weapon).unwrap_or(chrome);
-        if let Some(image) = reg.0.kill_icon_image_of(weapon) {
+        let ns = reg
+            .registry()
+            .component_namespace_of(weapon, asset_game::WeaponComponent::Material)
+            .unwrap_or(chrome);
+        if let Some(image) = reg.registry().kill_icon_image_of(weapon) {
             (image.to_owned(), ns)
-        } else if let Some(name) = reg.0.kill_icon_of(weapon) {
+        } else if let Some(name) = reg.registry().kill_icon_of(weapon) {
             (name.to_owned(), ns)
         } else {
             (KILLICON_DIED.to_owned(), chrome)
@@ -210,7 +214,10 @@ pub(crate) fn obituary(
         return;
     }
     let payload = obituary.event.payload;
-    let pick = pick_kill_icon(&payload, weapons.as_deref());
+    let bound = weapons
+        .as_deref()
+        .and_then(|weapons| weapons.for_event(obituary.event.world).ok());
+    let pick = pick_kill_icon(&payload, bound.as_ref());
     let attacker = snapshot_client_name(&presented, payload.attacker_entity_num);
     let victim = snapshot_client_name(&presented, payload.other_entity_num);
     let attacker_team = snapshot_client_team(&presented, payload.attacker_entity_num);

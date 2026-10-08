@@ -18,12 +18,12 @@ pub(super) fn equipment(
         detonate_delay_ms: f.detonate_delay_ms,
         detonate_time_ms: f.detonate_time_ms,
         projectile_rotates: f.projectile_rotates
-            || registry.namespace_of(id) != Some(asset_core::AssetNamespace::Iw4),
+            || registry.host_namespace_of(id) != Some(asset_core::AssetNamespace::Iw4),
         stickiness: f.stickiness,
         timed_detonation: f.timed_detonation,
         proj_impact_explode: f.proj_impact_explode,
         stick_to_players: f.stick_to_players,
-        ballistic_blade: registry.namespace_of(id) == Some(asset_core::AssetNamespace::T5)
+        ballistic_blade: registry.host_namespace_of(id) == Some(asset_core::AssetNamespace::T5)
             && registry.name_of(id) == "knife_ballistic",
         explosion_radius: f.explosion_radius,
         explosion_radius_min: f.explosion_radius_min,

@@ -115,13 +115,17 @@ pub fn scene_lit_pass_material(
     tess: &TessMaterials,
     authored: assets::MaterialIndex,
 ) -> Option<SmodelPassMaterial> {
-    let world_material = tess.catalog.derived(authored)?;
+    let world_material = tess.catalog().derived(authored)?;
     let ordinal = tess
-        .catalog
+        .catalog()
+        .parts()
         .sorted_materials
         .ordinal_for_asset_id(authored.order())?;
-    let maps =
-        render_scene::runtime_maps(Some(authored), &tess.catalog, tess.material_images.as_ref());
+    let maps = render_scene::runtime_maps(
+        Some(authored),
+        &tess.catalog(),
+        tess.material_images.as_ref(),
+    );
     let inv_h = lighting_iw4::model_lighting_inv_image_height(atlas.dims.image_height)?;
     let scale = lighting_iw4::model_lighting_lookup_scale(inv_h);
     Some(SmodelPassMaterial {
@@ -170,7 +174,7 @@ pub fn prepare_model_materials(
         return;
     }
     let owner: ModelMaterialsOwner = (
-        Arc::clone(&tess.catalog),
+        Arc::clone(&tess.catalog()),
         atlas.as_ref().map(|atlas| atlas.image.id()),
         bodies
             .as_ref()
@@ -199,7 +203,7 @@ pub fn prepare_model_materials(
             admit_keys(
                 present_keys(&entry.material_keys, &entry.material_edges),
                 &atlas,
-                &tess.catalog,
+                &tess.catalog(),
                 &mut by_key,
                 &mut refused,
             );
@@ -210,20 +214,20 @@ pub fn prepare_model_materials(
             admit_keys(
                 present_keys(&entry.material_keys, &entry.material_edges),
                 &atlas,
-                &tess.catalog,
+                &tess.catalog(),
                 &mut by_key,
                 &mut refused,
             );
         }
     }
     if let Some(weapons) = weapons.as_deref() {
-        for id in 1..=weapons.0.len() as u32 {
-            for camo in weapons.0.material_camouflages_of(id) {
+        for id in 1..=weapons.registry().len() as u32 {
+            for camo in weapons.registry().material_camouflages_of(id) {
                 for (_, key) in &camo.materials {
                     if by_key.contains_key(key) {
                         continue;
                     }
-                    let Some(authored) = tess.catalog.material_for_key(key) else {
+                    let Some(authored) = tess.catalog().material_for_key(key) else {
                         continue;
                     };
                     if let Some(material) = scene_lit_pass_material(
@@ -285,7 +289,7 @@ pub fn prepare_model_materials(
                 }
                 if let Some(material) = crate::authored_lit_xmodel_pass_material(
                     &atlas,
-                    &tess.catalog,
+                    &tess.catalog(),
                     tess.material_images.as_ref(),
                     authored,
                 ) {

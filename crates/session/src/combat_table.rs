@@ -7,13 +7,14 @@ pub fn from_registry(
 ) -> Vec<WeaponCombatFacts> {
     let rules = WeaponHostRules::default();
     let mut refused = Vec::new();
-    let rows = (0..=weapons.len())
-        .map(|index| {
-            let id = index as u32;
+    let rows = weapons
+        .published_weapons()
+        .map(|weapon| {
+            let id = weapon.wire_id();
             if id == 0 {
                 return WeaponCombatFacts::none();
             }
-            match weapons.combat_facts_of(id, rules, global_location) {
+            match weapon.combat_facts(rules, global_location) {
                 Ok(facts) => facts,
                 Err(reason) => {
                     refused.push(format!("{}({reason:?})", weapons.name_of(id)));

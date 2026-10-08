@@ -5,7 +5,7 @@ use asset_audio::{SoundCatalog, unit_random};
 use asset_core::AssetNamespace;
 
 use crate::admission::AdmissionPolicy;
-use crate::clip_store::{ClipKey, MediaService, clip_key_for_variant};
+use crate::clip_store::{ClipKey, MediaService, clip_key_for_sound};
 use crate::render_core::AudioScope;
 use crate::start::StartFailure;
 
@@ -22,6 +22,7 @@ pub enum CueFailure {
     PendingBudget,
     MissingAlias,
     MissingPolicy,
+    InvalidMediaBinding,
     NoMedia,
     Cancelled,
     FireRefused,
@@ -58,16 +59,8 @@ pub(crate) struct CueExecutionPolicy {
 pub(crate) use asset_audio::SpatialPlaybackPolicy as CueSpatialPolicy;
 
 impl CueExecutionPolicy {
-    fn lower(
-        bank: &SoundCatalog,
-        namespace: AssetNamespace,
-        index: usize,
-        variant: usize,
-    ) -> Option<Self> {
-        let policy = bank.playback_policy(index, variant)?;
-        if policy.namespace != namespace {
-            return None;
-        }
+    fn lower(bound: asset_audio::BoundSound<'_>) -> Self {
+        let policy = bound.policy();
         let spatial = policy.spatial.as_ref().map(|spatial| match spatial {
             Ok(spatial) => Ok(spatial.clone()),
             Err(failure) => Err(match failure {
@@ -83,7 +76,7 @@ impl CueExecutionPolicy {
                 asset_audio::SpatialPolicyFailure::InvalidFalloffCurve => StartFailure::FalloffEval,
             }),
         });
-        Some(Self {
+        Self {
             looping: policy.looping(),
             composition: policy.composition.clone(),
             stereo_speaker_gains: policy.stereo_speaker_gains,
@@ -91,8 +84,8 @@ impl CueExecutionPolicy {
             channel: policy.channel,
             priority: policy.priority.clone(),
             spatial,
-            admission: alias_admission(bank.revision(), index, policy),
-        })
+            admission: alias_admission(bound.revision(), bound.alias_index(), policy),
+        }
     }
 
     pub(crate) fn admission_for(&self, emitter: Option<u32>, priority: f32) -> AdmissionPolicy {
@@ -291,8 +284,9 @@ impl CueResolver {
             .ok_or(CueFailure::MissingAlias)?;
         bank.sound_at(index).ok_or(CueFailure::MissingAlias)?;
         let published = bank
-            .playback_policy(index, 0)
-            .ok_or(CueFailure::MissingPolicy)?;
+            .bind_published_alias(index, 0)
+            .map_err(|_| CueFailure::MissingPolicy)?
+            .policy();
         if published.namespace != request.namespace {
             return Err(CueFailure::MissingPolicy);
         }
@@ -308,16 +302,11 @@ impl CueResolver {
         let variant = bank
             .pick_variant_at(index, &mut self.lcg, self.history.get(&key).copied())
             .ok_or(CueFailure::MissingAlias)?;
-        let policy = bank
-            .playback_policy(index, variant)
-            .ok_or(CueFailure::MissingPolicy)?;
-        let clip = clip_key_for_variant(
-            bank,
-            request.namespace,
-            &request.alias,
-            Some(index),
-            variant,
-        );
+        let bound = bank
+            .bind_published_alias(index, variant)
+            .map_err(|_| CueFailure::MissingPolicy)?;
+        let policy = bound.policy();
+        let clip = clip_key_for_sound(bound).map_err(|_| CueFailure::InvalidMediaBinding)?;
         let volume = policy.volume(unit_random(&mut self.lcg));
         let pitch = policy.pitch(unit_random(&mut self.lcg));
         let scale = if request.pitch_scale.is_finite() && request.pitch_scale > 0.0 {
@@ -327,8 +316,7 @@ impl CueResolver {
         };
         self.history.insert(key, variant);
         Ok(ResolvedCue {
-            policy: CueExecutionPolicy::lower(bank, request.namespace, index, variant)
-                .ok_or(CueFailure::MissingPolicy)?,
+            policy: CueExecutionPolicy::lower(bound),
             bank: bank.clone(),
             media: request
                 .media
