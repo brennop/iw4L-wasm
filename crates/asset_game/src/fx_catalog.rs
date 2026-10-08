@@ -316,7 +316,7 @@ impl OwnedFxElemDef {
             .and_then(|index| {
                 sounds
                     .name_at(index)
-                    .map(|alias| (sounds.namespace_of_alias(index), alias))
+                    .and_then(|alias| Some((sounds.namespace_of_alias(index)?, alias)))
             }) {
             Some((namespace, alias)) => FxBankSound::Play { namespace, alias },
             None => FxBankSound::Gap,
@@ -372,7 +372,7 @@ pub struct FxDefinitions {
 
     zones: Vec<ZoneOwner>,
     capture_zone: ZoneOwner,
-    map_namespace: crate::AssetNamespace,
+    map_namespace: Option<crate::AssetNamespace>,
     pub capture_gaps: usize,
 }
 
@@ -384,7 +384,7 @@ pub struct FxCatalog {
 
     links: HashMap<fastfile_iw4::Ptr, FxLink>,
     last_captured: Option<String>,
-    capture_ns: crate::AssetNamespace,
+    capture_ns: Option<crate::AssetNamespace>,
 }
 
 impl std::ops::Deref for FxCatalog {
@@ -412,7 +412,6 @@ impl FxCatalog {
         if !authored_slot && hint.is_none() {
             return AssetEdge::Absent;
         }
-        let ns = crate::body_namespace(ns);
         match hint.and_then(|name| self.index_in(ns, name)) {
             Some(index) => AssetEdge::bind_order(index, self.zone_of(index)),
             None => AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss),
@@ -440,7 +439,7 @@ impl FxCatalog {
     }
 
     pub fn set_capture_ns(&mut self, ns: crate::AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn absorb(&mut self, other: FxCatalog) {
@@ -554,7 +553,9 @@ impl FxCatalog {
         }
 
         self.last_captured = Some(name.to_owned());
-        let namespace = self.capture_ns;
+        let namespace = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         self.insert_owned(OwnedFxEffectDef {
             namespace,
             name: name.to_owned(),
@@ -622,7 +623,9 @@ impl FxCatalog {
         }
 
         self.last_captured = Some(name.to_owned());
-        let namespace = self.capture_ns;
+        let namespace = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         self.insert_owned(OwnedFxEffectDef {
             namespace,
             name: name.to_owned(),
@@ -644,7 +647,9 @@ impl FxCatalog {
     }
 
     pub fn bind_named_slot(&mut self, slot: fastfile_iw4::Ptr, name: &str) {
-        let ns = self.capture_ns;
+        let ns = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         if self.index_in(ns, name).is_none() {
             self.insert_owned(OwnedFxEffectDef {
                 namespace: ns,
@@ -733,22 +738,32 @@ impl FxDefinitions {
     }
 
     pub fn set_map_namespace(&mut self, ns: crate::AssetNamespace) {
-        self.map_namespace = ns;
+        self.map_namespace = Some(ns);
     }
 
     pub fn map_namespace(&self) -> crate::AssetNamespace {
         self.map_namespace
+            .expect("effects require an explicit map family")
     }
 
     pub fn resolve_createfx_id(&self, fxid: &str) -> Option<&OwnedFxEffectDef> {
-        self.resolve_def_for_map(fxid)
-            .or_else(|| self.get_in(body_namespace(self.map_namespace), fxid))
+        self.resolve_def_for_map(fxid).or_else(|| {
+            self.get_in(
+                self.map_namespace
+                    .expect("effects require an explicit map family"),
+                fxid,
+            )
+        })
     }
 
     pub fn map_fx_name<'a>(&self, name: &'a str) -> FxName<'a> {
         match self.resolve_def_for_map(name) {
             Some(def) => FxName::new(def.namespace, name),
-            None => FxName::new(self.map_namespace, name),
+            None => FxName::new(
+                self.map_namespace
+                    .expect("effects require an explicit map family"),
+                name,
+            ),
         }
     }
 
@@ -768,7 +783,9 @@ impl FxDefinitions {
     }
 
     pub fn alias_for_map(&mut self, from: &str, to: &str) -> bool {
-        let map_ns = body_namespace(self.map_namespace);
+        let map_ns = self
+            .map_namespace
+            .expect("effects require an explicit map family");
         let Some(def) = self.resolve_def_in(map_ns, to) else {
             return false;
         };
@@ -780,12 +797,10 @@ impl FxDefinitions {
     }
 
     pub fn resolve_def_for_map(&self, name: &str) -> Option<&OwnedFxEffectDef> {
-        let map_ns = body_namespace(self.map_namespace);
-        self.resolve_def_in(map_ns, name).or_else(|| {
-            (map_ns != crate::AssetNamespace::Iw4)
-                .then(|| self.resolve_def_in(crate::AssetNamespace::Iw4, name))
-                .flatten()
-        })
+        let map_ns = self
+            .map_namespace
+            .expect("effects require an explicit map family");
+        self.resolve_def_in(map_ns, name)
     }
 
     pub fn resolve_materials(&mut self, materials: &crate::MaterialDefinitions) {
@@ -1774,13 +1789,6 @@ fn lookup_playable_fx(
         .copied()
 }
 
-pub fn body_namespace(ns: crate::AssetNamespace) -> crate::AssetNamespace {
-    match ns {
-        crate::AssetNamespace::Iw5 => crate::AssetNamespace::Iw4,
-        other => other,
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FxName<'a> {
     pub namespace: crate::AssetNamespace,
@@ -1789,10 +1797,7 @@ pub struct FxName<'a> {
 
 impl<'a> FxName<'a> {
     pub fn new(namespace: crate::AssetNamespace, name: &'a str) -> Self {
-        Self {
-            namespace: body_namespace(namespace),
-            name,
-        }
+        Self { namespace, name }
     }
 
     pub fn engine(name: &'a str) -> Self {

@@ -27,87 +27,50 @@ impl CommonFamilyCompiler for T6CommonCompiler {
         } = products;
         let t6_captured = self.captured_weapons;
         let mut content = self.content;
-        let t6_sound_names = std::mem::take(&mut content.sound_names);
-        let t6_hands = content.hands.take();
-        let t6_melee = content.melee.take();
+        let t6_hands = content.hands.clone();
         let (added, kept) = xanims.absorb_vacant(std::mem::take(&mut content.xanims));
         report.push(format!(
             "t6 xanims absorbed: +{}, {kept} names already taken",
             added.len()
         ));
-        let t6_anim_names: std::collections::BTreeSet<_> = added.into_iter().collect();
         let mut refusals = Vec::new();
         report.push(bind_t6_fx(
-            std::mem::take(&mut content.fx),
-            std::mem::take(&mut content.fx_materials),
+            &mut content,
             &mut material_seed,
             &mut common_fx,
             &mut refusals,
         ));
         report.push(bind_t6_content(
             content,
-            &weapons,
             &mut material_seed,
             &mut fpv_meshes,
             &mut world_weapons,
             &mut refusals,
         ));
-        let t6_dressed = weapons.dress_t6_stand_ins(
-            |name| {
-                fpv_meshes
-                    .get(asset_core::AssetNamespace::Iw4, name)
-                    .is_some()
-            },
-            |name| {
-                world_weapons
-                    .get(asset_core::AssetNamespace::Iw4, name)
-                    .is_some()
-            },
-            |name| t6_sound_names.contains(name),
-            |name| t6_anim_names.contains(name),
-            t6_hands.as_deref().filter(|name| {
-                fpv_meshes
-                    .get(asset_core::AssetNamespace::Iw4, name)
-                    .is_some()
-            }),
-            t6_melee.as_ref(),
-        );
         refusals.extend(
-            t6_dressed
-                .refusals
-                .iter()
-                .cloned()
+            weapons
+                .prepare_native_t6(&fpv_meshes, t6_hands.as_deref())
+                .into_iter()
                 .map(CommonDependencyRefusal::WeaponPreparation),
         );
         let mut t6_projectiles = 0usize;
-        for id in 1..weapons.len() as u32 {
+        for id in 1..=weapons.len() as u32 {
             if weapons.identity_namespace_of(id) != Some(asset_core::AssetNamespace::T6) {
                 continue;
             }
             let Some(name) = weapons.projectile_model_of(id) else {
                 continue;
             };
-            if !projectile_meshes.contains(asset_core::AssetNamespace::Iw4, name)
-                && let Some(gun) = world_weapons.get(asset_core::AssetNamespace::Iw4, name)
+            if !projectile_meshes.contains(asset_core::AssetNamespace::T6, name)
+                && let Some(gun) = world_weapons.get(asset_core::AssetNamespace::T6, name)
             {
                 projectile_meshes.absorb_world_weapon(gun);
                 t6_projectiles += 1;
             }
         }
         report.push(format!(
-        "t6 weapon absorb: captured={t6_captured} dressed={} own_view={} own_anims={} (hands {t6_hands:?}) dual_wield={} borrowed_melee={} own_world={} own_projectile={} (+{t6_projectiles} projectile meshes) own_sounds={} missing_stand_ins={:?}; registry now {} (t6={})",
-        t6_dressed.dressed,
-        t6_dressed.own_view,
-        t6_dressed.own_anims,
-        t6_dressed.dual_wield,
-        t6_dressed.borrowed_melee,
-        t6_dressed.own_world,
-        t6_dressed.own_projectile,
-        t6_dressed.own_sounds,
-        t6_dressed.missing,
-        weapons.len(),
-        weapons.namespace_count(asset_core::AssetNamespace::T6)
-    ));
+            "t6 native weapons: captured={t6_captured}, projectiles={t6_projectiles}"
+        ));
 
         CommonPreparationResult {
             products: CommonPreparationProducts {

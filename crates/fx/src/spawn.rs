@@ -476,6 +476,7 @@ fn spawn_elem(
         prev_elem_handle: FX_ELEM_HANDLE_NONE,
         msec_begin,
         life_span_msec: life,
+        random_seed: life_idx,
         base_vel: [0.0; 3],
         origin,
         spawn_origin: elem_def.spawn_origin,

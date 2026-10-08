@@ -59,7 +59,7 @@ pub struct XAnimCatalog {
 pub struct XAnimBuild {
     catalog: XAnimCatalog,
     capture_zone: ZoneOwner,
-    capture_ns: AssetNamespace,
+    capture_ns: Option<AssetNamespace>,
     pub capture_gaps: usize,
     strings: ScriptStrings,
 }
@@ -81,7 +81,7 @@ impl Default for XAnimBuild {
         Self {
             catalog: XAnimCatalog::default(),
             capture_zone: ZoneOwner::default(),
-            capture_ns: AssetNamespace::Iw4,
+            capture_ns: None,
             capture_gaps: 0,
             strings: ScriptStrings::default(),
         }
@@ -180,23 +180,6 @@ impl XAnimCatalog {
         self.clip_at(self.index_by_name(ns, name)?)
     }
 
-    pub fn body_clip(
-        &self,
-        namespace: AssetNamespace,
-        name: &str,
-        body_bones: &[String],
-    ) -> Option<Arc<AnimClip>> {
-        if let Some(clip) = self.clip(namespace, name) {
-            return Some(clip);
-        }
-        if namespace == AssetNamespace::Iw4 {
-            return None;
-        }
-        let mut clip = (*self.clip(AssetNamespace::Iw4, name)?).clone();
-        clip.tracks.retain(|track| body_bones.contains(&track.name));
-        Some(Arc::new(clip))
-    }
-
     pub fn decode(&self, ns: AssetNamespace, name: &str) -> Option<AnimClip> {
         let captured = self.get(ns, name)?;
         AnimClip::from_parts(&captured.parts).ok()
@@ -222,20 +205,6 @@ impl XAnimCatalog {
         }
         seen.values().filter(|bits| bits.count_ones() >= 2).count()
     }
-
-    pub fn peer(&self, ns: AssetNamespace, name: &str) -> Option<&CapturedXAnim> {
-        const PREFER: [AssetNamespace; 3] =
-            [AssetNamespace::T5, AssetNamespace::Iw5, AssetNamespace::Iw4];
-        for other in PREFER {
-            if other == ns {
-                continue;
-            }
-            if let Some(captured) = self.get(other, name) {
-                return Some(captured);
-            }
-        }
-        None
-    }
 }
 
 impl XAnimBuild {
@@ -248,7 +217,7 @@ impl XAnimBuild {
     }
 
     pub fn set_capture_ns(&mut self, ns: AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn set_capture_zone(&mut self, zone: ZoneOwner) {
@@ -256,7 +225,11 @@ impl XAnimBuild {
     }
 
     pub fn insert_captured(&mut self, captured: CapturedXAnim) {
-        self.insert_in(self.capture_ns, captured);
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            captured,
+        );
     }
 
     pub fn insert_in(&mut self, ns: AssetNamespace, mut captured: CapturedXAnim) {
@@ -301,7 +274,7 @@ impl XAnimBuild {
                 .get(i)
                 .copied()
                 .unwrap_or(local.capture_zone);
-            self.capture_ns = key.namespace;
+            self.capture_ns = Some(key.namespace);
             self.retain(key, captured);
             if vacant {
                 added += 1;

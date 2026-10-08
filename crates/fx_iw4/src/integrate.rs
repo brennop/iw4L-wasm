@@ -7,20 +7,20 @@ pub struct FxElemVec3Range {
 }
 
 impl FxElemVec3Range {
-    fn sampled(self, seed: u64) -> [f32; 3] {
-        core::array::from_fn(|axis| {
-            self.base[axis]
-                + self.amplitude[axis]
-                    * crate::random::sample_f32(
-                        seed,
-                        [
-                            crate::random::FxRandomChannel::VelocityX,
-                            crate::random::FxRandomChannel::VelocityY,
-                            crate::random::FxRandomChannel::VelocityZ,
-                        ][axis],
-                    )
-        })
+    fn sampled(self, random: [f32; 3]) -> [f32; 3] {
+        core::array::from_fn(|axis| self.base[axis] + self.amplitude[axis] * random[axis])
     }
+}
+
+/// Every sample of an element's velocity graph shares these three draws, and
+/// each one is a hash, so a graph walk takes them once.
+fn velocity_random(seed: u64) -> [f32; 3] {
+    use crate::random::{FxRandomChannel, sample_f32};
+    [
+        sample_f32(seed, FxRandomChannel::VelocityX),
+        sample_f32(seed, FxRandomChannel::VelocityY),
+        sample_f32(seed, FxRandomChannel::VelocityZ),
+    ]
 }
 
 pub fn integrate_velocity_graph(
@@ -41,6 +41,7 @@ pub fn integrate_velocity_graph(
     let segment_count = samples.len() - 1;
 
     let segment_span_ms = life_ms * segment_count as f32;
+    let random = velocity_random(seed);
     let mut delta = [0.0f32; 3];
     let first = (libm::floorf(start * segment_count as f32) as usize).min(segment_count - 1);
     let end_excl =
@@ -53,8 +54,8 @@ pub fn integrate_velocity_graph(
         if hi <= lo {
             continue;
         }
-        let v0 = sample_lerp(samples, lo, seed);
-        let v1 = sample_lerp(samples, hi, seed);
+        let v0 = sample_lerp(samples, lo, random);
+        let v1 = sample_lerp(samples, hi, random);
         let w = 0.5 * (hi - lo) * segment_span_ms;
         delta[0] += (v0[0] + v1[0]) * w;
         delta[1] += (v0[1] + v1[1]) * w;
@@ -65,7 +66,7 @@ pub fn integrate_velocity_graph(
 
 #[inline]
 pub fn sample_vel_graph_at_age(samples: &[FxElemVec3Range], age01: f32, seed: u64) -> [f32; 3] {
-    sample_lerp(samples, age01, seed)
+    sample_lerp(samples, age01, velocity_random(seed))
 }
 
 fn clamp01(x: f32) -> f32 {
@@ -78,15 +79,15 @@ fn clamp01(x: f32) -> f32 {
     }
 }
 
-fn sample_lerp(samples: &[FxElemVec3Range], age01: f32, seed: u64) -> [f32; 3] {
+fn sample_lerp(samples: &[FxElemVec3Range], age01: f32, random: [f32; 3]) -> [f32; 3] {
     let last = samples.len() - 1;
     let t = clamp01(age01);
     let seg = t * last as f32;
     let i = (libm::floorf(seg) as usize).min(last);
     let j = (i + 1).min(last);
     let f = if i == j { 0.0 } else { seg - i as f32 };
-    let a = samples[i].sampled(seed);
-    let b = samples[j].sampled(seed);
+    let a = samples[i].sampled(random);
+    let b = samples[j].sampled(random);
     [
         a[0] + (b[0] - a[0]) * f,
         a[1] + (b[1] - a[1]) * f,

@@ -38,11 +38,7 @@ prepared local-light rows after shared light/shadow/texture bindings. Frame
 refresh/teardown clears products and catalog replacement invalidates run/shell
 caches. GPU/media readiness remains separate.
 
-T6 material preparation distinguishes captured native seeds from
-`RequiresDonor` sources. Common weapon materials retain the donor key and the
-inherited draw surface, sort key, game flags, atlas, surface types, state flags,
-camera region, draw route and zone. Their native T6 technique, state rows,
-constants and textures remain separate. Map/body native seeds use captured T6
-fields. Missing sources and wrong source families refuse before adding a
-material. Existing donor surface compatibility and texture defaults retain
-named preparation provenance.
+T6 common and map materials use captured native headers, technique sets, state,
+constants and textures. Missing captures or wrong source families refuse before
+adding a compiled material. Common weapons do not inherit IW4 material surfaces.
+Packed state decoding is shared; family adapters own alpha-test and draw rules.

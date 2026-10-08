@@ -1,5 +1,5 @@
 mod material;
-pub use material::{T6MaterialFields, T6MaterialPreparation, T6MaterialRefusal, T6MaterialSource};
+pub use material::T6MaterialRefusal;
 use std::collections::BTreeSet;
 
 use dxbc_sm5::wgsl::{ConstantRow, Shader, TextureDimension, TextureSlot};
@@ -882,7 +882,10 @@ impl MaterialCatalog {
             } else {
                 0
             },
-            ..Default::default()
+            zone: Default::default(),
+            t5_occupancy: None,
+            iw5_fallback_table: None,
+            t5_fallback_table: None,
         })
     }
 }

@@ -90,7 +90,7 @@ pub struct ProjectileMeshCatalog {
 #[derive(Clone, Debug, Default)]
 pub struct ProjectileMeshBuild {
     catalog: ProjectileMeshCatalog,
-    capture_ns: AssetNamespace,
+    capture_ns: Option<AssetNamespace>,
     strings: ScriptStrings,
 }
 
@@ -112,7 +112,7 @@ impl ProjectileMeshBuild {
     }
 
     pub fn set_capture_ns(&mut self, ns: AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn capture_unclassified(&mut self, stream: &ZoneStream<'_>, materials: &MaterialCatalog) {
@@ -132,7 +132,12 @@ impl ProjectileMeshBuild {
         else {
             return;
         };
-        self.insert_in(self.capture_ns, skel, Some(materials));
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            Some(materials),
+        );
     }
 
     pub fn capture_t5(
@@ -181,7 +186,12 @@ impl ProjectileMeshBuild {
     }
 
     pub fn insert_captured(&mut self, skel: ModelSkel, materials: Option<&MaterialCatalog>) {
-        self.insert_in(self.capture_ns, skel, materials);
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            materials,
+        );
     }
 
     pub fn capture_shared_unclassified(
@@ -190,7 +200,12 @@ impl ProjectileMeshBuild {
         materials: &MaterialCatalog,
     ) {
         if model_kind(&skel.name).is_none() {
-            self.insert_in(self.capture_ns, skel.clone(), Some(materials));
+            self.insert_in(
+                self.capture_ns
+                    .expect("asset capture requires an explicit family"),
+                skel.clone(),
+                Some(materials),
+            );
         }
     }
 

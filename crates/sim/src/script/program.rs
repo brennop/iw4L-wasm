@@ -13,14 +13,7 @@ pub enum Site {
     Client,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Realm {
-    Iw4,
-    Iw5,
-    T5,
-    T6,
-}
-
+pub use asset_core::FamilyId as Realm;
 #[derive(Clone, Debug)]
 pub struct ModuleIdentity {
     pub site: Site,

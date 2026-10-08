@@ -421,7 +421,7 @@ impl ZoneLane for Iw4Lane {
                     film_visions,
                     createart_name,
                     policy: WorldDrawPolicy::iw4(),
-                    ..Default::default()
+                    ..PreparedWorld::empty(WorldDrawPolicy::iw4())
                 },
                 collision: clip,
                 spawns: dm_spawns,
@@ -705,7 +705,7 @@ impl ZoneLane for Iw4Lane {
                         film_visions,
                         createart_name,
                         policy: WorldDrawPolicy::iw4(),
-                        ..Default::default()
+                        ..PreparedWorld::empty(WorldDrawPolicy::iw4())
                     },
                     collision: clip,
                     spawns: dm_spawns,

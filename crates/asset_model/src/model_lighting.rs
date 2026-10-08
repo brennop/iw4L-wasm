@@ -497,12 +497,17 @@ fn sample_light_grid_at(
         }
     }
 
+    let t6_visibility = grid.color_encoding == LightGridColorEncoding::T6Coefficients;
     let mut corners_needing_sight = 0u8;
     let mut corners_sight_cleared = 0u8;
     let mut corners_sight_suppressed = 0u8;
     let corners: [LightGridPickCorner; 8] = core::array::from_fn(|i| {
         let entry = entries[i];
-        let needs_trace = entry.map_or(0, |entry| entry.needs_trace);
+        let needs_trace = if t6_visibility {
+            0
+        } else {
+            entry.map_or(0, |entry| entry.needs_trace)
+        };
         let weight = weights[i];
         let asks = entry.is_some()
             && light_grid_corner_weight_keeps_entry(weight)
@@ -546,7 +551,7 @@ fn sample_light_grid_at(
     let selected_primary = light_grid_lookup_remap_primary(
         picked.primary_light,
         lookup_fallback,
-        grid.has_light_regions,
+        grid.has_light_regions && !t6_visibility,
         sun_base,
     );
 

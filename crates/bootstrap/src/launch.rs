@@ -203,6 +203,9 @@ fn run_export_gltf(games: asset_transport::GamesRoot, artifacts: PathBuf, zone_a
     )) {
         assets::MatchLoadOutcome::Ready(prepared) => prepared,
         assets::MatchLoadOutcome::Canceled => fatal("export-gltf: map walk canceled"),
+        assets::MatchLoadOutcome::Refused(reason) => {
+            fatal(&format!("export-gltf: map walk refused: {reason}"))
+        }
     };
     let summary = assets::export_prepared_world_gltf(
         &artifacts,

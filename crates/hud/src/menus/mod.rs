@@ -513,15 +513,16 @@ pub(crate) fn update_script_menus(
         };
         let mut owner_draw = |args: OwnerDrawArgs<'_>, frame: &mut ChromeFrame| {
             if args.item.owner_draw == 181 {
-                if let Some(image) = input
-                    .compass
-                    .as_ref()
-                    .and_then(|c| c.declaration.image.as_ref())
+                if let Some(map_namespace) = hud_images.map_namespace()
+                    && let Some(image) = input
+                        .compass
+                        .as_ref()
+                        .and_then(|c| c.declaration.image.as_ref())
                 {
                     push_owner_pic(
                         &args,
                         image.clone(),
-                        hud_images.map_namespace(),
+                        map_namespace,
                         args.color,
                         Draw2dOp::StretchPic,
                         frame,

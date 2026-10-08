@@ -312,7 +312,7 @@ pub(crate) fn settle_deaths(world: &mut World) {
     }
 }
 
-pub(crate) const TEAM_MENU: &str = "team_marinesopfor";
+pub(crate) const TEAM_MENU: &str = crate::TEAM_MENU;
 const CLASS_MENU: &str = "changeclass";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1049,6 +1049,11 @@ const SEAT_FIELDS: [&str; 6] = [
 const RADAR_FIELDS: [&str; 3] = ["hasradar", "radarmode", "isradarblocked"];
 
 pub(crate) fn publish_radar(world: &mut World) {
+    let constant = world
+        .resource::<Runtime>()
+        .dvars
+        .get(crate::CONSTANT_RADAR_DVAR)
+        .is_some_and(|value| value.trim().parse::<i32>().is_ok_and(|on| on != 0));
     let rows: Vec<(u32, bool, crate::RadarMode, bool)> = world
         .resource::<Runtime>()
         .players
@@ -1063,7 +1068,12 @@ pub(crate) fn publish_radar(world: &mut World) {
         let engine = &world.resource::<Runtime>().engine;
         let team_on = engine.team_radar.get(&team).is_some_and(|on| *on != 0);
         let team_blocked = engine.team_radar_blocked.contains(&team);
-        let radar = if (has || team_on) && !blocked && !team_blocked {
+        // An EMP still blinds a constant radar, as it does a live UAV.
+        let radar = if blocked || team_blocked {
+            crate::RadarMode::Off
+        } else if constant {
+            crate::RadarMode::Constant
+        } else if has || team_on {
             mode
         } else {
             crate::RadarMode::Off

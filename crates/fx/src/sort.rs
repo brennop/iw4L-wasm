@@ -145,7 +145,7 @@ fn sort_distance(
     }
     let elem = host.elems.get(elem_slot)?;
     let effect = host.effect_at(effect_slot)?;
-    let seed = fx_iw4::elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+    let seed = elem.random_seed;
     let world = spark_elem_world_origin(
         elem.origin,
         elem.flags,

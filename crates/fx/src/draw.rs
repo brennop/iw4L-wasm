@@ -1,6 +1,6 @@
 use fx_iw4::{
     FxElemType, FxRandomChannel, FxTrailEmittedVert, FxTrailSegmentDrawState, FxTrailVertex,
-    draw_elem_handler_present, elem_norm_time, elem_random_seed, sample_life_span_msec, sample_u16,
+    draw_elem_handler_present, elem_norm_time, sample_life_span_msec, sample_u16,
     spark_fountain_cluster_draw_allows, spark_fountain_slot_for_handle, trail_compute_u,
     trail_emit_index_quad, trail_emit_segment_verts, trail_uncompress_basis, vec3_length_sq,
     vec3_normalize,
@@ -375,8 +375,7 @@ fn draw_one_elem(
             };
             let age = host.msec_now.wrapping_sub(elem.msec_begin);
             let norm = elem_norm_time(age, elem.life_span_msec);
-            let elem_random_seed =
-                elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+            let elem_random_seed = elem.random_seed;
             let origin = crate::spark::spark_elem_world_origin(
                 elem.origin,
                 elem.flags,
@@ -423,7 +422,7 @@ fn draw_one_elem(
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
                 let norm = elem_norm_time(age, elem.life_span_msec);
-                let seed = elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                let seed = elem.random_seed;
                 let Some(size1) = on_spark_size1(FxSparkDrawQuery {
                     def_name: effect.def_name.as_str(),
                     catalog_index: effect.catalog_index,
@@ -468,8 +467,7 @@ fn draw_one_elem(
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
                 let norm = elem_norm_time(age, elem.life_span_msec);
-                let elem_random_seed =
-                    elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                let elem_random_seed = elem.random_seed;
                 let origin = crate::spark::spark_elem_world_origin(
                     elem.origin,
                     elem.flags,
@@ -534,8 +532,7 @@ fn draw_one_elem(
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
                 let norm = elem_norm_time(age, elem.life_span_msec);
-                let elem_random_seed =
-                    elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                let elem_random_seed = elem.random_seed;
                 let origin = crate::spark::spark_elem_world_origin(
                     elem.origin,
                     elem.flags,
@@ -574,8 +571,7 @@ fn draw_one_elem(
                 };
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
                 let norm = elem_norm_time(age, elem.life_span_msec);
-                let elem_random_seed =
-                    elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+                let elem_random_seed = elem.random_seed;
                 let origin = crate::spark::spark_elem_world_origin(
                     elem.origin,
                     elem.flags,
@@ -626,7 +622,7 @@ fn draw_one_elem(
     };
     let age = host.msec_now.wrapping_sub(elem.msec_begin);
     let norm = elem_norm_time(age, elem.life_span_msec);
-    let elem_random_seed = elem_random_seed(effect.random_seed, elem.sequence, elem.msec_begin);
+    let elem_random_seed = elem.random_seed;
     let origin = crate::spark::spark_elem_world_origin(
         elem.origin,
         elem.flags,

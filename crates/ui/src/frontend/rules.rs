@@ -38,6 +38,16 @@ pub fn seed_rules(dvars: &mut UiMenuDvars, config: &str) {
             dvars.set(&name, value.trim_matches('"'));
         }
     }
+    // Ours, so no stock config sets it.
+    for dvar in [
+        sim::CONSTANT_RADAR_DVAR,
+        sim::ENEMY_BOTS_DVAR,
+        sim::FRIENDLY_BOTS_DVAR,
+    ] {
+        if dvars.get(dvar).is_none() {
+            dvars.set(dvar, "0");
+        }
+    }
 }
 
 pub fn host_rules(dvars: &UiMenuDvars) -> frame::HostMatchRules {

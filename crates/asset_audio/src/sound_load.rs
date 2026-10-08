@@ -12,14 +12,6 @@ use crate::zone::{ZoneMemory, open_zone_shared};
 use crate::zone_sound::{ZoneSoundOrigin, ensure_zone_sound};
 use crate::{AssetNamespace, ZoneGame};
 
-pub fn namespace_for_zone(games: &GamesRoot, zone: &str) -> AssetNamespace {
-    find_zone_file(games, zone)
-        .ok()
-        .and_then(|found| crate::zone_game_for_path(&found.path))
-        .map(AssetNamespace::from_zone_game)
-        .unwrap_or(AssetNamespace::Iw4)
-}
-
 struct SoundSink {
     catalog: SoundCatalog,
     walked: usize,

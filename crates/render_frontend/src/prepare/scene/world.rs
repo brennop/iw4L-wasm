@@ -671,7 +671,12 @@ fn install_sun_effects(
 }
 
 impl WorldScene {
-    pub fn from_bounds(mesh: Mesh, min: [f32; 3], max: [f32; 3]) -> Self {
+    pub fn from_bounds(
+        mesh: Mesh,
+        min: [f32; 3],
+        max: [f32; 3],
+        policy: asset_world::WorldDrawPolicy,
+    ) -> Self {
         let min = Vec3::from_array(min);
         let max = Vec3::from_array(max);
         WorldScene {
@@ -724,7 +729,7 @@ impl WorldScene {
             center: (min + max) * 0.5,
             radius: ((max - min).length() * 0.5).max(1.0),
             world_bounds: None,
-            sun_sample_size_near: asset_world::WorldDrawPolicy::iw4().sun_sample_size_near,
+            sun_sample_size_near: policy.sun_sample_size_near,
             cull: None,
             intermission_view: None,
             fx_glass: None,
@@ -787,6 +792,7 @@ impl WorldScene {
         max: [f32; 3],
         dpvs: WorldDpvs,
         intermission_view: Option<WorldCameraPose>,
+        policy: asset_world::WorldDrawPolicy,
     ) -> Self {
         let min = Vec3::from_array(min);
         let max = Vec3::from_array(max);
@@ -831,7 +837,7 @@ impl WorldScene {
             center: (min + max) * 0.5,
             radius: ((max - min).length() * 0.5).max(1.0),
             world_bounds: None,
-            sun_sample_size_near: asset_world::WorldDrawPolicy::iw4().sun_sample_size_near,
+            sun_sample_size_near: policy.sun_sample_size_near,
             cull: None,
             intermission_view: None,
             fx_glass: None,
@@ -1107,6 +1113,7 @@ pub fn world_scene_from_draw(
     } = materials;
     let Some(mut draw) = world.draw else {
         let mut empty = WorldScene::default();
+        empty.sun_sample_size_near = world.policy.sun_sample_size_near;
         empty.common_profile_id = common_profile_id;
         empty.products_id = products_id;
         empty.fx_glass = fx_glass;
@@ -1566,6 +1573,7 @@ pub fn world_scene_from_draw(
             origin: view.origin,
             angles: view.angles,
         }),
+        policy,
     );
     scene.fx_glass = fx_glass;
     scene.world_bounds = world_bounds;

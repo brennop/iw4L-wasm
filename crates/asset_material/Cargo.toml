@@ -6,6 +6,7 @@ license.workspace = true
 description = "Authored materials, techniques, images, and cross-game remaps."
 
 [dependencies]
+d3d9_state.workspace = true
 web-time = { workspace = true }
 asset_core.workspace = true
 asset_transport.workspace = true

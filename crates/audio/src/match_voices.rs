@@ -57,7 +57,7 @@ pub(crate) fn team_voice_aliases(
         .chain(["generic_death_"])
         .collect();
     let mut aliases: Vec<String> = (0..bank.sounds().len())
-        .filter(|&index| bank.namespace_of_alias(index) == AssetNamespace::Iw4)
+        .filter(|&index| bank.namespace_of_alias(index) == Some(AssetNamespace::Iw4))
         .filter_map(|index| bank.name_at(index))
         .filter(|name| prefixes.iter().any(|prefix| name.starts_with(prefix)))
         .map(str::to_owned)

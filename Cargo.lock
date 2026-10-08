@@ -419,6 +419,7 @@ dependencies = [
  "asset_transport",
  "bcdec_rs",
  "bevy",
+ "d3d9_state",
  "diag",
  "dpvs_iw4",
  "dxbc_sm5",
@@ -6405,6 +6406,7 @@ name = "sim"
 version = "0.1.0"
 dependencies = [
  "anim_iw4",
+ "asset_core",
  "bevy_ecs",
  "clipmap_iw4",
  "diag",

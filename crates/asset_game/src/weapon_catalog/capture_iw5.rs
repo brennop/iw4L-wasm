@@ -137,7 +137,9 @@ impl WeaponCatalog {
         let leftover_anim_overrides = leftover_iw5_anim_overrides(stream, &geometry);
         apply_leftover_default_anim_overrides(&mut sz_xanims, &leftover_anim_overrides);
         self.entries.push(CatalogWeapon {
-            namespace: self.capture_ns,
+            namespace: self
+                .capture_ns
+                .expect("asset capture requires an explicit family"),
             impact_payload: None,
             alternate_weapon: geometry
                 .alternate_weapon_name
@@ -1043,7 +1045,7 @@ pub(super) fn read_iw5_combat_fx(
 ) -> WeaponCombatFx {
     use fastfile_iw5::size as sz;
     let Some(body) = geometry.weap_def else {
-        return WeaponCombatFx::default();
+        return WeaponCombatFx::empty(crate::AssetNamespace::Iw5);
     };
     let name = |x86, x64| match stream.ptr_at(body, stream.layout(x86, x64)) {
         Ok(fastfile_iw5::ZonePtr::Offset(q)) => fx_name_at_slot(stream.resolve_alias(q)),
@@ -1060,7 +1062,7 @@ pub(super) fn read_iw5_combat_fx(
             && world_last_shot_eject_hint.is_some(),
         view_last_shot_eject_hint,
         world_last_shot_eject_hint,
-        ..WeaponCombatFx::default()
+        ..WeaponCombatFx::empty(crate::AssetNamespace::Iw5)
     }
 }
 

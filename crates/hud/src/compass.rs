@@ -261,7 +261,7 @@ pub(crate) fn update_compass(
         items.map,
         items.player.zip(player_stem),
         &drawable.image_name,
-        hud_images.map_namespace(),
+        hud_images.map_namespace().expect("drawable compass family"),
         uv,
         map_rotation,
         [player_w, player_h],
@@ -269,7 +269,9 @@ pub(crate) fn update_compass(
         jam_fade,
     );
 
-    let map_ns = hud_images.map_namespace();
+    let Some(map_ns) = hud_images.map_namespace() else {
+        return;
+    };
     if hud_images
         .get(map_ns, &drawable.image_name, &mut images)
         .is_none()
@@ -700,6 +702,35 @@ fn take_radar_pings(
         latch.radar_last_ms = None;
         return None;
     }
+    if radar == sim::RadarMode::Constant {
+        // No sweep: every enemy is pinged afresh each frame, so its blip stays
+        // solid and follows it. Cold-Blooded does not hide anyone from it.
+        latch.radar_progress = 0.0;
+        latch.radar_last_ms = None;
+        for (id, _) in &snapshot.players {
+            if *id == local {
+                continue;
+            }
+            let Some(meta) = snapshot.meta.for_client(*id) else {
+                continue;
+            };
+            if same_team(local_team, meta.client_state_team) {
+                continue;
+            }
+            let Some(ps) = presented.alive_player(*id) else {
+                continue;
+            };
+            latch.actors.insert(
+                id.0,
+                PingActor {
+                    begin_fade_ms: now_ms,
+                    fade_seconds: COMPASS_RADAR_PING_FADE_TIME_DEFAULT,
+                    last_pos: [ps.origin[0], ps.origin[1]],
+                },
+            );
+        }
+        return None;
+    }
     let frametime = latch
         .radar_last_ms
         .map_or(0, |last| now_ms.saturating_sub(last).max(0));
@@ -761,7 +792,7 @@ pub(crate) fn resolve(
         gaps.raise(GapCause::CompassNoImageDeclared);
         return None;
     };
-    let map_ns = hud_images.map_namespace();
+    let map_ns = hud_images.map_namespace()?;
     hud_images.ensure_rgba(map_ns, image_name);
     if hud_images.rgba(map_ns, image_name).is_none() {
         gaps.raise(GapCause::CompassImageMissing {

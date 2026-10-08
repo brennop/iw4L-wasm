@@ -1512,7 +1512,7 @@ impl AssetLinkSink for CommonWalkSink {
             sound.raw_file(name, data, zlib_compressed);
         }
         self.player_anim_sources
-            .capture(name, data, zlib_compressed);
+            .capture(self.materials.capture_ns(), name, data, zlib_compressed);
         if let Some(table) = asset_game::capture_pen_table(name, data, zlib_compressed) {
             self.pen_table = Some(table);
         }

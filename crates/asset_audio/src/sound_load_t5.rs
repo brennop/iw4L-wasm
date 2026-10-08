@@ -184,7 +184,7 @@ impl AssetLinkSink for T5SoundCapture {
             pcm: pcm_bytes.into(),
             zone: self.catalog.capture_zone_for_ingest(),
             seek_table,
-            ..Default::default()
+            sab_media: None,
         });
         Ok(())
     }

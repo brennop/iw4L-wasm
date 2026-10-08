@@ -5,8 +5,8 @@ use catalog_linking::{material_hint_edge, stamp_combat_fx};
 mod capture_merge;
 use capture_merge::{
     apply_leftover_default_anim_overrides, apply_leftover_default_sound_overrides,
-    apply_leftover_hip_spread, idle_from_capture, leftover_hip_spread_block,
-    merge_body_facts, merge_combat_fx, merge_combat_slots, merge_sound_aliases, merge_sz_xanims,
+    apply_leftover_hip_spread, idle_from_capture, leftover_hip_spread_block, merge_body_facts,
+    merge_combat_fx, merge_combat_slots, merge_sound_aliases, merge_sz_xanims,
     movement_from_capture, read_hide_tags, read_name, read_script_string_map, read_sz_xanims,
     xanims_idle,
 };
@@ -16,7 +16,7 @@ pub use preparation::{
     PreparedComponentTarget, WeaponComponent, WeaponPreparationRecipe, WeaponPreparationRefusal,
 };
 mod iw5_parameters;
-mod t6_compatibility;
+mod native_t6;
 use iw5_parameters::*;
 mod registry;
 pub use capture_t6::{
@@ -494,8 +494,6 @@ pub enum CacOffhandBucket {
     Lethal,
     Tactical,
 }
-
-const OFFHAND_CLASS_SMOKE: i32 = 2;
 
 pub fn cac_offhand_bucket(offhand_class: i32) -> Option<CacOffhandBucket> {
     match offhand_class {
@@ -1031,7 +1029,7 @@ impl CombatFxSlots {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeaponCombatFx {
     pub view_flash: AssetEdge<FxSpace>,
     pub view_flash_hint: Option<String>,
@@ -1058,6 +1056,28 @@ pub struct WeaponCombatFx {
 }
 
 impl WeaponCombatFx {
+    pub fn empty(namespace: crate::AssetNamespace) -> Self {
+        Self {
+            namespace,
+            view_flash: AssetEdge::Absent,
+            view_flash_hint: None,
+            world_flash: AssetEdge::Absent,
+            world_flash_hint: None,
+            view_shell_eject: AssetEdge::Absent,
+            view_shell_eject_hint: None,
+            world_shell_eject: AssetEdge::Absent,
+            world_shell_eject_hint: None,
+            view_last_shot_eject: AssetEdge::Absent,
+            view_last_shot_eject_hint: None,
+            world_last_shot_eject: AssetEdge::Absent,
+            world_last_shot_eject_hint: None,
+            explosion: AssetEdge::Absent,
+            explosion_hint: None,
+            tracer: AssetEdge::Absent,
+            tracer_hint: None,
+            last_shot_eject_pair_authored: false,
+        }
+    }
     fn present_bound<'a>(
         &self,
         edge: AssetEdge<FxSpace>,
@@ -1176,7 +1196,7 @@ pub struct WeaponCatalog {
     entries: Vec<CatalogWeapon>,
     strings: ScriptStrings,
     iw5_attachments: HashMap<String, Iw5ScopeRow>,
-    capture_ns: crate::AssetNamespace,
+    capture_ns: Option<crate::AssetNamespace>,
     vehicle_turrets: HashMap<String, String>,
     vehicle_compass: HashMap<String, ([String; 2], [i32; 2])>,
     vehicle_accel: HashMap<String, f32>,
@@ -1390,7 +1410,6 @@ struct WeaponRow {
 
     hud_icon: Option<String>,
     hud_icon_from_slot: bool,
-    own_hud_icon: bool,
     pickup_icon: Option<String>,
     pickup_icon_image: Option<String>,
     pickup_icon_authored: bool,
@@ -1483,7 +1502,7 @@ impl Default for WeaponRow {
             iw5_fx_overrides: Vec::new(),
             iw5_notetrack_overrides: Vec::new(),
             sounds: WeaponSoundAliases::default(),
-            combat_fx: WeaponCombatFx::default(),
+            combat_fx: WeaponCombatFx::empty(crate::AssetNamespace::Iw4),
             reticle: WeaponReticleAssets::default(),
             hud_material_edges: WeaponHudMaterialEdges::default(),
             overlay_material: None,
@@ -1491,7 +1510,6 @@ impl Default for WeaponRow {
             overlay_material_from_slot: false,
             hud_icon: None,
             hud_icon_from_slot: false,
-            own_hud_icon: false,
             pickup_icon: None,
             pickup_icon_image: None,
             pickup_icon_authored: false,
@@ -1706,20 +1724,6 @@ pub struct T6Melee {
     pub knife: String,
     pub melee: String,
     pub charge: Option<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct T6StandInCensus {
-    pub refusals: Vec<WeaponPreparationRefusal>,
-    pub dressed: usize,
-    pub own_view: usize,
-    pub own_world: usize,
-    pub own_projectile: usize,
-    pub own_sounds: usize,
-    pub own_anims: usize,
-    pub dual_wield: usize,
-    pub borrowed_melee: usize,
-    pub missing: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2049,24 +2053,6 @@ impl WeaponBuild {
                 tracers,
             );
         }
-    }
-
-    pub fn stamp_namespace(&mut self, ns: crate::AssetNamespace) {
-        let attachments = &self.registry.iw5_attachments;
-        for row in self.registry.rows.iter_mut().skip(1) {
-            row.namespace = ns;
-            row.preparation = WeaponPreparationRecipe::for_capture(ns, &row.name);
-            if ns == crate::AssetNamespace::Iw5 {
-                if let Some((view, world)) =
-                    iw5_default_scope_models(&row.iw5_attachment_slots, attachments)
-                {
-                    row.attachment_view_models.extend(view);
-                    row.attachment_world_models.extend(world);
-                }
-            }
-        }
-        self.registry.rebuild_name_maps();
-        self.registry.revision = mint_weapon_revision();
     }
 
     pub fn resolve_hud_material_edges(&mut self, materials: &crate::MaterialDefinitions) {

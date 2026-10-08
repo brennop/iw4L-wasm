@@ -37,6 +37,7 @@ pub struct FpvAssemblyTags {
 
 #[derive(Debug)]
 pub struct FpvAssembly {
+    pub family: crate::FpvFamilyConnection,
     mesh_identity: u64,
     pub dobj: Arc<DObj>,
     pub parts: Vec<FpvAssemblyPart>,
@@ -174,6 +175,10 @@ impl FpvAssembly {
         if catalog.identity() == 0 {
             return Err(FpvAssemblyError::Catalog("published mesh owner"));
         }
+        let family = crate::FpvFamilyConnection::bind(catalog, mounts.gun, hands).ok_or(
+            FpvAssemblyError::Catalog("compatible gun and hands families"),
+        )?;
+        let hands = family.hands();
         let reticle_tags: Vec<String> = if jammed {
             EMP_RETICLE_TAGS
                 .iter()
@@ -184,6 +189,13 @@ impl FpvAssembly {
         };
         let gun_tags: Vec<String> = hide_tags.iter().chain(&reticle_tags).cloned().collect();
         let pose_of = |model: FpvMeshIndex| -> Result<&ModelPoseSrc, FpvAssemblyError> {
+            if model != hands
+                && catalog
+                    .get_at(model.order())
+                    .is_none_or(|entry| entry.namespace != family.family())
+            {
+                return Err(FpvAssemblyError::Catalog("native FPV component family"));
+            }
             catalog
                 .get_at(model.order())
                 .and_then(|entry| entry.skel.pose.as_ref())
@@ -192,7 +204,7 @@ impl FpvAssembly {
         let mut parts = vec![
             (hands, FpvPartRole::Hands, None),
             (
-                mounts.gun,
+                family.gun(),
                 FpvPartRole::Gun,
                 Some(Attach {
                     parent_model: 0,
@@ -302,6 +314,7 @@ impl FpvAssembly {
             })
             .collect();
         Ok(Self {
+            family,
             mesh_identity: catalog.identity(),
             dobj,
             parts,

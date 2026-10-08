@@ -1,6 +1,5 @@
 use super::*;
 mod binding;
-mod t6;
 use asset_core::{AssetKey, AssetKind, AssetNamespace};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,8 +21,6 @@ pub enum WeaponComponent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComponentPreparationPolicy {
     Native,
-    T6Conversion,
-    T6WeaponDonor { weapon: AssetKey },
     Unsupported(ComponentPreparationRefusal),
 }
 
@@ -51,9 +48,9 @@ pub enum PreparedComponentTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WeaponPreparationRefusal {
-    MissingWeaponDonor {
+    MissingNativeComponent {
         weapon: String,
-        donor: Option<String>,
+        component: WeaponComponent,
     },
 }
 
@@ -100,8 +97,7 @@ pub struct WeaponPreparationRecipe {
     source: AssetKey,
     routes: [Option<AssetNamespace>; 11],
     references: Vec<PreparedComponentReference>,
-    refusal: Option<WeaponPreparationRefusal>,
-    donor_weapon: Option<AssetKey>,
+    pub(in crate::weapon_catalog) refusal: Option<WeaponPreparationRefusal>,
     closed_references: bool,
 }
 
@@ -147,31 +143,16 @@ impl WeaponPreparationRecipe {
             routes: [Some(namespace); 11],
             references: Vec::new(),
             refusal: None,
-            donor_weapon: None,
             closed_references: false,
         }
     }
     pub(super) fn for_capture(namespace: AssetNamespace, weapon: &str) -> Self {
-        if namespace != AssetNamespace::T6 {
-            return Self::native(namespace);
+        let mut recipe = Self::native(namespace);
+        recipe.set_source(namespace, weapon);
+        if namespace == AssetNamespace::T6 {
+            recipe.attachment_mount_on_root = true;
+            recipe.hide_mode = crate::FpvHideMode::Bones;
         }
-        Self {
-            host_namespace: AssetNamespace::Iw4,
-            attachment_mount_on_root: true,
-            hide_mode: crate::FpvHideMode::Bones,
-            source: AssetKey {
-                namespace,
-                kind: AssetKind::Weapon,
-                name: weapon.to_owned(),
-            },
-            donor_weapon: None,
-            closed_references: true,
-            routes: [None; 11],
-            references: Vec::new(),
-            refusal: Some(WeaponPreparationRefusal::MissingWeaponDonor {
-                weapon: weapon.to_owned(),
-                donor: crate::weapon_t6::stand_in_for(weapon).map(str::to_owned),
-            }),
-        }
+        recipe
     }
 }

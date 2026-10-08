@@ -2,8 +2,8 @@ use fx_iw4::{
     FX_ELEM_TYPE_SPARK_CLOUD, FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_STATUS_HAS_PENDING_LOOP_ELEMS,
     FX_STATUS_REF_COUNT_MASK_IW4, FxOrientFrame, FxUpdateEffectBolt, axis_to_quat,
     begin_iterating_over_effects_exclusive, bolt_compose_orientation, bolt_mark_lost,
-    elem_norm_time, elem_random_seed, elem_uses_collision, end_iterating_over_effects,
-    end_iterating_runs_gc, get_orientation, unit_quat_to_axis, update_effect_bolt, vector_vectors,
+    elem_norm_time, elem_uses_collision, end_iterating_over_effects, end_iterating_runs_gc,
+    get_orientation, unit_quat_to_axis, update_effect_bolt, vector_vectors,
 };
 use std::collections::HashMap;
 
@@ -384,22 +384,20 @@ fn pending_collide_for_elem(
     }
     let def_index = elem.def_index;
     let base_vel = elem.base_vel;
-    let sequence = elem.sequence;
+    let elem_seed = elem.random_seed;
     let origin = elem.origin;
     let msec_begin = elem.msec_begin;
     let life_msec = elem.life_span_msec.max(1);
     let flags = elem.flags;
-    let (def_name, catalog_index, effect_seed, now, alt) = match host.effect_at(effect_slot) {
+    let (def_name, catalog_index, now, alt) = match host.effect_at(effect_slot) {
         Some(e) => (
             slot_def_name(e),
             e.catalog_index,
-            e.random_seed,
             e.frame_now(),
             e.frame_when_played(),
         ),
         None => return None,
     };
-    let elem_seed = elem_random_seed(effect_seed, sequence, msec_begin);
     let spawn = host
         .elems
         .get(slot)
@@ -614,22 +612,20 @@ fn update_element(
     let msec_begin = elem.msec_begin;
     let life_msec = elem.life_span_msec.max(1);
     let base_vel = elem.base_vel;
-    let sequence = elem.sequence;
+    let elem_seed = elem.random_seed;
     let origin = elem.origin;
     let elem_type = elem.elem_type;
     let spark_handle = elem.spark_cloud_handle;
     let at_rest_fraction = elem.at_rest_fraction;
-    let (def_name, catalog_index, effect_seed, now, alt) = match host.effect_at(effect_slot) {
+    let (def_name, catalog_index, now, alt) = match host.effect_at(effect_slot) {
         Some(e) => (
             slot_def_name(e),
             e.catalog_index,
-            e.random_seed,
             e.frame_now(),
             e.frame_when_played(),
         ),
         None => return true,
     };
-    let elem_seed = elem_random_seed(effect_seed, sequence, msec_begin);
     let spawn = host
         .elems
         .get(slot)
@@ -666,7 +662,7 @@ fn update_element(
         life_ms,
         dt_sec,
         base_vel,
-        elem_random_seed: elem_random_seed(effect_seed, sequence, msec_begin),
+        elem_random_seed: elem_seed,
         origin,
         prev_msec,
         msec_now,
@@ -694,7 +690,6 @@ fn update_element(
                 }
             }
             let emit_residual = host.elems.get(slot).map(|e| e.emit_residual).unwrap_or(0);
-            let elem_seed = elem_random_seed(effect_seed, sequence, msec_begin);
             if let Some(sched) = on_emit(FxEmitQuery {
                 def_name: def_name.as_str(),
                 catalog_index,
@@ -797,25 +792,17 @@ fn update_element(
             def_index,
             age_msec: msec_now.saturating_sub(msec_begin).max(0),
             life_msec,
-            elem_random_seed: elem_random_seed(effect_seed, sequence, msec_begin),
+            elem_random_seed: elem_seed,
             norm_time: elem_norm_time(msec_now.saturating_sub(msec_begin).max(0), life_msec),
         }) {
             let (origin_now, at_rest_now, spawn, seed) = match host.elems.get(slot) {
-                Some(e) => {
-                    let seed = elem_random_seed(effect_seed, sequence, msec_begin);
-                    (
-                        e.origin,
-                        e.at_rest_fraction,
-                        Some(e.orient_spawn_params(seed)),
-                        seed,
-                    )
-                }
-                None => (
-                    origin,
-                    at_rest_fraction,
-                    None,
-                    elem_random_seed(effect_seed, sequence, msec_begin),
+                Some(e) => (
+                    e.origin,
+                    e.at_rest_fraction,
+                    Some(e.orient_spawn_params(elem_seed)),
+                    elem_seed,
                 ),
+                None => (origin, at_rest_fraction, None, elem_seed),
             };
             let world = spark_elem_world_origin(origin_now, flags, &now, &alt, spawn);
             let axis = spark_elem_axis(

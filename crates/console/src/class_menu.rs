@@ -695,9 +695,7 @@ pub(crate) fn route(
                 key.clone()
             };
             let preview = catalog.previews.get(&lookup)?;
-            let ns = asset_core::AssetKey::parse(&lookup)
-                .map(|key| key.namespace)
-                .unwrap_or(asset_core::AssetNamespace::Iw4);
+            let ns = asset_core::AssetKey::parse(&lookup).ok()?.namespace;
             Some((ns, preview))
         });
     let image = preview

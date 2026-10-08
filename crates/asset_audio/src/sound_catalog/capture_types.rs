@@ -2,7 +2,7 @@ use super::*;
 
 pub const MSS_PCM: i32 = 1;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LoadedSoundPcm {
     pub name: String,
 
@@ -27,6 +27,7 @@ impl LoadedSoundPcm {
         self.game
     }
     pub fn captured(
+        game: ZoneGame,
         name: impl Into<String>,
         format: i32,
         rate: u32,
@@ -36,7 +37,7 @@ impl LoadedSoundPcm {
     ) -> Self {
         Self {
             name: name.into(),
-            game: ZoneGame::Iw4,
+            game,
             format,
             rate,
             bits: 16,
@@ -61,7 +62,9 @@ impl LoadedSoundPcm {
             samples: source.entry.frame_count,
             sab_media: Some(source),
             zone,
-            ..Default::default()
+            block_size: 0,
+            pcm: Default::default(),
+            seek_table: Vec::new(),
         }
     }
 
@@ -302,7 +305,7 @@ impl VoicePriority {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CapturedSound {
     pub name: String,
     pub aliases: Vec<CapturedAlias>,

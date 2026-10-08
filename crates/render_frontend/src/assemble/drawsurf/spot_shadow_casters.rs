@@ -169,7 +169,7 @@ fn mix_sidecar(id: &mut u64, indices: &[u32]) {
     }
 }
 
-fn host_dvars() -> SpotShadowChooseDvars {
+fn host_dvars(sun_sample_size_near: f32) -> SpotShadowChooseDvars {
     SpotShadowChooseDvars {
         spot_enable: true,
         spot_limit: 4,
@@ -180,7 +180,7 @@ fn host_dvars() -> SpotShadowChooseDvars {
         spot_project_frac: 0.0,
         quality_spot_shadow: false,
         spot_dist_cull: false,
-        sun_sample_size_near: 0.25,
+        sun_sample_size_near,
     }
 }
 
@@ -422,7 +422,7 @@ pub fn fill_spot_shadow_caster_plan(
         lights.len() as u32,
         lighting_iw4::SpotShadowUsedForce::None,
         false,
-        host_dvars(),
+        host_dvars(world.sun_sample_size_near),
         SPOT_SHADOW_SCORE_LUMA,
         None,
     ) else {

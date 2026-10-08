@@ -340,7 +340,7 @@ pub struct CrossGameTechsetResolution {
     pub reason: CrossGameReason,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TechniqueSetFacts {
     pub namespace: crate::AssetNamespace,
     pub name: AssetRef,
@@ -390,7 +390,6 @@ pub enum TechsetResolve<'a> {
 
 #[derive(Clone, Debug)]
 pub struct AuthoredMaterial {
-    pub t6_preparation: Option<crate::t6_techset::T6MaterialPreparation>,
     pub name: AssetRef,
 
     pub namespace: crate::AssetNamespace,
@@ -487,7 +486,7 @@ pub struct MaterialCatalog {
 
     link: ZoneLinkState,
     capture_zone: crate::asset_graph::ZoneOwner,
-    capture_ns: crate::AssetNamespace,
+    capture_ns: Option<crate::AssetNamespace>,
 
     cross_zone_link: bool,
 }
@@ -555,11 +554,12 @@ impl MaterialCatalog {
     }
 
     pub fn set_capture_ns(&mut self, ns: crate::AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn capture_ns(&self) -> crate::AssetNamespace {
         self.capture_ns
+            .expect("asset capture requires an explicit family")
     }
 
     /// Pointer→row lookup: this is the walk's question, and it only has an
@@ -1397,25 +1397,29 @@ impl MaterialCatalog {
                 .ok()?
                 .to_vec()
         };
-        Some(self.take_image_slot(AuthoredImage {
-            namespace: self.capture_ns,
-            name,
-            map_type: geometry.map_type,
-            semantic: geometry.semantic,
-            category: geometry.category,
-            use_srgb_reads: geometry.use_srgb_reads,
-            width: geometry.width,
-            height: geometry.height,
-            depth: geometry.depth,
-            level_count: geometry.level_count,
-            format: geometry.format,
-            payload: Arc::new(payload),
-            decoded: None,
-            common_owned: false,
-            decoded_variant: None,
-            decoded_by: None,
-            pending_decode: None,
-        }))
+        Some(
+            self.take_image_slot(AuthoredImage {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                map_type: geometry.map_type,
+                semantic: geometry.semantic,
+                category: geometry.category,
+                use_srgb_reads: geometry.use_srgb_reads,
+                width: geometry.width,
+                height: geometry.height,
+                depth: geometry.depth,
+                level_count: geometry.level_count,
+                format: geometry.format,
+                payload: Arc::new(payload),
+                decoded: None,
+                common_owned: false,
+                decoded_variant: None,
+                decoded_by: None,
+                pending_decode: None,
+            }),
+        )
     }
 
     fn capture_material(&mut self, s: &ZoneStream<'_>) -> Option<usize> {
@@ -1425,7 +1429,7 @@ impl MaterialCatalog {
             .and_then(|name| s.cstr(name).ok())
             .map(AssetRef::decode)?;
 
-        let technique_set = self.link.last_technique_set.take().unwrap_or_default();
+        let technique_set = self.link.last_technique_set.take()?;
         let mut textures = Vec::with_capacity(geometry.texture_count);
         if let Some(table) = geometry.textures {
             for i in 0..geometry.texture_count {
@@ -1465,7 +1469,12 @@ impl MaterialCatalog {
         }
 
         let table = technique_set.table.clone().or_else(|| {
-            Self::resolve_technique_table(&self.techsets, self.capture_ns, &technique_set.name)
+            Self::resolve_technique_table(
+                &self.techsets,
+                self.capture_ns
+                    .expect("asset capture requires an explicit family"),
+                &technique_set.name,
+            )
         });
         let route = table.as_ref().map(|table| {
             route_from_table(
@@ -1475,37 +1484,40 @@ impl MaterialCatalog {
                 table,
             )
         });
-        Some(self.take_material_slot(AuthoredMaterial {
-            t6_preparation: None,
-            name,
-            namespace: self.capture_ns,
-            technique_set_edge: if technique_set.name.is_empty() {
-                crate::AssetEdge::Absent
-            } else {
-                crate::AssetEdge::Unresolved(crate::AssetEdgeReason::CatalogMiss)
-            },
-            technique_set: technique_set.name,
-            draw_surf: geometry.draw_surf,
-            sort_key: geometry.sort_key,
-            info_game_flags: geometry.info_game_flags,
-            texture_atlas: Some(geometry.texture_atlas),
-            surface_type_bits: geometry.surface_type_bits,
-            t5_layered_surface_types: None,
-            state_flags: geometry.state_flags,
-            camera_region: geometry.camera_region,
-            state_bits: read_state_bits(
-                |offset| s.u32_at(geometry.state_bits?, offset).ok(),
-                geometry.state_bits_count,
-            ),
-            state_bits_entry: geometry.state_bits_entry,
-            t5_state_bits_entry: None,
-            iw5_state_bits_entry: None,
-            technique_table: table,
-            route,
-            textures,
-            constants,
-            zone: self.capture_zone,
-        }))
+        Some(
+            self.take_material_slot(AuthoredMaterial {
+                name,
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                technique_set_edge: if technique_set.name.is_empty() {
+                    crate::AssetEdge::Absent
+                } else {
+                    crate::AssetEdge::Unresolved(crate::AssetEdgeReason::CatalogMiss)
+                },
+                technique_set: technique_set.name,
+                draw_surf: geometry.draw_surf,
+                sort_key: geometry.sort_key,
+                info_game_flags: geometry.info_game_flags,
+                texture_atlas: Some(geometry.texture_atlas),
+                surface_type_bits: geometry.surface_type_bits,
+                t5_layered_surface_types: None,
+                state_flags: geometry.state_flags,
+                camera_region: geometry.camera_region,
+                state_bits: read_state_bits(
+                    |offset| s.u32_at(geometry.state_bits?, offset).ok(),
+                    geometry.state_bits_count,
+                ),
+                state_bits_entry: geometry.state_bits_entry,
+                t5_state_bits_entry: None,
+                iw5_state_bits_entry: None,
+                technique_table: table,
+                route,
+                textures,
+                constants,
+                zone: self.capture_zone,
+            }),
+        )
     }
 
     fn capture_owned_technique_graph(
@@ -1687,16 +1699,20 @@ impl MaterialCatalog {
                 );
             }
         }
-        Some(self.take_techset_slot(TechniqueSetFacts {
-            namespace: self.capture_ns,
-            name,
-            zone: self.capture_zone,
-            table,
-            t5_occupancy: None,
-            iw5_fallback_table: None,
-            t5_fallback_table: None,
-            world_vert_format: geometry.world_vert_format,
-        }))
+        Some(
+            self.take_techset_slot(TechniqueSetFacts {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                zone: self.capture_zone,
+                table,
+                t5_occupancy: None,
+                iw5_fallback_table: None,
+                t5_fallback_table: None,
+                world_vert_format: geometry.world_vert_format,
+            }),
+        )
     }
 
     fn capture_shader(&mut self, s: &ZoneStream<'_>, kind: AssetType) -> Option<usize> {
@@ -1711,12 +1727,16 @@ impl MaterialCatalog {
                 bytes.extend_from_slice(&s.u32_at(program, i * 4).ok()?.to_le_bytes());
             }
         }
-        Some(self.take_shader_slot(AuthoredShader {
-            namespace: self.capture_ns,
-            name,
-            kind,
-            program: bytes,
-        }))
+        Some(
+            self.take_shader_slot(AuthoredShader {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                kind,
+                program: bytes,
+            }),
+        )
     }
 
     fn capture_vertex_decl(&mut self, s: &ZoneStream<'_>) -> Option<usize> {
@@ -2411,25 +2431,29 @@ impl MaterialCatalog {
                 .ok()?
                 .to_vec()
         };
-        Some(self.take_image_slot(AuthoredImage {
-            namespace: self.capture_ns,
-            name,
-            map_type: geometry.map_type,
-            semantic: geometry.semantic,
-            category: geometry.category,
-            use_srgb_reads: geometry.use_srgb_reads,
-            width: geometry.width,
-            height: geometry.height,
-            depth: geometry.depth,
-            level_count: geometry.level_count,
-            format: geometry.format,
-            payload: Arc::new(payload),
-            decoded: None,
-            common_owned: false,
-            decoded_variant: None,
-            decoded_by: None,
-            pending_decode: None,
-        }))
+        Some(
+            self.take_image_slot(AuthoredImage {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                map_type: geometry.map_type,
+                semantic: geometry.semantic,
+                category: geometry.category,
+                use_srgb_reads: geometry.use_srgb_reads,
+                width: geometry.width,
+                height: geometry.height,
+                depth: geometry.depth,
+                level_count: geometry.level_count,
+                format: geometry.format,
+                payload: Arc::new(payload),
+                decoded: None,
+                common_owned: false,
+                decoded_variant: None,
+                decoded_by: None,
+                pending_decode: None,
+            }),
+        )
     }
 
     fn capture_material_t5(&mut self, s: &fastfile_t5::ZoneStream<'_>) -> Option<usize> {
@@ -2438,7 +2462,7 @@ impl MaterialCatalog {
             .name
             .and_then(|name| s.cstr(name).ok())
             .map(AssetRef::decode)?;
-        let technique_set = self.link.last_technique_set.take().unwrap_or_default();
+        let technique_set = self.link.last_technique_set.take()?;
         let mut textures = Vec::with_capacity(geometry.texture_count);
         if let Some(table) = geometry.textures {
             for i in 0..geometry.texture_count {
@@ -2478,9 +2502,10 @@ impl MaterialCatalog {
         }
         Some(
             self.take_material_slot(AuthoredMaterial {
-                t6_preparation: None,
                 name,
-                namespace: self.capture_ns,
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
                 technique_set_edge: if technique_set.name.is_empty() {
                     crate::AssetEdge::Absent
                 } else {
@@ -2549,16 +2574,20 @@ impl MaterialCatalog {
                 );
             }
         }
-        Some(self.take_techset_slot(TechniqueSetFacts {
-            namespace: self.capture_ns,
-            name,
-            zone: self.capture_zone,
-            table: None,
-            t5_occupancy: occupancy,
-            iw5_fallback_table: None,
-            t5_fallback_table: fallback,
-            world_vert_format: geometry.world_vert_format,
-        }))
+        Some(
+            self.take_techset_slot(TechniqueSetFacts {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                zone: self.capture_zone,
+                table: None,
+                t5_occupancy: occupancy,
+                iw5_fallback_table: None,
+                t5_fallback_table: fallback,
+                world_vert_format: geometry.world_vert_format,
+            }),
+        )
     }
 
     fn capture_owned_technique_graph_t5(
@@ -2692,12 +2721,16 @@ impl MaterialCatalog {
                 bytes.extend_from_slice(&s.u32_at(program, i * 4).ok()?.to_le_bytes());
             }
         }
-        Some(self.take_shader_slot(AuthoredShader {
-            namespace: self.capture_ns,
-            name,
-            kind,
-            program: bytes,
-        }))
+        Some(
+            self.take_shader_slot(AuthoredShader {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                kind,
+                program: bytes,
+            }),
+        )
     }
 
     fn capture_vertex_decl_t5(&mut self, s: &fastfile_t5::ZoneStream<'_>) -> Option<usize> {
@@ -2733,25 +2766,29 @@ impl MaterialCatalog {
                 .ok()?
                 .to_vec()
         };
-        Some(self.take_image_slot(AuthoredImage {
-            namespace: self.capture_ns,
-            name,
-            map_type: geometry.map_type,
-            semantic: geometry.semantic,
-            category: geometry.category,
-            use_srgb_reads: geometry.use_srgb_reads,
-            width: geometry.width,
-            height: geometry.height,
-            depth: geometry.depth,
-            level_count: geometry.level_count,
-            format: geometry.format,
-            payload: Arc::new(payload),
-            decoded: None,
-            common_owned: false,
-            decoded_variant: None,
-            decoded_by: None,
-            pending_decode: None,
-        }))
+        Some(
+            self.take_image_slot(AuthoredImage {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                map_type: geometry.map_type,
+                semantic: geometry.semantic,
+                category: geometry.category,
+                use_srgb_reads: geometry.use_srgb_reads,
+                width: geometry.width,
+                height: geometry.height,
+                depth: geometry.depth,
+                level_count: geometry.level_count,
+                format: geometry.format,
+                payload: Arc::new(payload),
+                decoded: None,
+                common_owned: false,
+                decoded_variant: None,
+                decoded_by: None,
+                pending_decode: None,
+            }),
+        )
     }
 
     fn capture_material_iw5(&mut self, s: &fastfile_iw5::ZoneStream<'_>) -> Option<usize> {
@@ -2760,7 +2797,7 @@ impl MaterialCatalog {
             .name
             .and_then(|name| s.cstr(name).ok())
             .map(AssetRef::decode)?;
-        let technique_set = self.link.last_technique_set.take().unwrap_or_default();
+        let technique_set = self.link.last_technique_set.take()?;
         let mut textures = Vec::with_capacity(geometry.texture_count);
         if let Some(table) = geometry.textures {
             for i in 0..geometry.texture_count {
@@ -2813,37 +2850,40 @@ impl MaterialCatalog {
         let state_bits_entry = iw5_state_bits_entry
             .as_ref()
             .map(crate::iw5_tech_map::remap_state_bits_entry);
-        Some(self.take_material_slot(AuthoredMaterial {
-            t6_preparation: None,
-            name,
-            namespace: self.capture_ns,
-            technique_set_edge: if technique_set.name.is_empty() {
-                crate::AssetEdge::Absent
-            } else {
-                crate::AssetEdge::Unresolved(crate::AssetEdgeReason::CatalogMiss)
-            },
-            technique_set: technique_set.name,
-            draw_surf: geometry.draw_surf,
-            sort_key: geometry.sort_key,
-            info_game_flags,
-            texture_atlas: None,
-            surface_type_bits: None,
-            t5_layered_surface_types: None,
-            state_flags,
-            camera_region,
-            state_bits: read_state_bits(
-                |offset| s.u32_at(geometry.state_bits?, offset).ok(),
-                geometry.state_bits_count,
-            ),
-            state_bits_entry,
-            t5_state_bits_entry: None,
-            iw5_state_bits_entry,
-            technique_table: technique_set.table,
-            route: None,
-            textures,
-            constants,
-            zone: self.capture_zone,
-        }))
+        Some(
+            self.take_material_slot(AuthoredMaterial {
+                name,
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                technique_set_edge: if technique_set.name.is_empty() {
+                    crate::AssetEdge::Absent
+                } else {
+                    crate::AssetEdge::Unresolved(crate::AssetEdgeReason::CatalogMiss)
+                },
+                technique_set: technique_set.name,
+                draw_surf: geometry.draw_surf,
+                sort_key: geometry.sort_key,
+                info_game_flags,
+                texture_atlas: None,
+                surface_type_bits: None,
+                t5_layered_surface_types: None,
+                state_flags,
+                camera_region,
+                state_bits: read_state_bits(
+                    |offset| s.u32_at(geometry.state_bits?, offset).ok(),
+                    geometry.state_bits_count,
+                ),
+                state_bits_entry,
+                t5_state_bits_entry: None,
+                iw5_state_bits_entry,
+                technique_table: technique_set.table,
+                route: None,
+                textures,
+                constants,
+                zone: self.capture_zone,
+            }),
+        )
     }
 
     fn capture_technique_set_iw5(&mut self, s: &fastfile_iw5::ZoneStream<'_>) -> Option<usize> {
@@ -2868,16 +2908,20 @@ impl MaterialCatalog {
             }
         }
 
-        Some(self.take_techset_slot(TechniqueSetFacts {
-            namespace: self.capture_ns,
-            name,
-            zone: self.capture_zone,
-            table: None,
-            t5_occupancy: None,
-            iw5_fallback_table: fallback,
-            t5_fallback_table: None,
-            world_vert_format: geometry.world_vert_format,
-        }))
+        Some(
+            self.take_techset_slot(TechniqueSetFacts {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                zone: self.capture_zone,
+                table: None,
+                t5_occupancy: None,
+                iw5_fallback_table: fallback,
+                t5_fallback_table: None,
+                world_vert_format: geometry.world_vert_format,
+            }),
+        )
     }
 
     fn capture_owned_technique_graph_iw5(
@@ -3018,12 +3062,16 @@ impl MaterialCatalog {
             fastfile_iw5::AssetType::PixelShader => AssetType::PixelShader,
             _ => return None,
         };
-        Some(self.take_shader_slot(AuthoredShader {
-            namespace: self.capture_ns,
-            name,
-            kind,
-            program: bytes,
-        }))
+        Some(
+            self.take_shader_slot(AuthoredShader {
+                namespace: self
+                    .capture_ns
+                    .expect("asset capture requires an explicit family"),
+                name,
+                kind,
+                program: bytes,
+            }),
+        )
     }
 
     fn capture_vertex_decl_iw5(&mut self, s: &fastfile_iw5::ZoneStream<'_>) -> Option<usize> {

@@ -280,7 +280,9 @@ impl AssetLinkSink for SoundCatalog {
         }
         self.register_loaded(LoadedSoundPcm {
             name,
-            game: self.capture_game,
+            game: self
+                .capture_game
+                .expect("asset capture requires an explicit family"),
             format,
             rate,
             bits,
@@ -289,7 +291,8 @@ impl AssetLinkSink for SoundCatalog {
             block_size,
             pcm: pcm_bytes.into(),
             zone: self.capture_zone,
-            ..Default::default()
+            seek_table: Vec::new(),
+            sab_media: None,
         });
         Ok(())
     }
@@ -330,7 +333,13 @@ impl AssetLinkSink for SoundCatalog {
         }
         self.last_curve_name = Some(name.clone());
         self.curve_by_ptr.insert(file_key(header), name.clone());
-        self.insert_curve(ns_of(self.capture_game), CapturedSndCurve { name, knots });
+        self.insert_curve(
+            ns_of(
+                self.capture_game
+                    .expect("asset capture requires an explicit family"),
+            ),
+            CapturedSndCurve { name, knots },
+        );
         Ok(())
     }
 
@@ -525,7 +534,9 @@ impl AssetLinkSink for SoundCatalog {
         self.ingest_sound(CapturedSound {
             name,
             aliases,
-            game: self.capture_game,
+            game: self
+                .capture_game
+                .expect("asset capture requires an explicit family"),
             zone: self.capture_zone,
         });
         Ok(())

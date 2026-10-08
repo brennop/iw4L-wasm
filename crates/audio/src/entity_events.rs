@@ -430,9 +430,11 @@ impl NotetrackSoundTable {
         let mut unbound = 0usize;
         let mut rumbles = HashMap::new();
         for weapon in 1..=weapons.len() as u32 {
-            let namespace = weapons
-                .component_namespace_of(weapon, asset_game::WeaponComponent::Sound)
-                .unwrap_or(asset_core::AssetNamespace::Iw4);
+            let Some(namespace) =
+                weapons.component_namespace_of(weapon, asset_game::WeaponComponent::Sound)
+            else {
+                continue;
+            };
             for (note, action) in weapons.notetrack_actions_of(weapon) {
                 let sound = action.sound_alias.as_deref().map(|alias| {
                     match weapons
@@ -652,8 +654,7 @@ fn grenade_contact(
             .bounce_sound_alias(payload.weapon, surf, &bank.0)?;
         let namespace = weapons
             .registry()
-            .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
+            .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)?;
         Some((namespace, alias))
     }) else {
         diag::warn!(

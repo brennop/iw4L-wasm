@@ -45,22 +45,13 @@ pub fn t6_sound_banks(zone: &Path) -> (Vec<SoundAssetBank>, Vec<String>) {
     }
 }
 
-pub fn capture_t6_sounds_for_iw4_compatibility<'n>(
+pub fn capture_t6_sounds<'n>(
     zone: &Path,
     loads: &[&ZoneLoad],
     banks: &[SoundAssetBank],
     names: impl IntoIterator<Item = &'n str>,
 ) -> (SoundCatalog, Vec<String>, Vec<String>) {
-    capture_t6_sounds_in_game(zone, loads, banks, names, ZoneGame::Iw4)
-}
-
-pub fn capture_t6_sounds_in_game<'n>(
-    zone: &Path,
-    loads: &[&ZoneLoad],
-    banks: &[SoundAssetBank],
-    names: impl IntoIterator<Item = &'n str>,
-    game: ZoneGame,
-) -> (SoundCatalog, Vec<String>, Vec<String>) {
+    let game = ZoneGame::T6;
     let mut report = Vec::new();
     let mut lists: HashMap<u32, (&ZoneLoad, Ptr, u32)> = HashMap::new();
     for &load in loads {
@@ -114,7 +105,7 @@ pub fn capture_t6_sounds_in_game<'n>(
             let asset = le32(row, 16);
             loaded
                 .entry(asset)
-                .or_insert_with(|| load_asset(&mut catalog, banks, asset, name, game, &mut report));
+                .or_insert_with(|| load_asset(&mut catalog, banks, asset, name, &mut report));
             let loaded_name = format!("t6/{asset:08x}");
             let secondary = decode_ptr(le32(row, SND_ALIAS_SECONDARY))
                 .and_then(|p| load.blocks.cstr(p).ok())
@@ -151,7 +142,8 @@ pub fn capture_t6_sounds_in_game<'n>(
         catalog.ingest_sound(CapturedSound {
             name: name.to_owned(),
             aliases,
-            ..Default::default()
+            game: ZoneGame::T6,
+            zone: catalog.capture_zone_for_ingest(),
         });
         filled.push(name.to_owned());
     }
@@ -165,7 +157,6 @@ fn load_asset(
     banks: &[SoundAssetBank],
     id: u32,
     alias: &str,
-    game: ZoneGame,
     report: &mut Vec<String>,
 ) -> Option<String> {
     let Some((bank, entry)) = banks
@@ -184,7 +175,7 @@ fn load_asset(
             "t6 sound {alias}: asset {id:08x} has unsupported SAB codec {format}"
         ));
     }
-    let sound = LoadedSoundPcm::from_sab(source, game, catalog.capture_zone_for_ingest());
+    let sound = LoadedSoundPcm::from_sab(source, ZoneGame::T6, catalog.capture_zone_for_ingest());
     let name = sound.name.clone();
     catalog.ingest_loaded(sound);
     Some(name)

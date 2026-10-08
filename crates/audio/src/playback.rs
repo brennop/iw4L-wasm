@@ -329,7 +329,9 @@ fn play_bound_weapon_sounds(
         let Some(alias) = bank.0.name_at(event.index) else {
             continue;
         };
-        let namespace = bank.0.namespace_of_alias(event.index);
+        let Some(namespace) = bank.0.namespace_of_alias(event.index) else {
+            continue;
+        };
         let outcome = play_oneshot_recorded(
             &bank.0,
             namespace,

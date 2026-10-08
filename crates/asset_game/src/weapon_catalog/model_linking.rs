@@ -106,44 +106,22 @@ impl WeaponBuild {
                 row.fpv_hands = [None, None];
                 continue;
             };
-            let map_ns = fpv
-                .map_namespace
-                .map(|namespace| {
-                    if namespace == crate::AssetNamespace::T6 {
-                        crate::AssetNamespace::Iw4
-                    } else {
-                        namespace
-                    }
-                })
-                .unwrap_or(hand_ns);
+            let Some(map_ns) = fpv.map_namespace else {
+                row.fpv_hands = [None, None];
+                continue;
+            };
             let hand_name = row
                 .hand_xmodel_edge
                 .bound_index()
                 .and_then(|index| fpv.get_at(index))
                 .map(|entry| entry.skel.name.as_str());
-            let own_hands = (row.namespace == crate::AssetNamespace::T6)
-                .then_some(hand_name)
-                .flatten()
-                .and_then(|name| {
-                    let index = fpv.index_by_name(hand_ns, name)?;
-                    let skel = &fpv.get_at(index)?.skel;
-                    (skel.pose.is_some() && skel.bone_names.iter().any(|bone| bone == "tag_weapon"))
-                        .then(|| {
-                            (
-                                asset_model::FpvHands::FromWeaponDef {
-                                    namespace: hand_ns,
-                                    name: name.to_owned(),
-                                },
-                                crate::FpvMeshIndex::from_order(index),
-                            )
-                        })
-                });
-            if own_hands.is_some() {
-                row.fpv_hands = [own_hands.clone(), own_hands];
-                continue;
-            }
             row.fpv_hands = std::array::from_fn(|side| {
-                let kit = bodies.kits().kit(side == 1);
+                let kit = bodies.kits().kit(side == 1)?;
+                let body = bodies.get(&kit.body)?;
+                if body.namespace != map_ns {
+                    return None;
+                }
+                let kit = Some(kit);
                 let mut choice =
                     asset_model::FpvHands::resolve(fpv, map_ns, kit, hand_name, hand_ns);
                 if row.secondary_gun_xmodel.is_some()
@@ -155,9 +133,12 @@ impl WeaponBuild {
                             .any(|bone| bone == "tag_weapon1")
                     })
                 {
-                    choice = asset_model::FpvHands::game_default(hand_ns);
+                    choice = asset_model::FpvHands::game_default(map_ns);
                 }
                 let (ns, name) = choice.key()?;
+                if ns != body.namespace {
+                    return None;
+                }
                 let index = fpv.index_by_name(ns, name)?;
                 let skel = &fpv.get_at(index)?.skel;
                 if skel.pose.is_none() || !skel.bone_names.iter().any(|bone| bone == "tag_weapon") {

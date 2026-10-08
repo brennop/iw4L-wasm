@@ -34,7 +34,6 @@ pub struct LaneGap {
     pub addr: Option<&'static str>,
 }
 
-#[derive(Default)]
 pub struct LoadedWorld {
     pub scripts: crate::ScriptSources,
     pub world: PreparedWorld,
@@ -66,7 +65,7 @@ impl LoadedWorld {
         Self {
             world: PreparedWorld {
                 policy,
-                ..Default::default()
+                ..PreparedWorld::empty(policy)
             },
             report: vec![reason.clone()],
             gaps: vec![LaneGap {
@@ -74,7 +73,7 @@ impl LoadedWorld {
                 reason,
                 addr,
             }],
-            ..Default::default()
+            ..LoadedWorld::empty(policy)
         }
     }
 
@@ -148,15 +147,12 @@ pub(crate) struct CommonPreparationProducts {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum CommonDependencyRefusal {
-    ModelDonor {
-        model: String,
-        stand_in: &'static str,
-        fields: &'static [asset_material::t6_techset::T6MaterialFields],
+    NativeMaterial {
+        family: asset_core::FamilyId,
+        name: String,
+        reason: String,
     },
     WeaponPreparation(asset_game::WeaponPreparationRefusal),
-    EffectDonor {
-        effect: &'static str,
-    },
 }
 
 pub(crate) struct CommonPreparationResult {
@@ -249,3 +245,23 @@ pub const LANE_GAPS: &[&str] = &[
     "assets::lane::t6::load_world/no_decoder",
     "assets::session_load::load_prepared_match/zone_open",
 ];
+
+impl LoadedWorld {
+    pub fn empty(policy: WorldDrawPolicy) -> Self {
+        Self {
+            scripts: Default::default(),
+            world: PreparedWorld::empty(policy),
+            materials: Default::default(),
+            collision: Default::default(),
+            spawns: Default::default(),
+            bodies: Default::default(),
+            fpv_meshes: Default::default(),
+            xanims: Default::default(),
+            facts: Default::default(),
+            arena_bytes: Default::default(),
+            sound: Default::default(),
+            report: Default::default(),
+            gaps: Default::default(),
+        }
+    }
+}

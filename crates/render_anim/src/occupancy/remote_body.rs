@@ -835,14 +835,7 @@ impl<'a> RemotePoseFrame<'a> {
                     .zip(world_weapons)
                     .and_then(|(w, c)| self.compositions.get(w, c, weapon, sample.weapon_model)),
             )?;
-            let binding = trees.bind_player(
-                self.sources,
-                bodies,
-                catalog,
-                axis,
-                crate::anim::remote_body::CharacterAnimationPolicy::MultiplayerBodyTracks,
-                persist_key,
-            )?;
+            let binding = trees.bind_player(self.sources, bodies, catalog, axis, persist_key)?;
             if !std::ptr::eq(binding.body(), model_set.body) {
                 return Err("remote model body differs from character animation binding".into());
             }

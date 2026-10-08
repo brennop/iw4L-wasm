@@ -67,4 +67,4 @@ pub use vertex_layout::{
     VertexLayoutFamily,
 };
 
-pub use state::{CompiledPassState, UnsupportedStateFields, compile_material_state};
+pub use state::{CompiledPassState, UnsupportedStateFields, compile_packed_state};

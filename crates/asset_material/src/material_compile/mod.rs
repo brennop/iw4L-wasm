@@ -1,4 +1,6 @@
 mod sort;
+mod state;
+pub use state::compile_material_state;
 mod technique;
 
 use render_material::{
@@ -31,7 +33,8 @@ pub fn compile_material_catalog(source: &crate::MaterialDefinitions) -> RuntimeM
                 let Some(technique) = technique else {
                     continue;
                 };
-                slots[slot_index] = Some(compiler.compile_technique(
+                slots[slot_index] = Some(technique::compile_technique(
+                    compiler,
                     source,
                     slot_index as u8,
                     technique,

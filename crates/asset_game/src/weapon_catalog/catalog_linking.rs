@@ -6,7 +6,7 @@ impl WeaponCatalog {
     }
 
     pub fn set_capture_ns(&mut self, ns: crate::AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn capture_vehicle(&mut self, stream: &ZoneStream<'_>) {
@@ -27,7 +27,9 @@ impl WeaponCatalog {
     }
 
     pub fn resolve_reticles(&mut self, materials: &crate::MaterialCatalog) {
-        let ns = self.capture_ns;
+        let ns = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         let names_of = |slot: Ptr| {
             let material = materials
                 .material_index(slot)
@@ -176,7 +178,9 @@ impl WeaponCatalog {
     }
 
     pub fn resolve_reticle_images(&mut self, materials: &crate::MaterialDefinitions) {
-        let ns = self.capture_ns;
+        let ns = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         for entry in &mut self.entries {
             if entry.reticle.center_image.is_none() {
                 if let Some(name) = entry.reticle.center_material.as_deref() {
@@ -288,7 +292,9 @@ impl WeaponCatalog {
     }
 
     pub fn resolve_projectile_fx_edges(&mut self, fx: &crate::FxCatalog) {
-        let ns = crate::body_namespace(self.capture_ns);
+        let ns = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         for entry in &mut self.entries {
             stamp_fx_edge(
                 entry.proj_trail_slot,
@@ -339,7 +345,9 @@ impl WeaponCatalog {
     }
 
     pub fn resolve_combat_fx(&mut self, fx: &crate::FxCatalog, tracers: &crate::TracerCatalog) {
-        let ns = self.capture_ns;
+        let ns = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
         for entry in &mut self.entries {
             stamp_combat_fx(&mut entry.combat_fx, entry.combat_slots, ns, fx, tracers);
         }
@@ -427,7 +435,6 @@ pub(super) fn stamp_combat_fx(
     fx: &crate::FxCatalog,
     tracers: &crate::TracerCatalog,
 ) {
-    let ns = crate::body_namespace(ns);
     combat.namespace = ns;
     stamp_fx_edge(
         slots.view_flash,

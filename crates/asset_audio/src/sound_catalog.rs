@@ -91,7 +91,7 @@ pub struct SoundCatalog {
     curve_by_ptr: HashMap<(u8, u32), String>,
     last_loaded_name: Option<String>,
     last_curve_name: Option<String>,
-    capture_game: ZoneGame,
+    capture_game: Option<ZoneGame>,
     pub capture_gaps: usize,
 
     pub alias_flags_missing: usize,
@@ -339,8 +339,16 @@ impl SoundCatalog {
             bytes
         };
         if !name.is_empty() {
-            self.rawfiles
-                .insert((ns_of(self.capture_game), name.to_owned()), bytes);
+            self.rawfiles.insert(
+                (
+                    ns_of(
+                        self.capture_game
+                            .expect("asset capture requires an explicit family"),
+                    ),
+                    name.to_owned(),
+                ),
+                bytes,
+            );
         }
     }
 
@@ -353,13 +361,21 @@ impl SoundCatalog {
     }
 
     pub(crate) fn ingest_sound(&mut self, mut sound: CapturedSound) {
-        sound.game = self.capture_game;
+        sound.game = self
+            .capture_game
+            .expect("asset capture requires an explicit family");
         sound.zone = self.capture_zone;
         self.register_sound(sound);
     }
 
     pub(crate) fn ingest_curve(&mut self, curve: CapturedSndCurve) {
-        self.insert_curve(ns_of(self.capture_game), curve);
+        self.insert_curve(
+            ns_of(
+                self.capture_game
+                    .expect("asset capture requires an explicit family"),
+            ),
+            curve,
+        );
     }
 
     pub fn resolve_loaded_edges(&mut self) {
@@ -471,7 +487,7 @@ impl SoundCatalog {
     }
 
     pub fn set_capture_game(&mut self, game: ZoneGame) {
-        self.capture_game = game;
+        self.capture_game = Some(game);
     }
 
     pub fn zone_of_loaded(&self, index: usize) -> ZoneOwner {
@@ -598,11 +614,8 @@ impl SoundCatalog {
         self.sounds.get(index).map(|s| s.name.as_str())
     }
 
-    pub fn namespace_of_alias(&self, index: usize) -> AssetNamespace {
-        self.sounds
-            .get(index)
-            .map(|s| ns_of(s.game))
-            .unwrap_or_default()
+    pub fn namespace_of_alias(&self, index: usize) -> Option<AssetNamespace> {
+        self.sounds.get(index).map(|s| ns_of(s.game))
     }
 
     pub fn zone_of_alias(&self, index: usize) -> ZoneOwner {
@@ -726,7 +739,13 @@ impl SoundCatalog {
         let field = row.at(s.layout(SND_ALIAS_VOLUME_FALLOFF_CURVE, 104));
         let named = self.curve_by_ptr.get(&file_key(field)).cloned();
         if let Some(name) = named.as_deref()
-            && let Some(curve) = self.curve_lookup(ns_of(self.capture_game), name)
+            && let Some(curve) = self.curve_lookup(
+                ns_of(
+                    self.capture_game
+                        .expect("asset capture requires an explicit family"),
+                ),
+                name,
+            )
         {
             return Some(curve);
         }
@@ -738,17 +757,34 @@ impl SoundCatalog {
             Some(ZonePtr::Offset(p)) => {
                 let header = s.resolve_alias(p);
                 if let Some(curve) = read_curve_header(s, header) {
-                    if let Some(filled) = self.curve_lookup(ns_of(self.capture_game), &curve.name) {
+                    if let Some(filled) = self.curve_lookup(
+                        ns_of(
+                            self.capture_game
+                                .expect("asset capture requires an explicit family"),
+                        ),
+                        &curve.name,
+                    ) {
                         return Some(filled);
                     }
-                    self.insert_curve(ns_of(self.capture_game), curve.clone());
+                    self.insert_curve(
+                        ns_of(
+                            self.capture_game
+                                .expect("asset capture requires an explicit family"),
+                        ),
+                        curve.clone(),
+                    );
                     return Some(curve);
                 }
                 let name = self.curve_name_for_offset(s, p).or(named);
-                match name
-                    .as_deref()
-                    .and_then(|n| self.curve_lookup(ns_of(self.capture_game), n))
-                {
+                match name.as_deref().and_then(|n| {
+                    self.curve_lookup(
+                        ns_of(
+                            self.capture_game
+                                .expect("asset capture requires an explicit family"),
+                        ),
+                        n,
+                    )
+                }) {
                     Some(curve) => Some(curve),
                     None => name.map(|name| CapturedSndCurve {
                         name,

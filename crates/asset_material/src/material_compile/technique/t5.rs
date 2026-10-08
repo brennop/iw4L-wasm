@@ -23,7 +23,11 @@ impl MaterialCompiler for T5Compiler {
         }
     }
     fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState {
-        render_material::compile_material_state(AssetNamespace::T5, words)
+        super::super::state::packed_state(
+            words,
+            fastfile_t5::state_bits::alpha_test(words[0])
+                .map(|(func, reference)| d3d9_state::AlphaTest::from_raw(func, reference)),
+        )
     }
     fn color_space(&self, slot: u8) -> PassColorSpace {
         if lighting_iw4::is_lit_remap_slot(slot) {

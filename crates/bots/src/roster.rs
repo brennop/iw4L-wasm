@@ -67,6 +67,15 @@ pub struct BotAddQueue(pub Vec<BotAddRequest>);
 pub struct BotAddRequest {
     pub count: u32,
     pub dummy: bool,
+    pub side: Option<BotSide>,
+}
+
+/// The team a bot joins, relative to the local player. Without one it lets the
+/// game scripts auto-assign it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotSide {
+    Friendly,
+    Enemy,
 }
 
 impl BotAddQueue {
@@ -74,13 +83,25 @@ impl BotAddQueue {
         self.0.push(BotAddRequest {
             count: count.max(1),
             dummy: false,
+            side: None,
         });
+    }
+
+    pub fn push_side(&mut self, count: u32, side: BotSide) {
+        if count > 0 {
+            self.0.push(BotAddRequest {
+                count,
+                dummy: false,
+                side: Some(side),
+            });
+        }
     }
 
     pub fn push_dummy(&mut self, count: u32) {
         self.0.push(BotAddRequest {
             count: count.max(1),
             dummy: true,
+            side: None,
         });
     }
 
@@ -152,11 +173,14 @@ pub struct BotSlot {
     pub joined: bool,
     pub class_picked_in: Option<LifeSequence>,
     pub class_picks: u32,
+    pub side: Option<BotSide>,
 }
 
 #[derive(Resource, Debug)]
 pub struct BotRoster {
     pub bots: Vec<BotSlot>,
+    /// The Game Rules' enemy and friendly bots were queued for this match.
+    pub rules_filled: bool,
     pub next_client: u32,
     pub seed: u64,
 }
@@ -165,6 +189,7 @@ impl Default for BotRoster {
     fn default() -> Self {
         Self {
             bots: Vec::new(),
+            rules_filled: false,
 
             next_client: 1,
             seed: 0xb075_0001,
@@ -181,7 +206,13 @@ impl BotRoster {
     // them *is* that client as far as the roster is concerned: `is_bot` claims
     // the player, and the slot is dead weight because no system can drive an
     // id someone else is already playing.
-    pub fn add_bots(&mut self, count: u32, taken: &[ClientId], dummy: bool) -> Vec<ClientId> {
+    pub fn add_bots(
+        &mut self,
+        count: u32,
+        taken: &[ClientId],
+        dummy: bool,
+        side: Option<BotSide>,
+    ) -> Vec<ClientId> {
         let room = MAX_HOST_BOTS.saturating_sub(self.bots.len() as u32);
         let count = count.min(room);
         let seed = self.seed;
@@ -214,6 +245,7 @@ impl BotRoster {
                 joined: false,
                 class_picked_in: None,
                 class_picks: 0,
+                side,
             });
             added.push(id);
         }

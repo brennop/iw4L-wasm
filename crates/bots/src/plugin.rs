@@ -110,6 +110,7 @@ impl Plugin for BotsPlugin {
             .add_systems(
                 Update,
                 (
+                    fill_bots_from_rules,
                     drain_bot_add_queue,
                     evict_bots_claiming_local_client,
                     boot_bots,
@@ -148,6 +149,50 @@ fn reset_roster_on_match_torn_down(
     *ready = BotNavigationReady::default();
 }
 
+/// Queues the Game Rules' enemy and friendly bots once per match, as soon as
+/// the world is installed.
+fn fill_bots_from_rules(
+    mut roster: ResMut<BotRoster>,
+    mut queue: ResMut<BotAddQueue>,
+    installed: Option<Res<HasWorld>>,
+    rules: Option<Res<frame::HostMatchRules>>,
+    world: Option<Res<AuthorityWorld>>,
+) {
+    if roster.rules_filled || !installed.is_some_and(|installed| installed.0) {
+        return;
+    }
+    let Some(world) = world else {
+        return;
+    };
+    roster.rules_filled = true;
+    let Some(rules) = rules else {
+        return;
+    };
+    let count = |dvar: &str| {
+        rules
+            .0
+            .iter()
+            .find(|(name, _)| name == dvar)
+            .and_then(|(_, value)| value.trim().parse::<u32>().ok())
+            .unwrap_or(0)
+    };
+    let enemies = count(sim::ENEMY_BOTS_DVAR);
+    // Free-for-all has no friends to add.
+    let friends = if world.0.game_mode_kind() == gamemode_iw4::GameModeKind::FreeForAll {
+        0
+    } else {
+        count(sim::FRIENDLY_BOTS_DVAR)
+    };
+    queue.push_side(enemies, crate::BotSide::Enemy);
+    queue.push_side(friends, crate::BotSide::Friendly);
+    if enemies + friends > 0 {
+        diag::info!(
+            Sim,
+            "bots: game rules add {enemies} enemy and {friends} friendly"
+        );
+    }
+}
+
 fn drain_bot_add_queue(
     mut queue: ResMut<BotAddQueue>,
     mut roster: ResMut<BotRoster>,
@@ -168,7 +213,7 @@ fn drain_bot_add_queue(
     }
     for request in requests {
         let count = request.count;
-        let added = roster.add_bots(count, &taken, request.dummy);
+        let added = roster.add_bots(count, &taken, request.dummy, request.side);
         if added.len() < count as usize {
             diag::warn!(
                 Sim,
@@ -206,6 +251,7 @@ fn boot_bots(
     mut request_ids: ResMut<net::ActionRequestIds>,
     installed: Option<Res<HasWorld>>,
     world: Option<ResMut<AuthorityWorld>>,
+    local: Res<LocalPresentClient>,
 ) {
     let Some(mut world) = world else {
         return;
@@ -214,10 +260,30 @@ fn boot_bots(
         return;
     }
     let seed = roster.seed;
+    let team_based = world.0.game_mode_kind() != gamemode_iw4::GameModeKind::FreeForAll;
+    let local_team = match world.0.client_state_team(local.0) {
+        Some(entity_iw4::TEAM_AXIS) => Some(("axis", "allies")),
+        Some(entity_iw4::TEAM_ALLIES) => Some(("allies", "axis")),
+        _ => None,
+    };
     for bot in &mut roster.bots {
         if bot.joined {
             continue;
         }
+        // A sided bot answers the team menu itself; until the player has a
+        // team there is no side to take, so it waits.
+        let team = match bot.side.filter(|_| team_based) {
+            None => None,
+            Some(side) => {
+                let Some((mine, theirs)) = local_team else {
+                    continue;
+                };
+                Some(match side {
+                    crate::BotSide::Friendly => mine,
+                    crate::BotSide::Enemy => theirs,
+                })
+            }
+        };
         if world.0.gsc_realm() == Some(sim::script::Realm::Iw4)
             && let Err(error) = world
                 .0
@@ -242,6 +308,23 @@ fn boot_bots(
                     request_id: join_id,
                 },
             ),
+            team.map_or(Ok(()), |team| {
+                let request_id = request_ids.allocate();
+                match (
+                    sim::menu_response_field(sim::TEAM_MENU),
+                    sim::menu_response_field(team),
+                ) {
+                    (Some(menu), Some(response)) => actions.push(
+                        bot.id,
+                        ClientAction::MenuResponse {
+                            request_id,
+                            menu,
+                            response,
+                        },
+                    ),
+                    _ => Ok(()),
+                }
+            }),
             actions.push(
                 bot.id,
                 ClientAction::ChooseDefaultClass {

@@ -187,7 +187,9 @@ pub fn apply_prepared_match(
     let request_id = ready.request_id;
     let load_key = ready.load_key;
     let zone = std::mem::take(&mut ready.zone);
-    let mut prepared = std::mem::take(&mut ready.prepared);
+    let Some(mut prepared) = ready.prepared.take() else {
+        return;
+    };
     commands.remove_resource::<PreparedMatchReady>();
 
     let world_report = std::mem::take(&mut prepared.report);
@@ -337,9 +339,10 @@ pub fn apply_prepared_match(
                 if let Ok(definition) = tree.to_runtime_definition(|_, name| {
                     let kit = bodies.0.kits().kit(axis)?;
                     let body = bodies.0.get(&kit.body)?;
-                    xanims
-                        .0
-                        .body_clip(body.namespace, name, &body.skel.bone_names)
+                    if player_anim_sources.family() != Some(body.namespace) {
+                        return None;
+                    }
+                    xanims.0.clip(body.namespace, name)
                 }) {
                     if axis {
                         content.set_player_axis_anim_tree(Some(definition));
@@ -358,9 +361,7 @@ pub fn apply_prepared_match(
             }
         }
 
-        let anim_namespace = prepared_map
-            .namespace
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
+        let anim_namespace = prepared_map.namespace.expect("installed map family");
         content.set_script_model_anims(xanims.0.names().filter_map(|name| {
             let parts = &xanims.0.get(anim_namespace, name)?.parts;
             let frequency = if parts.numframes > 0 && parts.framerate > 0.0 {
@@ -405,18 +406,10 @@ pub fn apply_prepared_match(
                     let selection = weapons.registry().describe_configuration(id)?;
                     let family = selection.family.as_ref()?;
                     Some(sim::WeaponSetup {
-                        realm: match family.namespace {
-                            asset_core::AssetNamespace::T5 => sim::script::Realm::T5,
-                            asset_core::AssetNamespace::Iw5 => sim::script::Realm::Iw5,
-                            asset_core::AssetNamespace::T6 => sim::script::Realm::T6,
-                            _ => sim::script::Realm::Iw4,
-                        },
+                        realm: family.namespace,
                         base: family.base.clone(),
                         attachments: selection.attachments.clone(),
-                        stand_in: (family.namespace == asset_core::AssetNamespace::T6)
-                            .then(|| asset_game::t6_stand_in_for(&script_names[id as usize]))
-                            .flatten()
-                            .map(str::to_owned),
+                        stand_in: None,
                     })
                 })
                 .collect(),

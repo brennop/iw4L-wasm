@@ -207,6 +207,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
         if sim::HostGameModeSelection::from_token(mode).is_none() {
             continue;
         }
+        add_rule_rows(&mut menu.items);
         for item in &mut menu.items {
             if item.dvar == "camera_thirdperson" {
                 if item.item_type == 12 {
@@ -226,3 +227,103 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
     }
     Ok(())
 }
+
+/// Our own Game Rules rows, copies of stock toggles (button plus value
+/// display): an always-on radar under Gameplay Options, and how many enemy and
+/// (in team modes) friendly bots join under Team Options.
+fn add_rule_rows(items: &mut Vec<asset_game::MenuItem>) {
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<Vec<(String, String)>>,
+    );
+    let pair = |items: &[asset_game::MenuItem], dvar: &str| {
+        let button = items
+            .iter()
+            .position(|item| item.item_type == 1 && item.dvar == dvar)?;
+        let value = items
+            .iter()
+            .position(|item| item.item_type == 12 && item.dvar == dvar)?;
+        Some((button, value))
+    };
+    let counts = |max: u32| -> Vec<(String, String)> {
+        (0..=max).map(|n| (n.to_string(), n.to_string())).collect()
+    };
+    let (Some(gameplay), Some((below_gameplay, _))) = (
+        pair(items, "scr_game_onlyheadshots"),
+        pair(items, "camera_thirdperson"),
+    ) else {
+        return;
+    };
+    // Team Options: the lowest row left of Gameplay Options in its panel.
+    let (left_x, top_y) = (items[gameplay.0].rect.x, items[gameplay.0].rect.y);
+    let team = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            item.item_type == 1 && item.rect.x < left_x - 1.0 && item.rect.y >= top_y - 1.0
+        })
+        .filter_map(|(i, item)| pair(items, &item.dvar).filter(|(button, _)| *button == i))
+        .max_by(|a, b| items[a.0].rect.y.total_cmp(&items[b.0].rect.y));
+    let team_based = items.iter().any(|item| item.dvar == "scr_team_fftype");
+    let mut bot_rows: Vec<Row> = vec![(
+        "enemy_bots",
+        "Enemy Bots:",
+        sim::ENEMY_BOTS_DVAR,
+        Some(counts(MAX_RULE_ENEMY_BOTS)),
+    )];
+    if team_based {
+        bot_rows.push((
+            "friendly_bots",
+            "Friendly Bots:",
+            sim::FRIENDLY_BOTS_DVAR,
+            Some(counts(MAX_RULE_FRIENDLY_BOTS)),
+        ));
+    }
+    let radar_rows: Vec<Row> = vec![(
+        "constant_radar",
+        "Constant Radar:",
+        sim::CONSTANT_RADAR_DVAR,
+        None,
+    )];
+    let mut columns = vec![(gameplay, below_gameplay, radar_rows)];
+    if let Some(team) = team {
+        columns.push((team, team.0, bot_rows));
+    }
+    for ((button, value), last, rows) in columns {
+        let mut y = items[last].rect.y + items[last].rect.h;
+        for (name, label, dvar, choices) in rows {
+            let mut row_button = items[button].clone();
+            let mut row_value = items[value].clone();
+            let values = choices.as_ref().map_or_else(
+                || "0 1".to_owned(),
+                |choices| {
+                    choices
+                        .iter()
+                        .map(|(_, value)| value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                },
+            );
+            row_button.name = format!("sidenav_button_{name}");
+            row_button.text_key = label.into();
+            row_button.text_literal = true;
+            row_button.dvar = dvar.into();
+            row_button.rect.y = y;
+            row_button.handlers.action = vec![asset_game::MenuEvent::Script(format!(
+                "play mouse_click; exec \"toggle {dvar} {values}\";"
+            ))];
+            row_value.dvar = dvar.into();
+            row_value.rect.y = y;
+            row_value.choices = choices.unwrap_or_else(|| items[gameplay.1].choices.clone());
+            y += items[last].rect.h;
+            items.push(row_button);
+            items.push(row_value);
+        }
+    }
+}
+
+/// MW2 lobbies hold 18: nine a side.
+pub const MAX_RULE_ENEMY_BOTS: u32 = 9;
+pub const MAX_RULE_FRIENDLY_BOTS: u32 = 8;

@@ -480,11 +480,12 @@ fn request_fx_type10(
     alias: &str,
     set: &mut MatchRequests,
 ) {
-    let ns = bank
-        .index_in(AssetNamespace::Iw4, alias)
-        .or_else(|| bank.index_unique(alias))
-        .map(|index| bank.namespace_of_alias(index))
-        .unwrap_or(AssetNamespace::Iw4);
+    let Some(ns) = bank
+        .index_unique(alias)
+        .and_then(|index| bank.namespace_of_alias(index))
+    else {
+        return;
+    };
     request_named(clips, bank, ns, alias, set);
 }
 

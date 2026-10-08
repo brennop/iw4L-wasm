@@ -339,7 +339,7 @@ impl ZoneLane for Iw5Lane {
                         exp_fog,
                         createart_name,
                         policy: WorldDrawPolicy::iw5(),
-                        ..Default::default()
+                        ..PreparedWorld::empty(WorldDrawPolicy::iw5())
                     },
                     collision: clip,
                     spawns: dm_spawns,
@@ -352,7 +352,7 @@ impl ZoneLane for Iw5Lane {
                         reason: "no GfxWorld retained — nothing to draw".into(),
                         addr: Some("assets::lane::iw5::load_world/no_gfx_world"),
                     }],
-                    ..Default::default()
+                    ..LoadedWorld::empty(WorldDrawPolicy::iw5())
                 },
             );
         };
@@ -546,7 +546,7 @@ impl ZoneLane for Iw5Lane {
                             createart_name,
                             policy: WorldDrawPolicy::iw5(),
                             smodel_lighting_samples,
-                            ..Default::default()
+                            ..PreparedWorld::empty(WorldDrawPolicy::iw5())
                         },
                         collision: clip,
                         spawns: dm_spawns,
@@ -562,7 +562,7 @@ impl ZoneLane for Iw5Lane {
                             ..Default::default()
                         },
                         report,
-                        ..Default::default()
+                        ..LoadedWorld::empty(WorldDrawPolicy::iw5())
                     },
                 )
             }
@@ -578,7 +578,7 @@ impl ZoneLane for Iw5Lane {
                             exp_fog,
                             createart_name,
                             policy: WorldDrawPolicy::iw5(),
-                            ..Default::default()
+                            ..PreparedWorld::empty(WorldDrawPolicy::iw5())
                         },
                         collision: clip,
                         spawns: dm_spawns,
@@ -591,7 +591,7 @@ impl ZoneLane for Iw5Lane {
                             reason: format!("world draw: {e}"),
                             addr: Some("assets::lane::iw5::load_world/world_mesh"),
                         }],
-                        ..Default::default()
+                        ..LoadedWorld::empty(WorldDrawPolicy::iw5())
                     },
                 )
             }
@@ -652,7 +652,6 @@ impl ZoneLane for Iw5Lane {
         sink.weapons.resolve_reticles(&sink.materials);
         let captured = sink.weapons.len();
         let mut weapons = sink.weapons.into_build();
-        weapons.stamp_namespace(asset_core::AssetNamespace::Iw5);
         weapons.apply_stats_tables(sink.stats_tables.values());
         weapons.resolve_sz_xanim_edges(&sink.xanims);
         weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);

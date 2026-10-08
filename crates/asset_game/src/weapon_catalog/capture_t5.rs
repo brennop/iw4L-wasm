@@ -33,7 +33,9 @@ impl WeaponCatalog {
             .map(|arr| read_sz_xanims_t5(stream, arr, false))
             .unwrap_or([const { None }; WEAPON_ANIM_SLOTS]);
         self.entries.push(CatalogWeapon {
-            namespace: self.capture_ns,
+            namespace: self
+                .capture_ns
+                .expect("asset capture requires an explicit family"),
             impact_payload: geometry.weap_def.and_then(|body| {
                 leftover_t5_cstr(
                     stream,
@@ -181,7 +183,7 @@ impl WeaponCatalog {
                 .unwrap_or([const { None }; WEAPON_ANIM_SLOTS]),
             hide_tags: read_hide_tags_t5(stream, strings, geometry.hide_tags),
             sounds: leftover_t5_sounds(stream, strings, &geometry),
-            combat_fx: WeaponCombatFx::default(),
+            combat_fx: WeaponCombatFx::empty(crate::AssetNamespace::T5),
             combat_slots: CombatFxSlots::default(),
             facts: capture_t5_body_facts(stream, &geometry),
         });
@@ -578,7 +580,7 @@ pub(super) fn leftover_t5_combat_fx(
             leftover_t5_header_name(stream, b, sz::WEAPON_DEF_PROJ_EXPLOSION_EFFECT_OFF)
         }),
         last_shot_eject_pair_authored: slots.last_shot_pair_authored(),
-        ..WeaponCombatFx::default()
+        ..WeaponCombatFx::empty(crate::AssetNamespace::T5)
     };
     (fx, slots)
 }

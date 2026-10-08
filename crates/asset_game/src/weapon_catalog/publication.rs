@@ -109,7 +109,12 @@ impl WeaponBuild {
             }
             if let Some(key) = entry.weap_def {
                 merge_sound_aliases(sounds_by_def.entry(key).or_default(), &entry.sounds);
-                merge_combat_fx(combat_fx_by_def.entry(key).or_default(), &entry.combat_fx);
+                merge_combat_fx(
+                    combat_fx_by_def
+                        .entry(key)
+                        .or_insert_with(|| WeaponCombatFx::empty(entry.namespace)),
+                    &entry.combat_fx,
+                );
                 merge_combat_slots(
                     combat_slots_by_def.entry(key).or_default(),
                     &entry.combat_slots,
@@ -312,12 +317,12 @@ impl WeaponBuild {
             index_of.insert(name.clone(), id);
             combat_slots.push(entry.combat_slots);
             rows.push(WeaponRow {
-                preparation: WeaponPreparationRecipe::native(crate::AssetNamespace::Iw4),
+                preparation: WeaponPreparationRecipe::for_capture(entry.namespace, &name),
                 name,
                 alternate_weapon: entry.alternate_weapon,
                 impact_payload: entry.impact_payload,
                 alternate_index: 0,
-                namespace: crate::AssetNamespace::Iw4,
+                namespace: entry.namespace,
                 facts: entry.facts,
                 semantics: None,
                 combat: None,
@@ -359,8 +364,26 @@ impl WeaponBuild {
                 sz_xanims_right: entry.sz_xanims_right,
                 sz_xanims_left: entry.sz_xanims_left,
                 hide_tags: entry.hide_tags,
-                attachment_view_models: entry.attached_models[0].clone(),
-                attachment_world_models: entry.attached_models[1].clone(),
+                attachment_view_models: {
+                    let mut models = entry.attached_models[0].clone();
+                    if entry.namespace == crate::AssetNamespace::Iw5
+                        && let Some((view, _)) =
+                            iw5_default_scope_models(&entry.iw5_attachment_slots, &iw5_attachments)
+                    {
+                        models.extend(view);
+                    }
+                    models
+                },
+                attachment_world_models: {
+                    let mut models = entry.attached_models[1].clone();
+                    if entry.namespace == crate::AssetNamespace::Iw5
+                        && let Some((_, world)) =
+                            iw5_default_scope_models(&entry.iw5_attachment_slots, &iw5_attachments)
+                    {
+                        models.extend(world);
+                    }
+                    models
+                },
                 attachment_view_ads_models: Vec::new(),
                 t6_clip_models: entry.t6_clip_models,
                 t6_attachments: entry.t6_attachments,
@@ -381,7 +404,6 @@ impl WeaponBuild {
                 overlay_material: entry.overlay_material,
                 overlay_image: entry.overlay_image,
                 hud_icon_from_slot: entry.hud_icon_slot.is_some(),
-                own_hud_icon: false,
                 hud_icon: entry.hud_icon,
                 hud_icon_image: entry.hud_icon_image,
                 pickup_icon: entry.pickup_icon,

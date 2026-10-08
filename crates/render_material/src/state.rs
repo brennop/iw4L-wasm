@@ -1,4 +1,3 @@
-use asset_core::AssetNamespace;
 use d3d9_state::{AlphaTest, BlendFactor};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -185,21 +184,12 @@ impl CompiledPassState {
     }
 }
 
-pub fn compile_material_state(namespace: AssetNamespace, words: [u32; 2]) -> CompiledPassState {
+pub fn compile_packed_state(
+    words: [u32; 2],
+    alpha_test: Option<AlphaTest>,
+    cull: u8,
+) -> CompiledPassState {
     let [word0, word1] = words;
-    let alpha_test = match namespace {
-        AssetNamespace::Iw4 | AssetNamespace::Iw5 => {
-            asset_iw4::alpha_test_from_state_bits(words).map(asset_iw4::Gfxs0AlphaTest::d3d)
-        }
-        AssetNamespace::T5 => fastfile_t5::state_bits::alpha_test(word0)
-            .map(|(func, reference)| AlphaTest::from_raw(func, reference)),
-        AssetNamespace::T6 => None,
-    };
-    let cull = match asset_iw4::cull_face_from_state_bits(words) {
-        asset_iw4::Gfxs0CullFace::Back => 1,
-        asset_iw4::Gfxs0CullFace::Front => 2,
-        asset_iw4::Gfxs0CullFace::None => 0,
-    };
     let colour_op = ((word0 >> 8) & 0x7) as u8;
     let colour_blend = word0 & 0x7ff;
     let alpha_blend = (word0 >> 16) & 0x7ff;
@@ -217,10 +207,10 @@ pub fn compile_material_state(namespace: AssetNamespace, words: [u32; 2]) -> Com
             | (u8::from(word0 & 0x1000_0000 != 0) << 1),
         line_fill: word0 & 0x8000_0000 != 0,
         stencil: word1 & 0xffff_ffc0,
-        depth_write: asset_iw4::depth_write_enable(word1),
-        depth_test_enable: asset_iw4::depth_test_enable(word1),
+        depth_write: word1 & 1 != 0,
+        depth_test_enable: word1 & 2 == 0,
         depth_func: ((word1 >> 2) & 3) as u8,
-        polyoffset_level: asset_iw4::polygon_offset_level(word1) as u8,
+        polyoffset_level: ((word1 >> 4) & 3) as u8,
         authored: AuthoredStateFields {
             non_add_blend: colour_op > 1 || (colour_op != 0 && alpha_op > 1),
             independent_alpha_blend: colour_op != 0 && alpha_op != 0 && alpha_blend != colour_blend,

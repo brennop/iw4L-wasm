@@ -105,6 +105,14 @@ pub use input::{
     SpawnPick, TickInput, action_request_id, menu_response_field, menu_response_text,
 };
 pub use mantle_xanim::MantleXAnimBind;
+
+// Game Rules of ours, not stock MW2: an always-on radar and lobby bots.
+pub const CONSTANT_RADAR_DVAR: &str = "scr_game_constantradar";
+pub const ENEMY_BOTS_DVAR: &str = "scr_game_enemybots";
+pub const FRIENDLY_BOTS_DVAR: &str = "scr_game_friendlybots";
+
+/// IW4's team menu; answering it "allies" or "axis" joins that team.
+pub const TEAM_MENU: &str = "team_marinesopfor";
 pub use match_state::{
     ClassDef, ClassRejectReason, ClientLifecycle, ClientSnapshotMeta,
     ConfigurationChangeRejectReason, DroppedItemAmmo, EntityEventPayload, EntityEventRecord,

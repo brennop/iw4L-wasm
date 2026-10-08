@@ -6,11 +6,10 @@ impl WeaponCatalog {
         let Some(name) = weapon.name().filter(|name| !name.is_empty()) else {
             return;
         };
-        if crate::weapon_t6::stand_in_for(name).is_none() {
-            return;
-        }
         self.entries.push(CatalogWeapon {
-            namespace: self.capture_ns,
+            namespace: self
+                .capture_ns
+                .expect("asset capture requires an explicit family"),
             name: name.to_owned(),
             alternate_weapon: weapon
                 .variant_str(v::ALT_WEAPON_NAME)
@@ -101,7 +100,7 @@ impl WeaponCatalog {
                 explosion_hint: weapon
                     .def_asset_name(fastfile_t6::weapon::def::PROJ_EXPLOSION_EFFECT)
                     .map(str::to_owned),
-                ..WeaponCombatFx::default()
+                ..WeaponCombatFx::empty(crate::AssetNamespace::T6)
             },
             combat_slots: CombatFxSlots::default(),
             facts: capture_t6_body_facts(weapon),
@@ -625,34 +624,6 @@ pub fn t6_weapon_sound_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<Stri
     .into_iter()
     .flatten()
     .collect()
-}
-
-pub(super) fn keep_t6_sounds(own: &mut WeaponSoundAliases, keep: &impl Fn(&str) -> bool) {
-    for slot in [
-        &mut own.fire,
-        &mut own.fire_player,
-        &mut own.fire_last,
-        &mut own.fire_last_player,
-        &mut own.empty_fire,
-        &mut own.empty_fire_player,
-        &mut own.melee_swipe,
-        &mut own.melee_swipe_player,
-        &mut own.melee_hit,
-        &mut own.melee_miss,
-        &mut own.pullback,
-        &mut own.pullback_player,
-        &mut own.raise,
-        &mut own.raise_player,
-        &mut own.first_raise,
-        &mut own.first_raise_player,
-        &mut own.putaway,
-        &mut own.putaway_player,
-        &mut own.proj_explosion,
-    ] {
-        if slot.as_deref().is_some_and(|name| !keep(name)) {
-            *slot = None;
-        }
-    }
 }
 
 pub(super) fn capture_t6_kick(w: fastfile_t6::weapon::WeaponView<'_>) -> WeaponKickFacts {

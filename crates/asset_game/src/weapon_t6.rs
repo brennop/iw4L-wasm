@@ -1,76 +1,3 @@
-const STAND_INS: &[(&str, &str)] = &[
-    ("an94", "ak47_mp"),
-    ("hk416", "m4_mp"),
-    ("scar", "scar_mp"),
-    ("sig556", "m16_mp"),
-    ("saritch", "fal_mp"),
-    ("sa58", "fal_mp"),
-    ("type95", "famas_mp"),
-    ("tar21", "tavor_mp"),
-    ("xm8", "fn2000_mp"),
-    ("mp7", "mp5k_mp"),
-    ("vector", "kriss_mp"),
-    ("qcw05", "uzi_mp"),
-    ("pdw57", "p90_mp"),
-    ("evoskorpion", "tmp_mp"),
-    ("insas", "ump45_mp"),
-    ("qbb95", "rpd_mp"),
-    ("lsat", "mg4_mp"),
-    ("mk48", "m240_mp"),
-    ("hamr", "sa80_mp"),
-    ("as50", "barrett_mp"),
-    ("dsr50", "cheytac_mp"),
-    ("svu", "m21_mp"),
-    ("ballista", "cheytac_mp"),
-    ("fnp45", "usp_mp"),
-    ("fiveseven", "beretta_mp"),
-    ("kard", "deserteagle_mp"),
-    ("judge", "coltanaconda_mp"),
-    ("beretta93r", "beretta393_mp"),
-    ("saiga12", "aa12_mp"),
-    ("870mcs", "spas12_mp"),
-    ("srm1216", "striker_mp"),
-    ("ksg", "m1014_mp"),
-    ("smaw", "at4_mp"),
-    ("usrpg", "rpg_mp"),
-    ("fhj18", "stinger_mp"),
-    ("riotshield", "riotshield_mp"),
-    ("crossbow", "m79_mp"),
-    ("knife_ballistic", "throwingknife_mp"),
-    ("frag_grenade", "frag_grenade_mp"),
-    ("sticky_grenade", "semtex_mp"),
-    ("hatchet", "throwingknife_mp"),
-    ("satchel_charge", "c4_mp"),
-    ("claymore", "claymore_mp"),
-    ("bouncingbetty", "claymore_mp"),
-    ("flash_grenade", "flash_grenade_mp"),
-    ("concussion_grenade", "concussion_grenade_mp"),
-    ("willy_pete", "smoke_grenade_mp"),
-    ("emp_grenade", "concussion_grenade_mp"),
-    ("proximity_grenade", "concussion_grenade_mp"),
-    ("sensor_grenade", "smoke_grenade_mp"),
-    ("trophy_system", "claymore_mp"),
-    ("tactical_insertion", "flare_mp"),
-];
-
-const TACTICAL_EQUIPMENT: &[&str] = &["tactical_insertion"];
-
-pub fn is_tactical_equipment(name: &str) -> bool {
-    TACTICAL_EQUIPMENT.contains(&base_name(name))
-}
-
-const SHEDS_STAND_IN_TRAIL: &[&str] = &["bouncingbetty", "trophy_system"];
-
-pub fn sheds_stand_in_trail(name: &str) -> bool {
-    SHEDS_STAND_IN_TRAIL.contains(&base_name(name))
-}
-
-const STAYS_PLANTED: &[&str] = &["sensor_grenade"];
-
-pub fn stays_planted(name: &str) -> bool {
-    STAYS_PLANTED.contains(&base_name(name))
-}
-
 const PLANTED_MODELS: &[(&str, &str)] = &[("tactical_insertion", "t6_wpn_tac_insert_world")];
 
 pub fn planted_model(name: &str) -> Option<&'static str> {
@@ -142,14 +69,6 @@ pub fn base_name(name: &str) -> &str {
         }
     }
     base
-}
-
-pub fn stand_in_for(name: &str) -> Option<&'static str> {
-    let base = base_name(name);
-    STAND_INS
-        .iter()
-        .find(|(t6, _)| *t6 == base)
-        .map(|(_, iw4)| *iw4)
 }
 
 pub fn capture_t6_string_table(

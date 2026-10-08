@@ -20,7 +20,7 @@ impl MaterialCompiler for T6Compiler {
         }
     }
     fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState {
-        render_material::compile_material_state(AssetNamespace::T6, words)
+        super::super::state::packed_state(words, None)
     }
     fn color_space(&self, _slot: u8) -> PassColorSpace {
         PassColorSpace::Unknown

@@ -22,6 +22,9 @@ pub struct FxElemSlot {
     pub msec_begin: i32,
 
     pub life_span_msec: i32,
+    /// `elem_random_seed` of the owning effect, sequence and `msec_begin`,
+    /// none of which change while the element lives.
+    pub random_seed: u64,
     pub base_vel: [f32; 3],
 
     pub origin: [f32; 3],
@@ -54,6 +57,7 @@ impl Default for FxElemSlot {
             prev_elem_handle: FX_ELEM_HANDLE_NONE,
             msec_begin: 0,
             life_span_msec: 0,
+            random_seed: 0,
             base_vel: [0.0; 3],
             origin: [0.0; 3],
             spawn_origin: [[0.0; 2]; 3],

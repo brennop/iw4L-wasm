@@ -1,11 +1,5 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CharacterAnimationPolicy {
-    MultiplayerBodyTracks,
-    NativeT6,
-}
-
 #[derive(Clone, Debug)]
 pub struct PlayerAnimationBinding {
     bodies: Arc<asset_model::BodyMeshCatalog>,
@@ -13,7 +7,6 @@ pub struct PlayerAnimationBinding {
     tree: Arc<asset_anim::CompiledAnimTreeDefinition>,
     script: Arc<asset_anim::ParsedPlayerAnimScript>,
     catalog: Arc<asset_anim::XAnimCatalog>,
-    policy: CharacterAnimationPolicy,
     rig: Arc<xmodel_runtime::DObj>,
 }
 
@@ -22,10 +15,6 @@ impl PlayerAnimationBinding {
         self.bodies
             .get(&self.body_name)
             .expect("bound character body")
-    }
-
-    pub fn policy(&self) -> CharacterAnimationPolicy {
-        self.policy
     }
 
     fn matches(
@@ -52,7 +41,7 @@ impl PlayerAnimationBinding {
         let body = self.body();
         let clip = self
             .catalog
-            .body_clip(body.namespace, &leaf.name, &body.skel.bone_names)
+            .clip(body.namespace, &leaf.name)
             .ok_or_else(|| format!("decode failed for character clip `{}`", leaf.name))?;
         if !self.rig.tracks_for(&clip).iter().any(Option::is_some) {
             return Err(format!(
@@ -101,12 +90,8 @@ impl RemoteBodyTrees {
         bodies: &assets::PreparedBodies,
         catalog: &assets::PreparedXAnims,
         axis: bool,
-        profile: CharacterAnimationPolicy,
         persist_key: u32,
     ) -> Result<Arc<PlayerAnimationBinding>, String> {
-        if profile == CharacterAnimationPolicy::NativeT6 {
-            return Err("native T6 character animation profile is unsupported".into());
-        }
         let tree = sources
             .compiled()
             .and_then(|t| t.as_ref().ok())
@@ -128,6 +113,13 @@ impl RemoteBodyTrees {
             return Ok(slot.binding.clone());
         }
         let body = bodies.0.get(&kit.body).ok_or("character body missing")?;
+        if sources.family() != Some(body.namespace) {
+            return Err(format!(
+                "{} character requires its own animation tree and script; supplied family {:?}",
+                body.namespace.as_str(),
+                sources.family()
+            ));
+        }
         let pose = body
             .skel
             .pose
@@ -148,7 +140,6 @@ impl RemoteBodyTrees {
             tree: tree.clone(),
             script: script.clone(),
             catalog: catalog.0.clone(),
-            policy: profile,
             rig: Arc::new(rig),
         }))
     }

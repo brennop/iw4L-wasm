@@ -509,12 +509,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let runtime_namespace = common_opened
         .as_ref()
         .and_then(|(_, image)| image.as_ref().ok())
-        .map(|image| match image.game {
-            asset_core::ZoneGame::T5 => asset_core::AssetNamespace::T5,
-            asset_core::ZoneGame::Iw5 => asset_core::AssetNamespace::Iw5,
-            _ => asset_core::AssetNamespace::Iw4,
-        })
-        .unwrap_or(asset_core::AssetNamespace::Iw4);
+        .map(|image| image.game);
 
     let (
         mut weapons,
@@ -711,19 +706,23 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
 
     let cac_tables: Vec<(asset_core::AssetNamespace, asset_game::CapturedStringTable)> = [
         (runtime_namespace, iw4_stats, iw4_census_stats),
-        (asset_core::AssetNamespace::Iw5, iw5_stats, iw5_census_stats),
         (
-            asset_core::AssetNamespace::T5,
+            Some(asset_core::AssetNamespace::Iw5),
+            iw5_stats,
+            iw5_census_stats,
+        ),
+        (
+            Some(asset_core::AssetNamespace::T5),
             t5_code_stats,
             t5_census_stats,
         ),
-        (asset_core::AssetNamespace::T6, t6_tables, Vec::new()),
+        (Some(asset_core::AssetNamespace::T6), t6_tables, Vec::new()),
     ]
     .into_iter()
     .flat_map(|(namespace, code, common)| {
         code.into_iter()
             .chain(common)
-            .map(move |table| (namespace, table))
+            .filter_map(move |table| Some((namespace?, table)))
     })
     .collect();
 

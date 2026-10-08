@@ -31,3 +31,5 @@ pub mod asset_graph {
 pub mod progress {
     pub use asset_transport::progress::*;
 }
+
+pub use material_compile::compile_material_state;

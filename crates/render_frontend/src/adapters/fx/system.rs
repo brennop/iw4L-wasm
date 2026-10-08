@@ -2142,6 +2142,14 @@ fn publish_weapon_fire(
         combat.last_fire_alias = Some(alias.to_owned());
 
         let sound_origin = fire.event.payload.origin;
+        let Some(sound_namespace) = weapons.as_ref().and_then(|w| {
+            w.registry().component_namespace_of(
+                fire.event.payload.weapon,
+                asset_game::WeaponComponent::Sound,
+            )
+        }) else {
+            return;
+        };
         sounds.write(audio::WeaponSound {
             event: Some(audio::AudioEvent::from_entity(
                 *generation,
@@ -2149,15 +2157,7 @@ fn publish_weapon_fire(
                 &fire.event,
                 0,
             )),
-            namespace: weapons
-                .as_ref()
-                .and_then(|w| {
-                    w.registry().component_namespace_of(
-                        fire.event.payload.weapon,
-                        asset_game::WeaponComponent::Sound,
-                    )
-                })
-                .unwrap_or(asset_core::AssetNamespace::Iw4),
+            namespace: sound_namespace,
             alias: alias.to_owned(),
             origin_inches: (!player_view).then_some(sound_origin),
             snd_ent: audio::ent_from_number(fire.event.payload.number),
@@ -2605,15 +2605,15 @@ fn tick_missile_present_state(
                 )
             }) {
                 Some(alias) => {
+                    let Some(sound_namespace) = weapons
+                        .component_namespace_of(row.weapon, asset_game::WeaponComponent::Sound)
+                    else {
+                        continue;
+                    };
                     if let Some(sounds) = sounds.as_deref_mut() {
                         sounds.write(audio::WeaponSound {
                             event: None,
-                            namespace: weapons
-                                .component_namespace_of(
-                                    row.weapon,
-                                    asset_game::WeaponComponent::Sound,
-                                )
-                                .unwrap_or(asset_core::AssetNamespace::Iw4),
+                            namespace: sound_namespace,
                             alias: alias.to_owned(),
                             origin_inches: Some(row.origin),
                             snd_ent: Some(entnum),
@@ -2723,6 +2723,12 @@ fn explosion(
             )
         });
     if let (Some(alias), Some(sounds)) = (alias, sounds.as_deref_mut()) {
+        let Some(sound_namespace) = weapons.as_ref().and_then(|w| {
+            w.registry()
+                .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)
+        }) else {
+            return;
+        };
         sounds.write(audio::WeaponSound {
             event: Some(audio::AudioEvent::from_entity(
                 *generation,
@@ -2730,13 +2736,7 @@ fn explosion(
                 &explosion.event,
                 0,
             )),
-            namespace: weapons
-                .as_ref()
-                .and_then(|w| {
-                    w.registry()
-                        .component_namespace_of(payload.weapon, asset_game::WeaponComponent::Sound)
-                })
-                .unwrap_or(asset_core::AssetNamespace::Iw4),
+            namespace: sound_namespace,
             alias: alias.to_owned(),
             origin_inches: Some(payload.origin),
             snd_ent: audio::ent_from_number(payload.number),

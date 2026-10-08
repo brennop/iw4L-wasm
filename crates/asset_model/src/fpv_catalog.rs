@@ -217,7 +217,7 @@ pub struct FpvMeshBuild {
     catalog: FpvMeshCatalog,
     capture_zone: crate::ZoneOwner,
     strings: ScriptStrings,
-    capture_ns: AssetNamespace,
+    capture_ns: Option<AssetNamespace>,
 }
 
 impl Default for FpvMeshBuild {
@@ -226,7 +226,7 @@ impl Default for FpvMeshBuild {
             catalog: FpvMeshCatalog::default(),
             capture_zone: crate::ZoneOwner::default(),
             strings: ScriptStrings::default(),
-            capture_ns: AssetNamespace::Iw4,
+            capture_ns: None,
         }
     }
 }
@@ -252,7 +252,7 @@ impl FpvMeshBuild {
     }
 
     pub fn set_capture_ns(&mut self, ns: AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn set_capture_zone(&mut self, zone: crate::ZoneOwner) {
@@ -337,12 +337,22 @@ impl FpvMeshBuild {
         materials: &MaterialCatalog,
     ) {
         if model_kind(&skel.name) == Some(ModelKind::Fpv) {
-            self.insert_in(ns.unwrap_or(self.capture_ns), skel.clone(), Some(materials));
+            self.insert_in(
+                ns.or(self.capture_ns)
+                    .expect("asset capture requires an explicit family"),
+                skel.clone(),
+                Some(materials),
+            );
         }
     }
 
     pub fn insert_captured(&mut self, skel: FpvSkel, materials: Option<&MaterialCatalog>) {
-        self.insert_in(self.capture_ns, skel, materials);
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            materials,
+        );
     }
 
     pub fn insert_in(
@@ -516,20 +526,6 @@ impl FpvMeshCatalog {
             };
         }
         seen.values().filter(|bits| bits.count_ones() >= 2).count()
-    }
-
-    pub fn peer(&self, ns: AssetNamespace, name: &str) -> Option<&FpvMeshEntry> {
-        const PREFER: [AssetNamespace; 3] =
-            [AssetNamespace::T5, AssetNamespace::Iw5, AssetNamespace::Iw4];
-        for other in PREFER {
-            if other == ns {
-                continue;
-            }
-            if let Some(entry) = self.get(other, name) {
-                return Some(entry);
-            }
-        }
-        None
     }
 
     pub fn tag_view_count(&self) -> usize {
@@ -741,4 +737,35 @@ pub fn plan_fpv_mounts(
         rocket,
         ads_swaps: Vec::new(),
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FamilyFpvMesh<F: asset_core::Family> {
+    index: crate::FpvMeshIndex,
+    owner: u64,
+    family: core::marker::PhantomData<F>,
+}
+
+impl<F: asset_core::Family> FamilyFpvMesh<F> {
+    pub fn index(self) -> crate::FpvMeshIndex {
+        self.index
+    }
+    pub fn owner(self) -> u64 {
+        self.owner
+    }
+}
+
+impl FpvMeshCatalog {
+    pub fn family_mesh<F: asset_core::Family>(
+        &self,
+        index: crate::FpvMeshIndex,
+    ) -> Option<FamilyFpvMesh<F>> {
+        (self.identity() != 0 && self.get_at(index.order())?.namespace == F::ID).then_some(
+            FamilyFpvMesh {
+                index,
+                owner: self.identity(),
+                family: core::marker::PhantomData,
+            },
+        )
+    }
 }

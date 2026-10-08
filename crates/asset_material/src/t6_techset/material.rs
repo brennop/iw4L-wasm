@@ -1,19 +1,4 @@
 use super::*;
-use crate::{AuthoredImage, StandInTextures, TS_COLOR_MAP, TS_NORMAL_MAP, TS_SPECULAR_MAP};
-use std::sync::Arc;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum T6MaterialSource {
-    NativeSeed(usize),
-    RequiresDonor(usize),
-}
-impl T6MaterialSource {
-    fn index(self) -> usize {
-        match self {
-            Self::NativeSeed(index) | Self::RequiresDonor(index) => index,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum T6MaterialRefusal {
@@ -22,113 +7,11 @@ pub enum T6MaterialRefusal {
     MissingTechniqueGraph,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum T6MaterialFields {
-    DrawSurface,
-    SortKey,
-    GameFlags,
-    TextureAtlas,
-    SurfaceTypes,
-    LayeredSurfaceTypes,
-    StateFlags,
-    CameraRegion,
-    DrawRoute,
-    Zone,
-}
-impl T6MaterialFields {
-    pub const ALL: &'static [Self] = &[
-        Self::DrawSurface,
-        Self::SortKey,
-        Self::GameFlags,
-        Self::TextureAtlas,
-        Self::SurfaceTypes,
-        Self::LayeredSurfaceTypes,
-        Self::StateFlags,
-        Self::CameraRegion,
-        Self::DrawRoute,
-        Self::Zone,
-    ];
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum T6MaterialPreparation {
-    Native,
-    RequiresDonor {
-        source: crate::MaterialKey,
-        donor: crate::MaterialKey,
-        fields: &'static [T6MaterialFields],
-    },
-    DonorSurface {
-        source: crate::MaterialKey,
-        donor: crate::MaterialKey,
-    },
-}
-
 impl MaterialCatalog {
-    pub fn t6_donor_surface(
-        &mut self,
-        donor: usize,
-        source: crate::MaterialKey,
-        locator_name: &str,
-        textures: StandInTextures,
-    ) -> Result<usize, crate::t6_techset::T6MaterialRefusal> {
-        let donor = self
-            .materials
-            .get(donor)
-            .ok_or(crate::t6_techset::T6MaterialRefusal::MissingSource)?;
-        if source.namespace != crate::AssetNamespace::T6
-            || donor.namespace != crate::AssetNamespace::Iw4
-        {
-            return Err(crate::t6_techset::T6MaterialRefusal::WrongSourceFamily);
-        }
-        let mut material = donor.clone();
-        material.t6_preparation = Some(crate::t6_techset::T6MaterialPreparation::DonorSurface {
-            source,
-            donor: crate::MaterialKey {
-                namespace: material.namespace,
-                name: material.name.as_str().to_owned(),
-            },
-        });
-        material.name = AssetRef::Real(locator_name.to_owned());
-        let namespace = material.namespace;
-        for binding in &mut material.textures {
-            let slot = match binding.semantic {
-                TS_COLOR_MAP => &textures.color,
-                TS_NORMAL_MAP => &textures.normal,
-                TS_SPECULAR_MAP => &textures.specular,
-                _ => continue,
-            };
-            let Some((image_name, image, srgb)) = slot else {
-                continue;
-            };
-            let incoming = AuthoredImage {
-                namespace,
-                name: AssetRef::Real(image_name.clone()),
-                map_type: 3,
-                semantic: binding.semantic,
-                category: 0,
-                use_srgb_reads: *srgb,
-                width: image.width() as u16,
-                height: image.height() as u16,
-                depth: 1,
-                level_count: image.texture_descriptor.mip_level_count as u8,
-                format: 0,
-                payload: Arc::new(Vec::new()),
-                decoded: Some(image.clone()),
-                common_owned: false,
-                decoded_variant: None,
-                decoded_by: None,
-                pending_decode: None,
-            };
-            binding.image = Some(self.link_image(incoming));
-        }
-        Ok(self.link_material(material))
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn t6_material(
         &mut self,
-        source: T6MaterialSource,
+        source: usize,
         name: &str,
         set: &T6TechniqueSet,
         textures: &[T6Texture],
@@ -139,29 +22,12 @@ impl MaterialCatalog {
     ) -> Result<usize, T6MaterialRefusal> {
         let seed = self
             .materials
-            .get(source.index())
+            .get(source)
             .ok_or(T6MaterialRefusal::MissingSource)?;
-        let preparation = match source {
-            T6MaterialSource::NativeSeed(_) if seed.namespace == crate::AssetNamespace::T6 => {
-                T6MaterialPreparation::Native
-            }
-            T6MaterialSource::RequiresDonor(_) if seed.namespace == crate::AssetNamespace::Iw4 => {
-                T6MaterialPreparation::RequiresDonor {
-                    source: crate::MaterialKey {
-                        namespace: crate::AssetNamespace::T6,
-                        name: name.to_owned(),
-                    },
-                    donor: crate::MaterialKey {
-                        namespace: seed.namespace,
-                        name: seed.name.as_str().to_owned(),
-                    },
-                    fields: T6MaterialFields::ALL,
-                }
-            }
-            _ => return Err(T6MaterialRefusal::WrongSourceFamily),
-        };
+        if seed.namespace != crate::AssetNamespace::T6 {
+            return Err(T6MaterialRefusal::WrongSourceFamily);
+        }
         let mut material = seed.clone();
-        material.t6_preparation = Some(preparation);
         let technique_set = draw.technique_set_name(&set.name);
         let technique_set = technique_set.as_str();
         let graph = self

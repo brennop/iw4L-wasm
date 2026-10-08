@@ -38,7 +38,7 @@ mod weapon_semantics;
 mod weapon_t6;
 pub use weapon_t6::{
     MELEE_WEAPON as T6_MELEE_WEAPON, T6_EFFECTS, T6_EQUIPMENT_SOUNDS, capture_t6_string_table,
-    planted_model as t6_planted_model, stand_in_for as t6_stand_in_for,
+    planted_model as t6_planted_model,
 };
 
 pub use arena::*;
@@ -68,3 +68,6 @@ pub mod asset_graph {
 
 mod team_t6;
 pub use team_t6::t6_team_properties;
+
+mod fpv_family;
+pub use fpv_family::{FpvFamilyConnection, NativeFpvConnection, T6WithIw4Hands};

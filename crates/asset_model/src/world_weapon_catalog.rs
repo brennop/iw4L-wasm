@@ -93,7 +93,7 @@ pub struct WorldWeaponCatalog {
 pub struct WorldWeaponBuild {
     catalog: WorldWeaponCatalog,
     capture_zone: crate::ZoneOwner,
-    capture_ns: AssetNamespace,
+    capture_ns: Option<AssetNamespace>,
     strings: ScriptStrings,
 }
 
@@ -127,7 +127,7 @@ impl WorldWeaponBuild {
     }
 
     pub fn set_capture_ns(&mut self, ns: AssetNamespace) {
-        self.capture_ns = ns;
+        self.capture_ns = Some(ns);
     }
 
     pub fn capture(&mut self, stream: &ZoneStream<'_>, materials: &MaterialCatalog) {
@@ -139,7 +139,12 @@ impl WorldWeaponBuild {
         else {
             return;
         };
-        self.insert_in(self.capture_ns, skel, Some(materials));
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            Some(materials),
+        );
     }
 
     pub fn capture_t5(
@@ -183,7 +188,12 @@ impl WorldWeaponBuild {
     }
 
     pub fn insert_captured(&mut self, skel: ModelSkel, materials: Option<&MaterialCatalog>) {
-        self.insert_in(self.capture_ns, skel, materials);
+        self.insert_in(
+            self.capture_ns
+                .expect("asset capture requires an explicit family"),
+            skel,
+            materials,
+        );
     }
 
     pub fn capture_shared(
@@ -193,7 +203,14 @@ impl WorldWeaponBuild {
         materials: &MaterialCatalog,
     ) {
         if crate::model_kind(&skel.name) == Some(crate::ModelKind::WorldWeapon) {
-            self.insert_in(ns.unwrap_or(self.capture_ns), skel.clone(), Some(materials));
+            self.insert_in(
+                ns.unwrap_or(
+                    self.capture_ns
+                        .expect("asset capture requires an explicit family"),
+                ),
+                skel.clone(),
+                Some(materials),
+            );
         }
     }
 

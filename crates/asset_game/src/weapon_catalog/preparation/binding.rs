@@ -98,13 +98,13 @@ impl WeaponPreparationRecipe {
                 continue;
             };
             if slot.is_some() {
-                self.declare_donor_slot(WeaponComponent::Effect, name);
+                self.declare_native_slot(WeaponComponent::Effect, name);
             }
             *edge = self.bind_fx(catalog, slot.is_some(), Some(name));
         }
         if let Some(name) = combat.tracer_hint.as_deref() {
             if slots.tracer.is_some() {
-                self.declare_donor_slot(WeaponComponent::Tracer, name);
+                self.declare_native_slot(WeaponComponent::Tracer, name);
             }
             let valid = self
                 .candidate_namespace(WeaponComponent::Tracer, name)
@@ -131,22 +131,20 @@ impl WeaponPreparationRecipe {
         }
     }
 
-    fn declare_donor_slot(&mut self, component: WeaponComponent, name: &str) {
+    fn declare_native_slot(&mut self, component: WeaponComponent, name: &str) {
         if !self.closed_references || self.reference(component, name).is_some() {
             return;
         }
-        let Some(donor) = &self.donor_weapon else {
+        let Some(namespace) = self.namespace(component) else {
             return;
         };
         self.references.push(PreparedComponentReference {
             component,
-            source_namespace: donor.namespace,
+            source_namespace: namespace,
             source_name: name.to_owned(),
-            storage_namespace: donor.namespace,
+            storage_namespace: namespace,
             name: name.to_owned(),
-            policy: ComponentPreparationPolicy::T6WeaponDonor {
-                weapon: donor.clone(),
-            },
+            policy: ComponentPreparationPolicy::Native,
             target: PreparedComponentTarget::Pending,
         });
     }
@@ -203,7 +201,7 @@ impl WeaponPreparationRecipe {
         let native = !self.closed_references;
         self.references.push(PreparedComponentReference {
             component,
-            source_namespace: self.source.namespace,
+            source_namespace: self.namespace(component).unwrap_or(self.source.namespace),
             source_name: name.to_owned(),
             name: name.to_owned(),
             storage_namespace: self.namespace(component).unwrap_or(self.source.namespace),

@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use asset_anim::XAnimCatalog;
-use asset_core::AssetNamespace;
 use asset_game::{WEAPON_ANIM_SLOTS, WeaponAnimations, WeaponFpvFacts};
 use asset_material::TS_COLOR_MAP;
 use asset_model::FpvMeshCatalog;
@@ -575,9 +574,11 @@ impl FpvPreparationJob {
             .and_then(|row| row[asset_iw4::size::weap_anim::IDLE].bound_index())
             .and_then(|order| xanims.clip_at(order))
             .map(|clip| clip.name.clone());
-        let namespace = registry
-            .component_namespace_of(id, asset_game::WeaponComponent::ViewModel)
-            .unwrap_or(AssetNamespace::Iw4);
+        let Some(namespace) =
+            registry.component_namespace_of(id, asset_game::WeaponComponent::ViewModel)
+        else {
+            return;
+        };
         let gun_name = fpv
             .get_at(gun_index.order())
             .map(|entry| entry.skel.name.clone())

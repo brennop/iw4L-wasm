@@ -181,7 +181,8 @@ impl AssetLinkSink for Iw5SoundCapture {
             block_size,
             pcm: pcm_bytes.into(),
             zone: self.catalog.capture_zone_for_ingest(),
-            ..Default::default()
+            seek_table: Vec::new(),
+            sab_media: None,
         });
         Ok(())
     }

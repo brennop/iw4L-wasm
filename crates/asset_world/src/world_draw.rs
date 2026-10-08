@@ -500,7 +500,7 @@ pub struct WorldPrimaryLight {
     pub t5_specular_color: Option<[f32; 4]>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapturedLightDef {
     pub namespace: crate::AssetNamespace,
     pub name: crate::AssetRef,

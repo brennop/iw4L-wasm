@@ -65,7 +65,9 @@ impl WeaponCatalog {
             .unwrap_or([const { None }; WEAPON_ANIM_SLOTS]);
         let hide_tags = read_hide_tags(stream, &self.strings, geometry.hide_tags);
         self.entries.push(CatalogWeapon {
-            namespace: self.capture_ns,
+            namespace: self
+                .capture_ns
+                .expect("asset capture requires an explicit family"),
             impact_payload: None,
             alternate_weapon: geometry
                 .alternate_weapon_name
@@ -288,7 +290,7 @@ impl WeaponCatalog {
             combat_fx: WeaponCombatFx {
                 last_shot_eject_pair_authored: geometry.view_last_shot_eject_slot.is_some()
                     && geometry.world_last_shot_eject_slot.is_some(),
-                ..WeaponCombatFx::default()
+                ..WeaponCombatFx::empty(crate::AssetNamespace::Iw4)
             },
             facts: WeaponBodyFacts {
                 body_resolved: geometry.weap_def.is_some(),
