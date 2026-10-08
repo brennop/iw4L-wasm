@@ -910,9 +910,20 @@ fn preflight_match_install(
             zone,
         );
     }
+    let kind = match match_kind(mode_selection) {
+        Ok(kind) => kind,
+        Err(gap) => {
+            diag::info!(Sim, "match install refused: {gap}");
+            return Err(InstallRefusal::with_gap(gap, gap));
+        }
+    };
     let mut objective_weapons = Vec::new();
     if let Some(namespace @ (asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::Iw5)) =
         prepared_map.namespace
+        && !matches!(
+            kind,
+            gamemode_iw4::GameModeKind::FreeForAll | gamemode_iw4::GameModeKind::TeamDeathmatch
+        )
     {
         let catalog = catalog.ok_or_else(|| {
             InstallRefusal::new("IW4 menu catalog missing for objective bindings".to_owned())
@@ -992,13 +1003,6 @@ fn preflight_match_install(
         }
     }
     let strings = std::mem::take(&mut prepared.strings);
-    let kind = match match_kind(mode_selection) {
-        Ok(kind) => kind,
-        Err(gap) => {
-            diag::info!(Sim, "match install refused: {gap}");
-            return Err(InstallRefusal::with_gap(gap, gap));
-        }
-    };
     struct Sources(assets::ScriptSources);
     impl sim::script::SourceResolver for Sources {
         fn read(&self, module: &str) -> Result<String, String> {

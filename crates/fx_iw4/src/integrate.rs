@@ -12,8 +12,6 @@ impl FxElemVec3Range {
     }
 }
 
-/// Every sample of an element's velocity graph shares these three draws, and
-/// each one is a hash, so a graph walk takes them once.
 fn velocity_random(seed: u64) -> [f32; 3] {
     use crate::random::{FxRandomChannel, sample_f32};
     [

@@ -15,13 +15,15 @@ unsupported capability until a native cue compiler supplies them.
 The map selects soldier kits. A soldier's body and first-person hands belong to
 the map's family. Kit arms take precedence over weapon-authored hands; authored
 hands are eligible only when they belong to the soldier's family. Missing hands
-leave first-person composition unresolved.
+leave first-person composition unresolved. T6 maps capture both faction viewhands
+and require the selected kit hands for every weapon family.
 
 `FamilyFpvMesh<F>` is issued by a published catalog after checking family and
-owner. `NativeFpvConnection<F>` accepts a gun and hands of the same family.
-`T6WithIw4Hands` explicitly accepts T6 guns with IW4 soldier hands. Both reject
-mixed catalog owners. Other foreign pairs refuse. Attachments and auxiliary
-models must belong to the weapon's family.
+owner. `SoldierFpvConnection<G, H>` connects native gun family G to native soldier
+hands family H for IW4, IW5, T5 and T6. Both meshes must have the same owner.
+`NativeFpvConnection<F>` names the same-family case. Attachments and auxiliary
+models must belong to the weapon's family. The assembled skeleton validates
+mounts; missing hands or mount tags refuse composition without substitute models.
 
 Third-person body clips, animation sources, trees and scripts must match the
 soldier's family. Missing foreign profiles refuse; IW4 clips are not a fallback.

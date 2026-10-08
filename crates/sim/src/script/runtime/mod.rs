@@ -1100,8 +1100,6 @@ fn register(
     });
 }
 
-/// Where each thread's entity was last seen. Only a hint: a hit is checked
-/// against the entity's own serial, and a miss rebuilds it from a full scan.
 #[derive(Resource, Default)]
 struct ThreadIndex(std::collections::HashMap<u64, Entity>);
 
@@ -1270,8 +1268,6 @@ fn kill(world: &mut World, entity: Entity, serial: u64) {
     retire(&mut world.resource_mut::<Runtime>(), serial);
 }
 
-/// Unreachable script objects cannot be observed, so the heap is swept every
-/// few ticks rather than every tick: the sweep walks every live value.
 const HEAP_COLLECT_TICKS: u32 = 10;
 
 pub(crate) fn advance_scheduler(world: &mut World) {
@@ -1425,7 +1421,6 @@ pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread,
         let Err(message) = result else {
             continue;
         };
-        // Looked up only on failure: a location owns two strings.
         let location = &program.functions[at_function].code[at_pc].0;
         if world.resource::<Runtime>().fault.is_some() {
             break;
@@ -1646,8 +1641,6 @@ fn entity_receivers(world: &World, thread: &Thread) -> Vec<Value> {
         .collect()
 }
 
-/// Threads waiting on an object that has been deleted, found in one pass
-/// over the waiters rather than one pass per thread.
 fn threads_waiting_on_deleted(world: &World) -> std::collections::HashSet<u64> {
     let runtime = world.resource::<Runtime>();
     runtime
@@ -1702,8 +1695,6 @@ impl Runtime {
 
 fn collect_heap(world: &mut World) {
     use std::collections::HashSet;
-    // Only object and array ids are walked, by reference: values themselves
-    // are never cloned, and a string or vector holds nothing to keep alive.
     #[derive(Default)]
     struct Marks {
         objects: HashSet<u64>,

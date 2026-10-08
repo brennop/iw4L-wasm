@@ -228,9 +228,6 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
     Ok(())
 }
 
-/// Our own Game Rules rows, copies of stock toggles (button plus value
-/// display): an always-on radar under Gameplay Options, and how many enemy and
-/// (in team modes) friendly bots join under Team Options.
 fn add_rule_rows(items: &mut Vec<asset_game::MenuItem>) {
     type Row = (
         &'static str,
@@ -256,7 +253,6 @@ fn add_rule_rows(items: &mut Vec<asset_game::MenuItem>) {
     ) else {
         return;
     };
-    // Team Options: the lowest row left of Gameplay Options in its panel.
     let (left_x, top_y) = (items[gameplay.0].rect.x, items[gameplay.0].rect.y);
     let team = items
         .iter()
@@ -324,6 +320,5 @@ fn add_rule_rows(items: &mut Vec<asset_game::MenuItem>) {
     }
 }
 
-/// MW2 lobbies hold 18: nine a side.
 pub const MAX_RULE_ENEMY_BOTS: u32 = 9;
 pub const MAX_RULE_FRIENDLY_BOTS: u32 = 8;

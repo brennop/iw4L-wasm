@@ -121,9 +121,14 @@ impl WeaponBuild {
                 if body.namespace != map_ns {
                     return None;
                 }
-                let kit = Some(kit);
-                let mut choice =
-                    asset_model::FpvHands::resolve(fpv, map_ns, kit, hand_name, hand_ns);
+                let choice = if map_ns == crate::AssetNamespace::T6 {
+                    asset_model::FpvHands::FromKit {
+                        namespace: map_ns,
+                        name: kit.arms.as_ref()?.clone(),
+                    }
+                } else {
+                    asset_model::FpvHands::resolve(fpv, map_ns, Some(kit), hand_name, hand_ns)
+                };
                 if row.secondary_gun_xmodel.is_some()
                     && fpv.get_hands(&choice).is_some_and(|entry| {
                         !entry
@@ -133,7 +138,7 @@ impl WeaponBuild {
                             .any(|bone| bone == "tag_weapon1")
                     })
                 {
-                    choice = asset_model::FpvHands::game_default(map_ns);
+                    return None;
                 }
                 let (ns, name) = choice.key()?;
                 if ns != body.namespace {

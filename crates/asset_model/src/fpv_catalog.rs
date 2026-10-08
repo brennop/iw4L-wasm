@@ -114,12 +114,6 @@ impl FpvHands {
                 };
             }
         }
-        let def = Self::game_default(map_ns);
-        if let Some((ns, name)) = def.key() {
-            if catalog.contains(ns, name) {
-                return def;
-            }
-        }
         Self::Unresolved
     }
 }

@@ -703,8 +703,6 @@ fn take_radar_pings(
         return None;
     }
     if radar == sim::RadarMode::Constant {
-        // No sweep: every enemy is pinged afresh each frame, so its blip stays
-        // solid and follows it. Cold-Blooded does not hide anyone from it.
         latch.radar_progress = 0.0;
         latch.radar_last_ms = None;
         for (id, _) in &snapshot.players {

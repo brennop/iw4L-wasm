@@ -38,7 +38,6 @@ pub fn seed_rules(dvars: &mut UiMenuDvars, config: &str) {
             dvars.set(&name, value.trim_matches('"'));
         }
     }
-    // Ours, so no stock config sets it.
     for dvar in [
         sim::CONSTANT_RADAR_DVAR,
         sim::ENEMY_BOTS_DVAR,

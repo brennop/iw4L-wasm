@@ -786,7 +786,11 @@ fn primary_lights(
         let is_sun = i != 0 && i <= sun_count;
         lights.push(crate::WorldPrimaryLight {
             is_sun,
-            light_type: h[0],
+            light_type: match h[0] {
+                3 | 4 => lighting_iw4::GFX_LIGHT_TYPE_SPOT,
+                5 => lighting_iw4::GFX_LIGHT_TYPE_OMNI,
+                t => t,
+            },
             can_cast_shadow: h[1] != 0,
             exponent: h[2],
             color: r.xyz(p.at(8))?,

@@ -70,4 +70,6 @@ mod team_t6;
 pub use team_t6::t6_team_properties;
 
 mod fpv_family;
-pub use fpv_family::{FpvFamilyConnection, NativeFpvConnection, T6WithIw4Hands};
+pub use fpv_family::{
+    FpvFamilyConnection, NativeFpvConnection, SoldierFpvConnection, SoldierHandsConnection,
+};

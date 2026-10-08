@@ -73,7 +73,9 @@ fn is_head_model(name: &str) -> bool {
 }
 
 pub fn is_arms_model(name: &str) -> bool {
-    name.starts_with("viewmodel_") && name.ends_with("_arms")
+    name.starts_with("viewhands_")
+        || (name.starts_with("viewmodel_") && name.ends_with("_arms"))
+        || (name.starts_with("c_") && name.contains("_mp_") && name.ends_with("_viewhands"))
 }
 
 pub fn is_body_model(name: &str) -> bool {

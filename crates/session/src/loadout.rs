@@ -37,7 +37,7 @@ pub fn resolve_class_weapon(
                     .expect("resolved in this registry")
                     .wire_id()
             })
-            .map_err(|refusal| format!("{name}:{}", refusal.code()))
+            .map_err(|refusal| format!("{name}:{} — {refusal}", refusal.code()))
     };
     if let Some(family) = asset_game::FamilyKey::parse(name)
         && weapons.weapon_families().family(&family).is_some()
@@ -61,7 +61,7 @@ pub fn resolve_class_weapon(
         _ if attachments.is_empty() => weapons
             .configuration_admission(id)
             .map(|()| id)
-            .map_err(|refusal| format!("{name}:{}", refusal.code())),
+            .map_err(|refusal| format!("{name}:{} — {refusal}", refusal.code())),
         _ => Err(format!("{name}:weapon.unknown_family")),
     }
 }

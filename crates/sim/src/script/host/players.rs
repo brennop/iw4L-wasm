@@ -1068,7 +1068,6 @@ pub(crate) fn publish_radar(world: &mut World) {
         let engine = &world.resource::<Runtime>().engine;
         let team_on = engine.team_radar.get(&team).is_some_and(|on| *on != 0);
         let team_blocked = engine.team_radar_blocked.contains(&team);
-        // An EMP still blinds a constant radar, as it does a live UAV.
         let radar = if blocked || team_blocked {
             crate::RadarMode::Off
         } else if constant {

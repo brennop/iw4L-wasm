@@ -70,8 +70,6 @@ pub struct BotAddRequest {
     pub side: Option<BotSide>,
 }
 
-/// The team a bot joins, relative to the local player. Without one it lets the
-/// game scripts auto-assign it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotSide {
     Friendly,
@@ -179,7 +177,6 @@ pub struct BotSlot {
 #[derive(Resource, Debug)]
 pub struct BotRoster {
     pub bots: Vec<BotSlot>,
-    /// The Game Rules' enemy and friendly bots were queued for this match.
     pub rules_filled: bool,
     pub next_client: u32,
     pub seed: u64,

@@ -149,8 +149,6 @@ fn reset_roster_on_match_torn_down(
     *ready = BotNavigationReady::default();
 }
 
-/// Queues the Game Rules' enemy and friendly bots once per match, as soon as
-/// the world is installed.
 fn fill_bots_from_rules(
     mut roster: ResMut<BotRoster>,
     mut queue: ResMut<BotAddQueue>,
@@ -177,7 +175,6 @@ fn fill_bots_from_rules(
             .unwrap_or(0)
     };
     let enemies = count(sim::ENEMY_BOTS_DVAR);
-    // Free-for-all has no friends to add.
     let friends = if world.0.game_mode_kind() == gamemode_iw4::GameModeKind::FreeForAll {
         0
     } else {
@@ -185,7 +182,7 @@ fn fill_bots_from_rules(
     };
     queue.push_side(enemies, crate::BotSide::Enemy);
     queue.push_side(friends, crate::BotSide::Friendly);
-    if enemies + friends > 0 {
+    if enemies > 0 || friends > 0 {
         diag::info!(
             Sim,
             "bots: game rules add {enemies} enemy and {friends} friendly"
@@ -270,8 +267,6 @@ fn boot_bots(
         if bot.joined {
             continue;
         }
-        // A sided bot answers the team menu itself; until the player has a
-        // team there is no side to take, so it waits.
         let team = match bot.side.filter(|_| team_based) {
             None => None,
             Some(side) => {

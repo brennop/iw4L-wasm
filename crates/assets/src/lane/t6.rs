@@ -1415,7 +1415,7 @@ fn camera_region(t6: u8) -> u8 {
     }
 }
 
-fn capture_bodies(
+fn capture_soldiers(
     path: &Path,
     factions: &[fastfile_t6::ZoneLoad],
     shared: &[fastfile_t6::ZoneLoad],
@@ -1423,10 +1423,11 @@ fn capture_bodies(
     kits: asset_model::SoldierKits,
     materials: &mut asset_material::MaterialCatalog,
     report: &mut Vec<String>,
-) -> Result<asset_model::BodyMeshBuild, String> {
+) -> Result<(asset_model::BodyMeshBuild, asset_model::FpvMeshBuild), String> {
     use asset_core::{AssetNamespace, WalkLocalMaterialIndex};
     use asset_material::t6_techset::T6Draw;
     let mut bodies = asset_model::BodyMeshBuild::default();
+    let mut fpv = asset_model::FpvMeshBuild::default();
     let zones: Vec<_> = factions.iter().chain(shared).collect();
     let mut decoded = DecodedTextures::new();
     let mut techsets = BTreeMap::new();
@@ -1435,102 +1436,122 @@ fn capture_bodies(
         .into_iter()
         .flatten()
     {
-        let name = &kit.body;
-        if bodies.get(name).is_some() {
-            continue;
-        }
-        let (load, asset, model) = factions
-            .iter()
-            .find_map(|load| {
-                load.assets.iter().find_map(|asset| {
-                    let model = asset_model::T6Model::new(load, asset)?;
-                    (model.name() == Some(name.as_str())).then_some((load, asset, model))
-                })
-            })
-            .ok_or_else(|| format!("T6 body {name}: model missing"))?;
-        let mut rows = Vec::with_capacity(model.surface_count());
-        for surface in 0..model.surface_count() {
-            let slot = model
-                .material_slot(surface)
-                .ok_or("T6 body material slot missing")?;
-            let material = load
-                .asset_in(asset, slot)
-                .ok_or("T6 body material missing")?;
-            let raw_name =
-                header_str(load, &material.header, 0).ok_or("T6 body material name missing")?;
-            let material_name = asset_core::AssetRef::bare_name(raw_name);
-            if let Some(&row) = bound.get(material_name) {
-                rows.push(Some(row));
+        for (name, hands) in
+            std::iter::once((&kit.body, false)).chain(kit.arms.as_ref().map(|name| (name, true)))
+        {
+            let captured = if hands {
+                fpv.contains(AssetNamespace::T6, name)
+            } else {
+                bodies.get(name).is_some()
+            };
+            if captured {
                 continue;
             }
-            let address = load
-                .blocks
-                .ptr_at(slot)
-                .map_err(|e| format!("T6 body material pointer: {e:?}"))?
-                .ok_or("T6 body material null")?;
-            let (material_load, material) = if raw_name.starts_with(',') {
-                zones
-                    .iter()
-                    .find_map(|zone| {
-                        zone.assets
-                            .iter()
-                            .find(|asset| {
-                                asset.ty == fastfile_t6::AssetType::Material
-                                    && header_str(zone, &asset.header, 0) == Some(material_name)
-                            })
-                            .map(|asset| (*zone, asset))
+            let (load, asset, model) = factions
+                .iter()
+                .find_map(|load| {
+                    load.assets.iter().find_map(|asset| {
+                        let model = asset_model::T6Model::new(load, asset)?;
+                        (model.name() == Some(name.as_str())).then_some((load, asset, model))
                     })
-                    .ok_or_else(|| {
-                        format!("T6 body material {material_name}: definition missing")
-                    })?
-            } else {
-                (load, material)
-            };
-            let native = capture_native(
-                material_load,
-                &zones,
-                address,
-                material,
-                ColourMapAlpha::Mask,
-                ipaks,
-                &mut decoded,
-                &mut techsets,
-                report,
-            )
-            .ok_or_else(|| format!("T6 body material {material_name}: native capture failed"))?;
-            let set = &techsets[&native.technique_set];
-            materials.link_t6_technique_set(set, T6Draw::Lit, report);
-            let seed =
-                native_material_seed(path, material_name, material, &set.name, false, materials)?;
-            let row = materials
-                .t6_material(
-                    seed,
-                    material_name,
-                    set,
-                    &native.textures,
-                    native.constants,
-                    &native.state,
-                    T6Draw::Lit,
+                })
+                .ok_or_else(|| format!("T6 soldier {name}: model missing"))?;
+            let mut rows = Vec::with_capacity(model.surface_count());
+            for surface in 0..model.surface_count() {
+                let slot = model
+                    .material_slot(surface)
+                    .ok_or("T6 soldier material slot missing")?;
+                let material = load
+                    .asset_in(asset, slot)
+                    .ok_or("T6 soldier material missing")?;
+                let raw_name = header_str(load, &material.header, 0)
+                    .ok_or("T6 soldier material name missing")?;
+                let material_name = asset_core::AssetRef::bare_name(raw_name);
+                if let Some(&row) = bound.get(material_name) {
+                    rows.push(Some(row));
+                    continue;
+                }
+                let address = load
+                    .blocks
+                    .ptr_at(slot)
+                    .map_err(|e| format!("T6 soldier material pointer: {e:?}"))?
+                    .ok_or("T6 soldier material null")?;
+                let (material_load, material) = if raw_name.starts_with(',') {
+                    zones
+                        .iter()
+                        .find_map(|zone| {
+                            zone.assets
+                                .iter()
+                                .find(|asset| {
+                                    asset.ty == fastfile_t6::AssetType::Material
+                                        && header_str(zone, &asset.header, 0) == Some(material_name)
+                                })
+                                .map(|asset| (*zone, asset))
+                        })
+                        .ok_or_else(|| {
+                            format!("T6 soldier material {material_name}: definition missing")
+                        })?
+                } else {
+                    (load, material)
+                };
+                let native = capture_native(
+                    material_load,
+                    &zones,
+                    address,
+                    material,
+                    ColourMapAlpha::Mask,
+                    ipaks,
+                    &mut decoded,
+                    &mut techsets,
                     report,
                 )
-                .map_err(|e| format!("T6 body material link failed: {e:?}"))?;
-            let row = WalkLocalMaterialIndex::from_walk(row);
-            bound.insert(material_name.to_owned(), row);
-            rows.push(Some(row));
+                .ok_or_else(|| {
+                    format!("T6 soldier material {material_name}: native capture failed")
+                })?;
+                let set = &techsets[&native.technique_set];
+                materials.link_t6_technique_set(set, T6Draw::Lit, report);
+                let seed = native_material_seed(
+                    path,
+                    material_name,
+                    material,
+                    &set.name,
+                    false,
+                    materials,
+                )?;
+                let row = materials
+                    .t6_material(
+                        seed,
+                        material_name,
+                        set,
+                        &native.textures,
+                        native.constants,
+                        &native.state,
+                        T6Draw::Lit,
+                        report,
+                    )
+                    .map_err(|e| format!("T6 soldier material link failed: {e:?}"))?;
+                let row = WalkLocalMaterialIndex::from_walk(row);
+                bound.insert(material_name.to_owned(), row);
+                rows.push(Some(row));
+            }
+            let skel = asset_model::capture_model_skel_t6(model, |surface| rows[surface])
+                .ok_or_else(|| format!("T6 soldier {name}: skeleton capture failed"))?;
+            report.push(format!(
+                "T6 soldier {name}: {} bones, {} vertices, {} surfaces",
+                skel.bones.len(),
+                skel.positions.len(),
+                skel.surface_materials.len()
+            ));
+            if hands {
+                fpv.insert_in(AssetNamespace::T6, skel, Some(materials));
+            } else {
+                bodies.insert_in(AssetNamespace::T6, skel, Some(materials));
+            }
         }
-        let skel = asset_model::capture_model_skel_t6(model, |surface| rows[surface])
-            .ok_or_else(|| format!("T6 body {name}: skeleton capture failed"))?;
-        report.push(format!(
-            "T6 body {name}: {} bones, {} vertices, {} surfaces",
-            skel.bones.len(),
-            skel.positions.len(),
-            skel.surface_materials.len()
-        ));
-        bodies.insert_in(AssetNamespace::T6, skel, Some(materials));
     }
     bodies.set_kits(kits);
     materials.resolve_technique_set_edges();
-    Ok(bodies)
+    Ok((bodies, fpv))
 }
 
 fn map_teams(
@@ -2088,7 +2109,7 @@ impl ZoneLane for T6Lane {
                 material_rows.len()
             ));
             let (team_settings, faction_loads, kits) = map_teams(path, &mut report)?;
-            let bodies = capture_bodies(
+            let (bodies, fpv_meshes) = capture_soldiers(
                 path,
                 &faction_loads,
                 &shared_loads,
@@ -2247,6 +2268,7 @@ impl ZoneLane for T6Lane {
                 sound,
                 collision: Some(collision),
                 bodies,
+                fpv_meshes,
                 spawns,
                 facts: crate::MapFacts {
                     script_sound: asset_audio::MapScriptSoundFacts {
