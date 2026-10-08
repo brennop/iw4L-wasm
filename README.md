@@ -75,12 +75,19 @@ This whole project is written by an LLM.
 
 ## Acknowledgements and license
 
+Thank you to all contributors for code, bug reports, testing and feedback.
+Special thanks to **ju1cedr1nker** and **silvernote03** for QA testing weapons,
+maps, attachments and other gameplay features.
+
 [OpenAssetTools](https://github.com/Laupetin/OpenAssetTools) and its [iw4x-x64
 fork](https://github.com/iw4x-x64/oat) informed asset layouts;
 [IW4x](https://github.com/iw4x/iw4x-client) informed asset and protocol behavior;
 [KisakCOD](https://github.com/SwagSoftware/KisakCOD) informed engine structure.
 [Ghidra](https://github.com/NationalSecurityAgency/ghidra) was used to inspect the
 original binaries.
+
+Movement implementation history and source boundaries are recorded in
+[its provenance note](docs/provenance/movement-iw4.md).
 
 IW4L's source is licensed under [Apache 2.0](LICENSE). Preserve required attribution and
 bundled font license texts when redistributing; see [NOTICE](NOTICE). Original game

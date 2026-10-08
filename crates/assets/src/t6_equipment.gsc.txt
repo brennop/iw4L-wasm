@@ -1,21 +1,8 @@
-// T6 (Black Ops II) equipment under IW4 rules, after T6's own scripts
-// (_weaponobjects, _bouncingbetty, _proximity_grenade, _trophy_system,
-// _sensor_grenade, _empgrenade): their radii, delays and damage are T6's.
-//
-// The engine reports T6 equipment IW4 has nothing like (bouncing betty,
-// trophy system, shock charge, sensor and EMP grenades) under its own name,
-// so IW4's scripts leave it alone, and tags every thrown grenade with
-// `nativename` (the weapon itself) and `weaponmodel` (a model showing it).
-// A player's `t6lethal` / `t6tactical` name the IW4 offhands their T6
-// equipment is given as.
-
 #include maps\mp\_utility;
 #include common_scripts\utility;
 
 main()
 {
-	// T6's own effects and sounds (`asset_game::T6_EFFECTS`,
-	// `T6_EQUIPMENT_SOUNDS`).
 	level.t6Fx = [];
 	level.t6Fx[ "betty_explosion" ] = loadfx( "weapon/bouncing_betty/fx_betty_explosion" );
 	level.t6Fx[ "betty_destroyed" ] = loadfx( "weapon/bouncing_betty/fx_betty_destroyed" );
@@ -43,8 +30,6 @@ main()
 	level.t6Fx[ "emp_explosion" ] = loadfx( "explosions/fx_flashbang" );
 	precacheShader( "compassping_enemy" );
 
-	// Free objective slots for sensor grenade pings, from the top down;
-	// the game modes take theirs from 0.
 	level.t6PingIds = [];
 	for ( id = 31; id >= 24; id-- )
 		level.t6PingIds[ level.t6PingIds.size ] = id;
@@ -71,13 +56,10 @@ onPlayerSpawned()
 	{
 		self waittill( "spawned_player" );
 
-		// T6 claymores wait T6's grace period before they go off.
 		level.claymoreDetectionGracePeriod = 0.6;
 
-		// T6 deletes a player's planted equipment when they spawn again.
 		self deleteObjects();
 
-		// A T6 class carries one of each item.
 		if ( isDefined( self.t6lethal ) && self hasWeapon( self.t6lethal ) )
 			self setWeaponAmmoClip( self.t6lethal, 1 );
 		if ( isDefined( self.t6tactical ) && self hasWeapon( self.t6tactical ) )
@@ -136,7 +118,6 @@ watchEquipment()
 				grenade thread empGrenadeThink( self );
 				break;
 			case "c4_mp":
-				// IW4's scripts run T6's C4; it shows T6's lights.
 				if ( isDefined( self.t6lethal ) && self.t6lethal == weapName )
 					grenade thread plantedLights( self, "c4" );
 				break;
@@ -144,8 +125,6 @@ watchEquipment()
 	}
 }
 
-// Equipment of T6's own: kept for its owner's next spawn to delete, and
-// for EMP grenades and trophy systems to find.
 addObject( owner )
 {
 	owner.t6Objects = array_removeUndefined( owner.t6Objects );
@@ -177,8 +156,6 @@ isStunned()
 	return isDefined( self.t6StunnedUntil ) && getTime() < self.t6StunnedUntil;
 }
 
-// T6's weapon object damage: an enemy's hit sets it off (a concussion or
-// flash only stuns it for a second). Returns the attacker.
 waitTillDamaged( owner, health )
 {
 	self endon( "death" );
@@ -211,7 +188,6 @@ waitTillDamaged( owner, health )
 	}
 }
 
-// Enemies may destroy it by hand (T6's trophy system and sensor grenade).
 enemyDestroyable( owner, hint )
 {
 	self endon( "death" );
@@ -254,7 +230,6 @@ plantedLights( owner, name )
 	self thread teamLights( owner, name, ( 0, 0, 0 ) );
 }
 
-// T6's equipment lights: green to its owner's side, red to everyone else.
 teamLights( owner, name, offset )
 {
 	self endon( "death" );
@@ -302,8 +277,6 @@ destroyed( fx )
 	self delete();
 }
 
-// T6 proximity detection (`proximityweaponobjectdetonation`): an enemy in
-// the radius, in sight of it. Moving targets only, unless `stillToo`.
 waitForTarget( owner, radius, stillToo )
 {
 	self endon( "death" );
@@ -331,8 +304,6 @@ waitForTarget( owner, radius, stillToo )
 	}
 }
 
-// Bouncing betty: an enemy within 192 trips it; 0.6s later it jumps 65
-// units and bursts (256 radius, 210 to 70 damage).
 bettyThink( owner )
 {
 	self endon( "death" );
@@ -382,7 +353,6 @@ bettyDestroyedWatch( owner )
 	if ( !isDefined( self ) )
 		return;
 
-	// Shot, it fizzles with a small blast.
 	origin = self.origin;
 	playFx( level.t6Fx[ "betty_destroyed" ], origin );
 	playSoundAtPos( origin, "dst_equipment_destroy" );
@@ -390,8 +360,6 @@ bettyDestroyedWatch( owner )
 	self delete();
 }
 
-// Shock charge: sticks, then an enemy within 150 (moving or not) sets it
-// off; everyone within 200 is shocked.
 shockChargeThink( owner )
 {
 	self endon( "death" );
@@ -432,7 +400,6 @@ shockOnExplode( owner )
 	}
 }
 
-// T6's taser: a 1.5s shock and four 1-point zaps 0.15s apart.
 shocked( owner, origin )
 {
 	self notify( "t6_shocked" );
@@ -456,8 +423,6 @@ shocked( owner, origin )
 	self shellShock( "concussion_grenade_mp", 0.6 );
 }
 
-// Trophy system: shoots down enemy grenades and rockets within 512 it can
-// see, twice, then breaks.
 trophyThink( owner )
 {
 	self endon( "death" );
@@ -514,7 +479,6 @@ trophyTarget( owner, eye )
 	{
 		if ( missile == self )
 			continue;
-		// Claymores and tactical insertions are let be.
 		if ( isDefined( missile.weaponname ) && ( missile.weaponname == "claymore_mp" || missile.weaponname == "flare_mp" ) )
 			continue;
 		if ( isDefined( missile.nativename ) && missile.nativename == "tactical_insertion_mp" )
@@ -534,7 +498,6 @@ trophyTarget( owner, eye )
 		return missile;
 	}
 
-	// An enemy's tactical insertion too.
 	foreach ( player in level.players )
 	{
 		stick = player.setSpawnPoint;
@@ -558,8 +521,6 @@ trophyDamageWatch( owner )
 		self destroyed( "equipment_explode_lg" );
 }
 
-// Sensor grenade: shows its owner's side the enemies within 750 it can see
-// on the minimap, until it is destroyed (one hit) or its owner respawns.
 sensorThink( owner )
 {
 	self endon( "death" );
@@ -620,13 +581,10 @@ sensorDamageWatch( owner )
 		self destroyed();
 }
 
-// EMP grenade: within 512 it jams enemies' HUD and minimap for 12 seconds
-// (its thrower's for 1) and fries enemy equipment.
 empGrenadeThink( owner )
 {
 	self waittill( "explode", origin );
 
-	// T6 detonates it as a smoke-type grenade, which plays no burst.
 	playFx( level.t6Fx[ "emp_explosion" ], origin );
 
 	foreach ( player in level.players )
@@ -704,7 +662,6 @@ empClearOnDeath()
 
 empClear()
 {
-	// An EMP killstreak keeps it jammed.
 	if ( level.teamBased && isDefined( level.teamEMPed ) && level.teamEMPed[ self.team ] )
 		return;
 	if ( !level.teamBased && isDefined( level.empPlayer ) && level.empPlayer != self )

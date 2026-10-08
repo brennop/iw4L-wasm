@@ -133,13 +133,7 @@ fn record_received_ticks(
         return;
     }
     for tick in &received.0 {
-        ring.push(
-            sim::TickInput {
-                cmds: tick.frame.cmds.clone(),
-                actions: tick.frame.actions.clone(),
-            },
-            tick.snapshot.clone(),
-        );
+        ring.push(tick.snapshot.clone());
     }
 }
 
@@ -154,12 +148,12 @@ fn record_server_tick(
         return;
     };
     if role.runs_authority() {
-        ring.push(tick.input.clone(), tick.snapshot.clone());
+        ring.push(tick.snapshot.clone());
     }
     let Some(recording) = session.0.as_mut() else {
         return;
     };
-    if let Err(error) = recording.record(&tick.input, &tick.snapshot) {
+    if let Err(error) = recording.record(&tick.snapshot) {
         let line = format!("record: write failed, recording stopped: {error}");
         diag::info!(Net, "{line}");
         diag.line = Some(line);

@@ -72,8 +72,6 @@ pub struct AuthoredImage {
     pub pending_decode: Option<u64>,
 }
 
-/// Texels for [`MaterialCatalog::stand_in_material`]: `(image name, texture,
-/// sRGB reads)` per slot; `None` keeps the donor's image.
 #[derive(Clone, Debug, Default)]
 pub struct StandInTextures {
     pub color: Option<(String, Arc<Image>, bool)>,
@@ -583,10 +581,6 @@ impl MaterialCatalog {
         self.link_reused_images = 0;
     }
 
-    /// A material of another game drawn with `donor`'s technique set, state
-    /// bits and constants: the donor's colour, normal and specular slots take
-    /// the given texels, in this catalog's namespace, under `name`. The
-    /// donor's other slots (detail, reflection) stay as they are.
     pub fn stand_in_material(
         &mut self,
         donor: usize,
@@ -1959,7 +1953,7 @@ fn argument_is_model_lighting_const(argument: &OwnedShaderArgument) -> bool {
     )
 }
 
-fn graph_slots_bind_model_lighting_const(slots: &[Option<OwnedTechnique>]) -> bool {
+pub(crate) fn graph_slots_bind_model_lighting_const(slots: &[Option<OwnedTechnique>]) -> bool {
     slots.iter().flatten().any(|technique| {
         technique
             .passes

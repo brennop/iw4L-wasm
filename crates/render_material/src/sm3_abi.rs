@@ -224,10 +224,8 @@ pub enum PassAbiRefusal {
         row_count: u8,
     },
 
-    /// A DXBC program failed to parse or reads what the lowering refuses.
     DxbcProgram,
 
-    /// A DXBC vertex input whose semantic no routed attribute carries.
     DxbcVertexInputUnrouted {
         register: u32,
     },

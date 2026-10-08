@@ -34,17 +34,12 @@ struct ClipJob {
     queued_at: Instant,
 }
 
-/// Which decoder a clip went through. Every clip takes exactly one of these,
-/// and they cost wildly different things — an external process per XWMA clip,
-/// a loop over bytes for everything else — so the report separates them rather
-/// than averaging one number over all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipPath {
     /// Linear PCM read in place from the zone.
     Pcm,
     /// T5 ADPCM, decoded in process.
     Adpcm,
-    /// T5 XWMA, decoded by an external `ffmpeg` or read from the artifact cache.
     Xwma,
     /// A clip read out of an IWD rather than out of the zone.
     Streamed,
@@ -79,10 +74,10 @@ impl ClipPath {
 #[derive(Clone, Debug)]
 pub(crate) enum ClipError {
     Decode,
+    Xwma(asset_audio::XwmaDecodeError),
     InvalidPcm(crate::media::PcmError),
     Read,
     QueueClosed,
-    QueueFull,
     RequestLimit,
 }
 
@@ -217,10 +212,6 @@ impl PreparedClipCache {
     }
 }
 
-/// How many queued jobs a worker takes at once. It bounds how long the store
-/// can hold a clip's outcome back — every job in a batch is published when the
-/// last of them is prepared — and it is the XWMA decoder's batch, which is the
-/// only decoder here that gains anything from the grouping.
 pub const PREP_BATCH: usize = 64;
 
 pub(crate) const MEDIA_REQUEST_LIMIT: usize = 4096;
@@ -359,7 +350,7 @@ impl ClipStore {
         self.service.late_prepares()
     }
     pub(crate) fn prefetch(&mut self, key: ClipKey) -> MediaRequest {
-        self.service.request_with_policy(key, true)
+        self.service.submit_request(key)
     }
     pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmBuffer, ClipError>> {
         self.service.ready(key)
@@ -412,6 +403,8 @@ impl MediaService {
             let spawned = std::thread::Builder::new()
                 .name(format!("clip-prep-{slot}"))
                 .spawn(move || {
+                    assets::session_load::use_process_cpus();
+                    crate::diagnostics::thread(&format!("clip-prep-{slot}"));
                     loop {
                         if stop_worker.load(Ordering::Acquire) {
                             return;
@@ -444,6 +437,7 @@ impl MediaService {
                                 Ordering::Relaxed,
                             );
                         }
+                        let prepare_at = Instant::now();
                         let mut prepared = prepare_jobs(&bank, iwd.as_deref(), &jobs);
                         for (job, result) in jobs.iter().zip(prepared.iter_mut()) {
                             if matches!(
@@ -473,6 +467,13 @@ impl MediaService {
                             outcomes.lock().unwrap_or_else(|poison| poison.into_inner());
                         let used = USE_TICK.fetch_add(1, Ordering::Relaxed);
                         for (job, result) in jobs.into_iter().zip(prepared) {
+                            if crate::diagnostics::enabled() {
+                                let result_detail = match &result {
+                                    Ok(pcm) => format!("ready frames={} rate={}", pcm.len() / usize::from(pcm.channels()), pcm.rate()),
+                                    Err(error) => format!("failed {error:?}"),
+                                };
+                                crate::diagnostics::emit(format!("audio diag: media key={:?} queued_to_publish_ms={:.3} batch_prepare_ms={:.3} {result_detail}", job.key, job.queued_at.elapsed().as_secs_f64()*1000.0, prepare_at.elapsed().as_secs_f64()*1000.0));
+                            }
                             guard.insert(job.key, (result, used));
                         }
                     }
@@ -540,19 +541,18 @@ impl MediaService {
     }
 
     pub(crate) fn request(&self, key: ClipKey) -> bool {
-        matches!(
-            self.request_with_policy(key, false),
-            MediaRequest::Submitted
-        )
+        matches!(self.submit_request(key), MediaRequest::Submitted)
     }
 
-    fn request_with_policy(&self, key: ClipKey, defer_full: bool) -> MediaRequest {
+    fn submit_request(&self, key: ClipKey) -> MediaRequest {
         REQUESTS.fetch_add(1, Ordering::Relaxed);
+        let lock_at = Instant::now();
         let mut requests = self
             .0
             .requests
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        let _ = crate::diagnostics::slow_stage("media_request_lock", lock_at);
         if requests.queued.contains(&key) {
             return MediaRequest::Existing;
         }
@@ -577,7 +577,6 @@ impl MediaService {
         if requests.match_live && matches!(key, ClipKey::Loaded(_)) {
             requests.late_prepares = requests.late_prepares.saturating_add(1);
             LATE.fetch_add(1, Ordering::Relaxed);
-            diag::warn!(Audio, "audio: clip prepare after AudioReady ({key:?})");
         }
         let job = ClipJob {
             key: key.clone(),
@@ -590,14 +589,10 @@ impl MediaService {
             }
             Err(error) => {
                 let reason = match error {
-                    TrySendError::Full(_) if defer_full => {
+                    TrySendError::Full(_) => {
                         requests.queued.remove(&key);
                         QUEUE_DEFERRED.fetch_add(1, Ordering::Relaxed);
                         return MediaRequest::Deferred;
-                    }
-                    TrySendError::Full(_) => {
-                        QUEUE_FULL.fetch_add(1, Ordering::Relaxed);
-                        ClipError::QueueFull
                     }
                     TrySendError::Disconnected(_) => ClipError::QueueClosed,
                 };
@@ -612,12 +607,17 @@ impl MediaService {
     }
 
     pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmBuffer, ClipError>> {
-        let requests = self
-            .0
-            .requests
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if !requests.queued.contains(key) && requests.queued.len() == MEDIA_REQUEST_LIMIT {
+        let lock_at = Instant::now();
+        let at_limit = {
+            let requests = self
+                .0
+                .requests
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            !requests.queued.contains(key) && requests.queued.len() == MEDIA_REQUEST_LIMIT
+        };
+        let lock_at = crate::diagnostics::slow_stage("media_ready_requests_lock", lock_at);
+        if at_limit {
             return Some(Err(ClipError::RequestLimit));
         }
         let mut outcomes = self
@@ -625,6 +625,7 @@ impl MediaService {
             .outcomes
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        let _ = crate::diagnostics::slow_stage("media_ready_outcomes_lock", lock_at);
         let (result, used) = outcomes.get_mut(key)?;
         *used = USE_TICK.fetch_add(1, Ordering::Relaxed);
         Some(result.clone())
@@ -735,7 +736,6 @@ pub(crate) fn clip_key_for_variant(
 static WORKERS: AtomicU64 = AtomicU64::new(0);
 static REQUESTS: AtomicU64 = AtomicU64::new(0);
 static QUEUE_DEFERRED: AtomicU64 = AtomicU64::new(0);
-static QUEUE_FULL: AtomicU64 = AtomicU64::new(0);
 static REQUEST_LIMIT: AtomicU64 = AtomicU64::new(0);
 static QUEUED: AtomicU64 = AtomicU64::new(0);
 static QUEUE_WAIT_NS: AtomicU64 = AtomicU64::new(0);
@@ -770,7 +770,6 @@ pub struct ClipPrepCost {
     pub workers: u64,
     pub requests: u64,
     pub queued: u64,
-    pub queue_full: u64,
     pub queue_deferred: u64,
     pub request_limit: u64,
     pub queue_wait_ms: f64,
@@ -784,7 +783,6 @@ pub fn clip_prep_cost() -> ClipPrepCost {
         workers: WORKERS.load(Ordering::Relaxed),
         requests: REQUESTS.load(Ordering::Relaxed),
         queued: QUEUED.load(Ordering::Relaxed),
-        queue_full: QUEUE_FULL.load(Ordering::Relaxed),
         queue_deferred: QUEUE_DEFERRED.load(Ordering::Relaxed),
         request_limit: REQUEST_LIMIT.load(Ordering::Relaxed),
         queue_wait_ms: QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64 / 1.0e6,
@@ -827,18 +825,15 @@ fn note_outcome(path: ClipPath, result: Result<&PcmBuffer, &ClipError>) {
             PREPARED[slot].fetch_add(1, Ordering::Relaxed);
             SAMPLE_BYTES[slot].fetch_add(prepared.resident_bytes() as u64, Ordering::Relaxed);
         }
-        Err(_) => {
+        Err(error) => {
+            if let ClipError::Xwma(error) = error {
+                diag::warn!(Audio, "audio: {error}");
+            }
             FAILED[slot].fetch_add(1, Ordering::Relaxed);
         }
     }
 }
 
-/// One worker's drained jobs, prepared together.
-///
-/// The XWMA clips among them go to their decoder in one call, because that
-/// decoder leaves the process: one `ffmpeg` for the batch instead of one per
-/// clip. Every other path is a loop over bytes in this process and is prepared
-/// one clip at a time, exactly as before.
 fn prepare_jobs(
     bank: &SoundCatalog,
     iwd: Option<&NamespaceSoundIwd>,
@@ -872,7 +867,7 @@ fn prepare_jobs(
         note_wall(ClipPath::Xwma, decode_at.elapsed());
         for ((i, sound), pcm) in asked.into_iter().zip(decoded) {
             let result = pcm
-                .map_err(|_| ClipError::Decode)
+                .map_err(ClipError::Xwma)
                 .and_then(|bytes| pcm_from_s16(&bytes, sound.channels(), sound.rate));
             note_outcome(ClipPath::Xwma, result.as_ref());
             out[i] = Some(result);
@@ -948,7 +943,7 @@ fn prepare_loaded(sound: &asset_audio::LoadedSoundPcm) -> Result<PcmBuffer, Clip
             sound.channels().max(0) as u32,
             sound.rate,
         )
-        .map_err(|_| ClipError::Decode)?;
+        .map_err(ClipError::Xwma)?;
         return pcm_from_s16(&decoded, sound.channels(), sound.rate);
     }
     if sound.format() != 1 {

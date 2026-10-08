@@ -223,7 +223,6 @@ fn grenade_launch_velocity(
         velocity[1] += flat[1] * extra;
         velocity[2] += flat[2] * extra;
     }
-    // Up along the view: square to the aim, in its vertical plane.
     if facts.projectile_speed_relative_up != 0 {
         let level = direction[0].hypot(direction[1]);
         let up = match flatten_xy(direction) {

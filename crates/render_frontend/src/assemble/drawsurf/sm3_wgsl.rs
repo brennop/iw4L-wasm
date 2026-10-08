@@ -114,8 +114,6 @@ pub fn lower_pass_to_validated_wgsl(
     Ok(lowered)
 }
 
-/// The alpha-tested fragment entries of a DXBC pass, the same tests and
-/// names the SM3 lowering emits (see `MATERIAL_ALPHA_TESTS`).
 pub(crate) fn dxbc_alpha_tests() -> Vec<(String, String)> {
     MATERIAL_ALPHA_TESTS
         .iter()

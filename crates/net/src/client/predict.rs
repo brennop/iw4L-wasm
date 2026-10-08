@@ -1,6 +1,11 @@
-use entity_iw4::adjust_position_for_mover;
+use entity_iw4::{
+    EntityEventAction, EntityEventKind, adjust_position_for_mover, entity_event_action,
+};
 use playerstate_iw4::{PlayerState, UserCmd, buttons, eflags, other_flags, pm_flags};
-use sim::{AdoptReport, ClientId, SimWorld, Snapshot, Tick, TickInput};
+use sim::{
+    AdoptReport, ClientId, EntityEventPayload, EntityEventRecord, EventAudience, EventSequence,
+    SimWorld, Snapshot, Tick, TickInput,
+};
 use std::collections::VecDeque;
 
 use crate::ServerTime;
@@ -226,6 +231,9 @@ pub struct ClientPrediction {
     had_local_last_snap: bool,
 
     tick_input: TickInput,
+
+    owner_events: Vec<EntityEventRecord>,
+    next_owner_event: EventSequence,
 }
 
 impl ClientPrediction {
@@ -251,6 +259,8 @@ impl ClientPrediction {
             last_predict_msec: None,
             had_local_last_snap: false,
             tick_input: TickInput::default(),
+            owner_events: Vec::new(),
+            next_owner_event: EventSequence(1),
         };
         pred.world.suppress_snapshot_publish();
         pred
@@ -309,6 +319,14 @@ impl ClientPrediction {
         self.had_local_last_snap
     }
 
+    pub fn presents_owner_fire(&self) -> bool {
+        self.armed && self.predicted_local.is_some_and(|ps| pmove_runs_for(&ps))
+    }
+
+    pub fn take_owner_events(&mut self) -> Vec<EntityEventRecord> {
+        std::mem::take(&mut self.owner_events)
+    }
+
     pub fn arm_from_content(&mut self, authority: &SimWorld) {
         self.world.initialize_prediction_from(authority);
         self.world
@@ -349,8 +367,12 @@ impl ClientPrediction {
         self.next_tick = self.next_tick.wrapping_add(1);
 
         let output = if msec > 0 {
-            self.step_predicted(tick, cmd, msec, sim::StepReason::PredictNew)
-                .unwrap_or(input)
+            let events_from = self.world.next_entity_event_sequence();
+            let output = self
+                .step_predicted(tick, cmd, msec, sim::StepReason::PredictNew)
+                .unwrap_or(input);
+            self.collect_owner_events(tick, events_from, &input, &output);
+            output
         } else {
             input
         };
@@ -573,6 +595,58 @@ impl ClientPrediction {
 
         self.next_tick = tick;
         pending
+    }
+
+    fn collect_owner_events(
+        &mut self,
+        tick: Tick,
+        events_from: EventSequence,
+        input: &PlayerState,
+        output: &PlayerState,
+    ) {
+        let local = i32::try_from(self.local.0).unwrap_or(-1);
+        let mut owner_events = std::mem::take(&mut self.owner_events);
+        let mut next = self.next_owner_event;
+        for record in self.world.entity_events() {
+            if (record.sequence == events_from || record.sequence.is_newer_than(events_from))
+                && record.payload.number == local
+                && entity_event_action(record.event) == Ok(EntityEventAction::WeaponFire)
+            {
+                owner_events.push(EntityEventRecord {
+                    sequence: next,
+                    audience: EventAudience::Client(self.local),
+                    ..record.clone()
+                });
+                next = next.next();
+            }
+        }
+        self.next_owner_event = next;
+        let mut ring = input.event_sequence;
+        movement_iw4::consume_player_events(output, &mut ring, |ev| {
+            let event = EntityEventKind(ev.event);
+            if entity_event_action(event) == Ok(EntityEventAction::EjectBrass) {
+                owner_events.push(EntityEventRecord {
+                    sequence: self.alloc_owner_event(),
+                    tick,
+                    audience: EventAudience::Client(self.local),
+                    event,
+                    payload: EntityEventPayload {
+                        number: local,
+                        event_parm: ev.event_parm,
+                        origin: output.origin,
+                        weapon: output.weapon,
+                        ..Default::default()
+                    },
+                });
+            }
+        });
+        self.owner_events = owner_events;
+    }
+
+    fn alloc_owner_event(&mut self) -> EventSequence {
+        let sequence = self.next_owner_event;
+        self.next_owner_event = sequence.next();
+        sequence
     }
 
     fn local_state(&self) -> Option<PlayerState> {

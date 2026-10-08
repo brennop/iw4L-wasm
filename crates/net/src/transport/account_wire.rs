@@ -3,7 +3,7 @@ use sim::{AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES};
 use super::wire::{WireError, WireReader, WireWriter};
 use crate::{AccountChallenge, AccountProof, ConnectionId};
 
-const MAGIC: &[u8; 8] = b"IW4LACP1";
+const MAGIC: &[u8; 8] = b"IW4LACP2";
 const MAX_BYTES: usize = 8500;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +56,7 @@ fn put_snapshot(
         out.put_i32(snapshot.version);
         out.put_u32(snapshot.checksum);
         out.put_bytes(&snapshot.bytes);
+        out.put_bytes(&snapshot.skills.encode());
     }
     Ok(())
 }
@@ -78,6 +79,9 @@ fn get_snapshot(
             let checksum = input.get_u32()?;
             let mut bytes = vec![0; PLAYER_DATA_BUFFER_BYTES];
             input.get_bytes(&mut bytes)?;
+            let skills =
+                sim::SkillRatings::decode(&get_array::<{ sim::SKILL_RATING_BYTES }>(input)?)
+                    .map_err(|_| WireError::Malformed("account skill ratings"))?;
             if bytes[..4] != version.to_le_bytes() || bytes[4..8] != checksum.to_le_bytes() {
                 return Err(WireError::Malformed("account snapshot stamp"));
             }
@@ -87,6 +91,7 @@ fn get_snapshot(
                 version,
                 checksum,
                 bytes,
+                skills,
             }))
         }
         _ => Err(WireError::Malformed("account snapshot tag")),

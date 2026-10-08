@@ -361,7 +361,7 @@ records source delivery, not a signature or platform identity. Full connection
 state parity, schema migration and platform identity remain incomplete.
 Remote profiles bind a signing key to member, connection, session, epoch and
 a fresh host challenge. Duplicate owners and stale contexts refuse admission.
-This protocol uses game-wire version 99; installed multiplayer validation remains
+This protocol uses game-wire version 106; installed multiplayer validation remains
 required.
 Host bots bind distinct temporary accounts before their join actions are queued.
 Their 8,188-byte buffers start at zero and use the first installed player schema

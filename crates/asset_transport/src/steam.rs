@@ -1,4 +1,3 @@
-#[cfg(windows)]
 use std::collections::HashSet;
 #[cfg(windows)]
 use std::path::Path;
@@ -10,6 +9,21 @@ use crate::discover::GamesRoot;
 use crate::discover::{search_roots, zone_game_for_path};
 
 pub const MW2_SHORTCUT: &str = "Modern Warfare 2.lnk";
+
+const TITLES: [(ZoneGame, &str, &str); 4] = [
+    (ZoneGame::Iw4, MW2_SHORTCUT, "Call of Duty Modern Warfare 2"),
+    (
+        ZoneGame::Iw5,
+        "Modern Warfare 3.lnk",
+        "Call of Duty Modern Warfare 3",
+    ),
+    (ZoneGame::T5, "Black Ops.lnk", "Call of Duty Black Ops"),
+    (
+        ZoneGame::T6,
+        "Black Ops II.lnk",
+        "Call of Duty Black Ops II",
+    ),
+];
 
 #[derive(Clone, Debug, Default)]
 pub struct SteamProbe {
@@ -30,16 +44,7 @@ pub enum SteamCandidate {
 pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
     let mut probe = SteamProbe::default();
     let roots = search_roots(&root.0);
-    let titles = [
-        (ZoneGame::Iw4, MW2_SHORTCUT, "Call of Duty Modern Warfare 2"),
-        (
-            ZoneGame::Iw5,
-            "Modern Warfare 3.lnk",
-            "Call of Duty Modern Warfare 3",
-        ),
-        (ZoneGame::T5, "Black Ops.lnk", "Call of Duty Black Ops"),
-    ];
-    let missing = titles
+    let missing = TITLES
         .into_iter()
         .filter(|(game, shortcut, _)| !root.0.join(shortcut).exists() && !has_game(&roots, *game))
         .collect::<Vec<_>>();
@@ -97,6 +102,65 @@ pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
 #[cfg(not(windows))]
 pub fn link_steam_games(_root: &GamesRoot) -> SteamProbe {
     SteamProbe::default()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn installed_game_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let missing = TITLES
+        .into_iter()
+        .filter(|(game, _, _)| {
+            !roots.iter().any(|root| {
+                crate::discover::folder_holds_game(root, *game)
+                    || std::fs::read_dir(root).is_ok_and(|entries| {
+                        entries
+                            .flatten()
+                            .any(|entry| crate::discover::folder_holds_game(&entry.path(), *game))
+                    })
+            })
+        })
+        .collect::<Vec<_>>();
+    steam_libraries()
+        .into_iter()
+        .flat_map(|library| {
+            missing
+                .iter()
+                .map(move |&(game, _, title)| (game, library.join("steamapps/common").join(title)))
+        })
+        .filter(|(game, folder)| crate::discover::folder_holds_game(folder, *game))
+        .map(|(_, folder)| folder)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn steam_libraries() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/share"));
+    let installs = [
+        home.join(".steam/steam"),
+        home.join(".steam/root"),
+        data.join("Steam"),
+        home.join(".var/app/com.valvesoftware.Steam/data/Steam"),
+        home.join("Library/Application Support/Steam"),
+    ];
+    let mut seen = HashSet::new();
+    let mut libraries = Vec::new();
+    for install in installs {
+        let listed = std::fs::read_to_string(install.join("steamapps/libraryfolders.vdf"))
+            .map(|vdf| steam_library_paths(&vdf))
+            .unwrap_or_else(|_| Vec::new());
+        for library in std::iter::once(install).chain(listed) {
+            if let Ok(canonical) = std::fs::canonicalize(&library)
+                && seen.insert(canonical)
+            {
+                libraries.push(library);
+            }
+        }
+    }
+    libraries
 }
 
 #[cfg(windows)]
@@ -194,7 +258,6 @@ fn steam_libraries() -> Vec<PathBuf> {
     libraries
 }
 
-#[cfg(windows)]
 fn steam_library_paths(vdf: &str) -> Vec<PathBuf> {
     vdf.lines()
         .filter_map(|line| line.trim().strip_prefix("\"path\""))

@@ -381,6 +381,12 @@ pub fn apply_prepared_match(
         content.set_weapon_script_names(weapons.0.script_names_table());
         content.set_weapon_script_aliases(objective_weapons);
         content.set_vehicle_turrets(weapons.0.vehicle_turrets());
+        content.set_vehicle_accel(
+            weapons
+                .0
+                .vehicle_accel()
+                .map(|(name, accel)| (name.to_owned(), accel)),
+        );
         content.set_vehicle_compass(
             weapons
                 .0
@@ -1624,6 +1630,7 @@ fn install_clip_and_player(
             let row = ClassRow::from(&preset.into());
             project_class(index as u32, &row, weapons, combat, equipment).def
         })
+        .filter(|class| !class.locked)
         .collect();
     let locked_n = lock_reasons.iter().filter(|r| r.is_some()).count();
     let has_intermission_view = intermission_view.is_some();

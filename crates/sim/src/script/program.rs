@@ -18,7 +18,6 @@ pub enum Realm {
     Iw4,
     Iw5,
     T5,
-    /// Weapon content only: no T6 script program runs.
     T6,
 }
 

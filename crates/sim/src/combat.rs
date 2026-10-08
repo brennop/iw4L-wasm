@@ -1812,8 +1812,6 @@ fn spend_ps_offhand_round(ps: &mut PlayerState, weapon: u32, facts: weapon_iw4::
     }
 }
 
-/// IW4's `usedBefore`, the first byte of a held weapon's equipped state: it
-/// has been raised since it was given.
 fn weapon_used_before(ps: &PlayerState, weapon: u32) -> bool {
     ps.weapons
         .iter()
@@ -1827,11 +1825,8 @@ pub(crate) fn mark_weapon_used(ps: &mut PlayerState, weapon: u32) {
     }
 }
 
-/// Bytes of equipped state per held weapon in `weapon_data`.
 const WEAPON_DATA_STRIDE: usize = 5;
 
-/// A weapon put straight into the hand is used from then on; its first
-/// raise sounds as one.
 pub(crate) fn raise_given_weapon(
     ps: &mut PlayerState,
     weapon: u32,

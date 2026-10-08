@@ -168,15 +168,33 @@ impl CueWork {
             StartOutcome::Failed(StartFailure::MissingAlias) => crate::CueFailure::MissingAlias,
             _ => crate::CueFailure::NoMedia,
         }));
-        self.request.state.complete(StartDecision {
+        let decision = StartDecision {
             event: self.request.execution.event,
             namespace: self.request.namespace,
             alias: self.request.alias.clone(),
             variant: self.resolved.as_ref().map(|cue| cue.variant),
             outcome,
             secondary: self.secondary.clone(),
-            detail: None,
-        });
+            detail: crate::diagnostics::enabled().then(|| {
+                let wait = self.request.execution.class.start_wait();
+                let requested = self.request.execution.deadline.checked_sub(wait);
+                let elapsed_ms = if self.source.is_some() {
+                    0.0
+                } else {
+                    requested.map_or(0.0, |at| at.elapsed().as_secs_f64() * 1000.0)
+                };
+                let id = self.request.state.playback.get().map(|state| state.id);
+                format!(
+                    "instance={id:?} request_to_decision_ms={elapsed_ms:.3} source={:?} clip={:?}",
+                    self.source,
+                    self.resolved.as_ref().and_then(|cue| cue.clip.as_ref())
+                )
+            }),
+        };
+        if crate::diagnostics::enabled() {
+            crate::diagnostics::emit(decision.line());
+        }
+        self.request.state.complete(decision);
     }
 
     pub(crate) fn step(
@@ -184,6 +202,7 @@ impl CueWork {
         resolver: &mut CueResolver,
         listener: Option<ListenerSnapshot>,
         children: &mut Vec<CueWork>,
+        output_available: bool,
     ) -> CueStep {
         let intent = &self.request.execution;
         if intent.lease.cancelled() || self.request.state.release.requested() {
@@ -193,15 +212,27 @@ impl CueWork {
             return CueStep::Finished;
         }
         if self.source.is_none() && Instant::now() >= intent.deadline {
-            self.complete(StartOutcome::Failed(StartFailure::Expired));
+            self.complete(StartOutcome::Failed(if output_available {
+                StartFailure::Expired
+            } else {
+                StartFailure::OutputUnavailable
+            }));
             return CueStep::Finished;
         }
+        if self.source.is_none() && !output_available {
+            return CueStep::Waiting;
+        }
         if self.resolved.is_none() {
-            match resolver.resolve(&self.request) {
+            let resolve_at = Instant::now();
+            let resolved = resolver.resolve(&self.request);
+            let _ = crate::diagnostics::slow_stage("cue_resolve", resolve_at);
+            match resolved {
                 Ok(cue) => {
                     self.request.state.resolved(Ok(cue.clone()));
                     if let (Some(media), Some(clip)) = (&cue.media, &cue.clip) {
+                        let request_at = Instant::now();
                         media.request(clip.clone());
+                        let _ = crate::diagnostics::slow_stage("cue_media_request", request_at);
                     }
                     self.resolved = Some(cue);
                 }
@@ -226,7 +257,10 @@ impl CueWork {
             return self.fail(StartFailure::NoPcm);
         };
         let pcm = match service.ready(clip) {
-            None => return CueStep::Waiting,
+            None => {
+                service.request(clip.clone());
+                return CueStep::Waiting;
+            }
             Some(Err(error)) => return self.fail(error.into()),
             Some(Ok(pcm)) => pcm,
         };

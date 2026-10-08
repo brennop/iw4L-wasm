@@ -16,6 +16,8 @@ console/ui `map` → session::lifecycle   SessionSwapRequest, tear the previous
 Cancellation is `MatchLoadAbort(request_id)`: the walk returns
 `MatchLoadOutcome::Canceled` at its next checkpoint, throwing nothing away.
 Failure is `MapLoadFailed`, from discovery *and* install; a request ends once.
+Startup and later load failures return to the main menu with a map error dialog;
+OK or Escape dismisses it. The log keeps the full error.
 
 ## The walk: `assets::session_load::load_prepared_match`
 
@@ -58,6 +60,6 @@ Content-addressed leaf in `asset_transport::artifact_cache` (`cache_get` /
 `cache_put`, `fnv1a64`). A miss is silent — the caller computes the value anyway
 — and a hit must be the **same bytes** a miss would have written. The key names
 every input; if the encoder changed, bump the format word. Live kinds: `mips`,
-`wgsl`, `localize`, `nav` and `xwma_pcm`, whose miss is a batched `ffmpeg`.
+`wgsl`, `localize`, `nav` and `xwma_pcm`, whose miss is decoded by the native Rust T5 WMA2 decoder.
 `IW4L_GAMES` holds the game trees; no folder name is hardcoded. Live it is `make
 map mp_boneyard` ([`RUN.md`](RUN.md)), with stages in `LoadProgress`.

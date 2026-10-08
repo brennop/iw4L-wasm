@@ -1,6 +1,3 @@
-//! The `RDEF` chunk: constant buffers with their variables, and the
-//! resources bound to registers.
-
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -34,7 +31,6 @@ pub struct ConstantBuffer {
     pub variables: Vec<Variable>,
 }
 
-/// `D3D_SHADER_INPUT_TYPE`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BindingKind {
     ConstantBuffer,
@@ -48,7 +44,6 @@ pub enum BindingKind {
 pub struct Binding {
     pub name: String,
     pub kind: BindingKind,
-    /// `D3D_SRV_DIMENSION` for textures: 4 `2D`, 7 `3D`, 9 `CUBE`, ...
     pub dimension: u32,
     pub bind_point: u32,
     pub bind_count: u32,
@@ -66,7 +61,6 @@ impl Reflection {
         let (buffer_count, buffer_at) = (u(0)? as usize, u(4)? as usize);
         let (binding_count, binding_at) = (u(8)? as usize, u(12)? as usize);
         let major = (u(16)? >> 8) & 0xff;
-        // Shader Model 5 variable records carry texture and sampler ranges.
         let variable_stride = if major >= 5 { 40 } else { 24 };
         let mut constant_buffers = Vec::with_capacity(buffer_count);
         for index in 0..buffer_count {

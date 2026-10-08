@@ -95,8 +95,6 @@ pub struct ModelSkel {
 
     pub movement_brushes: Vec<xmodel_runtime::ModelMovementBrush>,
 
-    /// The gun bone a T6 attachment copy hangs from (`j_barrel` for a
-    /// silencer); `None` for the gun's root.
     pub mount_tag: Option<String>,
 
     pub lod: Option<crate::ModelLodSelector>,

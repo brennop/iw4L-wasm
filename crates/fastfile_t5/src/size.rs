@@ -553,6 +553,7 @@ pub const WEAPON_DEF_NOTE_SOUND_KEYS_OFF: usize = 0x10;
 pub const WEAPON_DEF_NOTE_SOUND_VALUES_OFF: usize = 0x14;
 
 pub const WEAPON_DEF_IMPACT_TYPE_OFF: usize = 0x28;
+pub const WEAPON_DEF_PARENT_WEAPON_NAME_OFF: usize = 0x3c;
 pub const WEAPON_DEF_VIEW_FLASH_OFF: usize = 0x74;
 pub const WEAPON_DEF_WORLD_FLASH_OFF: usize = 0x78;
 pub const WEAPON_DEF_VIEW_SHELL_EJECT_OFF: usize = 0x190;

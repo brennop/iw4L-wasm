@@ -102,7 +102,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     };
     let game: Vec<(Arc<str>, Detached)> = runtime
         .objects
-        .get(&2)
+        .get(&1)
         .into_iter()
         .flatten()
         .filter_map(|(id, value)| Some((symbol_name(runtime, *id)?, detach(runtime, value, 0)?)))
@@ -162,6 +162,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         }
     }
 
+    let match_data = std::mem::take(&mut world.resource_mut::<Runtime>().engine.match_data);
     reset(world);
     {
         let mut runtime = world.resource_mut::<Runtime>();
@@ -169,10 +170,9 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         runtime.local_presentation_dvars = local_presentation_dvars;
         runtime.local_presentation_client = local_presentation_client;
         runtime.pending_local_dvars = pending_local_dvars;
+        runtime.engine.match_data = match_data;
     }
-    let mut plan = (*plan).clone();
-    let entries = std::mem::take(&mut plan.entries);
-    if let Err(fault) = install_level(world, program, plan) {
+    if let Err(fault) = install_level(world, program, (*plan).clone()) {
         world.resource_mut::<Runtime>().fault = Some(fault);
         return;
     }
@@ -184,7 +184,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     runtime.restored_pers = pers;
     for (name, value) in game {
         match attach(&mut runtime, value) {
-            Ok(value) => runtime.set_object_field(2, &name, value),
+            Ok(value) => runtime.set_object_field(1, &name, value),
             Err(message) => {
                 runtime.fault = Some(Fault::at(
                     &Location {
@@ -200,10 +200,10 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         }
     }
     drop(runtime);
-    for entry in entries {
+    for entry in &plan.entries {
         if let Err(fault) = run_now(
             world,
-            &entry,
+            entry,
             Value::level(),
             Vec::new(),
             i64::from(crate::level_time_ms(tick)),

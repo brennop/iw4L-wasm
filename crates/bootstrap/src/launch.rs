@@ -80,6 +80,9 @@ fn install_class_catalog(
     for line in &common.report {
         diag::info!(Launch, "{line}");
     }
+    commands.insert_resource(ui::frontend::maps::MapPresentation::from_tables(
+        &common.tables,
+    ));
     let mut class_catalog =
         ClassLoadoutCatalog::from_weapon_registry(std::sync::Arc::new(common.weapons))
             .with_weapon_tables(&common.tables);
@@ -97,7 +100,11 @@ fn install_class_catalog(
         shell.started.elapsed().as_secs_f32() * 1000.0,
     );
     for (key, preview) in &mut class_catalog.previews {
-        if key.contains('+') && menus.material_images.contains_key(&preview.image) {
+        if key.contains('+')
+            && asset_core::AssetKey::parse(key)
+                .is_ok_and(|key| key.namespace == asset_core::AssetNamespace::Iw4)
+            && menus.material_images.contains_key(&preview.image)
+        {
             preview.image = format!("iw4:material/{}", preview.image);
         }
     }
@@ -659,6 +666,7 @@ fn content_flags(trees: &NamespaceTrees) -> master_protocol::ContentFlags {
         trees.get(asset_core::AssetNamespace::Iw4).is_some(),
         trees.get(asset_core::AssetNamespace::Iw5).is_some(),
         trees.get(asset_core::AssetNamespace::T5).is_some(),
+        trees.get(asset_core::AssetNamespace::T6).is_some(),
     )
 }
 

@@ -314,9 +314,20 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             .and_then(|t| table_search(t, column as usize, &value));
         Ok(Value::Int(row.map_or(-1, |r| r as i32)))
     });
-    registry.register(Function, "getsystemtime", |_, _, _| Ok(Value::Int(0)));
+    registry.register(Function, "getsystemtime", |_, _, _| {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "system time precedes the Unix epoch")?
+            .as_secs();
+        let seconds =
+            u32::try_from(seconds).map_err(|_| "system time exceeds the timestamp format")?;
+        Ok(Value::Int(i32::from_le_bytes(seconds.to_le_bytes())))
+    });
     registry.register(Function, "getbuildnumber", |_, _, _| {
-        Ok(Value::string(env!("CARGO_PKG_VERSION")))
+        env!("IW4L_BUILD_NUMBER")
+            .parse::<i32>()
+            .map(Value::Int)
+            .map_err(|_| "numeric build metadata is unavailable".into())
     });
     registry.register(Function, "getbuildversion", |_, _, _| {
         Ok(Value::string(env!("CARGO_PKG_VERSION")))

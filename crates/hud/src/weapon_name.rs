@@ -28,8 +28,6 @@ pub(crate) fn localized_weapon_name(
     match text {
         Some(text) => {
             gaps.clear(HudGap::LocalizedText);
-            // A T6 configuration is named with its attachments, as IW4's
-            // own rows are (`M4A1 Red Dot Sight`).
             let mut name = text.to_owned();
             for key in weapons.0.attachment_caption_keys_of(viewmodel_index) {
                 let caption = match weapons.0.identity_namespace_of(viewmodel_index) {

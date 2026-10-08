@@ -8,6 +8,7 @@ mod sound_load_iw5;
 mod sound_load_t5;
 mod sound_load_t6;
 mod sound_wma_t5;
+mod wma_t5;
 mod zone_sound;
 
 pub use asset_core::*;

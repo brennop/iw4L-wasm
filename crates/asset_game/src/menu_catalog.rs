@@ -135,6 +135,7 @@ pub struct MenuItem {
     pub text_align_x: f32,
     pub text_align_y: f32,
     pub text_style: i32,
+    pub game_msg_window_index: i32,
     pub background: String,
     pub focus_sound: String,
     pub dvar: String,
@@ -1295,6 +1296,7 @@ impl AssetLinkSink for MenuSink {
             item.text_align_x = rec.text_align_x;
             item.text_align_y = rec.text_align_y;
             item.text_style = rec.text_style;
+            item.game_msg_window_index = rec.game_msg_window_index;
             item.background = rec.background.to_owned();
             item.focus_sound = rec.focus_sound.to_owned();
             item.dvar = rec.dvar.to_owned();

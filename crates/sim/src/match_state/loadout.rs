@@ -97,21 +97,8 @@ pub const CLASS_CATALOG_DEATHSTREAKS: [&str; 4] = [
     "specialty_finalstand",
 ];
 
-/// IW4's camouflage, as `mp/camoTable.csv` numbers it: the number is the
-/// `gunXModel` / `worldModel` slot a weapon given with it shows.
-pub const IW4_CAMOS: [&str; 9] = [
-    "none",
-    "woodland",
-    "desert",
-    "arctic",
-    "digital",
-    "red_urban",
-    "red_tiger",
-    "blue_tiger",
-    "orange_fall",
-];
+pub use weapon_iw4::IW4_CAMOS;
 
-/// The `IW4_CAMOS` number of a camouflage name; 0 for none or unknown.
 pub fn iw4_camo_index(name: &str) -> u8 {
     IW4_CAMOS
         .iter()
@@ -124,7 +111,6 @@ pub struct PersonalClass {
     pub weapons: [u32; 4],
     pub perks: [u32; 3],
     pub deathstreak: u8,
-    /// The primary's and secondary's camouflage (`IW4_CAMOS`).
     pub camos: [u8; 2],
 }
 
@@ -163,7 +149,6 @@ pub struct ClassDef {
     pub perks: [u32; 3],
 
     pub deathstreak: String,
-    /// The primary's and secondary's camouflage (`IW4_CAMOS`).
     pub camos: [u8; 2],
     pub locked: bool,
 }

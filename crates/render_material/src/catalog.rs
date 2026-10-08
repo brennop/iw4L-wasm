@@ -478,6 +478,7 @@ pub struct RuntimeMaterialCatalog {
     pub materials: Vec<RuntimeMaterial>,
 
     pub material_indices_by_name: Vec<(String, usize)>,
+    pub material_indices_by_key: std::collections::HashMap<asset_core::MaterialKey, usize>,
     pub technique_sets: Vec<RuntimeTechniqueSet>,
 
     pub shader_programs: Vec<Option<RuntimeShaderProgram>>,
@@ -578,6 +579,10 @@ impl RuntimeMaterialCatalog {
         let material = self.material_for_name(name)?;
         self.sorted_materials
             .ordinal_for_asset_id(usize::from(material.asset_id.0))
+    }
+
+    pub fn material_for_key(&self, key: &asset_core::MaterialKey) -> Option<&RuntimeMaterial> {
+        self.materials.get(*self.material_indices_by_key.get(key)?)
     }
 
     pub fn material_for_name(&self, name: impl AsRef<str>) -> Option<&RuntimeMaterial> {

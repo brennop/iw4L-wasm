@@ -260,9 +260,7 @@ pub struct WeaponBodyFacts {
     pub projectile_speed: i32,
     pub projectile_speed_up: i32,
     pub projectile_speed_forward: i32,
-    /// T5/T6's upward speed along the thrower's view (IW4 has none).
     pub projectile_speed_relative_up: i32,
-    /// T6 equipment its owner cannot pick back up (not `bRetrievable`).
     pub refuses_pickup: bool,
     pub projectile_activate_dist: i32,
     pub projectile_explosion_type: i32,
@@ -285,7 +283,6 @@ pub struct WeaponBodyFacts {
 
     pub no_dual_wield: bool,
     pub dual_wield: bool,
-    /// The fire button melees: a T6 riot shield bashes with it.
     pub fire_melees: bool,
 }
 
@@ -427,7 +424,6 @@ impl WeaponSwayFacts {
     pub fn hip_params(&self) -> weapon_iw4::WeaponSwayParams {
         weapon_iw4::WeaponSwayParams {
             max_angle: self.sway_max_angle,
-            lerp_speed: self.sway_lerp_speed,
             pitch_scale: self.sway_pitch_scale,
             yaw_scale: self.sway_yaw_scale,
             horiz_scale: self.sway_horiz_scale,
@@ -438,7 +434,6 @@ impl WeaponSwayFacts {
     pub fn ads_params(&self) -> weapon_iw4::WeaponSwayParams {
         weapon_iw4::WeaponSwayParams {
             max_angle: self.ads_sway_max_angle,
-            lerp_speed: self.ads_sway_lerp_speed,
             pitch_scale: self.ads_sway_pitch_scale,
             yaw_scale: self.ads_sway_yaw_scale,
             horiz_scale: self.ads_sway_horiz_scale,
@@ -453,7 +448,6 @@ pub enum CacOffhandBucket {
     Tactical,
 }
 
-/// IW4's `smoke` offhand class, thrown with the tactical button.
 const OFFHAND_CLASS_SMOKE: i32 = 2;
 
 pub fn cac_offhand_bucket(offhand_class: i32) -> Option<CacOffhandBucket> {
@@ -464,8 +458,6 @@ pub fn cac_offhand_bucket(offhand_class: i32) -> Option<CacOffhandBucket> {
     }
 }
 
-/// A weapon's camouflage models: `(slot, model)` for each filled `gunXModel` /
-/// `worldModel` slot past 0. A script gives the weapon with its slot.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WeaponCamoModels {
     pub view: Vec<(u8, String)>,
@@ -506,15 +498,9 @@ pub struct CatalogWeapon {
     pub scope_rows: [Iw5ScopeRow; 6],
 
     pub iw5_attachment_slots: [Option<String>; fastfile_iw5::size::WEAPON_ATTACHMENT_SLOT_COUNT],
-    /// Models a T6 weapon attaches to its first-person and world guns (its
-    /// magazine, a sniper's scope).
     pub attached_models: [Vec<String>; 2],
-    /// Of those, the magazine (attachment slot 6), which a fast-mag
-    /// attachment replaces.
     pub t6_clip_models: [Option<String>; 2],
-    /// What each T6 attachment the weapon takes does to it.
     pub t6_attachments: Vec<T6Attachment>,
-    /// How each T6 attachment the weapon takes changes its numbers.
     pub t6_attachment_stats: Vec<T6AttachmentStats>,
     pub iw5_reload_overrides: Vec<fastfile_iw5::ReloadOverride>,
     pub iw5_anim_overrides: Vec<LeftoverAnimOverride>,
@@ -559,6 +545,7 @@ pub struct CatalogWeapon {
     pub world_model: Option<String>,
 
     pub camo_models: WeaponCamoModels,
+    pub skin_parent: Option<String>,
 
     pub projectile_model: Option<String>,
 
@@ -1197,6 +1184,7 @@ pub struct WeaponCatalog {
     capture_ns: crate::AssetNamespace,
     vehicle_turrets: HashMap<String, String>,
     vehicle_compass: HashMap<String, ([String; 2], [i32; 2])>,
+    vehicle_accel: HashMap<String, f32>,
 }
 
 impl WeaponCatalog {
@@ -1328,6 +1316,8 @@ impl WeaponCatalog {
         if let Some(turret) = turret.and_then(|ptr| read_name(stream, ptr)) {
             self.vehicle_turrets.insert(name.clone(), turret);
         }
+        self.vehicle_accel
+            .insert(name.clone(), stream.vehicle_accel());
         let (icons, size) = stream.vehicle_compass();
         self.vehicle_compass
             .insert(name, (icons.map(str::to_owned), size));
@@ -1462,6 +1452,7 @@ impl WeaponCatalog {
             hand_xmodel,
             world_model,
             camo_models,
+            skin_parent: None,
             projectile_model,
             rocket_model,
             knife_xmodel: None,
@@ -2253,6 +2244,7 @@ impl WeaponCatalog {
             hand_xmodel,
             world_model,
             camo_models: WeaponCamoModels::default(),
+            skin_parent: None,
             projectile_model: geometry
                 .projectile_model_name
                 .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
@@ -2418,6 +2410,13 @@ impl WeaponCatalog {
             hand_xmodel,
 
             camo_models: WeaponCamoModels::default(),
+            skin_parent: geometry.weap_def.and_then(|body| {
+                leftover_t5_cstr(
+                    stream,
+                    body,
+                    fastfile_t5::size::WEAPON_DEF_PARENT_WEAPON_NAME_OFF,
+                )
+            }),
             world_model: geometry
                 .world_model_name
                 .and_then(|ptr| stream.cstr(ptr).ok())
@@ -2463,9 +2462,6 @@ impl WeaponCatalog {
         }
     }
 
-    /// A T6 weapon: its name, display key and gameplay facts. Everything it
-    /// shows or plays is left empty here and borrowed from an IW4 stand-in by
-    /// [`WeaponBuild::dress_t6_stand_ins`].
     pub fn capture_t6(&mut self, weapon: fastfile_t6::weapon::WeaponView<'_>) {
         use fastfile_t6::weapon::variant as v;
         let Some(name) = weapon.name().filter(|name| !name.is_empty()) else {
@@ -2490,7 +2486,6 @@ impl WeaponCatalog {
             hud_material_edges: WeaponHudMaterialEdges::default(),
             reticle_center_slot: None,
             reticle_side_slot: None,
-            // T6 UI images are keyed by material name.
             overlay_material: weapon
                 .variant_asset_name(v::OVERLAY_MATERIAL)
                 .map(str::to_owned),
@@ -2516,6 +2511,7 @@ impl WeaponCatalog {
                 .map(capture_t6_attachment_stats)
                 .collect(),
             camo_models: WeaponCamoModels::default(),
+            skin_parent: None,
             iw5_reload_overrides: Vec::new(),
             iw5_anim_overrides: Vec::new(),
             iw5_fx_overrides: Vec::new(),
@@ -2558,7 +2554,6 @@ impl WeaponCatalog {
                 .or_else(|| crate::weapon_t6::planted_model(name).map(str::to_owned)),
             rocket_model: None,
             sz_xanims: t6_sz_xanims(weapon),
-            // Paired by name when the rows are dressed (`X_dw` with `X_lh`).
             dual_wield_weapon: None,
             impact_payload: None,
             sz_xanims_right: [const { None }; WEAPON_ANIM_SLOTS],
@@ -2621,6 +2616,7 @@ impl WeaponCatalog {
         let mut build = WeaponBuild::from_catalog(self.entries, self.iw5_attachments);
         build.registry.vehicle_turrets = self.vehicle_turrets;
         build.registry.vehicle_compass = self.vehicle_compass;
+        build.registry.vehicle_accel = self.vehicle_accel;
         build
     }
 }
@@ -2886,19 +2882,12 @@ fn remap_t5_sz_xanims(t5: &[Option<String>]) -> [Option<String>; WEAPON_ANIM_SLO
     out
 }
 
-/// T6 clips share names with IW4's (`viewmodel_scar_idle`,
-/// `viewmodel_m67_throw`), and both live in the IW4 namespace where T6
-/// weapons resolve their content; T6's are kept under this prefix.
 pub const T6_XANIM_PREFIX: &str = "t6_";
 
-/// The weapon's `szXAnims` in IW4 slots, as [`remap_t5_sz_xanims`] does
-/// for T5, named with [`T6_XANIM_PREFIX`]. A T6 row keeps these only when it shows its own first-person
-/// model, see [`WeaponBuild::dress_t6_stand_ins`].
 fn t6_sz_xanims(w: fastfile_t6::weapon::WeaponView<'_>) -> [Option<String>; WEAPON_ANIM_SLOTS] {
     t6_sz_xanims_by(|slot| w.xanim(slot))
 }
 
-/// [`t6_sz_xanims`] over any T6 `szXAnims` (a weapon's or an attachment's).
 fn t6_sz_xanims_by<'a>(
     xanim: impl Fn(u32) -> Option<&'a str>,
 ) -> [Option<String>; WEAPON_ANIM_SLOTS] {
@@ -2943,7 +2932,6 @@ fn t6_sz_xanims_by<'a>(
     ];
     let mut out = [const { None }; WEAPON_ANIM_SLOTS];
     for (src, dst) in PAIRS {
-        // `FIRE_INTRO` stands in for `FIRE` only where there is no `FIRE`.
         if out[dst].is_none() {
             out[dst] = xanim(src as u32)
                 .filter(|name| !name.is_empty())
@@ -2953,10 +2941,6 @@ fn t6_sz_xanims_by<'a>(
     out
 }
 
-/// The left hand's clips of a dual-wield left half (`*_lh_mp`), in IW4
-/// slots: its idle, fire and reload live in T6's own left-hand slots, the
-/// rest (raise, sprint, ADS) are the pair's shared clips. Empty for any
-/// other weapon.
 fn t6_sz_xanims_left(
     w: fastfile_t6::weapon::WeaponView<'_>,
 ) -> [Option<String>; WEAPON_ANIM_SLOTS] {
@@ -2984,8 +2968,6 @@ fn t6_sz_xanims_left(
     out
 }
 
-/// Every animation name a T6 weapon's `szXAnims` holds, as the zone names
-/// it (without [`T6_XANIM_PREFIX`]).
 pub fn t6_weapon_xanim_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<String> {
     (0..fastfile_t6::weapon::variant::XANIM_COUNT)
         .filter_map(|slot| w.xanim(slot).filter(|name| !name.is_empty()))
@@ -3518,9 +3500,6 @@ fn capture_t5_body_facts(
     facts
 }
 
-/// `weapClass_t` T6 → IW4. T6 has no sniper class (its snipers are
-/// rifles, as in T5) and folds shotgun pistols into their own class; they
-/// fire pellets, so they become spread weapons here.
 fn remap_t6_weap_class(raw: i32) -> i32 {
     use fastfile_t6::weapon::weap_class as t6;
     match raw {
@@ -3537,8 +3516,6 @@ fn remap_t6_weap_class(raw: i32) -> i32 {
     }
 }
 
-/// `weapType_t` T6 → IW4, which knows bullet, grenade, projectile and
-/// riot shield. Mines and bombs are thrown or planted like grenades.
 fn remap_t6_weap_type(raw: i32) -> i32 {
     use fastfile_t6::weapon::weap_type as t6;
     match raw {
@@ -3553,9 +3530,6 @@ fn capture_t6_body_facts(w: fastfile_t6::weapon::WeaponView<'_>) -> WeaponBodyFa
     use fastfile_t6::weapon::{def as d, variant as v};
     let ads_in_ms = w.variant_i32(v::ADS_TRANS_IN_TIME);
     let ads_out_ms = w.variant_i32(v::ADS_TRANS_OUT_TIME);
-    // T6 damage is a six-step curve: `damage[i]` out to `damageRange[i]`,
-    // with the last entry the floor. IW4 falls off linearly between one
-    // near and one far point, so the near step and the floor are kept.
     let curve = w.damage_curve();
     let (near, near_range) = curve[0];
     let (far, far_range) = curve[fastfile_t6::weapon::def::DAMAGE_STEPS - 1];
@@ -3693,8 +3667,6 @@ fn capture_t6_body_facts(w: fastfile_t6::weapon::WeaponView<'_>) -> WeaponBodyFa
     facts
 }
 
-/// A T6 per-surface table in IW4 surface order. The first 29 types agree;
-/// IW4's riot shield is T6's 31 and IW4's slush, which T6 lacks, takes snow.
 fn t6_surface_table(t6: [f32; fastfile_t6::weapon::def::SURF_TYPE_COUNT]) -> [f32; 31] {
     const T6_RIOT_SHIELD: usize = 31;
     const T6_SNOW: usize = 19;
@@ -3705,15 +3677,10 @@ fn t6_surface_table(t6: [f32; fastfile_t6::weapon::def::SURF_TYPE_COUNT]) -> [f3
     })
 }
 
-/// The T6 alias names a weapon plays directly. Reload and handling sounds
-/// come from animation notetracks, and T6 weapons still play their
-/// stand-in's animations, so those stay the stand-in's.
 fn capture_t6_sounds(w: fastfile_t6::weapon::WeaponView<'_>) -> WeaponSoundAliases {
     use fastfile_t6::weapon::def as d;
     let name = |off| w.def_str(off).filter(|s| !s.is_empty()).map(str::to_owned);
     let fire = name(d::FIRE_SOUND);
-    // Some defs (`xm8_mp`) name only the shot's LFE layer as the player
-    // fire; the shot itself is the `_fire_plr` alias beside `_fire_npc`.
     let fire_player = match (name(d::FIRE_SOUND_PLAYER), &fire) {
         (Some(player), Some(npc)) if player.to_ascii_lowercase().ends_with("_lfe") => npc
             .strip_suffix("_fire_npc")
@@ -3744,59 +3711,33 @@ fn capture_t6_sounds(w: fastfile_t6::weapon::WeaponView<'_>) -> WeaponSoundAlias
     }
 }
 
-/// The models a T6 weapon attaches to its first-person (`view`) or world
-/// gun, by slot.
-/// The `attachViewModel` slot T6 weapons hold their magazine in.
 const T6_CLIP_SLOT: u32 = 6;
 
-/// One T6 attachment (or authored pair of attachments) as one weapon
-/// takes it, read from its `WeaponAttachmentUnique`.
 #[derive(Clone, Debug)]
 pub struct T6Attachment {
-    /// `au_an94_acog`, `au_an94_acog+grip`.
     pub name: String,
-    /// The attachment table's index of the attachment (of a pair, the one
-    /// it is filed under).
     pub kind: u32,
-    /// For a pair, `1 << kind` of both; zero for one attachment.
     pub mask: u32,
-    /// The weapon the attachment switches to (`gl_an94_mp`).
     pub alt_weapon: Option<String>,
-    /// First-person and world models, named as their placed copies (see
-    /// [`t6_attachment_models`]).
     pub models: [Vec<String>; 2],
-    /// The first-person main model's copy and the copy drawn instead while
-    /// aiming (a holographic sight or rangefinder seen from behind).
     pub view_ads_model: Option<(String, String)>,
-    /// The scope overlay the weapon shows wearing it; none for a sight
-    /// looked through (an ACOG on a sniper rifle).
     pub overlay: Option<String>,
-    /// Gun bones the attachment hides (iron sights under an optic).
     pub hide_tags: Vec<String>,
-    /// Clips the attachment plays instead of the weapon's, in IW4 slots.
     pub xanims: [Option<String>; WEAPON_ANIM_SLOTS],
     pub fire_sound: Option<String>,
     pub fire_sound_player: Option<String>,
-    /// Removes the weapon's own attached models (a sniper's scope) but its
-    /// magazine.
     pub disable_base_attachment: bool,
-    /// Removes the weapon's magazine (a fast mag carries its own).
     pub disable_base_clip: bool,
 }
 
-/// How a T6 attachment changes the numbers of a weapon of its class
-/// (its `WeaponAttachment`). Scales are 1 where it changes nothing.
 #[derive(Clone, Debug)]
 pub struct T6AttachmentStats {
-    /// The attachment table's index of the attachment.
     pub kind: u32,
     pub clip_size_scale: f32,
     pub fire_time_scale: f32,
-    /// Reload, empty reload, reload add, quick and quick empty reload.
     pub reload_time_scales: [f32; 5],
     pub ads_in_time_scale: f32,
     pub ads_out_time_scale: f32,
-    /// The optic's ADS FOV (`fADSZoomFov1`), when it sets one.
     pub ads_zoom_fov: Option<f32>,
     pub ads_zoom_in_frac: Option<f32>,
     pub ads_zoom_out_frac: Option<f32>,
@@ -3806,17 +3747,13 @@ pub struct T6AttachmentStats {
     pub ads_move_speed_scale: f32,
     pub ads_view_kick_center_speed_scale: f32,
     pub ads_idle_amount_scale: f32,
-    /// FMJ: bullets pass through more.
     pub penetrating: bool,
-    /// Fast mag (`bDualMag`): a shell-by-shell reload loads two at a time.
     pub dual_mag: bool,
-    /// The attachment's alternate weapon fires from the weapon's magazine.
     pub shared_ammo: bool,
 }
 
 fn capture_t6_attachment_stats(a: fastfile_t6::weapon::AttachmentView<'_>) -> T6AttachmentStats {
     use fastfile_t6::weapon::attachment as at;
-    // A scale the asset leaves at zero changes nothing.
     let scale = |off| Some(a.f32_at(off)).filter(|v| *v > 0.0).unwrap_or(1.0);
     let set = |off| Some(a.f32_at(off)).filter(|v| *v > 0.0);
     T6AttachmentStats {
@@ -3826,7 +3763,6 @@ fn capture_t6_attachment_stats(a: fastfile_t6::weapon::AttachmentView<'_>) -> T6
         reload_time_scales: std::array::from_fn(|i| scale(at::RELOAD_TIME_SCALES + 4 * i as u32)),
         ads_in_time_scale: scale(at::ADS_TRANS_IN_TIME_SCALE),
         ads_out_time_scale: scale(at::ADS_TRANS_OUT_TIME_SCALE),
-        // A FOV of 1 is "unchanged" (a variable zoom sets only its steps).
         ads_zoom_fov: set(at::ADS_ZOOM_FOV).filter(|fov| *fov > 1.0),
         ads_zoom_in_frac: set(at::ADS_ZOOM_IN_FRAC),
         ads_zoom_out_frac: set(at::ADS_ZOOM_OUT_FRAC),
@@ -3842,11 +3778,8 @@ fn capture_t6_attachment_stats(a: fastfile_t6::weapon::AttachmentView<'_>) -> T6
     }
 }
 
-/// IW4 moves at this share of running speed while aiming
-/// (`PM_CmdScale_Walk`), times the weapon's ADS move speed scale.
 const ADS_WALK_SPEED_SCALE: f32 = 0.4;
 
-/// `facts` with the numbers of `stats` applied.
 fn apply_t6_attachment_stats(facts: &mut WeaponBodyFacts, stats: &T6AttachmentStats) {
     let ms = |value: i32, scale: f32| (value as f32 * scale).round() as i32;
     if stats.clip_size_scale != 1.0 && facts.clip_size > 0 {
@@ -3860,7 +3793,6 @@ fn apply_t6_attachment_stats(facts: &mut WeaponBodyFacts, stats: &T6AttachmentSt
     facts.reload_empty_add_time_ms = ms(facts.reload_empty_add_time_ms, empty);
     facts.reload_start_time_ms = ms(facts.reload_start_time_ms, reload);
     facts.reload_end_time_ms = ms(facts.reload_end_time_ms, reload);
-    // Rates are per transition: a shorter transition is a faster rate.
     facts.ads_in_rate /= stats.ads_in_time_scale;
     facts.ads_out_rate /= stats.ads_out_time_scale;
     if let Some(fov) = stats.ads_zoom_fov {
@@ -3888,28 +3820,20 @@ fn apply_t6_attachment_stats(facts: &mut WeaponBodyFacts, stats: &T6AttachmentSt
     ] {
         *max *= stats.hip_spread_max_scale;
     }
-    // Relative to walking, as IW4's (SMGs 2, rifles 1), and walking is 0.4
-    // of running: a stock speeds aiming up to running pace, not past it.
     if stats.ads_move_speed_scale != 1.0 {
         facts.ads_move_speed_scale = (facts.ads_move_speed_scale * stats.ads_move_speed_scale)
             .min(1.0 / ADS_WALK_SPEED_SCALE);
     }
     facts.kick.f_ads_view_kick_center_speed *= stats.ads_view_kick_center_speed_scale;
     facts.idle.ads_idle_amount *= stats.ads_idle_amount_scale;
-    // A pump shotgun's fast mag loads two shells a stroke, each stroke a
-    // little slower (its reload scales).
     if stats.dual_mag && facts.segmented_reload {
         facts.reload_ammo_add = facts.reload_ammo_add.max(1) * 2;
     }
-    // FMJ doubles how deep bullets go, as IW4's does.
     if stats.penetrating {
         facts.penetrate_multiplier *= 2.0;
     }
 }
 
-/// A T6 attachment model placed for one weapon: the name its copy is
-/// captured under, the model it copies, the gun bone it hangs from
-/// (`None` for the root) and its offset and `(pitch, yaw, roll)` there.
 pub struct T6AttachmentModel {
     pub copy: String,
     pub model: String,
@@ -3918,9 +3842,6 @@ pub struct T6AttachmentModel {
     pub angles: [f32; 3],
 }
 
-/// The models `unique` hangs on the first-person (`view`) or world gun.
-/// The same model sits differently on every weapon, so each weapon's is a
-/// copy of its own, named `model@unique`.
 pub fn t6_attachment_models(
     unique: fastfile_t6::weapon::AttachmentUniqueView<'_>,
     view: bool,
@@ -3945,8 +3866,6 @@ pub fn t6_attachment_models(
         .collect()
 }
 
-/// The first-person model `unique` draws instead of its main one while
-/// aiming, copied for this weapon as the main one is.
 pub fn t6_attachment_ads_model(
     unique: fastfile_t6::weapon::AttachmentUniqueView<'_>,
 ) -> Option<T6AttachmentModel> {
@@ -3995,7 +3914,6 @@ fn capture_t6_attachment(
     })
 }
 
-/// Every clip a weapon's attachments name, as the zone names them.
 pub fn t6_attachment_xanim_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<String> {
     w.attachment_uniques()
         .flat_map(|unique| {
@@ -4006,7 +3924,6 @@ pub fn t6_attachment_xanim_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<
         .collect()
 }
 
-/// The fire sounds a weapon's attachments name (a silencer's).
 pub fn t6_attachment_sound_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<String> {
     use fastfile_t6::weapon::unique as u;
     w.attachment_uniques()
@@ -4023,13 +3940,10 @@ fn t6_attached_models(weapon: fastfile_t6::weapon::WeaponView<'_>, view: bool) -
         .collect()
 }
 
-/// A T6 model name without the `,` that marks a reference to a model
-/// another zone defines.
 pub fn t6_model_name(name: &str) -> String {
     name.strip_prefix(',').unwrap_or(name).to_owned()
 }
 
-/// Every alias [`capture_t6_sounds`] can name, for the sound walk to read.
 pub fn t6_weapon_sound_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<String> {
     let s = capture_t6_sounds(w);
     [
@@ -4058,8 +3972,6 @@ pub fn t6_weapon_sound_names(w: fastfile_t6::weapon::WeaponView<'_>) -> Vec<Stri
     .collect()
 }
 
-/// The T6 slots whose alias the sound walk read; the rest are emptied for
-/// the stand-in to fill.
 fn keep_t6_sounds(own: &mut WeaponSoundAliases, keep: &impl Fn(&str) -> bool) {
     for slot in [
         &mut own.fire,
@@ -5899,8 +5811,9 @@ struct WeaponRow {
     world_model_edge: AssetEdge<WorldWeaponSpace>,
 
     camo_models: WeaponCamoModels,
+    skin_parent: Option<String>,
+    material_camos: Arc<[crate::WeaponCamouflage]>,
 
-    /// The first-person and world camouflage models, by slot.
     camo_view_edges: Vec<(u8, AssetEdge<FpvMeshSpace>)>,
     camo_world_edges: Vec<(u8, AssetEdge<WorldWeaponSpace>)>,
 
@@ -5934,20 +5847,14 @@ struct WeaponRow {
 
     attachment_view_models: Vec<String>,
     attachment_world_models: Vec<String>,
-    /// First-person attachment models drawn instead of others while
-    /// aiming: `(model, while aiming)`.
     attachment_view_ads_models: Vec<(String, String)>,
 
-    /// See [`CatalogWeapon::t6_clip_models`] and
-    /// [`CatalogWeapon::t6_attachments`].
     t6_clip_models: [Option<String>; 2],
     t6_attachments: Vec<T6Attachment>,
     t6_attachment_stats: Vec<T6AttachmentStats>,
 
     iw5_configuration: Option<(u32, Iw5AttachmentSelection)>,
     prepared_attachments: Vec<String>,
-    /// The attachment captions the HUD names the weapon with after its own
-    /// name (`MPUI_REFLEX`), for a T6 configuration.
     attachment_caption_keys: Vec<String>,
 
     iw5_attachment_slots: [Option<String>; fastfile_iw5::size::WEAPON_ATTACHMENT_SLOT_COUNT],
@@ -5970,8 +5877,6 @@ struct WeaponRow {
 
     hud_icon: Option<String>,
     hud_icon_from_slot: bool,
-    /// The HUD icon is the T6 row's own UI image, kept in its identity
-    /// namespace (see [`WeaponRegistry::hud_icon_namespace_of`]).
     own_hud_icon: bool,
     pickup_icon: Option<String>,
     pickup_icon_image: Option<String>,
@@ -6023,6 +5928,8 @@ impl Default for WeaponRow {
             world_model: None,
             world_model_edge: AssetEdge::Absent,
             camo_models: WeaponCamoModels::default(),
+            skin_parent: None,
+            material_camos: Arc::default(),
             camo_view_edges: Vec::new(),
             camo_world_edges: Vec::new(),
             attachment_world_model_edges: Vec::new(),
@@ -6110,6 +6017,7 @@ pub struct WeaponRegistry {
 
     vehicle_turrets: HashMap<String, String>,
     vehicle_compass: HashMap<String, ([String; 2], [i32; 2])>,
+    vehicle_accel: HashMap<String, f32>,
 
     revision: u64,
 }
@@ -6133,11 +6041,6 @@ pub struct Iw5PreparationCensus {
     pub refused: Vec<crate::WeaponSelection>,
 }
 
-/// `base` wearing the T6 attachments of `kinds`: each one's models,
-/// hidden gun bones, clips and fire sound, and the clips of the authored
-/// pair when there is one. An attachment the weapon has no unique for
-/// (FMJ, fast ADS) changes nothing it shows. `None` for a weapon without
-/// T6 attachments.
 fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Option<WeaponRow> {
     if base.t6_attachments.is_empty() {
         return None;
@@ -6163,8 +6066,6 @@ fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Op
     let mut row = base.clone();
     row.name = name;
     row.t6_attachments = Vec::new();
-    // The bare weapon's hides (its iron sights under its own scope) give
-    // way to the attachments'.
     row.hide_tags = Vec::new();
     for (side, models) in [
         &mut row.attachment_view_models,
@@ -6185,8 +6086,6 @@ fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Op
             models.extend(attachment.models[side].iter().cloned());
         }
     }
-    // The overlay is the pair's, else none under a sight looked through,
-    // else the one an attachment changes the scope's to (a variable zoom).
     if !singles.is_empty() {
         let overlay = match pair {
             Some(pair) => pair.overlay.clone(),
@@ -6197,8 +6096,6 @@ fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Op
                 .find(|overlay| base.overlay_material.as_ref() != Some(overlay))
                 .or_else(|| base.overlay_material.clone()),
         };
-        // A sight looked through aims down it like iron sights; a scope
-        // overlay hides the gun and steadies with a held breath.
         match &overlay {
             None => row.facts.overlay_reticle = 0,
             Some(_) if row.facts.overlay_reticle == 0 => row.facts.overlay_reticle = 1,
@@ -6212,9 +6109,6 @@ fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Op
         .iter()
         .filter_map(|attachment| attachment.view_ads_model.clone())
         .collect();
-    // An attachment's clip set repeats the weapon's where it changes
-    // nothing; only its own clips replace the weapon's, so one
-    // attachment's set does not undo another's.
     for attachment in singles.iter().copied().chain(pair) {
         for (slot, clip) in attachment.xanims.iter().enumerate() {
             if let Some(clip) = clip
@@ -6231,8 +6125,6 @@ fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Op
     }) {
         apply_t6_attachment_stats(&mut row.facts, stats);
     }
-    // Attachments that change only numbers (FMJ) leave the gun as bare,
-    // its own scope hiding its iron sights.
     if singles.is_empty()
         && let Some(bare) = base
             .t6_attachments
@@ -6256,19 +6148,13 @@ fn compose_t6_configuration(base: &WeaponRow, kinds: &[u32], name: String) -> Op
     Some(row)
 }
 
-/// What [`WeaponBuild::prepare_t6_configurations`] did.
 #[derive(Clone, Debug, Default)]
 pub struct T6PreparationCensus {
     pub prepared: usize,
-    /// Selections of an attachment the T6 table does not name, or of a
-    /// weapon without T6 attachments.
     pub refused: usize,
-    /// Alternate weapons composed for configurations.
     pub alternates: usize,
 }
 
-/// The T6 attachment table's index of each attachment, by name: the
-/// `eAttachment` a weapon's attachment uniques are filed under.
 fn t6_attachment_kinds(
     tables: &[(crate::AssetNamespace, crate::CapturedStringTable)],
 ) -> HashMap<String, u32> {
@@ -6292,34 +6178,23 @@ fn t6_attachment_kinds(
         .collect()
 }
 
-/// The knife and swings a T6 gun without melee clips borrows (see
-/// [`crate::T6_MELEE_WEAPON`]).
 #[derive(Clone, Debug)]
 pub struct T6Melee {
-    /// The first-person knife model.
     pub knife: String,
     pub melee: String,
     pub charge: Option<String>,
 }
 
-/// What [`WeaponBuild::dress_t6_stand_ins`] did.
 #[derive(Clone, Debug, Default)]
 pub struct T6StandInCensus {
     pub dressed: usize,
-    /// Rows showing their own T6 first-person / world model.
     pub own_view: usize,
     pub own_world: usize,
-    /// Rows throwing or planting their own T6 projectile model.
     pub own_projectile: usize,
-    /// Rows firing with their own T6 sound.
     pub own_sounds: usize,
-    /// Rows animated with their own T6 clips, held in the T6 hands.
     pub own_anims: usize,
-    /// Dual-wield rows drawing their left half's gun and clips.
     pub dual_wield: usize,
-    /// Rows stabbing with the melee weapon's knife and swings.
     pub borrowed_melee: usize,
-    /// T6 rows whose IW4 stand-in is not in the registry.
     pub missing: Vec<String>,
 }
 
@@ -6352,9 +6227,6 @@ impl WeaponBuild {
         self.family_tables = tables;
     }
 
-    /// A row for every T6 family's attachment and compatible pair of
-    /// attachments: the base row wearing what each attachment's unique
-    /// does to it (see [`compose_t6_configuration`]).
     pub fn prepare_t6_configurations(&mut self) -> T6PreparationCensus {
         let families = crate::WeaponFamilies::build(&self.family_tables, &self.registry);
         let kinds = t6_attachment_kinds(&self.family_tables);
@@ -6373,7 +6245,6 @@ impl WeaponBuild {
             };
             let attachments = families.normalize(crate::AssetNamespace::T6, &selection.attachments);
             let name = families.configuration_name(family, &attachments);
-            // Dual wield is a weapon pair of its own (`fiveseven_dw`).
             if self
                 .registry
                 .by_namespaced
@@ -6438,17 +6309,6 @@ impl WeaponBuild {
         census
     }
 
-    /// The alternate weapon of T6 configuration `parent` (a grenade
-    /// launcher, select fire, a dual optic's second sight) as a row of its
-    /// own: T6 draws it with the configuration's attachments and returns to
-    /// the configuration, and a select fire or dual optic fires from its
-    /// magazine. Also the configuration's raise coming back from it.
-    ///
-    /// Switching plays only the raise of the weapon switched to: the
-    /// alternate's (`gl_to_grenade`) going in, the configuration's
-    /// (`gl_from_grenade`) coming back. Select fire's alternate has no raise
-    /// of its own and plays the attachment's `select_fire_in`, and the
-    /// configuration then plays its `select_fire_out` coming back.
     fn compose_t6_alternate(
         &self,
         base_id: u32,
@@ -6481,8 +6341,6 @@ impl WeaponBuild {
         alt.attachment_view_ads_models = config.attachment_view_ads_models.clone();
         alt.hide_tags = config.hide_tags.clone();
         alt.t6_attachments = Vec::new();
-        // The alternate plays the configuration's clips (a grip's) where its
-        // own are the weapon's.
         for slot in 0..WEAPON_ANIM_SLOTS {
             if alt.sz_xanims[slot] == base.sz_xanims[slot] {
                 alt.sz_xanims[slot] = config.sz_xanims[slot].clone();
@@ -6618,6 +6476,9 @@ impl WeaponBuild {
             .vehicle_compass
             .extend(std::mem::take(&mut other.registry.vehicle_compass));
         self.registry
+            .vehicle_accel
+            .extend(std::mem::take(&mut other.registry.vehicle_accel));
+        self.registry
             .vehicle_turrets
             .extend(std::mem::take(&mut other.registry.vehicle_turrets));
         if other.registry.is_empty() {
@@ -6630,6 +6491,7 @@ impl WeaponBuild {
         if self.registry.rows.is_empty() {
             other.registry.vehicle_turrets = std::mem::take(&mut self.registry.vehicle_turrets);
             other.registry.vehicle_compass = std::mem::take(&mut self.registry.vehicle_compass);
+            other.registry.vehicle_accel = std::mem::take(&mut self.registry.vehicle_accel);
             *self = other;
             return;
         }
@@ -6661,25 +6523,6 @@ impl WeaponBuild {
         }
     }
 
-    /// Gives every T6 row the models, animations, sounds, effects and icons
-    /// of its IW4 stand-in. The row keeps its own name, display key and
-    /// gameplay facts; the facts that only make sense with the stand-in's
-    /// animations and viewmodel (third-person anim set, viewmodel offsets,
-    /// sprint and melee timings, impact surface set) come from the stand-in.
-    /// Rows whose stand-in is not in the registry are reported and left bare.
-    ///
-    /// `own_view` and `own_world` say whether a T6 row's own view or world
-    /// model reached the catalogs; such a row keeps that model instead of
-    /// the stand-in's.
-    ///
-    /// `own_sound` says whether a T6 alias reached the sound catalogs; the
-    /// row plays those and the stand-in's for the rest.
-    ///
-    /// A row showing its own first-person model also takes its own
-    /// animations (`own_anim` says which reached the clip catalog) and is
-    /// held in `hands`, the T6 arms they were authored against, with sounds
-    /// and rumbles named on the clips' notetracks. Without the hands or its
-    /// idle clip it keeps the stand-in's animations and arms.
     pub fn dress_t6_stand_ins(
         &mut self,
         own_view: impl Fn(&str) -> bool,
@@ -6690,9 +6533,6 @@ impl WeaponBuild {
         melee: Option<&T6Melee>,
     ) -> T6StandInCensus {
         let mut census = T6StandInCensus::default();
-        // A dual-wield pair is `X_dw` (the right hand, the row a player
-        // holds) and `X_lh` (the left, whose gun and left-hand clips the
-        // right row takes in `resolve_sz_xanim_edges`).
         let left_halves: HashSet<String> = self
             .registry
             .rows
@@ -6731,8 +6571,6 @@ impl WeaponBuild {
             facts.sprint_loop_time_ms = stand_in_facts.sprint_loop_time_ms;
             facts.sprint_drop_time_ms = stand_in_facts.sprint_drop_time_ms;
             facts.dual_wield_view_model_offset = stand_in_facts.dual_wield_view_model_offset;
-            // The crosshair's geometry is not read from T6 weapons: without
-            // the stand-in's, its quads have no size.
             facts.i_reticle_side_size = stand_in_facts.i_reticle_side_size;
             facts.i_reticle_min_ofs = stand_in_facts.i_reticle_min_ofs;
             facts.ads_aim_pitch = stand_in_facts.ads_aim_pitch;
@@ -6741,19 +6579,12 @@ impl WeaponBuild {
             if facts.hip_reticle_side_pos == 0.0 {
                 facts.hip_reticle_side_pos = stand_in_facts.hip_reticle_side_pos;
             }
-            // The IW4 scripts give an offhand's stand-in and pick the throw
-            // button from its class (`semtex_mp` is "other", T6's
-            // `sticky_grenade_mp` "frag").
             if facts.offhand_class != 0 && stand_in_facts.offhand_class != 0 {
                 facts.offhand_class = stand_in_facts.offhand_class;
             }
-            // T6 tactical equipment throws with the tactical button whatever
-            // its stand-in is (IW4's tactical insertion is equipment).
             if crate::weapon_t6::is_tactical_equipment(&own.name) {
                 facts.offhand_class = OFFHAND_CLASS_SMOKE;
             }
-            // A T6 explosion effect that was captured replaces the
-            // stand-in's (the EMP grenade's flash, the shock charge's burst).
             if let Some(effect) = own
                 .combat_fx
                 .explosion_hint
@@ -6762,24 +6593,17 @@ impl WeaponBuild {
             {
                 dressed.combat_fx.explosion_hint = Some(effect.to_owned());
             }
-            // The claymore's laser is the stand-in's, not a bouncing betty's
-            // or a trophy system's.
             if crate::weapon_t6::sheds_stand_in_trail(&own.name) {
                 dressed.proj_trail = None;
                 dressed.proj_beacon = None;
             }
-            // T6's sensor grenade stays where it lands, sensing, until it is
-            // destroyed (its fuse only pings again, `iw4l_t6/equipment`).
             if crate::weapon_t6::stays_planted(&own.name) {
                 facts.timed_detonation = false;
                 if facts.stickiness == 0 {
                     facts.stickiness = 3;
                 }
             }
-            // A T6 riot shield bashes with the fire button.
             facts.fire_melees = facts.weap_type == weapon_iw4::WEAPTYPE_SHIELD;
-            // T6 weapons carry no penetration multiplier: without the
-            // stand-in's, their bullets would stop at the first surface.
             if facts.penetrate_multiplier == 0.0 {
                 facts.penetrate_multiplier = if stand_in_facts.penetrate_multiplier > 0.0 {
                     stand_in_facts.penetrate_multiplier
@@ -6796,7 +6620,6 @@ impl WeaponBuild {
                 dressed.gun_xmodel = Some(gun);
                 census.own_view += 1;
                 own_gun = true;
-                // The stand-in's attachments belong to its own gun.
                 dressed.attachment_view_models = own
                     .attachment_view_models
                     .iter()
@@ -6815,10 +6638,6 @@ impl WeaponBuild {
                 dressed.sz_xanims_left = [const { None }; WEAPON_ANIM_SLOTS];
                 dressed.hand_xmodel = Some(hands.to_owned());
                 census.own_anims += 1;
-                // T6 rifles have no melee clip and a pistol's is the
-                // tactical knife attachment's: both stab with the melee
-                // weapon's knife, held beside the gun as IW4's knives are.
-                // A gun with a melee of its own holds no knife.
                 dressed.knife_xmodel = None;
                 if dressed.sz_xanims[weap_anim::MELEE]
                     .as_deref()
@@ -6843,13 +6662,10 @@ impl WeaponBuild {
                     dressed.dual_wield_weapon = Some(left);
                     dressed.facts.dual_wield = true;
                     dressed.facts.no_dual_wield = false;
-                    // Both guns hang off one viewmodel; nothing is shifted
-                    // apart as IW4's two akimbo viewmodels are.
                     dressed.facts.dual_wield_view_model_offset = 0.0;
                     census.dual_wield += 1;
                 }
             }
-            // A left half shows its own gun with its own left-hand clips.
             if own_gun
                 && own.sz_xanims_left[weap_anim::IDLE]
                     .as_deref()
@@ -6892,8 +6708,6 @@ impl WeaponBuild {
                 sounds.notetrack_convention = dressed.sounds.notetrack_convention;
             }
             dressed.sounds = sounds;
-            // A gun of its own hides what T6's bare weapon hides (a
-            // sniper's iron sights under its scope), not the stand-in's tags.
             if own_gun {
                 dressed.hide_tags = own
                     .t6_attachments
@@ -6901,8 +6715,6 @@ impl WeaponBuild {
                     .find(|attachment| attachment.kind == 0 && attachment.mask == 0)
                     .map_or_else(Vec::new, |bare| bare.hide_tags.clone());
             }
-            // The attachments keep what reached the catalogs; their clips
-            // only where the row plays its own.
             dressed.t6_clip_models = [
                 own.t6_clip_models[0].clone().filter(|name| own_view(name)),
                 own.t6_clip_models[1].clone().filter(|name| own_world(name)),
@@ -6927,7 +6739,6 @@ impl WeaponBuild {
                 })
                 .collect();
             dressed.t6_attachment_stats = own.t6_attachment_stats.clone();
-            // Equipment shows its own HUD icon, not the stand-in's.
             if dressed.facts.offhand_class != 0
                 && let Some(icon) = own.hud_icon.clone()
             {
@@ -6938,7 +6749,6 @@ impl WeaponBuild {
                 dressed.pickup_icon_authored = false;
                 dressed.own_hud_icon = true;
             }
-            // The weapon's own scope overlay, or none: not the stand-in's.
             dressed.overlay_material = own.overlay_material;
             dressed.overlay_image = own.overlay_image;
             dressed.overlay_material_from_slot = false;
@@ -7101,8 +6911,6 @@ impl WeaponBuild {
         }
     }
 
-    /// T6 times many alternate switches (select fire) at zero, the switch
-    /// lasting its clip; a zero-length raise would end before its clip plays.
     pub fn time_t6_alternate_raises(&mut self, xanims: &crate::XAnimCatalog) -> usize {
         let mut timed = 0;
         for row in &mut self.registry.rows {
@@ -7192,7 +7000,10 @@ impl WeaponBuild {
                 .view
                 .iter()
                 .map(|(slot, name)| {
-                    (*slot, fpv_model_edge(Some(name), row.namespace.content(), fpv))
+                    (
+                        *slot,
+                        fpv_model_edge(Some(name), row.namespace.content(), fpv),
+                    )
                 })
                 .collect();
             row.hand_xmodel_edge =
@@ -7225,7 +7036,6 @@ impl WeaponBuild {
                     row.namespace == crate::AssetNamespace::T6,
                 );
                 if let Ok(plan) = &mut plan {
-                    // A model the catalog lacks keeps its main one in view.
                     plan.ads_swaps = row
                         .attachment_view_ads_models
                         .iter()
@@ -7263,14 +7073,15 @@ impl WeaponBuild {
         bodies: &asset_model::BodyMeshCatalog,
     ) {
         for row in &mut self.registry.rows {
-            let map_ns = fpv.map_namespace.unwrap_or(row.namespace.content());
+            let map_ns = fpv
+                .map_namespace
+                .map(crate::AssetNamespace::content)
+                .unwrap_or(row.namespace.content());
             let hand_name = row
                 .hand_xmodel_edge
                 .bound_index()
                 .and_then(|index| fpv.get_at(index))
                 .map(|entry| entry.skel.name.as_str());
-            // A T6 row animated with its own clips is held in the T6 arms
-            // those clips were authored against, whatever the map's kit wears.
             let own_hands = (row.namespace == crate::AssetNamespace::T6)
                 .then_some(hand_name)
                 .flatten()
@@ -7389,7 +7200,8 @@ impl WeaponBuild {
                                 mounts: &asset_model::FpvMountPlan,
                                 rocket: bool,
                                 knife: Option<crate::FpvMeshIndex>,
-                                ads: bool| {
+                                ads: bool,
+                                jammed: bool| {
                 let key = crate::FpvAssemblyKey {
                     hands,
                     gun: mounts.gun,
@@ -7401,13 +7213,14 @@ impl WeaponBuild {
                     knife,
                     hide_tags: hide_tags.clone(),
                     hide_mode,
+                    jammed,
                 };
                 shared
                     .entry(key)
                     .or_insert_with(|| {
                         census.built += 1;
                         crate::FpvAssembly::build(
-                            fpv, hands, mounts, rocket, knife, ads, &hide_tags, hide_mode,
+                            fpv, hands, mounts, rocket, knife, ads, &hide_tags, hide_mode, jammed,
                         )
                         .map(Arc::new)
                         .map_err(|error| error.to_string())
@@ -7417,14 +7230,14 @@ impl WeaponBuild {
             let sides: [Option<Result<crate::FpvSideAssemblies, String>>; 2] =
                 std::array::from_fn(|side| {
                     let (_, hands) = row.fpv_hands[side].as_ref()?;
-                    let bare = match assemble(*hands, mounts, false, None, false) {
+                    let bare = match assemble(*hands, mounts, false, None, false, false) {
                         Ok(bare) => bare,
                         Err(error) => return Some(Err(error)),
                     };
                     let rocket = match mounts
                         .rocket
                         .is_some()
-                        .then(|| assemble(*hands, mounts, true, None, false))
+                        .then(|| assemble(*hands, mounts, true, None, false, false))
                     {
                         None => None,
                         Some(Ok(rocket)) => Some(rocket),
@@ -7434,24 +7247,35 @@ impl WeaponBuild {
                         None => None,
                         Some(Err(error)) => return Some(Err(error.clone())),
                         Some(Ok(knife)) => {
-                            match assemble(*hands, mounts, false, Some(*knife), false) {
+                            match assemble(*hands, mounts, false, Some(*knife), false, false) {
                                 Ok(melee) => Some(melee),
                                 Err(error) => return Some(Err(error)),
                             }
                         }
                     };
                     let ads = match (!mounts.ads_swaps.is_empty())
-                        .then(|| assemble(*hands, mounts, false, None, true))
+                        .then(|| assemble(*hands, mounts, false, None, true, false))
                     {
                         None => None,
                         Some(Ok(ads)) => Some(ads),
                         Some(Err(error)) => return Some(Err(error)),
                     };
+                    let jammed = match assemble(*hands, mounts, false, None, false, true) {
+                        Ok(jammed) => jammed,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    let jammed = jammed
+                        .parts
+                        .iter()
+                        .zip(&bare.parts)
+                        .any(|(jammed, bare)| jammed.hide != bare.hide)
+                        .then_some(jammed);
                     Some(Ok(crate::FpvSideAssemblies {
                         bare,
                         rocket,
                         melee,
                         ads,
+                        jammed,
                     }))
                 });
             for side in sides.iter().flatten().flatten() {
@@ -7459,6 +7283,7 @@ impl WeaponBuild {
                     .chain(&side.rocket)
                     .chain(&side.melee)
                     .chain(&side.ads)
+                    .chain(&side.jammed)
                 {
                     for &clip_index in &clips {
                         let Some(clip) = xanims.clip_at(clip_index) else {
@@ -7497,7 +7322,10 @@ impl WeaponBuild {
                 .world
                 .iter()
                 .map(|(slot, name)| {
-                    (*slot, world_model_edge(Some(name), row.namespace.content(), catalog))
+                    (
+                        *slot,
+                        world_model_edge(Some(name), row.namespace.content(), catalog),
+                    )
                 })
                 .collect();
             row.attachment_world_model_edges = row
@@ -7509,14 +7337,12 @@ impl WeaponBuild {
                 .world_model_edge
                 .bound_index()
                 .and_then(|index| catalog.get_at(index));
-            // T6 places its attached models on the gun's root bone.
             let on_gun_root = row.namespace == crate::AssetNamespace::T6;
             row.attachment_world_mounts = row
                 .attachment_world_model_edges
                 .iter()
                 .map(|edge| {
                     if on_gun_root {
-                        // The gun bone a T6 attachment names, else the root.
                         let attachment = catalog.get_at(edge.bound_index()?)?;
                         let bones = &gun?.skel.bone_names;
                         let tag = attachment.skel.mount_tag.as_deref().and_then(|tag| {
@@ -7554,6 +7380,62 @@ impl WeaponBuild {
                     .insert((ns, name), group.to_owned());
             }
         }
+    }
+
+    pub fn prepare_t5_camouflages(
+        &mut self,
+        table: &crate::CapturedStringTable,
+        choices: &crate::CapturedStringTable,
+        materials: &mut asset_material::MaterialCatalog,
+        fpv: &asset_model::FpvMeshBuild,
+        world: &asset_model::WorldWeaponBuild,
+    ) -> usize {
+        let mut prepared = HashMap::new();
+        let mut variants = HashMap::new();
+        let mut count = 0;
+        for row in &mut self.registry.rows {
+            if row.namespace != crate::AssetNamespace::T5 {
+                continue;
+            }
+            let Some(parent) = row.skin_parent.as_deref() else {
+                continue;
+            };
+            let key = (
+                parent.to_owned(),
+                row.gun_xmodel.clone(),
+                row.world_model.clone(),
+            );
+            let camos = prepared.entry(key).or_insert_with(|| {
+                let mut keys = Vec::new();
+                if let Some(entry) = row
+                    .gun_xmodel
+                    .as_deref()
+                    .and_then(|name| fpv.get(crate::AssetNamespace::T5, name))
+                {
+                    keys.extend(entry.material_keys.iter().flatten().cloned());
+                }
+                if let Some(entry) = row
+                    .world_model
+                    .as_deref()
+                    .and_then(|name| world.get(crate::AssetNamespace::T5, name))
+                {
+                    keys.extend(entry.material_keys.iter().flatten().cloned());
+                }
+                keys.sort_by(|a, b| a.name.cmp(&b.name));
+                keys.dedup();
+                Arc::<[crate::WeaponCamouflage]>::from(crate::weapon_camo::prepare_t5(
+                    table,
+                    choices,
+                    parent,
+                    &keys,
+                    materials,
+                    &mut variants,
+                ))
+            });
+            row.material_camos = Arc::clone(camos);
+            count += usize::from(!camos.is_empty());
+        }
+        count
     }
 
     pub fn apply_stats_tables<'a>(
@@ -7850,6 +7732,8 @@ impl WeaponBuild {
                 world_model: entry.world_model,
                 world_model_edge: AssetEdge::Absent,
                 camo_models: entry.camo_models,
+                skin_parent: entry.skin_parent,
+                material_camos: Arc::default(),
                 camo_view_edges: Vec::new(),
                 camo_world_edges: Vec::new(),
                 attachment_world_model_edges: Vec::new(),
@@ -7925,6 +7809,7 @@ impl WeaponBuild {
             fpv_clip_tracks: Arc::default(),
             vehicle_turrets: HashMap::new(),
             vehicle_compass: HashMap::new(),
+            vehicle_accel: HashMap::new(),
             revision: mint_weapon_revision(),
         };
         registry.rebuild_name_maps();
@@ -7941,6 +7826,12 @@ impl WeaponRegistry {
         self.vehicle_compass
             .iter()
             .map(|(name, (icons, size))| (name.as_str(), icons, *size))
+    }
+
+    pub fn vehicle_accel(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.vehicle_accel
+            .iter()
+            .map(|(name, accel)| (name.as_str(), *accel))
     }
 
     pub fn vehicle_turrets(&self) -> Vec<(String, String)> {
@@ -8496,15 +8387,64 @@ impl WeaponRegistry {
         self.rows.get(index as usize).map(|row| row.gun_xmodel_edge)
     }
 
-    /// The first-person camouflage models of a weapon, by slot.
+    pub fn material_camouflages_of(&self, weapon: u32) -> &[crate::WeaponCamouflage] {
+        self.rows
+            .get(weapon as usize)
+            .map_or(&[], |row| &row.material_camos)
+    }
+
+    pub fn camouflage_choices(&self, weapon: u32) -> Vec<(u8, &str)> {
+        let camos = self.material_camouflages_of(weapon);
+        if !camos.is_empty() {
+            return camos
+                .iter()
+                .map(|camo| (camo.slot, camo.name.as_str()))
+                .collect();
+        }
+        self.camo_models_of(weapon).map_or_else(Vec::new, |models| {
+            models
+                .view
+                .iter()
+                .filter_map(|(slot, _)| {
+                    weapon_iw4::IW4_CAMOS
+                        .get(usize::from(*slot))
+                        .filter(|_| *slot != 0)
+                        .map(|name| (*slot, *name))
+                })
+                .collect()
+        })
+    }
+
+    pub fn camouflage_slot(&self, weapon: u32, name: &str) -> Option<u8> {
+        if name.is_empty() || name.eq_ignore_ascii_case("none") {
+            return Some(0);
+        }
+        self.camouflage_choices(weapon)
+            .into_iter()
+            .find(|(_, own)| own.eq_ignore_ascii_case(name))
+            .map(|(slot, _)| slot)
+    }
+
+    pub fn camouflage_preview(&self, weapon: u32, name: &str) -> String {
+        if name.is_empty() || name.eq_ignore_ascii_case("none") {
+            return String::new();
+        }
+        if let Some(camo) = self
+            .material_camouflages_of(weapon)
+            .iter()
+            .find(|camo| camo.name.eq_ignore_ascii_case(name))
+        {
+            return camo.preview.clone();
+        }
+        format!("iw4:material/weapon_camo_menu_{name}")
+    }
+
     pub fn camo_view_edges_of(&self, index: u32) -> &[(u8, AssetEdge<FpvMeshSpace>)] {
         self.rows
             .get(index as usize)
             .map_or(&[], |row| row.camo_view_edges.as_slice())
     }
 
-    /// The world model a weapon given with camouflage `slot` shows, if it
-    /// has one of its own.
     pub fn camo_world_edge_of(&self, index: u32, slot: u8) -> Option<AssetEdge<WorldWeaponSpace>> {
         let row = self.rows.get(index as usize)?;
         row.camo_world_edges
@@ -8513,7 +8453,6 @@ impl WeaponRegistry {
             .map(|(_, edge)| *edge)
     }
 
-    /// The camouflage models a weapon names, by slot.
     pub fn camo_models_of(&self, index: u32) -> Option<&WeaponCamoModels> {
         self.rows.get(index as usize).map(|row| &row.camo_models)
     }
@@ -8780,8 +8719,6 @@ impl WeaponRegistry {
         catalog.get_at(self.world_model_edge_of(index)?.bound_index()?)
     }
 
-    /// The world model a weapon given with camouflage `camo` shows: its
-    /// camouflage model when it has one bound, else its plain one.
     pub fn world_model_entry_for<'a>(
         &self,
         index: u32,
@@ -8919,7 +8856,6 @@ impl WeaponRegistry {
         }
     }
 
-    /// The namespace the weapon is named in: its key, its stats rows.
     pub fn identity_namespace_of(&self, index: u32) -> Option<crate::AssetNamespace> {
         if index == 0 {
             return None;
@@ -8927,10 +8863,6 @@ impl WeaponRegistry {
         self.rows.get(index as usize).map(|row| row.namespace)
     }
 
-    /// The namespace the weapon's models, sounds, effects and icons resolve
-    /// in — its content namespace, which for a T6 weapon is its IW4
-    /// stand-in's. The namespace it is named in is
-    /// [`Self::identity_namespace_of`].
     pub fn namespace_of(&self, index: u32) -> Option<crate::AssetNamespace> {
         if index == 0 {
             return None;
@@ -9048,7 +8980,6 @@ impl WeaponRegistry {
         self.families.describe(id)
     }
 
-    /// See [`WeaponRow::attachment_caption_keys`].
     pub fn attachment_caption_keys_of(&self, index: u32) -> &[String] {
         self.rows
             .get(index as usize)
@@ -9270,7 +9201,6 @@ impl WeaponRegistry {
             .collect()
     }
 
-    /// Weapons with camouflage models, and how many of those bound.
     pub fn camo_census(&self) -> (usize, usize, usize) {
         let with = self
             .rows
@@ -9325,8 +9255,6 @@ impl WeaponRegistry {
         }
     }
 
-    /// Where [`Self::hud_icon_image_of`] resolves: a T6 row's own icon in
-    /// T6, any other in the row's content namespace.
     pub fn hud_icon_namespace_of(&self, index: u32) -> Option<crate::AssetNamespace> {
         let row = self.rows.get(index as usize).filter(|_| index != 0)?;
         Some(if row.own_hud_icon {

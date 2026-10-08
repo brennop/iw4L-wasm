@@ -118,7 +118,7 @@ pub(crate) struct EngineState {
     pub team_scores: BTreeMap<String, i32>,
     pub team_radar: BTreeMap<String, i32>,
     pub team_radar_blocked: std::collections::BTreeSet<String>,
-    pub match_data: BTreeMap<String, Value>,
+    pub match_data: super::match_data::MatchData,
     pub game_end_time: i32,
     pub slow_motion: Option<crate::ScriptSlowMotion>,
     pub ambient: Option<crate::ScriptAmbient>,

@@ -19,11 +19,12 @@ pub(crate) fn route_state_dump_commands(
         Option<Res<AuthorityClock>>,
         Option<Res<PresentedSnapshot>>,
     ),
-    (audio_ready, decisions, gaps, clips): (
+    (audio_ready, decisions, gaps, clips, runtime): (
         Option<Res<audio::AudioReady>>,
         Option<Res<audio::StartDecisions>>,
         Option<Res<audio::MissingAliasGaps>>,
         Option<Res<audio::ClipStore>>,
+        Option<Res<audio::AudioRuntime>>,
     ),
 ) {
     for cmd in events.read() {
@@ -42,6 +43,7 @@ pub(crate) fn route_state_dump_commands(
             decisions.as_deref(),
             gaps.as_deref(),
             clips.as_deref(),
+            runtime.as_deref(),
         );
         match write_current_state_dump(
             identity.as_deref(),
@@ -99,15 +101,19 @@ pub(super) fn write_current_state_dump(
     persist_state_dump(&identity.artifacts, name, captured_unix_ns, &body)
 }
 
-fn audio_dump_section(
+pub(super) fn audio_dump_section(
     ready: Option<&audio::AudioReady>,
     decisions: Option<&audio::StartDecisions>,
     gaps: Option<&audio::MissingAliasGaps>,
     clips: Option<&audio::ClipStore>,
+    runtime: Option<&audio::AudioRuntime>,
 ) -> String {
     let ready = ready.is_some_and(|r| r.0);
     let late = clips.map(audio::ClipStore::late_prepares).unwrap_or(0);
     let mut out = format!("[audio]\nAudioReady = {ready}\nlate_prepares = {late}\n");
+    if let Some(runtime) = runtime {
+        out.push_str(&format!("transport = {:?}\n", runtime.diagnostics()));
+    }
     match gaps {
         Some(gaps) if !gaps.is_empty() => {
             out.push_str("missing_aliases =\n");

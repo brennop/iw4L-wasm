@@ -1,11 +1,3 @@
-//! T6 aliases, read from the `SndBank` assets of a finished zone load and the
-//! sound asset banks in the install's `sound/` directory.
-//!
-//! Only the aliases asked for are read — a T6 bank holds thousands. They land
-//! in a catalog captured as IW4: T6 weapons resolve their content in the IW4
-//! namespace (see `AssetNamespace::content`), and T6 alias names do not
-//! collide with IW4's.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
@@ -43,8 +35,6 @@ fn decode_ptr(raw: u32) -> Option<Ptr> {
     })
 }
 
-/// The sound asset banks of the T6 install a zone belongs to
-/// (`<root>/zone/<dir>/x.ff` → `<root>/sound`).
 pub fn t6_sound_banks(zone: &Path) -> (Vec<SoundAssetBank>, Vec<String>) {
     match zone.parent().and_then(Path::parent).and_then(Path::parent) {
         Some(root) => asset_transport::open_sound_asset_banks(&root.join("sound")),
@@ -55,14 +45,21 @@ pub fn t6_sound_banks(zone: &Path) -> (Vec<SoundAssetBank>, Vec<String>) {
     }
 }
 
-/// `names` as a catalog, reading aliases from the `SndBank`s of `loads` (the
-/// first that defines a name wins) and following each alias's secondary.
-/// Returns it with the names it could fill and a report line per gap.
 pub fn capture_t6_sounds<'n>(
     zone: &Path,
     loads: &[&ZoneLoad],
     banks: &[SoundAssetBank],
     names: impl IntoIterator<Item = &'n str>,
+) -> (SoundCatalog, Vec<String>, Vec<String>) {
+    capture_t6_sounds_in_game(zone, loads, banks, names, ZoneGame::Iw4)
+}
+
+pub fn capture_t6_sounds_in_game<'n>(
+    zone: &Path,
+    loads: &[&ZoneLoad],
+    banks: &[SoundAssetBank],
+    names: impl IntoIterator<Item = &'n str>,
+    game: ZoneGame,
 ) -> (SoundCatalog, Vec<String>, Vec<String>) {
     let mut report = Vec::new();
     let mut lists: HashMap<u32, (&ZoneLoad, Ptr, u32)> = HashMap::new();
@@ -94,7 +91,7 @@ pub fn capture_t6_sounds<'n>(
 
     let mut catalog = SoundCatalog::default();
     catalog.set_capture_zone(ZoneOwner::from_zone_path(zone));
-    catalog.set_capture_game(ZoneGame::Iw4);
+    catalog.set_capture_game(game);
     let mut loaded: BTreeMap<u32, Option<String>> = BTreeMap::new();
     let mut filled = Vec::new();
     let mut queue: Vec<String> = names.into_iter().map(str::to_owned).collect();
@@ -117,7 +114,7 @@ pub fn capture_t6_sounds<'n>(
             let asset = le32(row, 16);
             let loaded_name = loaded
                 .entry(asset)
-                .or_insert_with(|| load_asset(&mut catalog, banks, asset, name, &mut report))
+                .or_insert_with(|| load_asset(&mut catalog, banks, asset, name, game, &mut report))
                 .clone();
             let Some(loaded_name) = loaded_name else {
                 continue;
@@ -145,7 +142,6 @@ pub fn capture_t6_sounds<'n>(
                 dist_min: f32::from(le16(row, 68)),
                 dist_max: f32::from(le16(row, 70)),
                 start_delay: i32::from(le16(row, 54)),
-                // `flags0` bit 0; the rest of T6's flag words is not IW4's.
                 looping: Some(le32(row, SND_ALIAS_FLAGS0) & 1 != 0),
                 probability: f32::from(row[88]) / 255.0,
                 ..Default::default()
@@ -166,12 +162,12 @@ pub fn capture_t6_sounds<'n>(
     (catalog, filled, report)
 }
 
-/// Asset `id` out of whichever bank holds it, as 16-bit PCM.
 fn load_asset(
     catalog: &mut SoundCatalog,
     banks: &[SoundAssetBank],
     id: u32,
     alias: &str,
+    game: ZoneGame,
     report: &mut Vec<String>,
 ) -> Option<String> {
     let (entry, bytes) = match banks.iter().find_map(|bank| bank.read(id)) {
@@ -205,7 +201,7 @@ fn load_asset(
     let name = format!("t6/{id:08x}");
     catalog.ingest_loaded(LoadedSoundPcm {
         name: name.clone(),
-        game: ZoneGame::Iw4,
+        game,
         format: MSS_PCM,
         rate,
         bits: 16,
@@ -218,7 +214,6 @@ fn load_asset(
     Some(name)
 }
 
-/// A whole FLAC stream as interleaved 16-bit PCM and its frame count.
 fn decode_flac(bytes: Vec<u8>, channels: u8) -> Result<(Vec<u8>, u32), String> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
@@ -266,4 +261,33 @@ fn decode_flac(bytes: Vec<u8>, channels: u8) -> Result<(Vec<u8>, u32), String> {
     }
     let frames = pcm.len() / 2 / usize::from(channels.max(1));
     Ok((pcm, frames as u32))
+}
+
+pub fn t6_sound_names(loads: &[&ZoneLoad]) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for load in loads {
+        for bank in load.assets.iter().filter(|a| a.ty == AssetType::SoundBank) {
+            let Some(count) = bank.header.get(4..8).map(|b| le32(b, 0)) else {
+                continue;
+            };
+            let Some(array) = bank.header.get(8..12).and_then(|b| decode_ptr(le32(b, 0))) else {
+                continue;
+            };
+            for i in 0..count {
+                let Ok(list) = load.blocks.bytes(array.at(i * SND_ALIAS_LIST), 20) else {
+                    continue;
+                };
+                let Some(name) = decode_ptr(le32(list, 0))
+                    .and_then(|p| load.blocks.cstr(p).ok())
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                else {
+                    continue;
+                };
+                if snd_hash_name(name) == le32(list, 4) {
+                    names.insert(name.to_owned());
+                }
+            }
+        }
+    }
+    names.into_iter().collect()
 }

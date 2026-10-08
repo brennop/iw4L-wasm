@@ -504,10 +504,6 @@ impl XAnimBuild {
 }
 
 impl XAnimBuild {
-    /// A T6 `XAnimParts` of a finished load, into `ns` as `prefix` + its
-    /// name. The header is T5's with a streamed size, asset type and timing
-    /// fields added (104 bytes); the compressed pools decode the same way.
-    /// Returns whether it was captured.
     pub fn capture_xanim_t6(
         &mut self,
         ns: AssetNamespace,
@@ -584,8 +580,6 @@ impl XAnimBuild {
             words(92, index_count)
         };
         let parts = RawXAnimParts {
-            // T6 weapons name clips in any case (`viewmodel_M4m203_…`); the
-            // game matches them regardless.
             name: format!("{prefix}{}", name.to_ascii_lowercase()),
             data_byte: bytes(68, usize::from(u16_at(4))),
             data_short: words(72, usize::from(u16_at(6))),
@@ -612,9 +606,6 @@ impl XAnimBuild {
         true
     }
 
-    /// [`Self::absorb`] that keeps every animation already here: `local`'s
-    /// clips only fill names this build does not have. Returns the names
-    /// added and how many were left out.
     pub fn absorb_vacant(&mut self, mut local: Self) -> (Vec<String>, usize) {
         let order = std::mem::take(&mut local.catalog.order);
         let entries = std::mem::take(&mut local.catalog.entries);

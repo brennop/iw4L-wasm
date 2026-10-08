@@ -566,13 +566,10 @@ pub struct FpvMountPlan {
     pub secondary_gun: Option<FpvMeshIndex>,
     pub attachments: Vec<FpvMount>,
     pub rocket: Option<FpvMount>,
-    /// Attachments drawn as another model while aiming: the index in
-    /// `attachments` and the model (a T6 optic's `viewModelADS`).
     pub ads_swaps: Vec<(usize, FpvMeshIndex)>,
 }
 
 impl FpvMountPlan {
-    /// The attachment models drawn, while aiming (`ads`) or not.
     pub fn attachment_models(&self, ads: bool) -> impl Iterator<Item = FpvMeshIndex> + '_ {
         self.attachments.iter().enumerate().map(move |(at, mount)| {
             ads.then(|| self.ads_swaps.iter().find(|(swap, _)| *swap == at))
@@ -622,9 +619,6 @@ fn scope_attach_tag_name<'a>(gun_bones: &'a [String], scope_bones: &[String]) ->
     })
 }
 
-/// Where each of a gun's attachments mounts. `on_gun_root` mounts them all
-/// on the gun's root bone, where T6 places its attached models (by an offset
-/// baked into each model's root rest) whatever their root bones are named.
 pub fn plan_fpv_mounts(
     catalog: &FpvMeshCatalog,
     gun: FpvMeshIndex,
@@ -671,7 +665,6 @@ pub fn plan_fpv_mounts(
                 .iter()
                 .any(|name| name.eq_ignore_ascii_case(root))
         });
-        // A T6 attachment hangs from the gun bone it names, else the root.
         let gun_root = || {
             let tag = skel.mount_tag.as_deref().and_then(|tag| {
                 gun_skel

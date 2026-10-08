@@ -56,6 +56,8 @@ mod cue;
 mod pending;
 pub use cue::CueFailure;
 mod device;
+mod diagnostics;
+pub use diagnostics::{emit as emit_audio_diagnostic, enabled as audio_diagnostics_enabled};
 mod render_core;
 mod runtime;
 mod sources;

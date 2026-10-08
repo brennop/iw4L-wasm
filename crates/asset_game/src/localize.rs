@@ -15,9 +15,6 @@ pub struct LocalizeCatalog {
 }
 
 impl LocalizeCatalog {
-    /// `key` is a bare string name (`WEAPON_AN94`) or a namespaced one
-    /// (`t6:localize/WEAPON_AN94`), which reads that game's string before
-    /// any game's.
     pub fn text(&self, key: &str) -> Option<&str> {
         if let Ok(asset) = asset_core::AssetKey::parse(key)
             && asset.kind == asset_core::AssetKind::Localize
@@ -27,9 +24,6 @@ impl LocalizeCatalog {
         self.entries.get(&key.to_uppercase()).map(String::as_str)
     }
 
-    /// `key` as `namespace` defines it, else as the first game defining it.
-    /// Games reuse names for different strings (`WEAPON_HATCHET` is T5's
-    /// Tomahawk and T6's Combat Axe).
     pub fn text_in(&self, namespace: asset_core::AssetNamespace, key: &str) -> Option<&str> {
         let key = key.to_uppercase();
         self.by_namespace
@@ -286,8 +280,6 @@ pub fn load_localize_catalog_t5(path: &Path) -> Result<LocalizeCatalog, String> 
     Ok(sink.catalog)
 }
 
-/// Every `LocalizeEntry` (`{ const char* value; const char* name; }`) of a
-/// T6 zone.
 pub fn load_localize_catalog_t6(path: &Path) -> Result<LocalizeCatalog, String> {
     let image = asset_transport::open_t6_zone(path).map_err(|e| format!("{e:?}"))?;
     let schema = fastfile_t6::schema::parse().map_err(|e| format!("T6 load plan: {e:?}"))?;

@@ -123,6 +123,7 @@ pub struct ClientMatchState {
     pub score: i32,
     pub kill_streak: i32,
     pub radar: RadarMode,
+    pub radar_blocked: bool,
     pub remote_missile: Option<RemoteMissile>,
     pub linked_weapon_view: Option<LinkedWeaponView>,
 
@@ -227,6 +228,7 @@ impl ClientMatchState {
             deaths: self.deaths,
             kill_streak: self.kill_streak,
             radar: self.radar,
+            radar_blocked: self.radar_blocked,
             remote_missile: self.remote_missile,
             linked_weapon_view: self.linked_weapon_view,
             ammo_by_weapon: self.ammo_by_weapon.clone(),
@@ -283,6 +285,7 @@ impl ClientMatchState {
         self.deaths = meta.deaths;
         self.kill_streak = meta.kill_streak;
         self.radar = meta.radar;
+        self.radar_blocked = meta.radar_blocked;
         self.remote_missile = meta.remote_missile;
         self.linked_weapon_view = meta.linked_weapon_view;
         self.ammo_by_weapon = meta.ammo_by_weapon.clone();

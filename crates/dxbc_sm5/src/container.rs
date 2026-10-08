@@ -1,6 +1,3 @@
-//! The `DXBC` container: a header, then chunks named by a four-character
-//! code (`RDEF`, `ISGN`, `OSGN`, `SHDR`/`SHEX`, `STAT`, ...).
-
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -85,7 +82,6 @@ impl<'a> Container<'a> {
             .map(|chunk| chunk.data)
     }
 
-    /// The shader program: `SHEX` (Shader Model 5) or `SHDR` (4).
     pub fn program(&self) -> Option<&'a [u8]> {
         self.chunk(b"SHEX").or_else(|| self.chunk(b"SHDR"))
     }

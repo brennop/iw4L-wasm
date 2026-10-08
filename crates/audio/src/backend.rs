@@ -19,9 +19,8 @@ pub(crate) fn register(app: &mut App) {
         .add_systems(
             Update,
             publish_audio_context
-                .after(ClientSet::Load)
-                .after(ClientSet::Present)
-                .before(ClientSet::Effects),
+                .in_set(ClientSet::Predict)
+                .after(frame::OwnerEventsPublished),
         )
         .add_systems(
             PostUpdate,
@@ -32,7 +31,7 @@ pub(crate) fn register(app: &mut App) {
         );
 }
 
-fn publish_audio_context(
+pub(crate) fn publish_audio_context(
     epoch: Res<MatchEpoch>,
     runtime: Res<AudioRuntime>,
     clips: Option<Res<crate::ClipStore>>,
@@ -43,26 +42,48 @@ fn publish_audio_context(
     presented: Option<Res<net::PresentedSnapshot>>,
     events: Option<Res<net::EntityEventCursor>>,
     local: Option<Res<net::LocalPresentClient>>,
+    adopted: Option<Res<net::LastAdoptedSnapshot>>,
+    prediction: Option<Res<net::ClientPredictionState>>,
+    view: Option<Res<frame::ViewSubject>>,
 ) {
     runtime.set_match_epoch(epoch.0);
     runtime.set_event_context(
         generation
             .and_then(|generation| generation.0)
-            .zip(
-                presented
-                    .as_ref()
-                    .and_then(|presented| presented.snapshot().map(|snapshot| snapshot.tick.0)),
-            )
+            .zip(presented.as_ref().and_then(|presented| {
+                presented.snapshot().map(|snapshot| {
+                    if view.as_ref().is_some_and(|view| view.in_killcam()) {
+                        snapshot.tick.0
+                    } else {
+                        adopted
+                            .as_ref()
+                            .and_then(|adopted| adopted.next())
+                            .map_or(snapshot.tick.0, |latest| latest.tick.0.max(snapshot.tick.0))
+                    }
+                })
+            }))
             .zip(events.as_ref().map(|events| events.timeline()))
             .map(|((world, tick), timeline)| crate::event::EventContext {
                 local_life: local.as_ref().and_then(|local| {
-                    let meta = presented.as_ref()?.snapshot()?.meta.for_client(local.0)?;
+                    let snapshot = if view.as_ref().is_some_and(|view| view.in_killcam()) {
+                        presented.as_ref()?.snapshot()?
+                    } else {
+                        adopted
+                            .as_ref()
+                            .and_then(|adopted| adopted.next())
+                            .or_else(|| presented.as_ref()?.snapshot())?
+                    };
+                    let meta = snapshot.meta.for_client(local.0)?;
                     (meta.lifecycle == sim::ClientLifecycle::Alive)
                         .then_some((local.0.0, meta.life_sequence.0))
                 }),
                 world,
                 timeline,
                 tick,
+                owner_tick: prediction
+                    .as_ref()
+                    .and_then(|prediction| prediction.0.history().newest())
+                    .map(|latest| latest.tick.0),
             }),
     );
     runtime.set_media_service(clips.as_ref().map(|clips| clips.service()));
@@ -96,13 +117,14 @@ fn cancel_audio_on_exit(mut exit: MessageReader<AppExit>, runtime: Res<AudioRunt
     runtime.cancel_all();
     diag::info!(
         Audio,
-        "audio: admissions queue_full={} logical_budget={} physical_budget={} concurrency={} cancelled={} stale_scope={}",
+        "audio: admissions queue_full={} logical_budget={} physical_budget={} concurrency={} cancelled={} stale_scope={} output_unavailable={}",
         runtime.rejection_count(crate::AdmissionFailure::QueueFull),
         runtime.rejection_count(crate::AdmissionFailure::LogicalBudget),
         runtime.rejection_count(crate::AdmissionFailure::PhysicalBudget),
         runtime.rejection_count(crate::AdmissionFailure::Concurrency),
         runtime.rejection_count(crate::AdmissionFailure::Cancelled),
-        runtime.rejection_count(crate::AdmissionFailure::StaleScope)
+        runtime.rejection_count(crate::AdmissionFailure::StaleScope),
+        runtime.rejection_count(crate::AdmissionFailure::OutputUnavailable)
     );
     let stats = runtime.diagnostics();
     diag::info!(

@@ -1,9 +1,3 @@
-//! T6 `XModel` → [`ModelSkel`], read from a finished [`fastfile_t6::ZoneLoad`].
-//!
-//! The T6 PC layout follows T5's: the same packed vertex, skinning lists,
-//! pose arrays and collision rows, with an 80-byte `XSurface` (T5: 68) and a
-//! 28-byte LOD record (T5: 32).
-
 use bevy::prelude::{Quat, Vec3};
 use fastfile_t6::{Ptr, ZoneLoad};
 
@@ -52,7 +46,6 @@ const XMODEL_COLL_SURF: u32 = 44;
 const XMODEL_COLL_TRI: u32 = 48;
 const BONE_STRIDE: u16 = 64;
 
-/// Reads of a finished T6 load, through its asset headers and blocks.
 struct Reader<'z> {
     load: &'z ZoneLoad,
 }
@@ -79,14 +72,11 @@ impl<'z> Reader<'z> {
     fn f32(&self, p: Ptr) -> Option<f32> {
         Some(f32::from_bits(self.u32(p)?))
     }
-    /// The pointer stored at `p`; `Some(None)` for null, `None` when `p`
-    /// itself is unreadable.
     fn ptr(&self, p: Ptr) -> Option<Option<Ptr>> {
         self.load.blocks.ptr_at(p).ok()
     }
 }
 
-/// An `XModel` asset header of a T6 load.
 #[derive(Clone, Copy)]
 pub struct T6Model<'z> {
     load: &'z ZoneLoad,
@@ -136,15 +126,11 @@ impl<'z> T6Model<'z> {
         usize::from(self.h_u8(off::NUM_SURFS))
     }
 
-    /// The slot of surface `index`'s `Material*`, for
-    /// [`ZoneLoad::asset_at`].
     pub fn material_slot(&self, index: usize) -> Option<Ptr> {
         Some(self.h_ptr(off::MATERIAL_HANDLES)?.at(4 * index as u32))
     }
 }
 
-/// `material_of(surface)` names each surface's material in the catalog the
-/// skeleton will be registered against.
 pub fn capture_model_skel_t6(
     model: T6Model<'_>,
     mut material_of: impl FnMut(usize) -> Option<WalkLocalMaterialIndex>,
@@ -294,7 +280,6 @@ pub fn capture_model_skel_t6(
         contents: Some(model.h_u32(off::CONTENTS)),
         coll_lod: model.h_u16(off::COLL_LOD) as i16,
         coll_surfs,
-        // Weapons and arms: nothing the player collides with.
         movement_brushes: Vec::new(),
         mount_tag: None,
         lod: Some(crate::ModelLodSelector::T5 {

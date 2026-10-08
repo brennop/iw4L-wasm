@@ -15,14 +15,10 @@ pub(crate) struct ClassMenuState {
     folder: Option<ClassPickerFolder>,
     page: usize,
     attachments: bool,
-    /// Picking the camouflage of `row`'s weapon.
     camo: bool,
     hover: usize,
 }
 
-/// The `IW4_CAMOS` names the weapon a class row names has a model for. A
-/// model's slot is its camouflage's number: models are not always named
-/// after the gun's (`viewmodel_f2000` wears `viewmodel_fn2000_woodland`).
 fn camo_names(catalog: &ClassLoadoutCatalog, weapon: &str) -> Vec<String> {
     let Some(registry) = catalog.resolver.0.as_deref() else {
         return Vec::new();
@@ -32,24 +28,24 @@ fn camo_names(catalog: &ClassLoadoutCatalog, weapon: &str) -> Vec<String> {
     else {
         return Vec::new();
     };
-    let Some(models) = registry.camo_models_of(id) else {
-        return Vec::new();
-    };
-    sim::match_state::IW4_CAMOS
-        .iter()
-        .enumerate()
-        .skip(1)
-        .filter(|(slot, _)| {
-            models
-                .view
-                .iter()
-                .any(|(own, _)| usize::from(*own) == *slot)
-        })
-        .map(|(_, camo)| (*camo).to_owned())
+    registry
+        .camouflage_choices(id)
+        .into_iter()
+        .map(|(_, name)| name.to_owned())
         .collect()
 }
 
-/// `red_tiger` as `Red Tiger`.
+fn camo_preview(catalog: &ClassLoadoutCatalog, weapon: &str, camo: &str) -> String {
+    let Some(registry) = catalog.resolver.0.as_deref() else {
+        return String::new();
+    };
+    session::resolve_class_weapon(registry, weapon, &[], asset_game::LoadoutRules::default())
+        .map_or_else(
+            |_| String::new(),
+            |id| registry.camouflage_preview(id, camo),
+        )
+}
+
 fn camo_label(camo: &str) -> String {
     if camo.is_empty() {
         return "None".into();
@@ -65,7 +61,6 @@ fn camo_label(camo: &str) -> String {
         .join(" ")
 }
 
-/// Which of a class's two camouflage slots a weapon row owns.
 fn camo_slot(row: ClassEditRow) -> Option<usize> {
     match row {
         ClassEditRow::Primary => Some(0),
@@ -330,7 +325,6 @@ pub(crate) fn route(
                                 chosen.pop();
                             }
                         }
-                        // A camouflage the new weapon has no model for goes.
                         let weapons = [candidate.primary.clone(), candidate.secondary.clone()];
                         for (weapon, camo) in weapons.iter().zip(&mut candidate.camos) {
                             if !camo.is_empty() && !camo_names(&catalog, weapon).contains(camo) {
@@ -365,8 +359,6 @@ pub(crate) fn route(
                     for menu in ["class_picker", "class_categories", "class_games"] {
                         menus.write(UiMenuRequest::Close(menu.into()));
                     }
-                    // IW4 goes from the weapon to its attachment, then to its
-                    // camouflage when it has any.
                     let has_camo = !camo_names(&catalog, slot.row_value(row)).is_empty();
                     if !state.attachments
                         && !state.camo
@@ -488,15 +480,18 @@ pub(crate) fn route(
                     .unwrap_or_default(),
             );
         }
-        // The swatch IW4's class panel lays behind each weapon; empty hides it.
         for (at, camo) in slot.camos.iter().enumerate() {
             dvars.set(
                 &format!("ui_class_camo_image_{at}"),
-                if camo.is_empty() {
-                    String::new()
-                } else {
-                    format!("iw4:material/weapon_camo_menu_{camo}")
-                },
+                camo_preview(
+                    &catalog,
+                    if at == 0 {
+                        &slot.primary
+                    } else {
+                        &slot.secondary
+                    },
+                    camo,
+                ),
             );
         }
         for (name, selected) in [
@@ -715,14 +710,20 @@ pub(crate) fn route(
             }
         })
         .unwrap_or_default();
-    // A camouflage previews as its swatch, as wide as the class panel
-    // lays it.
     let image = if state.camo {
         choices
             .get(state.page * PAGE_SIZE + state.hover)
             .filter(|camo| !camo.is_empty())
             .map_or_else(String::new, |camo| {
-                format!("iw4:material/weapon_camo_menu_{camo}")
+                camo_preview(
+                    &catalog,
+                    store
+                        .slots
+                        .get(store.selected)
+                        .zip(state.row)
+                        .map_or("", |(slot, row)| slot.row_value(row)),
+                    camo,
+                )
             })
     } else {
         image

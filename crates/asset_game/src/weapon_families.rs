@@ -97,10 +97,6 @@ pub struct WeaponFamily {
 }
 
 impl WeaponFamily {
-    /// The localize key of the family's name. A foreign family's key names
-    /// its own game's strings (`t6:localize/WEAPON_AN94`, see
-    /// [`crate::LocalizeCatalog::text`]); an IW4 family's stays bare, as the
-    /// IW4 menus expect it.
     pub fn name_key(&self) -> String {
         let key = self.display_key.trim_start_matches('@');
         match self.key.namespace {
@@ -405,8 +401,6 @@ impl WeaponFamilies {
             if !group.starts_with("weapon_") || base.is_empty() || base == "weapon_null" {
                 continue;
             }
-            // T6 marks rows no class may hold (dual-wield halves, killstreak
-            // guns) with allocation -1.
             if namespace == AssetNamespace::T6 && table.cell(row, 12) == "-1" {
                 continue;
             }
@@ -437,8 +431,6 @@ impl WeaponFamilies {
                         .cell(row, 8)
                         .split_ascii_whitespace()
                         .map(str::to_ascii_lowercase)
-                        // T6 names an attachment after the per-class asset
-                        // that carries it (`acog_sniper`, `reflex_pistol`).
                         .map(|name| match name.rsplit_once('_') {
                             Some((attachment, _))
                                 if namespace == AssetNamespace::T6
@@ -577,8 +569,6 @@ impl WeaponFamilies {
         if attachments.is_empty() {
             return family.key.base.clone();
         }
-        // T5 names its dual-wield guns `pythondw`; T6 `fiveseven_dw`, as
-        // any other attachment.
         if family.key.namespace == AssetNamespace::T5 && attachments == ["dw"] {
             return format!("{}dw", family.key.base);
         }
@@ -625,8 +615,6 @@ impl WeaponFamilies {
         self.candidate_selections(AssetNamespace::Iw5)
     }
 
-    /// Every loaded family of `namespace` bare, with each attachment it
-    /// offers, and with each compatible pair of them.
     pub(crate) fn candidate_selections(
         &self,
         namespace: AssetNamespace,

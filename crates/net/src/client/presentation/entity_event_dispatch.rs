@@ -12,7 +12,9 @@ use crate::client::input::ClientActionInput;
 use crate::client::presentation::centity_runtime::CEntityRuntime;
 use crate::client::presentation::entity_event_registry::{EntityEventDispatch, ev_dispatch_row};
 use crate::client::presentation::presented::LocalPresentClient;
-use crate::client::runtime::{LastAdoptedSnapshot, PendingPresentedEntityEvents};
+use crate::client::runtime::{
+    ClientPredictionState, LastAdoptedSnapshot, PendingPresentedEntityEvents,
+};
 use crate::gaps::{NetGapCause, NetIdentityGaps};
 use crate::schedule::ClientSet;
 
@@ -20,6 +22,7 @@ use crate::schedule::ClientSet;
 pub enum EntityEventDomain {
     Snapshot,
     Ring,
+    Predicted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -139,6 +142,8 @@ pub struct EntityEventCursor {
     archived_through: Option<(EventSequence, Tick)>,
     in_killcam: bool,
     timeline: u64,
+    predicted_shots: u32,
+    authority_shots: u32,
 }
 
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,7 +182,7 @@ impl UnsupportedEntityEvents {
                     row.name,
                     match row.dispatch {
                         EntityEventDispatch::Unsupported(reason) => reason,
-                        EntityEventDispatch::Observer(_) => {
+                        EntityEventDispatch::Observer(_) | EntityEventDispatch::OwnerInput => {
                             "declared as classified in EV_DISPATCH_REGISTRY, yet the classifier \
                              rejected it — G-BUS-1 should have caught this"
                         }
@@ -267,6 +272,8 @@ fn dispatch_entity_events(
     mut walk: ResMut<AppliedEntityEventWalk>,
     mut unsupported: ResMut<UnsupportedEntityEvents>,
     mut target_gaps: ResMut<NetIdentityGaps>,
+    prediction: Res<ClientPredictionState>,
+    role: Res<frame::RuntimeRole>,
     mut runtimes: Query<(Entity, &CEntity, &mut CEntityRuntime)>,
 ) {
     walk.walked = 0;
@@ -284,6 +291,7 @@ fn dispatch_entity_events(
         .map(|snapshot| snapshot.tick)
         .unwrap_or(Tick(0));
     let local_number = i32::try_from(local.0.0).unwrap_or(-1);
+    let owner_predicted = *role != frame::RuntimeRole::Replay && prediction.0.presents_owner_fire();
     let killcam_transition = pending.in_killcam != cursor.in_killcam;
     if killcam_transition {
         cursor.timeline = cursor.timeline.wrapping_add(1);
@@ -311,6 +319,9 @@ fn dispatch_entity_events(
         consume_entity_events(&next_state, &mut cursor, |ev| {
             walk.occupancy_fired = walk.occupancy_fired.saturating_add(1);
             let number = i32::from(identity.number());
+            if owner_predicted && number == local_number && is_owner_predicted(ev.event) {
+                return;
+            }
             dispatch_classified(
                 &mut commands,
                 local_number,
@@ -356,6 +367,20 @@ fn dispatch_entity_events(
         if !accepted {
             continue;
         }
+        if !archived
+            && record.payload.number == local_number
+            && entity_event_action(record.event) == Ok(EntityEventAction::WeaponFire)
+        {
+            cursor.authority_shots = cursor.authority_shots.wrapping_add(1);
+            perf::owner_shot("authority", cursor.authority_shots, record.tick.0);
+        }
+        if owner_predicted
+            && !archived
+            && record.payload.number == local_number
+            && is_owner_predicted(record.event)
+        {
+            continue;
+        }
         walk.last_event = record.event.0;
         walk.last_number = record.payload.number;
 
@@ -376,9 +401,8 @@ fn dispatch_entity_events(
             }
         };
 
-        let entity = match resolved {
+        let entity = match super::entity_event_recipient::recipient(record.event, resolved) {
             Some(entity) => entity,
-            None if event_without_centity(record.event) => Entity::PLACEHOLDER,
             None => {
                 target_gaps.raise(NetGapCause::EventNumberHasNoEntity { number });
                 continue;
@@ -400,6 +424,55 @@ fn dispatch_entity_events(
     walk.seen_through = cursor.seen_through;
 }
 
+fn is_owner_predicted(event: EntityEventKind) -> bool {
+    matches!(
+        entity_event_action(event),
+        Ok(EntityEventAction::WeaponFire | EntityEventAction::EjectBrass)
+    )
+}
+
+fn dispatch_owner_events(
+    mut commands: Commands,
+    mut prediction: ResMut<ClientPredictionState>,
+    local: Res<LocalPresentClient>,
+    slots: Res<CEntitySlots>,
+    mut cursor: ResMut<EntityEventCursor>,
+    mut walk: ResMut<AppliedEntityEventWalk>,
+    mut unsupported: ResMut<UnsupportedEntityEvents>,
+) {
+    let events = prediction.0.take_owner_events();
+    let local_number = i32::try_from(local.0.0).unwrap_or(-1);
+    let Some(entity) = u16::try_from(local_number)
+        .ok()
+        .and_then(|number| slots.entity_for_number(number))
+    else {
+        return;
+    };
+    for record in events {
+        if entity_event_action(record.event) == Ok(EntityEventAction::WeaponFire) {
+            cursor.predicted_shots = cursor.predicted_shots.wrapping_add(1);
+            perf::owner_shot("predicted", cursor.predicted_shots, record.tick.0);
+        }
+        dispatch_classified(
+            &mut commands,
+            local_number,
+            local_number,
+            entity,
+            DispatchedEntityEvent {
+                domain: EntityEventDomain::Predicted,
+                timeline: cursor.timeline,
+                sequence: record.sequence,
+                tick: record.tick,
+                event: record.event,
+                payload: record.payload,
+            },
+            false,
+            &mut walk,
+            &mut unsupported,
+        );
+    }
+}
+
 fn dispatch_classified(
     commands: &mut Commands,
     local_number: i32,
@@ -412,7 +485,7 @@ fn dispatch_classified(
 ) {
     let mut did = false;
     match entity_event_action(dispatched.event) {
-        Ok(EntityEventAction::None) => {}
+        Ok(EntityEventAction::None | EntityEventAction::OwnerStance) => {}
         Ok(EntityEventAction::Sound) => {
             did = true;
             commands.trigger(EntityEventSound {
@@ -522,16 +595,6 @@ fn dispatch_classified(
     }
 }
 
-fn event_without_centity(event: EntityEventKind) -> bool {
-    matches!(
-        entity_event_action(event),
-        Ok(EntityEventAction::PlayFx | EntityEventAction::Obituary | EntityEventAction::Rumble)
-    ) || event == EntityEventKind::PLAY_RUMBLE_ON_POS
-        || event == EntityEventKind::STOPSOUNDS
-        || event == EntityEventKind::SOUND_ALIAS
-        || event == EntityEventKind::SOUND_ALIAS_AS_MASTER
-}
-
 fn set_ads_from_reset(
     reset: On<net::EntityResetAds>,
     mut input: ResMut<ClientActionInput>,
@@ -552,8 +615,13 @@ pub fn register_entity_event_dispatch(app: &mut App) {
         .add_observer(set_ads_from_reset)
         .add_systems(
             Update,
-            dispatch_entity_events
-                .in_set(ClientSet::Reconcile)
-                .after(crate::sync_client_entities),
+            (
+                dispatch_entity_events
+                    .in_set(ClientSet::Reconcile)
+                    .after(crate::sync_client_entities),
+                dispatch_owner_events
+                    .in_set(frame::OwnerEventsPublished)
+                    .after(crate::predict_local_move),
+            ),
         );
 }

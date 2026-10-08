@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::Resource;
 use master_protocol::MemberId;
 use playerstate_iw4::UserCmd;
-use sim::{ClientAction, ClientId, Snapshot, Tick, TickInput};
+use sim::{ClientAction, ClientId, Snapshot, Tick};
 
 use crate::authority::runtime::ClientShotSamples;
 use crate::client::predict::CmdSeq;
@@ -15,13 +15,15 @@ use crate::transport::bootstrap::{
     encode_bootstrap, epoch_applies,
 };
 use crate::transport::delta::{SnapshotDecoder, SnapshotEncoder};
-use crate::transport::frame::{Frame, frame_from_acked_tick};
+use crate::transport::frame::{Frame, FrameParts, FrameSegments, FrameTail, WireMeta};
 use crate::transport::loopback_live::ReceivedTick;
 use crate::transport::meta_wire::WorldObjectSyncDecoder;
+use crate::transport::netfields::compute_state_hash;
 use crate::transport::protocol::{
     ClientPacket, ConnectionId, ConnectionTable, HandshakeHello, HandshakeReject, PacketHeader,
-    ProtocolLimits, ServerPacket, decode_client_packet, decode_server_packet,
+    ProtocolLimits, ServerPacket, SnapshotPayload, decode_client_packet, decode_server_packet,
 };
+use crate::transport::segment_delta::{self, MetaPatchCache};
 use crate::transport::udp_socket::UdpSendError;
 use crate::transport::wire::WireReader;
 
@@ -32,51 +34,27 @@ pub(crate) const CMDS_PER_PACKET: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct RelayMailbox {
-    inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
-    outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
+    inbound: Arc<Mutex<DataLanes>>,
+    outbound: Arc<Mutex<DataLanes>>,
     control_inbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     #[cfg(online)]
     control_inbound_drained: Arc<tokio::sync::Notify>,
     control_outbound: Arc<Mutex<Vec<(MemberId, Vec<u8>)>>>,
     cap: usize,
-    inbound_cap: usize,
-    inbound_member_cap: usize,
-}
-
-/// Outcome of an accepted inbound push.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InboundPush {
-    Queued,
-    /// The member was at its cap: its oldest queued datagram was dropped.
-    DroppedOldest,
-}
-
-impl InboundPush {
-    pub const OVER_CAP_NOTE: &'static str = "relay mailbox: member over cap, dropped oldest";
 }
 
 impl RelayMailbox {
     pub fn new(cap: usize) -> Self {
-        Self::new_with_member_cap(cap, cap, cap)
-    }
-
-    /// cap bounds outbound and control queues; the inbound queue holds at most
-    /// inbound_cap datagrams overall and member_cap per member, so one noisy
-    /// member cannot starve the others.
-    pub fn new_with_member_cap(cap: usize, inbound_cap: usize, member_cap: usize) -> Self {
         Self {
-            inbound: Arc::new(Mutex::new(Vec::new())),
-            outbound: Arc::new(Mutex::new(Vec::new())),
+            inbound: Arc::new(Mutex::new(DataLanes::default())),
+            outbound: Arc::new(Mutex::new(DataLanes::default())),
             control_inbound: Arc::new(Mutex::new(Vec::new())),
             #[cfg(online)]
             control_inbound_drained: Arc::new(tokio::sync::Notify::new()),
             control_outbound: Arc::new(Mutex::new(Vec::new())),
             cap,
-            inbound_cap,
-            inbound_member_cap: member_cap,
         }
     }
-
     pub fn push_control_inbound(
         &self,
         member: MemberId,
@@ -124,39 +102,50 @@ impl RelayMailbox {
         Self::new(RELAY_MAIL_CAP)
     }
 
-    /// A member at its cap loses its OLDEST queued datagram: the newest one
-    /// carries the freshest commands and the resend of the oldest unacked one.
-    /// Only a full queue (other members' datagrams) refuses the new datagram.
-    pub fn push_inbound(
-        &self,
-        member: MemberId,
-        bytes: Vec<u8>,
-    ) -> Result<InboundPush, &'static str> {
-        let mut queue = self.inbound.lock().expect("relay mailbox poisoned");
-        let mut outcome = InboundPush::Queued;
-        if queue.iter().filter(|(m, _)| *m == member).count() >= self.inbound_member_cap {
-            if let Some(oldest) = queue.iter().position(|(m, _)| *m == member) {
-                queue.remove(oldest);
-            }
-            outcome = InboundPush::DroppedOldest;
-        } else if queue.len() >= self.inbound_cap {
-            return Err("relay mailbox full");
-        }
-        queue.push((member, bytes));
-        Ok(outcome)
+    pub fn push_inbound(&self, member: MemberId, bytes: Vec<u8>) -> bool {
+        lock_lanes(&self.inbound).push(self.cap, member, bytes)
     }
 
     pub fn take_inbound(&self) -> Vec<(MemberId, Vec<u8>)> {
-        take_mail(&self.inbound)
+        lock_lanes(&self.inbound).take()
     }
 
-    pub fn push_outbound(&self, member: MemberId, bytes: Vec<u8>) -> Result<(), &'static str> {
-        push_mail(&self.outbound, self.cap, member, bytes)
+    pub fn push_outbound(&self, member: MemberId, bytes: Vec<u8>) -> bool {
+        lock_lanes(&self.outbound).push(self.cap, member, bytes)
     }
 
     pub fn take_outbound(&self) -> Vec<(MemberId, Vec<u8>)> {
-        take_mail(&self.outbound)
+        lock_lanes(&self.outbound).take()
     }
+}
+
+#[derive(Debug, Default)]
+struct DataLanes {
+    lanes: BTreeMap<MemberId, VecDeque<Vec<u8>>>,
+}
+
+impl DataLanes {
+    fn push(&mut self, cap: usize, member: MemberId, bytes: Vec<u8>) -> bool {
+        let lane = self.lanes.entry(member).or_default();
+        let dropped = lane.len() >= cap;
+        if dropped {
+            lane.pop_front();
+        }
+        lane.push_back(bytes);
+        dropped
+    }
+
+    fn take(&mut self) -> Vec<(MemberId, Vec<u8>)> {
+        let mut out = Vec::new();
+        for (member, lane) in std::mem::take(&mut self.lanes) {
+            out.extend(lane.into_iter().map(|bytes| (member, bytes)));
+        }
+        out
+    }
+}
+
+fn lock_lanes(lanes: &Mutex<DataLanes>) -> std::sync::MutexGuard<'_, DataLanes> {
+    lanes.lock().expect("relay mailbox poisoned")
 }
 
 fn push_mail(
@@ -372,23 +361,28 @@ impl UdpAuthorityHub {
         self.bootstrap = Some(lane);
     }
 
-    fn enroll_relay_member(&mut self, member_id: MemberId) -> ConnectionId {
+    fn enroll_relay_member(&mut self, member_id: MemberId, occupied: &[u32]) -> ConnectionId {
         if let Some((conn, _)) = self.member_by_conn.iter().find(|(_, id)| **id == member_id) {
             return *conn;
         }
-        let (conn, _) = self.connections.accept_new();
+        let (conn, _) = self.connections.accept_new(occupied);
         self.peers.insert(conn, member_id);
         self.replication.insert(conn, PeerReplicationState::new());
         self.member_by_conn.insert(conn, member_id);
         conn
     }
 
-    pub fn reconcile_relay_membership(&mut self, members: &[MemberId], local: MemberId) {
+    pub fn reconcile_relay_membership(
+        &mut self,
+        members: &[MemberId],
+        local: MemberId,
+        occupied: &[u32],
+    ) {
         for member_id in members {
             if *member_id == local || self.denied.contains(member_id) {
                 continue;
             }
-            self.enroll_relay_member(*member_id);
+            self.enroll_relay_member(*member_id, occupied);
         }
     }
 
@@ -488,9 +482,10 @@ impl UdpAuthorityHub {
     }
 
     fn send_outgoing(&mut self, member: MemberId, bytes: &[u8]) -> Result<(), UdpSendError> {
-        self.relay
-            .push_outbound(member, bytes.to_vec())
-            .map_err(relay_send_error)
+        if self.relay.push_outbound(member, bytes.to_vec()) {
+            perf::net_leg("mail_drop_out", 0, 1);
+        }
+        Ok(())
     }
 
     fn live_packet_epoch(&self) -> u32 {
@@ -617,6 +612,9 @@ impl UdpAuthorityHub {
                     }
                     if let Some(reliable) = reliable.as_deref_mut() {
                         reliable.ack(client, reliable_ack);
+                    }
+                    if let Some((seq, _)) = cmds.last() {
+                        perf::net_leg("cmd_in", seq.0, cmds.len() as u32);
                     }
                     for (seq, cmd) in cmds {
                         let mut sample = cmd_samples
@@ -904,32 +902,12 @@ impl UdpAuthorityHub {
         });
     }
 
-    pub fn fanout(
-        &mut self,
-        input: &TickInput,
-        snapshot: &Snapshot,
-        acks: &[(ClientId, CmdSeq)],
-    ) -> Result<(), UdpSendError> {
-        self.fanout_with_seats(
-            input,
-            snapshot,
-            acks,
-            |_, live| live.clone(),
-            None,
-            None,
-            None,
-            None,
-            false,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn fanout_with_seats(
         &mut self,
-        input: &TickInput,
         snapshot: &Snapshot,
         acks: &[(ClientId, CmdSeq)],
-        mut for_peer: impl FnMut(ClientId, &Snapshot) -> Snapshot,
+        mut for_peer: impl FnMut(ClientId, &Snapshot) -> Option<Snapshot>,
         mut pending_svc: Option<&mut crate::PendingSvcSounds>,
         mut pending_playercard: Option<&mut crate::PendingPlayerCard>,
         mut pending_gamenotify: Option<&mut crate::PendingGameNotify>,
@@ -939,6 +917,9 @@ impl UdpAuthorityHub {
         let mut last_err = None;
         let live_epoch = self.live_packet_epoch();
         let peer_ids: Vec<ConnectionId> = self.peers.keys().copied().collect();
+        let mut live: Option<Arc<Snapshot>> = None;
+        let mut live_meta: Option<Arc<WireMeta>> = None;
+        let mut meta_patches = MetaPatchCache::default();
         for conn in peer_ids {
             let Some(target) = self.peers.get(&conn).copied() else {
                 continue;
@@ -1015,33 +996,58 @@ impl UdpAuthorityHub {
                 .copied()
                 .filter(|(id, _)| *id == client)
                 .collect();
-            let peer_snap = for_peer(client, snapshot);
-            let mut frame = frame_from_acked_tick(&mut encoder, input, &peer_snap, peer_acks);
+            let (peer_snap, meta) = match for_peer(client, snapshot) {
+                Some(own) => {
+                    let meta = Arc::new(WireMeta::without_reliable_events(&own.meta));
+                    (Arc::new(own), meta)
+                }
+                None => (
+                    Arc::clone(live.get_or_insert_with(|| Arc::new(snapshot.clone()))),
+                    Arc::clone(live_meta.get_or_insert_with(|| {
+                        Arc::new(WireMeta::without_reliable_events(&snapshot.meta))
+                    })),
+                ),
+            };
+            let world_objects_wire = encoder
+                .encode_world_objects(peer_snap.tick, &peer_snap.meta.world_objects)
+                .to_vec();
+            let snapshot_delta = encoder.encode(&peer_snap);
             peer.encoder = encoder;
+            let mut tail = FrameTail::default();
             if let Some(pending) = pending_svc.as_mut() {
-                frame.svc_sounds = pending.take_for(client);
+                tail.svc_sounds = pending.take_for(client);
             }
             if let Some(pending) = pending_playercard.as_mut() {
                 let (slots, menus, splashes) = pending.take_for(client);
-                frame.svc_card_slots = slots;
-                frame.svc_open_menus = menus;
-                frame.svc_hud_splashes = splashes;
+                tail.svc_card_slots = slots;
+                tail.svc_open_menus = menus;
+                tail.svc_hud_splashes = splashes;
             }
             if let Some(pending) = pending_gamenotify.as_mut() {
-                frame.svc_game_notifies = pending.take_for(client);
+                tail.svc_game_notifies = pending.take_for(client);
             }
-
-            frame
-                .snapshot_meta
-                .journal
-                .retain(|record| !sim::sim_event_is_reliable(&record.event));
-
             if scores_due {
-                frame.svc_scores = Some(crate::format_scoreboard_from_snapshot(&peer_snap));
+                tail.svc_scores = Some(crate::format_scoreboard_from_snapshot(&peer_snap));
             }
             let snapshot_seq = peer.next_snap_seq;
             peer.next_snap_seq = snapshot_seq.wrapping_add(1);
-            peer.baseline.remember(snapshot_seq, peer_snap);
+            let parts = FrameParts::new(
+                peer_snap.tick,
+                compute_state_hash(&peer_snap.players),
+                &peer_acks,
+                &snapshot_delta,
+                meta,
+                &world_objects_wire,
+                &tail,
+            );
+            let payload = match peer.baseline.baseline_parts_for_encode() {
+                Some(baseline) if baseline_seq != 0 => {
+                    let delta = segment_delta::encode(&parts, baseline, &mut meta_patches);
+                    SnapshotPayload::against_baseline(&delta, || parts.to_raw())
+                }
+                _ => SnapshotPayload::Plain(parts.to_raw()),
+            };
+            peer.baseline.remember(snapshot_seq, peer_snap, parts);
             peer.out_seq = peer.out_seq.wrapping_add(1);
             let header = PacketHeader {
                 connection: conn,
@@ -1053,7 +1059,7 @@ impl UdpAuthorityHub {
                 header,
                 baseline_seq,
                 snapshot_seq,
-                payload: frame.to_bytes(),
+                payload,
             };
             let relay_bootstrap = self.bootstrap.is_some() && baseline_seq == 0;
             let already_admitted = matches!(peer.admission, PeerAdmission::Committed { .. });
@@ -1114,7 +1120,9 @@ impl UdpAuthorityHub {
                 }
                 continue;
             }
-            if let Err(e) = self.send_outgoing(target, &packet.to_bytes()) {
+            let bytes = packet.to_bytes();
+            perf::net_leg("snap_out", snapshot.tick.0, bytes.len() as u32);
+            if let Err(e) = self.send_outgoing(target, &bytes) {
                 last_err = Some(e);
             } else if let Some(peer) = self.replication.get_mut(&conn) {
                 peer.sent_ticks.push_back(snapshot.tick);
@@ -1138,7 +1146,7 @@ pub struct UdpClientLink {
     pub connection: Option<ConnectionId>,
     pub assigned_client: Option<ClientId>,
 
-    baselines: BTreeMap<u32, Snapshot>,
+    baselines: BTreeMap<u32, (Snapshot, Vec<u8>, FrameSegments)>,
     out_seq: u32,
     in_ack: u32,
     last_snapshot_seq: Option<u32>,
@@ -1195,9 +1203,10 @@ impl UdpClientLink {
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), UdpSendError> {
-        self.relay
-            .push_outbound(MemberId([0; 16]), bytes.to_vec())
-            .map_err(relay_send_error)
+        if self.relay.push_outbound(MemberId([0; 16]), bytes.to_vec()) {
+            perf::net_leg("mail_drop_out", 0, 1);
+        }
+        Ok(())
     }
 
     pub fn attach_bootstrap(&mut self, lane: Arc<BootstrapLane>) {
@@ -1648,11 +1657,18 @@ impl UdpClientLink {
                 let baseline = if baseline_seq == 0 {
                     None
                 } else {
-                    match self.baselines.get(&baseline_seq).cloned() {
+                    match self.baselines.get(&baseline_seq) {
                         Some(baseline) => Some(baseline),
                         None => return Ok(false),
                     }
                 };
+                let wire_len = payload.wire_len();
+                let Some(payload) =
+                    payload.decode(baseline.map(|(_, raw, segments)| (raw.as_slice(), segments)))
+                else {
+                    return Ok(false);
+                };
+                let baseline = baseline.map(|(snapshot, _, _)| snapshot.clone());
                 let mut decoder = SnapshotDecoder::new();
                 let mut world_decoder = WorldObjectSyncDecoder::default();
                 if let Some(baseline) = baseline.as_ref() {
@@ -1661,17 +1677,19 @@ impl UdpClientLink {
                 }
                 self.in_ack = header.sequence;
                 let mut input = WireReader::new(&payload);
-                let frame =
-                    Frame::decode(&mut input, &mut world_decoder).map_err(|e| e.to_string())?;
+                let (frame, segments) = Frame::decode_segments(&mut input, &mut world_decoder)
+                    .map_err(|e| e.to_string())?;
                 let mut snapshot = decoder
                     .decode(&frame.snapshot_delta)
                     .map_err(|e| e.to_string())?;
                 snapshot.meta = frame.snapshot_meta.clone();
                 self.note_applied_snapshot(snapshot_seq);
-                self.baselines.insert(snapshot_seq, snapshot.clone());
+                self.baselines
+                    .insert(snapshot_seq, (snapshot.clone(), payload, segments));
                 self.required_baseline_seq = self.required_baseline_seq.max(baseline_seq);
                 self.retain_applied_baseline();
                 snap_acks.push(snapshot_seq);
+                perf::net_leg("snap_in", snapshot.tick.0, wire_len as u32);
                 ticks.push(ReceivedTick { snapshot, frame });
                 Ok(true)
             }
@@ -1781,6 +1799,9 @@ impl UdpClientLink {
             actions: actions.to_vec(),
             reliable_ack,
         };
+        if let Some((seq, _, _)) = cmds.last() {
+            perf::net_leg("cmd_out", seq.0, cmds.len() as u32);
+        }
         if cmds.is_empty() {
             self.relay
                 .push_control_outbound(MemberId([0; 16]), packet.to_bytes())

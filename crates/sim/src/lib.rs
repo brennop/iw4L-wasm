@@ -24,6 +24,7 @@ pub mod match_state;
 mod missile;
 mod missile_guidance;
 pub use missile_guidance::{MissileGuide, MissileTarget};
+mod penetration;
 mod persistent_data;
 mod persistent_defaults;
 pub use persistent_data::{
@@ -38,6 +39,8 @@ pub use weapon_lock::WeaponLock;
 pub mod player_anim_script;
 pub mod rules;
 mod score;
+mod skill_rating;
+pub use skill_rating::{SKILL_RATING_BYTES, SkillRating, SkillRatingError, SkillRatings};
 pub mod script_gaps;
 mod script_player;
 mod smodel_grid;
@@ -136,11 +139,8 @@ pub use spawn::{
 };
 pub use step::phase_materialize_entity_dobjs;
 
-/// A script model attachment standing for a weapon's thrown model
-/// (`#weapon:<index>`), which the renderer draws from its own catalog.
 pub const WEAPON_MODEL_PREFIX: &str = "#weapon:";
 
-/// The weapon a [`WEAPON_MODEL_PREFIX`] attachment stands for.
 pub fn weapon_model_attachment(model: &str) -> Option<u32> {
     model.strip_prefix(WEAPON_MODEL_PREFIX)?.parse().ok()
 }

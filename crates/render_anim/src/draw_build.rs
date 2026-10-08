@@ -645,9 +645,6 @@ pub fn append_dynent_asset(
 /// its materials and its draws, plus a packed vertex buffer sized to the layout
 /// it laid out. This runs when the composition changes. A pose writes into the
 /// buffer below and touches nothing else here.
-///
-/// `camo` swaps the gun's materials for those of the camouflage it is shown
-/// with, by authored material.
 pub fn install_prepared_fpv_plan(
     plan: &mut FpvDrawPlan,
     geometry: &crate::anim::fpv_rig::PreparedFpvGeometry,

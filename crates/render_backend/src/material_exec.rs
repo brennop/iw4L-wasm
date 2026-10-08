@@ -135,6 +135,7 @@ impl ShellInternKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ExecutionShareExtra {
     Identity,
+    ReflectionProbe(u8),
     ViewmodelCodeMesh,
     LightingHandle(u32),
 
@@ -151,7 +152,7 @@ struct OverlayKeepKey {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum OverlayKeepExtra {
-    World,
+    World(Option<u8>),
     ViewmodelCodeMesh,
     Lighting {
         handle: u32,
@@ -175,10 +176,37 @@ fn xmodel_depth_hack(key: u64) -> bool {
     host_viewmodel_render_fx_flags(dpvs_iw4::GfxDrawSurf { packed: key }.object_id()) != 0
 }
 
-fn execution_share_extra(draw: &RetainedDrawItem) -> ExecutionShareExtra {
+fn per_surface_reflection_sh(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+) -> Option<(u8, [[f32; 4]; 3])> {
+    let probe = draw.surface_samplers.reflection_probe?.0;
+    let sh = (*frame.reflection_probe_sh.get(usize::from(probe))?)?;
+    Some((probe, sh))
+}
+
+fn overlay_reflection_sh(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+    scratch: &mut RuntimeCodeSources,
+) {
+    if let Some((_, sh)) = per_surface_reflection_sh(frame, draw) {
+        for (index, row) in render_material::CODE_T6_REFLECTION_SH.into_iter().zip(sh) {
+            scratch.set_constant_rows(index, &[row.map(f32::to_bits)]);
+        }
+    }
+}
+
+fn execution_share_extra(
+    frame: &MaterialExecFrame,
+    draw: &RetainedDrawItem,
+) -> ExecutionShareExtra {
     match draw.kind {
         RetainedDrawKind::MarkMesh { .. } => ExecutionShareExtra::MarkMesh,
-        RetainedDrawKind::World { .. } => ExecutionShareExtra::Identity,
+        RetainedDrawKind::World { .. } => match per_surface_reflection_sh(frame, draw) {
+            Some((probe, _)) => ExecutionShareExtra::ReflectionProbe(probe),
+            None => ExecutionShareExtra::Identity,
+        },
         RetainedDrawKind::Glass {
             lighting_handle, ..
         } => ExecutionShareExtra::LightingHandle(lighting_handle),
@@ -198,6 +226,7 @@ fn execution_share_extra(draw: &RetainedDrawItem) -> ExecutionShareExtra {
 }
 
 fn execution_share_key(
+    frame: &MaterialExecFrame,
     draw: &RetainedDrawItem,
     tech: TechType,
     vertex_type: u8,
@@ -214,7 +243,7 @@ fn execution_share_key(
         material_id: draw.material_id,
         tech: tech.0,
         vertex_type,
-        extra: execution_share_extra(draw),
+        extra: execution_share_extra(frame, draw),
     }
 }
 
@@ -246,15 +275,16 @@ fn smodel_code_world_from_local(kind: &RetainedDrawKind) -> Mat4 {
     }
 }
 
-fn overlay_keep_key(draw: &RetainedDrawItem) -> OverlayKeepKey {
+fn overlay_keep_key(frame: &MaterialExecFrame, draw: &RetainedDrawItem) -> OverlayKeepKey {
     let scene_light = dpvs_iw4::GfxDrawSurf { packed: draw.key }.scene_light_index();
     let extra = match draw.kind {
         RetainedDrawKind::CodeMesh {
             viewmodel: true, ..
         } => OverlayKeepExtra::ViewmodelCodeMesh,
-        RetainedDrawKind::World { .. } | RetainedDrawKind::CodeMesh { .. } => {
-            OverlayKeepExtra::World
+        RetainedDrawKind::World { .. } => {
+            OverlayKeepExtra::World(per_surface_reflection_sh(frame, draw).map(|(probe, _)| probe))
         }
+        RetainedDrawKind::CodeMesh { .. } => OverlayKeepExtra::World(None),
         RetainedDrawKind::MarkMesh {
             lighting_handle, ..
         } => OverlayKeepExtra::Lighting {
@@ -300,6 +330,7 @@ fn overlay_draw_material(
 ) {
     let inv_image_height = runtime.frame.inv_image_height;
     scratch.begin_overlay();
+    overlay_reflection_sh(runtime.frame, draw, scratch);
     apply_shadowable_light(
         scratch,
         draw.key,
@@ -429,6 +460,7 @@ fn overlay_draw_obj_only(
     need: OverlayCodeNeed,
 ) {
     let inv_image_height = runtime.frame.inv_image_height;
+    overlay_reflection_sh(runtime.frame, draw, scratch);
     match draw.kind {
         RetainedDrawKind::Smodel {
             lighting_handle,
@@ -682,8 +714,8 @@ impl MaterialRunExecutor {
         self.census.draws = self.census.draws.saturating_add(1);
         self.place_rows.clear();
         self.place_lanes.clear();
-        let share = execution_share_key(draw, tech_type, vertex_type);
-        let overlay_key = overlay_keep_key(draw);
+        let share = execution_share_key(view.frame, draw, tech_type, vertex_type);
+        let overlay_key = overlay_keep_key(view.frame, draw);
         if self.run.as_ref().is_some_and(|run| run.share == share) {
             let Self {
                 run,

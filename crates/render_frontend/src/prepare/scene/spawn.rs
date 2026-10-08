@@ -429,7 +429,7 @@ pub(crate) fn spawn_world(
                 commands.remove_resource::<crate::assemble::drawsurf::MapFrameFog>();
                 diag::warn!(
                     World,
-                    "drawsurf createart fog: RED missing setExpFog — code constants 37/38/40/41/43 stay unproduced"
+                    "drawsurf createart fog: missing setExpFog — fog code constants are fed as fog off"
                 );
             }
         }
@@ -530,6 +530,7 @@ pub(crate) fn spawn_world(
             lights: scene.primary_light_pack.clone(),
             attenuation: scene.primary_light_attenuation.clone(),
             t5_falloff: scene.primary_light_t5_falloff.clone(),
+            reflection_probe_sh: scene.reflection_probe_sh.clone(),
             dynamic: scene.dynamic_light,
         });
         {

@@ -4,6 +4,7 @@ mod breath_hint;
 mod chrome;
 mod compass;
 mod draw2d;
+mod emp_static;
 mod expr_cache;
 mod flash;
 mod font_overlay;

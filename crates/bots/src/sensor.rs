@@ -258,9 +258,10 @@ fn public_objectives(snapshot: &Snapshot, bot: ClientId, team: i32) -> Vec<ModeO
         .objectives
         .compass
         .iter()
-        // Enemy pings (a T6 sensor grenade's) mark players, not places.
         .filter(|o| {
-            o.shows_to(team, bot.0) && !o.icon.contains("defend") && !o.icon.starts_with("compassping")
+            o.shows_to(team, bot.0)
+                && !o.icon.contains("defend")
+                && !o.icon.starts_with("compassping")
         })
         .map(|o| ModeObjective {
             id: u32::from(o.index),

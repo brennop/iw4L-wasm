@@ -410,10 +410,7 @@ const LEGAL_FILES: &[(&str, &str)] = &[
     ("LICENSE", "LICENSE"),
     ("NOTICE", "NOTICE"),
     ("crates/ui/assets/OFL-Oxanium.txt", "OFL-Oxanium.txt"),
-    (
-        "crates/console/assets/OFL-FiraMono.txt",
-        "OFL-FiraMono.txt",
-    ),
+    ("crates/console/assets/OFL-FiraMono.txt", "OFL-FiraMono.txt"),
 ];
 
 pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {

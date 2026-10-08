@@ -230,6 +230,15 @@ pub(crate) fn update_script_menus(
                 .is_some_and(|a| a.client.kb.scores.active),
         classes: input.classes.as_deref(),
         weapons: input.weapons.as_ref().map(|w| w.0.as_ref()),
+        emp_jammed: in_game
+            && presented
+                .player(local.0)
+                .is_some_and(|ps| ps.other_flags & playerstate_iw4::other_flags::EMP_JAMMED != 0),
+        radar_blocked: in_game
+            && presented
+                .snapshot()
+                .and_then(|snap| snap.meta.for_client(local.0))
+                .is_some_and(|meta| meta.radar_blocked),
     };
 
     let mut runner = Runner {
@@ -308,6 +317,9 @@ pub(crate) fn update_script_menus(
     // the notice. Opening last also keeps keyboard/mouse focus on the dialog.
     if frontend && runner.dvars.get("ui_connection_error") == Some("1") {
         runner.open("iw4l_connection_error");
+    }
+    if frontend && runner.dvars.get("ui_map_error") == Some("1") {
+        runner.open("iw4l_map_error");
     }
     let pointer = !console_open;
     if pointer {

@@ -74,8 +74,8 @@ pub use client::presentation::projectiles::{
     PresentedProjectile, count_throw_rows, merge_presented_projectiles,
 };
 pub use client::proxy::{
-    AnimGap, FIXED_DELAY_POLICY_REVISION, PROXY_BUFFER_TICKS, PROXY_DELAY_MS,
-    PresentationSampleOutcome, PresentationSampleProvenance, PresentationSampleTime, ProxyMode,
+    ADAPTIVE_DELAY_POLICY_REVISION, AnimGap, PROXY_BUFFER_TICKS, PROXY_DELAY_MS,
+    PresentationSampleOutcome, PresentationSampleProvenance, PresentationSampleTime,
     ProxyPolicyRevision, ProxySample, ProxyStarvationReason, RemoteProxy,
 };
 pub use client::realtime::ClientRealtime;
@@ -161,7 +161,8 @@ pub use transport::netfields::{
 pub use transport::protocol::{
     ClientPacket, ConnectionId, ConnectionTable, ContentFingerprint, HandshakeHello,
     HandshakeReject, IdentityError, MatchDescriptor, PacketHeader, ProtocolLimits, ServerPacket,
-    UDP_IMPLEMENTED, decode_client_packet, decode_server_packet, evaluate_handshake,
+    SnapshotPayload, UDP_IMPLEMENTED, decode_client_packet, decode_server_packet,
+    evaluate_handshake,
 };
 pub use transport::reliable::{
     ActionVerdict, MAX_PENDING_RELIABLE, ReliableEventHub, ReliableEventQueue, ReliablePayload,
@@ -173,4 +174,4 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 104;
+pub const PROTOCOL_VERSION: u32 = 106;

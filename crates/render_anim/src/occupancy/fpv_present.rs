@@ -38,12 +38,11 @@ use render_scene::WorldScriptModelInstance;
 use render_scene::{FlyCamera, FpvLens};
 use render_scene::{HostGfxScene, scene_quat_from_viewmodel_axes};
 use weapon_iw4::{
-    GunKickSpring, GunRecoilPlacementState, PLACEMENT_ASSEMBLE_STEP_COUNT,
-    StanceTransitionFadeGlobals, WeaponBobInputs, WeaponBobWaveformInputs,
-    WeaponMovementKinematics, WeaponPlacementAssembleStep, WeaponPlacementPsInputs,
-    WeaponPlacementState, WeaponStanceStaticOfsInputs, calculate_weapon_movement_bob_waveform,
-    clip_table_key, dual_wield_view_model_origin_add, get_clip_for_hand,
-    get_viewmodel_weapon_index, viewmodel_rocket_should_be_attached,
+    GunRecoilResponse, PLACEMENT_ASSEMBLE_STEP_COUNT, StanceTransitionFadeGlobals, WeaponBobInputs,
+    WeaponBobWaveformInputs, WeaponMovementKinematics, WeaponPlacementAssembleStep,
+    WeaponPlacementPsInputs, WeaponPlacementState, WeaponStanceStaticOfsInputs,
+    calculate_weapon_movement_bob_waveform, clip_table_key, dual_wield_view_model_origin_add,
+    get_clip_for_hand, get_viewmodel_weapon_index, viewmodel_rocket_should_be_attached,
     viewweapon_iron_ads_saves_composed_axis, viewweapon_save_gun_pitch_yaw,
     viewweapon_view_to_world_delta, weapon_placement_assemble,
 };
@@ -89,6 +88,11 @@ fn same_compositions(a: &asset_game::FpvSideAssemblies, b: &asset_game::FpvSideA
             _ => false,
         }
         && match (&a.rocket, &b.rocket) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+        && match (&a.jammed, &b.jammed) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
@@ -719,7 +723,6 @@ pub fn tick_fpv_viewmodel(
         None
     };
     let weapon_id = session.weapon_id;
-    // An alternate mode shows its parent gun, given with the parent's model.
     let held = if session.parent_weapon != 0 {
         session.parent_weapon
     } else {
@@ -747,10 +750,12 @@ pub fn tick_fpv_viewmodel(
                 Ok(weapon_iw4::WeaponState::MeleeInit | weapon_iw4::WeaponState::MeleeFire)
             )
         }),
-        // T6 swaps an optic's model once the gun is fully raised to the eye.
         ads: presented
             .viewweapon_player(local.0)
             .is_some_and(|ps| ps.f_weapon_pos_frac >= 1.0),
+        jammed: presented
+            .player(local.0)
+            .is_some_and(|ps| ps.other_flags & playerstate_iw4::other_flags::EMP_JAMMED != 0),
         sample,
         predicted_fire,
         dual,
@@ -977,12 +982,7 @@ pub fn apply_fpv_placement(
 
     let mut state = WeaponPlacementState {
         sway_springs: kick.sway.springs(),
-        gun_recoil: GunRecoilPlacementState {
-            pitch_offset: kick.state.gun_angles[0],
-            pitch_speed: kick.state.gun_speed[0],
-            yaw_offset: kick.state.gun_angles[1],
-            yaw_speed: kick.state.gun_speed[1],
-        },
+        gun_recoil: kick.state.gun,
         movement_origin: kick.placement_move_origin,
         movement_angles: kick.placement_move_angles,
         weap_idle_time: kick.weap_idle_time,
@@ -1042,18 +1042,8 @@ pub fn apply_fpv_placement(
         pm_flags: ps.pm_flags,
         weapon_pos_frac: ps.f_weapon_pos_frac,
     });
-    let hip = GunKickSpring {
-        accel: facts.kick.hip_gun_kick_accel,
-        speed_max: facts.kick.hip_gun_kick_speed_max,
-        speed_decay: facts.kick.hip_gun_kick_speed_decay,
-        static_decay: facts.kick.hip_gun_kick_static_decay,
-    };
-    let ads = GunKickSpring {
-        accel: facts.kick.ads_gun_kick_accel,
-        speed_max: facts.kick.ads_gun_kick_speed_max,
-        speed_decay: facts.kick.ads_gun_kick_speed_decay,
-        static_decay: facts.kick.ads_gun_kick_static_decay,
-    };
+    let hip = GunRecoilResponse::default();
+    let ads = GunRecoilResponse::default();
     let mut steps = [WeaponPlacementAssembleStep::Sway; PLACEMENT_ASSEMBLE_STEP_COUNT];
 
     let mut idle = facts.idle;

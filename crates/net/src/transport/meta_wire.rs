@@ -706,6 +706,23 @@ pub struct SnapshotMetaSectionBytes {
 }
 
 impl SnapshotMetaSectionBytes {
+    pub fn segments(self) -> [usize; META_SEGMENTS] {
+        [
+            self.match_header,
+            self.events,
+            self.aliases,
+            self.entity_dobjs,
+            self.corpses,
+            self.entities,
+            self.script_movers,
+            self.entity_kernel,
+            self.item_tables,
+            self.area_entities,
+            self.objectives,
+            self.world_objects,
+        ]
+    }
+
     pub fn total(self) -> usize {
         self.match_header
             + self.events
@@ -726,14 +743,18 @@ fn section_span(out: &WireWriter, from: usize) -> usize {
     out.len() - from
 }
 
-pub fn encode_snapshot_meta(out: &mut WireWriter, meta: &SnapshotMeta, world_objects_wire: &[u8]) {
-    let _ = encode_snapshot_meta_sections(out, meta, world_objects_wire);
+pub fn encode_world_objects_wire(out: &mut WireWriter, world_objects_wire: &[u8]) -> usize {
+    let mark = out.len();
+    debug_assert!(world_objects_wire.len() <= u16::MAX as usize);
+    out.put_u16(world_objects_wire.len() as u16);
+    out.put_bytes(world_objects_wire);
+    section_span(out, mark)
 }
 
-pub fn encode_snapshot_meta_sections(
+pub fn encode_snapshot_meta_body(
     out: &mut WireWriter,
     meta: &SnapshotMeta,
-    world_objects_wire: &[u8],
+    keep_journal: impl Fn(&EventRecord) -> bool,
 ) -> SnapshotMetaSectionBytes {
     let mut sizes = SnapshotMetaSectionBytes::default();
     let mut mark = out.len();
@@ -757,9 +778,10 @@ pub fn encode_snapshot_meta_sections(
     }
     sizes.match_header = section_span(out, mark);
     mark = out.len();
-    debug_assert!(meta.journal.len() <= u16::MAX as usize);
-    out.put_u16(meta.journal.len() as u16);
-    for record in &meta.journal {
+    let journal: Vec<&EventRecord> = meta.journal.iter().filter(|r| keep_journal(r)).collect();
+    debug_assert!(journal.len() <= u16::MAX as usize);
+    out.put_u16(journal.len() as u16);
+    for record in journal {
         encode_event_record(out, record);
     }
     debug_assert!(meta.entity_events.len() <= u16::MAX as usize);
@@ -805,17 +827,15 @@ pub fn encode_snapshot_meta_sections(
     mark = out.len();
     encode_objectives(out, &meta.objectives);
     sizes.objectives = section_span(out, mark);
-    mark = out.len();
-    debug_assert!(world_objects_wire.len() <= u16::MAX as usize);
-    out.put_u16(world_objects_wire.len() as u16);
-    out.put_bytes(world_objects_wire);
-    sizes.world_objects = section_span(out, mark);
     sizes
 }
+
+pub const META_SEGMENTS: usize = 12;
 
 pub fn decode_snapshot_meta(
     input: &mut WireReader<'_>,
     world_decoder: &mut WorldObjectSyncDecoder,
+    remaining_after: &mut [usize; META_SEGMENTS],
 ) -> Result<(SnapshotMeta, Vec<u8>), WireError> {
     let phase = phase_from_tag(input.get_u8()?)?;
     let match_elapsed_ms = input.get_u32()?;
@@ -837,6 +857,7 @@ pub fn decode_snapshot_meta(
         let client = ClientId(input.get_u32()?);
         clients.push((client, decode_client_meta(input)?));
     }
+    remaining_after[0] = input.remaining();
     let journal_count = input.get_u16()? as usize;
     let mut journal = Vec::with_capacity(journal_count.min(64));
     for _ in 0..journal_count {
@@ -852,23 +873,34 @@ pub fn decode_snapshot_meta(
     for _ in 0..pellet_fx_count {
         pellet_fx.push(decode_pellet_fx_record(input)?);
     }
+    remaining_after[1] = input.remaining();
     let sound_aliases = decode_sound_alias_cs(input)?;
     let effect_names = decode_sound_alias_cs(input)?;
     let hud_materials = decode_sound_alias_cs(input)?;
     let hud_strings = decode_hud_strings(input)?;
     let rng = decode_rng_debug(input)?;
+    remaining_after[2] = input.remaining();
     let entity_dobjs = decode_entity_dobjs(input)?;
+    remaining_after[3] = input.remaining();
     let corpses = decode_corpse_pool(input)?;
+    remaining_after[4] = input.remaining();
     let entities = decode_entity_states(input)?;
+    remaining_after[5] = input.remaining();
     let script_movers = decode_script_movers(input)?;
+    remaining_after[6] = input.remaining();
     let entity_kernel = decode_entity_kernel(input)?;
+    remaining_after[7] = input.remaining();
     let item_ammo = decode_item_ammo(input)?;
     let item_pickups = decode_item_pickups(input)?;
+    remaining_after[8] = input.remaining();
     let area_entities = decode_area_entities(input)?;
+    remaining_after[9] = input.remaining();
     let objectives = decode_objectives(input)?;
+    remaining_after[10] = input.remaining();
     let wire_len = input.get_u16()? as usize;
     let mut wire = vec![0u8; wire_len];
     input.get_bytes(&mut wire)?;
+    remaining_after[11] = input.remaining();
     let world_objects = world_decoder.apply_wire(&wire)?;
     Ok((
         SnapshotMeta {
@@ -1280,6 +1312,7 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
     out.put_i32(meta.deaths);
     out.put_i32(meta.kill_streak);
     out.put_u8(meta.radar.wire_tag());
+    out.put_u8(u8::from(meta.radar_blocked));
     match &meta.remote_missile {
         None => out.put_u8(0),
         Some(remote) => {
@@ -1489,6 +1522,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     let kill_streak = input.get_i32()?;
     let radar = sim::RadarMode::from_wire_tag(input.get_u8()?)
         .ok_or(WireError::Malformed("bad radar mode"))?;
+    let radar_blocked = input.get_u8()? != 0;
     let remote_missile = match input.get_u8()? {
         0 => None,
         1 => {
@@ -1691,6 +1725,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         deaths,
         kill_streak,
         radar,
+        radar_blocked,
         remote_missile,
         linked_weapon_view,
         ammo_by_weapon,

@@ -28,7 +28,9 @@ pub mod structured_data;
 mod tracer_catalog;
 mod weapon_anim_dispatch;
 mod weapon_animations;
+mod weapon_camo;
 mod weapon_catalog;
+pub use weapon_camo::WeaponCamouflage;
 mod weapon_families;
 mod weapon_t6;
 pub use weapon_t6::{
@@ -57,3 +59,6 @@ pub use weapon_families::*;
 pub mod asset_graph {
     pub(crate) use crate::graph_support::*;
 }
+
+mod team_t6;
+pub use team_t6::t6_team_properties;

@@ -75,7 +75,9 @@ received plus its own presented state; `demo LATEST` plays it back.
 * `bot` hints follow the subcommand: counts, on/off, current bot IDs, weapons, and `tp … above`.
 * custom classes live in `iw4l-artifacts/profile/classes.txt` (one tab-separated
   row per class); `spawn 0` selects the first slot. Delete the file to generate
-  five available classes again.
+  five available classes again. Random presets use a pool of 20: five each for
+  IW4, IW5, T5 and T6, with IW4 equipment. Players and bots select only
+  presets supported by the loaded weapons, attachments and equipment.
 
 Callsign on the main menu selects a title and emblem. Killstreaks selects three
 rewards with different kill requirements; Apply saves the selection for the next

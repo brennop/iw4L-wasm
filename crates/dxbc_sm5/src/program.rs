@@ -1,8 +1,3 @@
-//! The `SHDR`/`SHEX` chunk: a version token, a length, then instructions.
-//! Each instruction is an opcode token (type in bits 0–10, length in
-//! DWORDs in bits 24–30) followed by its extended opcode and operand tokens;
-//! `customdata` blocks carry their length in the next token instead.
-
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -42,7 +37,6 @@ impl fmt::Display for ProgramError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Instruction<'a> {
     pub opcode: u16,
-    /// Every token of the instruction, the opcode token first.
     pub tokens: &'a [u32],
 }
 
@@ -51,13 +45,10 @@ impl Instruction<'_> {
         OpcodeName(self.opcode)
     }
 
-    /// Bit 31 of the opcode token: extended opcode tokens follow.
     pub fn extended(&self) -> bool {
         self.tokens[0] & 0x8000_0000 != 0
     }
 
-    /// The opcode-specific control bits (23:11): saturate, test boolean,
-    /// resinfo return type, ...
     pub fn controls(&self) -> u32 {
         (self.tokens[0] >> 11) & 0x1fff
     }
@@ -134,7 +125,6 @@ impl Program {
     }
 }
 
-/// `D3D10_SB_OPCODE_TYPE` / `D3D11_SB_OPCODE_TYPE`, displayed by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OpcodeName(pub u16);
 

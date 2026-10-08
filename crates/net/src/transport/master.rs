@@ -54,12 +54,14 @@ type Result<T> = std::result::Result<T, Error>;
 pub const CONTENT_IW4: u8 = 1 << 0;
 pub const CONTENT_IW5: u8 = 1 << 1;
 pub const CONTENT_T5: u8 = 1 << 2;
+pub const CONTENT_T6: u8 = 1 << 3;
 
-pub const fn content_inventory(iw4: bool, iw5: bool, t5: bool) -> ContentFlags {
+pub const fn content_inventory(iw4: bool, iw5: bool, t5: bool, t6: bool) -> ContentFlags {
     ContentFlags(
         (if iw4 { CONTENT_IW4 } else { 0 })
             | (if iw5 { CONTENT_IW5 } else { 0 })
-            | (if t5 { CONTENT_T5 } else { 0 }),
+            | (if t5 { CONTENT_T5 } else { 0 })
+            | (if t6 { CONTENT_T6 } else { 0 }),
     )
 }
 
@@ -71,6 +73,7 @@ pub fn content_required_by_map(map: &str) -> Result<ContentFlags> {
         "iw4" => CONTENT_IW4,
         "iw5" => CONTENT_IW5,
         "t5" => CONTENT_T5,
+        "t6" => CONTENT_T6,
         other => return Err(format!("unknown content namespace `{other}` in map `{map}`").into()),
     }))
 }
@@ -86,7 +89,10 @@ pub fn content_names(flags: ContentFlags) -> String {
     if flags.0 & CONTENT_T5 != 0 {
         names.push("t5");
     }
-    if flags.0 & !(CONTENT_IW4 | CONTENT_IW5 | CONTENT_T5) != 0 {
+    if flags.0 & CONTENT_T6 != 0 {
+        names.push("t6");
+    }
+    if flags.0 & !(CONTENT_IW4 | CONTENT_IW5 | CONTENT_T5 | CONTENT_T6) != 0 {
         names.push("unknown");
     }
     names.join(",")
@@ -336,6 +342,8 @@ pub struct MasterAdvert {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MasterBrowserSnapshot {
+    pub community_name: String,
+    pub ping_ms: Option<u64>,
     pub generation: u64,
     pub loading: bool,
     pub adverts: Vec<MasterAdvert>,

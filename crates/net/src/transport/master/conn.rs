@@ -45,6 +45,24 @@ pub(super) trait MasterConn: Clone {
     fn close(&self, code: u32, reason: &[u8]);
     /// Why the connection closed; `None` while it is open.
     fn close_reason(&self) -> Option<String>;
+    /// The connection's measured round trip, where the transport reports one.
+    fn rtt(&self) -> Option<std::time::Duration> {
+        None
+    }
+    /// Congestion counters for the perf trace, where the transport has them.
+    fn path_stats(&self) -> Option<PathStats> {
+        None
+    }
+}
+
+/// One sample of a connection's path: round trip, window, losses and the bytes
+/// waiting in the datagram send buffer.
+pub(super) struct PathStats {
+    pub rtt_us: u64,
+    pub cwnd: u64,
+    pub lost_packets: u64,
+    pub congestion_events: u64,
+    pub queued: u64,
 }
 
 pub(super) trait MasterSendStream {
@@ -124,6 +142,21 @@ impl MasterConn for QuicConn {
     type SendStream = QuicSend;
     type RecvStream = QuicRecv;
     type Datagram = bytes::Bytes;
+
+    fn rtt(&self) -> Option<std::time::Duration> {
+        Some(self.0.rtt())
+    }
+
+    fn path_stats(&self) -> Option<PathStats> {
+        let stats = self.0.stats();
+        Some(PathStats {
+            rtt_us: stats.path.rtt.as_micros() as u64,
+            cwnd: stats.path.cwnd,
+            lost_packets: stats.path.lost_packets,
+            congestion_events: stats.path.congestion_events,
+            queued: (super::online::DATAGRAM_SEND_BUFFER - self.0.datagram_send_buffer_space()) as u64,
+        })
+    }
 
     async fn open_bi(&self) -> Result<(QuicSend, QuicRecv), ConnError> {
         let (send, recv) = self.0.open_bi().await.map_err(ConnError::from_display)?;

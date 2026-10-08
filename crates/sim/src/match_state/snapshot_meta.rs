@@ -34,6 +34,7 @@ pub struct ClientSnapshotMeta {
     pub deaths: i32,
     pub kill_streak: i32,
     pub radar: RadarMode,
+    pub radar_blocked: bool,
     pub remote_missile: Option<RemoteMissile>,
     pub linked_weapon_view: Option<LinkedWeaponView>,
 

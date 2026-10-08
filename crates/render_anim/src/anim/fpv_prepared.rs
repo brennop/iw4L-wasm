@@ -29,6 +29,7 @@ pub struct FpvRigSet {
     rocket: [Option<Arc<PreparedFpvRig>>; 2],
     melee: [Option<Arc<PreparedFpvRig>>; 2],
     ads: [Option<Arc<PreparedFpvRig>>; 2],
+    jammed: [Option<Arc<PreparedFpvRig>>; 2],
 }
 
 impl FpvRigSet {
@@ -38,6 +39,7 @@ impl FpvRigSet {
         dual: bool,
         melee: bool,
         ads: bool,
+        jammed: bool,
     ) -> Option<&Arc<PreparedFpvRig>> {
         let hand = usize::from(dual);
         if melee && let Some(rig) = &self.melee[hand] {
@@ -48,6 +50,7 @@ impl FpvRigSet {
         }
         match (rocket, &self.rocket[hand]) {
             (true, Some(rig)) => Some(rig),
+            _ if jammed && let Some(rig) = &self.jammed[hand] => Some(rig),
             _ => self.bare[hand].as_ref(),
         }
     }
@@ -72,14 +75,10 @@ pub struct FpvWeaponView {
     pub idle_name: Option<String>,
     pub rigs: FpvRigSet,
     pub census: FpvViewCensus,
-    /// Per camouflage slot, the material each of the gun's authored
-    /// materials becomes: a camouflage model shares the gun's surfaces.
     pub camos: Vec<(u8, Arc<HashMap<usize, SmodelPassMaterial>>)>,
 }
 
 impl FpvWeaponView {
-    /// The gun's material swaps for camouflage `slot`; `None` for the plain
-    /// gun or a slot it has no model for.
     pub fn camo(&self, slot: u8) -> Option<&Arc<HashMap<usize, SmodelPassMaterial>>> {
         self.camos
             .iter()
@@ -198,6 +197,8 @@ struct FpvPreparationJob {
 
     models: Vec<usize>,
     next_model: usize,
+    camouflage_materials: Vec<usize>,
+    next_camouflage: usize,
     admission: FpvMaterialAdmission,
     image_cache: HashMap<u32, Handle<Image>>,
 
@@ -265,11 +266,6 @@ fn admit_surface(
     admission: &mut FpvMaterialAdmission,
     image_cache: &mut HashMap<u32, Handle<Image>>,
 ) -> FpvSurfaceVerdict {
-    use lighting_iw4::{
-        MODEL_LIGHTING_INV_ATLAS_WIDTH, MODEL_LIGHTING_VOLUME_W, model_lighting_inv_image_height,
-        model_lighting_lookup_scale,
-    };
-
     let edge = entry
         .material_edges
         .get(surface_index)
@@ -295,23 +291,42 @@ fn admit_surface(
     let Some(present_name) = entry.material_present_name(surface_index) else {
         return refused(leftover, "bound material has no name");
     };
-    let Some(mat_i) = entry
-        .skel
-        .surface_materials
-        .get(surface_index)
-        .copied()
-        .flatten()
-        .map(|index| index.get())
-    else {
-        return refused(present_name, "surface carries no authored material");
+    admit_material(
+        global,
+        images,
+        bound,
+        present_name,
+        lighting,
+        admission,
+        image_cache,
+    )
+}
+
+fn admit_material(
+    global: &RuntimeMaterialCatalog,
+    images: &[Option<Handle<Image>>],
+    mat_i: usize,
+    present_name: &str,
+    lighting: &WorldModelLightingAtlas,
+    admission: &mut FpvMaterialAdmission,
+    image_cache: &mut HashMap<u32, Handle<Image>>,
+) -> FpvSurfaceVerdict {
+    use lighting_iw4::{
+        MODEL_LIGHTING_INV_ATLAS_WIDTH, MODEL_LIGHTING_VOLUME_W, model_lighting_inv_image_height,
+        model_lighting_lookup_scale,
+    };
+
+    let refused = |material: &str, cause: &'static str| FpvSurfaceVerdict::Refused {
+        material: material.to_owned(),
+        cause,
     };
     if let Some(&row) = admission.by_authored.get(&mat_i) {
         return FpvSurfaceVerdict::Admitted(row);
     }
-    let Some(authored) = global.materials.get(bound) else {
+    let Some(authored) = global.materials.get(mat_i) else {
         return refused(present_name, "material outside the session catalog");
     };
-    let Some(ordinal) = global.ordinal_for_asset_id(assets::MaterialIndex::from_order(bound))
+    let Some(ordinal) = global.ordinal_for_asset_id(assets::MaterialIndex::from_order(mat_i))
     else {
         return refused(present_name, "material has no sorted ordinal");
     };
@@ -415,6 +430,7 @@ impl FpvPreparationJob {
                     .chain(&sides.rocket)
                     .chain(&sides.melee)
                     .chain(&sides.ads)
+                    .chain(&sides.jammed)
                 {
                     if !seen_assemblies.insert(assembly_key(assembly)) {
                         continue;
@@ -434,7 +450,6 @@ impl FpvPreparationJob {
                 }
             }
         }
-        // Camouflage models only lend their materials to the gun's surfaces.
         for id in 1..=weapon_n {
             for (_, edge) in registry.camo_view_edges_of(id) {
                 if let Some(order) = edge.bound_index()
@@ -445,9 +460,23 @@ impl FpvPreparationJob {
                 }
             }
         }
-        let work_total =
-            (models.len() + layouts_queue.len() + registry.alternate_fpv_pairs().count()) as u64
-                + u64::from(weapon_n);
+        let mut camouflage_materials = HashSet::new();
+        for id in 1..=weapon_n {
+            for camo in registry.material_camouflages_of(id) {
+                for (_, key) in &camo.materials {
+                    if let Some(material) = owner.materials.material_for_key(key) {
+                        camouflage_materials.insert(usize::from(material.asset_id.0));
+                    }
+                }
+            }
+        }
+        let mut camouflage_materials: Vec<_> = camouflage_materials.into_iter().collect();
+        camouflage_materials.sort_unstable();
+        let work_total = (models.len()
+            + camouflage_materials.len()
+            + layouts_queue.len()
+            + registry.alternate_fpv_pairs().count()) as u64
+            + u64::from(weapon_n);
         if let Some(stage) = &progress {
             stage.set_total(work_total);
         }
@@ -460,6 +489,8 @@ impl FpvPreparationJob {
             work_done: 0,
             models,
             next_model: 0,
+            camouflage_materials,
+            next_camouflage: 0,
             admission: FpvMaterialAdmission::default(),
             image_cache: HashMap::new(),
             layouts_queue,
@@ -520,7 +551,22 @@ impl FpvPreparationJob {
         lighting: &WorldModelLightingAtlas,
     ) {
         let Some(&order) = self.models.get(self.next_model) else {
-            self.stage = FpvPreparationStage::Layout;
+            if let Some(&bound) = self.camouflage_materials.get(self.next_camouflage) {
+                self.next_camouflage += 1;
+                let name = tess.catalog.materials[bound].name.as_str();
+                admit_material(
+                    &tess.catalog,
+                    &tess.material_images,
+                    bound,
+                    name,
+                    lighting,
+                    &mut self.admission,
+                    &mut self.image_cache,
+                );
+                self.tick();
+            } else {
+                self.stage = FpvPreparationStage::Layout;
+            }
             return;
         };
         self.next_model += 1;
@@ -670,10 +716,6 @@ impl FpvPreparationJob {
         census
     }
 
-    /// For each camouflage model of weapon `id`, the admitted material of
-    /// each of its surfaces, keyed by the gun's authored material of the same
-    /// surface. A model whose surfaces do not line up with the gun's is left
-    /// out.
     fn camo_swaps(
         &self,
         fpv: &FpvMeshCatalog,
@@ -685,12 +727,9 @@ impl FpvPreparationJob {
         };
         let authored = |entry: &asset_model::FpvMeshEntry, surface: usize| {
             entry
-                .skel
-                .surface_materials
+                .material_edges
                 .get(surface)
-                .copied()
-                .flatten()
-                .map(|index| index.get())
+                .and_then(|edge| edge.bound_index())
         };
         let mut out = Vec::new();
         for (slot, edge) in self.owner.weapons.camo_view_edges_of(id) {
@@ -721,6 +760,30 @@ impl FpvPreparationJob {
             }
             if !swaps.is_empty() {
                 out.push((*slot, Arc::new(swaps)));
+            }
+        }
+        for camo in self.owner.weapons.material_camouflages_of(id) {
+            let mut swaps = HashMap::new();
+            for (from, to) in &camo.materials {
+                let Some(source) = self.owner.materials.material_for_key(from) else {
+                    continue;
+                };
+                let Some(target) = self.owner.materials.material_for_key(to) else {
+                    continue;
+                };
+                let Some(row) = self
+                    .admission
+                    .by_authored
+                    .get(&usize::from(target.asset_id.0))
+                else {
+                    continue;
+                };
+                if let Some(material) = self.admission.materials.get(*row as usize) {
+                    swaps.insert(usize::from(source.asset_id.0), material.clone());
+                }
+            }
+            if !swaps.is_empty() {
+                out.push((camo.slot, Arc::new(swaps)));
             }
         }
         out
@@ -888,7 +951,22 @@ impl FpvPreparationJob {
                     name: refusal.to_string(),
                 });
             }
+            let jammed = match assemblies
+                .jammed
+                .as_ref()
+                .map(|assembly| self.composition(assembly))
+                .transpose()
+            {
+                Ok(jammed) => jammed.filter(|composition| composition.refusal().is_none()),
+                Err(_) => None,
+            };
             let mut rigs = FpvRigSet::default();
+            if let Some(jammed) = &jammed {
+                rigs.jammed[0] = Some(self.rig(jammed, false, &right_orders, &[]));
+                if left.is_some() {
+                    rigs.jammed[1] = Some(self.rig(jammed, true, &right_orders, &left_orders));
+                }
+            }
             rigs.bare[0] = Some(self.rig(&bare, false, &right_orders, &[]));
             if left.is_some() {
                 rigs.bare[1] = Some(self.rig(&bare, true, &right_orders, &left_orders));

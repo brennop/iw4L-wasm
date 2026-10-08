@@ -588,6 +588,15 @@ fn apply_camera_list(
     );
 }
 
+fn t6_sky_draws_unlit(material: &render_material::RuntimeMaterial) -> bool {
+    material.namespace == asset_core::AssetNamespace::T6
+        && material.unlit
+        && matches!(
+            material.sort_key,
+            asset_iw4::SORT_KEY_SKY | asset_iw4::SORT_KEY_SKYBOX
+        )
+}
+
 fn compact_product_draws(
     product: &mut FrameProduct,
     tech_type: TechType,
@@ -627,6 +636,16 @@ fn compact_product_draws(
                 light_type,
                 spot_shadowed.contains(&index),
             ))
+        } else if remap_lit
+            && tech_type.0 == lighting_iw4::GFX_DRAW_METHOD_LIT_BEGIN
+            && render_material::resolve_sorted_material(
+                catalog,
+                render_material::MaterialDrawKey::new(draw.key, draw.material_rank)
+                    .with_material_id(draw.material_id),
+            )
+            .is_ok_and(t6_sky_draws_unlit)
+        {
+            TechType(asset_iw4::TECHNIQUE_UNLIT as u8 + u8::from(dfog))
         } else if remap_lit {
             super::colour_lit_technique(
                 tech_type,
@@ -864,6 +883,7 @@ pub struct FrameAssemblyInputs {
     pub map_light_n: usize,
     pub attenuation: Vec<LightAttenuationBind>,
     pub t5_falloff: Vec<T5LightFalloffPack>,
+    pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
 }
 
 pub(crate) fn open_frame_products(
@@ -895,7 +915,11 @@ pub(crate) fn open_frame_products(
     inputs.primary_lights.clear();
     inputs.attenuation.clear();
     inputs.t5_falloff.clear();
+    inputs.reflection_probe_sh.clear();
     if let Some(map) = primary_lights.as_ref() {
+        inputs
+            .reflection_probe_sh
+            .extend_from_slice(&map.reflection_probe_sh);
         inputs.primary_lights.extend_from_slice(&map.lights);
         inputs.attenuation.extend_from_slice(&map.attenuation);
         inputs.t5_falloff.extend_from_slice(&map.t5_falloff);

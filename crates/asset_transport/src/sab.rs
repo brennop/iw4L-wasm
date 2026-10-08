@@ -1,16 +1,3 @@
-//! T6 sound asset banks (`sound/*.sabs`, `sound/*.sabl`): the audio of the
-//! aliases a `SndBank` names by `assetId`.
-//!
-//! ```text
-//! 0x00 "2UX#" u32 version u32 entrySize u32 checksumSize u32 dependencySize
-//! 0x14 u32 entryCount u32 dependencyCount u32 pad
-//! 0x20 i64 fileSize i64 entryOffset i64 checksumOffset …
-//! entryOffset: entryCount × { u32 id, u32 size, u32 offset, u32 frameCount,
-//!                              u8 frameRateIndex, u8 channels, u8 looping, u8 format }
-//! ```
-//!
-//! `offset` is from the start of the file.
-
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -19,7 +6,6 @@ use std::path::{Path, PathBuf};
 const MAGIC: [u8; 4] = *b"2UX#";
 const ENTRY_LEN: usize = 20;
 
-/// `frameRateIndex` → frames per second.
 pub const SAB_FRAME_RATES: [u32; 9] = [
     8000, 12000, 16000, 24000, 32000, 44100, 48000, 96000, 192000,
 ];
@@ -116,7 +102,6 @@ impl SoundAssetBank {
         self.entries.get(&id).copied()
     }
 
-    /// The stored bytes of entry `id` — PCM or a whole FLAC stream.
     pub fn read(&self, id: u32) -> Option<Result<(SabEntry, Vec<u8>), String>> {
         let entry = self.entry(id)?;
         let read = || -> std::io::Result<Vec<u8>> {
@@ -134,7 +119,6 @@ impl SoundAssetBank {
     }
 }
 
-/// Every sound asset bank in a T6 install's `sound/` directory.
 pub fn open_sound_asset_banks(sound_dir: &Path) -> (Vec<SoundAssetBank>, Vec<String>) {
     let mut report = Vec::new();
     let Ok(entries) = std::fs::read_dir(sound_dir) else {
@@ -164,7 +148,6 @@ pub fn open_sound_asset_banks(sound_dir: &Path) -> (Vec<SoundAssetBank>, Vec<Str
     (banks, report)
 }
 
-/// The T6 alias name hash (`SND_HashName`): sdbm-like, case-folded, never 0.
 pub fn snd_hash_name(name: &str) -> u32 {
     if name.is_empty() {
         return 0;

@@ -1,19 +1,3 @@
-//! T6 technique sets in the IW4 technique graph.
-//!
-//! T6 (PC) shaders are DX11: they read constant-buffer rows, and a pass's
-//! arguments fill rows by byte offset and buffer rather than registers. A
-//! T6 technique set becomes a technique set like any other here: each IW4
-//! technique slot holds the T6 technique of the same kind, its passes keep
-//! their DXBC programs, and their arguments are written in IW4 terms on
-//! virtual registers — the rows each stage reads, and the textures the pass
-//! samples, numbered in sorted order (the order `render_material::dxbc_abi`
-//! binds them in).
-//!
-//! A row a T6 argument fills keeps that argument's source; a row the T6
-//! renderer fills itself (its per-scene and per-object buffers) is named
-//! in the shader's reflection and bound to the IW4 code constant of that
-//! meaning, or to a fixed value where IW4 has none.
-
 use std::collections::BTreeSet;
 
 use dxbc_sm5::wgsl::{ConstantRow, Shader, TextureDimension, TextureSlot};
@@ -29,7 +13,6 @@ use crate::material_catalog::{
 use crate::t5_code_remap::{iw4_code_const_index, iw4_code_texture_index};
 use crate::t5_tech_map::{IW4_TECHNIQUE_TYPE_COUNT, IW4_TECHNIQUE_TYPE_NAMES};
 
-/// `MaterialShaderArgument::type`.
 pub mod argument_type {
     pub const MATERIAL_VERTEX_CONST: u16 = 0;
     pub const LITERAL_VERTEX_CONST: u16 = 1;
@@ -41,17 +24,12 @@ pub mod argument_type {
     pub const LITERAL_PIXEL_CONST: u16 = 7;
 }
 
-/// A T6 `MaterialShaderArgument`: `{ u16 type; u16 offset; u8 size; ...;
-/// u16 buffer; u32 def }`, with the literal a literal argument points at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct T6Argument {
     pub kind: u16,
-    /// Bytes into the constant buffer; for samplers `texture | sampler << 8`.
     pub offset: u16,
-    /// Bytes the argument fills.
     pub size: u8,
     pub buffer: u16,
-    /// A name hash (material constants and samplers) or a code index.
     pub def: u32,
     pub literal: Option<[u32; 4]>,
 }
@@ -64,6 +42,7 @@ pub struct T6Pass {
     pub pixel: Vec<u8>,
     pub custom_sampler_flags: u8,
     pub arguments: Vec<T6Argument>,
+    pub layer_routing: Vec<[u8; 2]>,
 }
 
 #[derive(Clone, Debug)]
@@ -75,19 +54,13 @@ pub struct T6Technique {
 #[derive(Clone, Debug)]
 pub struct T6TechniqueSet {
     pub name: String,
-    /// `MaterialTechniqueSet::techniques`, indexed by [`T6_TECHNIQUE_TYPE_NAMES`].
+    pub world_vert_format: u8,
     pub techniques: Vec<Option<T6Technique>>,
 }
 
-/// `MaterialTechniqueType` (T6, 36 slots).
-/// The `lit` technique's index in [`T6_TECHNIQUE_TYPE_NAMES`].
 pub const T6_TECHNIQUE_LIT: usize = 4;
-/// The `emissive` technique's index.
 pub const T6_TECHNIQUE_EMISSIVE: usize = 3;
 
-/// How a T6 material draws: lit like a gun body, or emissive like an optic's
-/// reticle (a material whose `lit` technique is off). T6's `unlit` technique
-/// is Radiant's preview, not what the game draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum T6Draw {
     Lit,
@@ -95,7 +68,6 @@ pub enum T6Draw {
 }
 
 impl T6Draw {
-    /// The technique set `set` is linked as for this kind of drawing.
     pub fn technique_set_name(self, set: &str) -> String {
         match self {
             Self::Lit => set.to_owned(),
@@ -104,12 +76,8 @@ impl T6Draw {
     }
 }
 
-/// The load-bits word 0 fields T6 shares with IW4 for how a pass writes
-/// colour: the colour blend (bits 0–10), the alpha test (11–13), the alpha
-/// blend (16–26) and sRGB writes (30). T6 shaders return gamma-encoded
-/// colour (`sqrt`), written as is.
 const T6_COLOUR_OUTPUT: u32 = 0x47ff_3fff;
-/// Load-bits word 1's depth write.
+const GFXS0_COLORWRITE_RGB: u32 = 0x0800_0000;
 const GFXS1_DEPTHWRITE: u32 = 0x1;
 
 pub const T6_TECHNIQUE_TYPE_NAMES: [&str; 36] = [
@@ -151,19 +119,17 @@ pub const T6_TECHNIQUE_TYPE_NAMES: [&str; 36] = [
     "debug performance",
 ];
 
-/// The T6 techniques an IW4 slot can draw with, best first. Distance-fog
-/// variants draw the plain technique; instanced ones (static model batches)
-/// have none. A lit technique a set lacks falls back to the same light
-/// without its shadow, then to plain `lit`.
 fn t6_techniques_for_iw4_slot(iw4: &str) -> Vec<usize> {
     let name = iw4.strip_suffix(" dfog").unwrap_or(iw4);
     let mut names = vec![name.to_owned()];
     if let Some(unshadowed) = name.strip_suffix(" shadow") {
         names.push(unshadowed.to_owned());
     }
+    if name == "build shadowmap color" {
+        names.push("build shadowmap depth".to_owned());
+    }
     if name.starts_with("lit") && !name.contains("instanced") {
         names.push("lit".to_owned());
-        // Last, any lit technique the set has.
         names.extend(
             T6_TECHNIQUE_TYPE_NAMES
                 .iter()
@@ -177,20 +143,25 @@ fn t6_techniques_for_iw4_slot(iw4: &str) -> Vec<usize> {
         .collect()
 }
 
-/// What the T6 renderer itself puts in a constant-buffer row, in IW4 terms.
+pub const CODE_T6_HDR_CONTROL_0: u16 = 0x300;
+pub const CODE_T6_HDR_CONTROL_1: u16 = 0x301;
+pub const CODE_T6_SKY_COLOR_MULTIPLIER: u16 = 0x302;
+pub const CODE_T6_FOG: [u16; 6] = [0x306, 0x307, 0x308, 0x309, 0x30a, 0x30b];
+const T6_FOG_NAMES: [&str; 6] = [
+    "fogColor",
+    "fogConsts",
+    "fogConsts2",
+    "sunFogDir",
+    "sunFogColor",
+    "sunFog",
+];
+pub use render_material::CODE_T6_REFLECTION_SH;
+
 enum EngineValue {
     Code(&'static str),
     Literal([f32; 4]),
 }
 
-/// Constant-buffer variables the T6 renderer fills, by reflection name.
-/// Unlisted names read zeros.
-///
-/// T6 constant buffers pack matrices column-major: the row a `dp4` reads is
-/// a column of the matrix, which is the row IW4's `TRANSPOSE_*` code
-/// matrices hold (its shaders `dp4` the same way). An inverse matrix is
-/// therefore IW4's `INVERSE_TRANSPOSE_*`, and an inverse-transpose its
-/// plain `INVERSE_*`.
 fn engine_value(name: &str) -> EngineValue {
     use EngineValue::{Code, Literal};
     match name {
@@ -206,7 +177,6 @@ fn engine_value(name: &str) -> EngineValue {
         "inverseWorldViewMatrix" => Code("INVERSE_TRANSPOSE_WORLD_VIEW_MATRIX0"),
         "inverseTransposeWorldViewMatrix" => Code("INVERSE_WORLD_VIEW_MATRIX0"),
         "inverseTransposeWorldMatrix" => Code("INVERSE_WORLD_MATRIX0"),
-        // IW4 draws the sun as the pass light of its sun techniques.
         "sunPosition" | "lightPosition" => Code("LIGHT_POSITION"),
         "sunDiffuse" | "lightDiffuse" => Code("LIGHT_DIFFUSE"),
         "lightSpotDir" => Code("LIGHT_SPOTDIR"),
@@ -226,33 +196,27 @@ fn engine_value(name: &str) -> EngineValue {
         "colorMatrixB" => Code("COLOR_MATRIX_B"),
         "outdoorFeatherParms" => Code("OUTDOOR_FEATHER_PARMS"),
         "particleCloudColor" => Code("PARTICLE_CLOUD_COLOR"),
-        // HDR exposure: none, IW4 draws in the gamma space T6 resolves to.
-        "hdrControl0" | "hdrControl1" | "colorTint" | "lightHeroScale" => Literal([1.0; 4]),
-        // The colour transform character shaders end with: identity.
+        "hdrControl0" => Code("T6_HDR_CONTROL_0"),
+        "hdrControl1" => Code("T6_HDR_CONTROL_1"),
+        "skyColorMultiplier" => Code("T6_SKY_COLOR_MULTIPLIER"),
+        "fogColor" | "fogConsts" | "fogConsts2" | "sunFogDir" | "sunFogColor" | "sunFog" => {
+            Code("T6_FOG")
+        }
+        "colorTint" | "lightHeroScale" | "occlusionAmount" => Literal([1.0; 4]),
         "heroLightingR" => Literal([1.0, 0.0, 0.0, 0.0]),
         "heroLightingG" => Literal([0.0, 1.0, 0.0, 0.0]),
         "heroLightingB" => Literal([0.0, 0.0, 1.0, 0.0]),
-        // Reticles scale by `1 - y` and fade in with `w`: drawn whole.
         "weaponParam0" => Literal([0.0, 0.0, 0.0, 1.0]),
-        // The light grid: T6 reads its model lighting volume where IW4 reads
-        // its own, at the model's base coordinates offset along the normal.
         "gridLightingCoordsAndVis" => Code("BASE_LIGHTING_COORDS"),
         "lightingLookupScale" => Code("LIGHTING_LOOKUP_SCALE"),
-        // Both spherical harmonics agree, so the reflection probe is scaled
-        // by one.
-        "gridLightingSH0"
-        | "gridLightingSH1"
-        | "gridLightingSH2"
-        | "reflectionLightingSH0"
-        | "reflectionLightingSH1"
-        | "reflectionLightingSH2" => Literal([0.25; 4]),
-        // Fog colours with no weight leave the colour unfogged.
+        "reflectionLightingSH0" => Code("T6_REFLECTION_SH0"),
+        "reflectionLightingSH1" => Code("T6_REFLECTION_SH1"),
+        "reflectionLightingSH2" => Code("T6_REFLECTION_SH2"),
+        "gridLightingSH0" | "gridLightingSH1" | "gridLightingSH2" => Literal([0.25; 4]),
         _ => Literal([0.0; 4]),
     }
 }
 
-/// The reflection variable covering a constant-buffer row: its name and
-/// the row it starts at.
 fn variable_at(reflection: &Reflection, row: ConstantRow) -> Option<(&str, u32)> {
     let binding = reflection
         .bindings
@@ -278,8 +242,6 @@ fn texture_name(reflection: &Reflection, texture: u32) -> Option<&str> {
         .map(|b| b.name.as_str())
 }
 
-/// When the runtime refreshes an argument: per primitive (world matrices),
-/// per object (other code values), or once per material.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tier {
     Primitive,
@@ -303,8 +265,6 @@ enum Stage {
     Pixel,
 }
 
-/// The material constants of `kind` a pass fills row `row` of `buffer`
-/// with.
 fn material_arguments_in_row(
     arguments: &[T6Argument],
     kind: u16,
@@ -322,11 +282,6 @@ fn material_arguments_in_row(
         .collect()
 }
 
-/// A row that T6 packs with several material constants (`Specular_Amount`,
-/// `Specular_Decay` and `Reflection_Amount` in one), or with one that does
-/// not start it, binds a constant of its own: this hash names it, and
-/// [`MaterialCatalog::t6_material`] assembles its value from the material's
-/// constants.
 fn packed_row_hash(arguments: &[&T6Argument]) -> Option<u32> {
     const FNV_OFFSET: u32 = 0x811c_9dc5;
     const FNV_PRIME: u32 = 0x0100_0193;
@@ -403,7 +358,20 @@ fn constant_argument(
     };
     match engine_value(name) {
         EngineValue::Code(code) => {
-            let Some(index) = iw4_code_const_index(code) else {
+            let index = match code {
+                "T6_HDR_CONTROL_0" => Some(CODE_T6_HDR_CONTROL_0),
+                "T6_HDR_CONTROL_1" => Some(CODE_T6_HDR_CONTROL_1),
+                "T6_SKY_COLOR_MULTIPLIER" => Some(CODE_T6_SKY_COLOR_MULTIPLIER),
+                "T6_REFLECTION_SH0" => Some(CODE_T6_REFLECTION_SH[0]),
+                "T6_REFLECTION_SH1" => Some(CODE_T6_REFLECTION_SH[1]),
+                "T6_REFLECTION_SH2" => Some(CODE_T6_REFLECTION_SH[2]),
+                "T6_FOG" => T6_FOG_NAMES
+                    .iter()
+                    .position(|fog| *fog == name)
+                    .map(|i| CODE_T6_FOG[i]),
+                _ => iw4_code_const_index(code),
+            };
+            let Some(index) = index else {
                 gaps.insert(format!("{name}: no IW4 {code}"));
                 return (
                     Tier::Stable,
@@ -445,8 +413,6 @@ fn literal_argument(
     }
 }
 
-/// The argument binding texture slot `destination`, or `None` when a
-/// custom sampler flag binds it (the reflection probe).
 fn sampler_argument(
     destination: u16,
     slot: TextureSlot,
@@ -472,6 +438,8 @@ fn sampler_argument(
     let lower = name.to_ascii_lowercase();
     let code = if lower.contains("reflectionprobe") {
         return None;
+    } else if lower.contains("lightmapsampler") {
+        return None;
     } else if lower.contains("modellighting") {
         "MODEL_LIGHTING"
     } else if lower.contains("shadowmap") && lower.contains("sun") {
@@ -483,9 +451,6 @@ fn sampler_argument(
     } else if lower.contains("outdoor") {
         "OUTDOOR"
     } else if lower.contains("floatz") {
-        // T6 viewmodel shaders (reticles) discard against the scene's
-        // device depth, which IW4's FLOATZ does not hold and a viewmodel
-        // pass binds no code texture for: a black stand-in never fails it.
         return Some((
             Tier::Stable,
             OwnedShaderArgument::MaterialPixelSampler {
@@ -508,7 +473,6 @@ fn sampler_argument(
     ))
 }
 
-/// Whether `pass` samples the scene depth (`floatZSampler`).
 fn reads_float_z(pass: &T6Pass) -> bool {
     let Ok(pixel) = Shader::parse(&pass.pixel) else {
         return false;
@@ -521,22 +485,34 @@ fn reads_float_z(pass: &T6Pass) -> bool {
     })
 }
 
-/// The vertex declaration every T6 pass reads: the five IW4 packed-vertex
-/// sources (position with the binormal sign, colour, texture coordinates,
-/// normal, tangent) under the semantics T6 shaders name them by.
-fn t6_vertex_decl() -> AuthoredVertexDecl {
+pub const T6_LAYER_WORLD_VERT_FORMAT: u8 = 8;
+
+fn iw4_layer_source(t6: u8) -> Option<u8> {
+    match t6 {
+        6..=9 => Some(t6 - 1),
+        _ => None,
+    }
+}
+
+fn t6_vertex_decl(layer_routing: &[[u8; 2]]) -> AuthoredVertexDecl {
     let mut routing = [[0u8; 2]; asset_iw4::vertex_decl::ROUTING_COUNT];
-    // [source, destination]: POSITION, COLOR0, TEXCOORD0, NORMAL, TEXCOORD2.
-    for (at, pair) in [[0, 0], [1, 2], [2, 5], [3, 1], [4, 7]]
-        .into_iter()
-        .enumerate()
-    {
-        routing[at] = pair;
+    let base = [[0, 0], [1, 2], [2, 5], [3, 1], [4, 7], [2, 6]];
+    let layer = layer_routing
+        .iter()
+        .filter_map(|&[source, dest]| Some([iw4_layer_source(source)?, dest]));
+    let mut stream_count = 0;
+    for (slot, pair) in routing.iter_mut().zip(base.into_iter().chain(layer)) {
+        *slot = pair;
+        stream_count += 1;
     }
     AuthoredVertexDecl {
         family: crate::VertexLayoutFamily::Iw4,
-        name: AssetRef::Real("$t6_packed_vertex".to_owned()),
-        stream_count: 5,
+        name: AssetRef::Real(if layer_routing.is_empty() {
+            "$t6_packed_vertex".to_owned()
+        } else {
+            format!("$t6_packed_vertex{layer_routing:?}")
+        }),
+        stream_count,
         has_optional_source: 0,
         routing,
     }
@@ -549,6 +525,7 @@ impl MaterialCatalog {
         pass_index: u8,
         vertex_decl: usize,
         gaps: &mut BTreeSet<String>,
+        namespace: crate::AssetNamespace,
     ) -> Result<OwnedMaterialPass, String> {
         let vertex =
             Shader::parse(&pass.vertex).map_err(|e| format!("{}: {e}", pass.vertex_name))?;
@@ -598,7 +575,7 @@ impl MaterialCatalog {
                     offset: tag,
                 },
                 shader: Some(this.link_shader(AuthoredShader {
-                    namespace: crate::AssetNamespace::Iw4,
+                    namespace,
                     name: AssetRef::Real(name.to_owned()),
                     kind,
                     program: program.to_vec(),
@@ -629,7 +606,6 @@ impl MaterialCatalog {
             per_obj_arg_count: per_obj,
             stable_arg_count: stable,
             custom_sampler_flags: 0,
-            // The T5 flag layout: 0x01 binds the reflection probe to t15.
             t5_custom_sampler_flags: pass.custom_sampler_flags,
             arguments: arguments
                 .into_iter()
@@ -639,22 +615,18 @@ impl MaterialCatalog {
         })
     }
 
-    /// Links `set` as an IW4-namespace technique set of the same name, and
-    /// returns its index; `report` gets a line per technique that could not
-    /// be translated and per value IW4 has no source for.
     pub fn link_t6_technique_set(
         &mut self,
         set: &T6TechniqueSet,
         draw: T6Draw,
         report: &mut Vec<String>,
     ) -> usize {
-        let vertex_decl = self.link_vertex_decl(t6_vertex_decl());
+        let namespace = crate::AssetNamespace::T6;
+        let layered = set.world_vert_format != 0;
         let mut gaps = BTreeSet::new();
         let mut slots = vec![None; IW4_TECHNIQUE_TYPE_COUNT];
         let mut table = TechniqueTable::default();
         for (iw4_slot, iw4_name) in IW4_TECHNIQUE_TYPE_NAMES.iter().enumerate() {
-            // Emissive, every slot that draws colour (lit ones included)
-            // draws the emissive technique; depth and shadow-map passes skip it.
             let candidates = match draw {
                 T6Draw::Lit => t6_techniques_for_iw4_slot(iw4_name),
                 T6Draw::Emissive
@@ -672,7 +644,15 @@ impl MaterialCatalog {
             };
             let passes: Result<Vec<_>, String> = (0u8..)
                 .zip(&technique.passes)
-                .map(|(index, pass)| self.t6_pass(pass, index, vertex_decl, &mut gaps))
+                .map(|(index, pass)| {
+                    let layer_routing = if layered {
+                        &pass.layer_routing[..]
+                    } else {
+                        &[]
+                    };
+                    let vertex_decl = self.link_vertex_decl(t6_vertex_decl(layer_routing));
+                    self.t6_pass(pass, index, vertex_decl, &mut gaps, namespace)
+                })
                 .collect();
             match passes {
                 Ok(passes) => {
@@ -681,7 +661,11 @@ impl MaterialCatalog {
                     table.pass_count_by_slot[iw4_slot] = passes.len() as u8;
                     table.max_pass_count = table.max_pass_count.max(passes.len() as u16);
                     slots[iw4_slot] = Some(OwnedTechnique {
-                        flags: 0,
+                        flags: if layered {
+                            asset_iw4::vertex_decl::TECHNIQUE_FLAG_VERTEX_TYPE_FROM_SURFACE
+                        } else {
+                            0
+                        },
                         passes,
                         body_scanned: true,
                     });
@@ -706,35 +690,34 @@ impl MaterialCatalog {
                 set.name, gaps
             ));
         }
+        table.model_lighting_const =
+            Some(crate::material_catalog::graph_slots_bind_model_lighting_const(&slots));
         table.graph = Some(OwnedTechniqueGraph {
             slots,
             rows_truncated: 0,
             arguments_truncated: 0,
         });
         self.link_techset(TechniqueSetFacts {
-            namespace: crate::AssetNamespace::Iw4,
+            namespace,
             name: AssetRef::Real(draw.technique_set_name(&set.name)),
             table: Some(table),
+            world_vert_format: if layered {
+                T6_LAYER_WORLD_VERT_FORMAT
+            } else {
+                0
+            },
             ..Default::default()
         })
     }
 }
 
-/// The samplers T6 materials name their colour, normal and specular maps
-/// by (`colorMap`, `normalMap`, `specularMap`, the first-person arms' own,
-/// and the lenses' colour).
 const COLOR_MAP_HASHES: [u32; 3] = [0xa0ab_1041, 0xf039_ec2d, 0xb607_c0fe];
 const NORMAL_MAP_HASH: u32 = 0x59d3_0d0f;
 const ARM_NORMAL_MAP_HASH: u32 = 0x942c_bff0;
 const SPECULAR_MAP_HASH: u32 = 0x34ec_ccb3;
-/// The material sampler a pass's `floatZSampler` binds instead (no T6
-/// name hashes to it).
 const FLOAT_Z_HASH: u32 = 0x666c_745a;
 const ARM_SPECULAR_MAP_HASH: u32 = 0x8c29_7e80;
 
-/// The names one map's sampler goes by. A material drawn with another
-/// kind's technique set (the arms' datapad and watch glass, named the
-/// weapon and lens way) names its maps differently from the samplers.
 fn sampler_aliases(hash: u32) -> &'static [u32] {
     const NORMAL: [u32; 2] = [NORMAL_MAP_HASH, ARM_NORMAL_MAP_HASH];
     const SPECULAR: [u32; 2] = [SPECULAR_MAP_HASH, ARM_SPECULAR_MAP_HASH];
@@ -744,17 +727,9 @@ fn sampler_aliases(hash: u32) -> &'static [u32] {
         .unwrap_or(&[])
 }
 
-/// `occlusionAmount`: how much of the sun's specular (x), the reflection
-/// probe (y) and the ambient light (z) a T6 lit surface takes.
 const OCCLUSION_AMOUNT_HASH: u32 = 0x9027_e5c1;
-/// The share of T6's specular and probe reflection kept under IW4's
-/// lighting. T6 lights in HDR and exposes the frame; IW4's sun colour and
-/// LDR probes are already at display brightness, so T6's normalized
-/// highlights read about twice as strong as BO2 shows them. Tuned by eye.
 const T6_SPECULAR_SCALE: f32 = 0.5;
 
-/// A texture a T6 material binds: its sampler's name hash and state, the
-/// image name and its texels as T6 shaders read them.
 #[derive(Clone, Debug)]
 pub struct T6Texture {
     pub name_hash: u32,
@@ -765,11 +740,6 @@ pub struct T6Texture {
 }
 
 impl MaterialCatalog {
-    /// A T6 material drawn with its own technique set `set`: the `donor`
-    /// (an IW4 material) lends its state bits, sort and draw route; the
-    /// textures and constants are the T6 material's own. A texture the set
-    /// samples that the material does not have reads a default, as in T6:
-    /// a flat normal, no specular, white otherwise.
     #[allow(clippy::too_many_arguments)]
     pub fn t6_material(
         &mut self,
@@ -839,8 +809,6 @@ impl MaterialCatalog {
                 constant.literal[1] *= T6_SPECULAR_SCALE;
             }
         }
-        // The packed rows' constants, assembled per component from the
-        // material's own.
         for pass in set
             .techniques
             .iter()
@@ -884,22 +852,15 @@ impl MaterialCatalog {
         }
         let mut material = self.materials.get(donor)?.clone();
         material.name = AssetRef::Real(name.to_owned());
+        material.namespace = crate::AssetNamespace::T6;
         material.technique_set = AssetRef::Real(technique_set.to_owned());
         material.technique_set_edge = Default::default();
         material.technique_table = None;
         material.constants = constants;
-        // A reticle draws over its sight's lens, which shares the donor.
         if draw == T6Draw::Emissive {
             material.sort_key = material.sort_key.saturating_add(1);
         }
-        // The donor's draw states, with the T6 material's own blend, alpha
-        // test and sRGB writes: a donor lens or alpha-tested body would
-        // otherwise cut or fade an opaque T6 surface by its colour map's
-        // alpha, and an IW4 donor's sRGB writes encode T6's gamma output
-        // a second time.
         if let Some(lit) = lit_state {
-            // A blended surface (a lens, a reticle) keeps the depth buffer
-            // to the surfaces behind it, as IW4's own blended materials do.
             let blends = !matches!((lit >> 4) & 0xf, 0 | 1);
             for bits in &mut material.state_bits {
                 bits[0] = (bits[0] & !T6_COLOUR_OUTPUT) | (lit & T6_COLOUR_OUTPUT);
@@ -944,4 +905,33 @@ impl MaterialCatalog {
             .collect();
         Some(self.link_material(material))
     }
+}
+
+pub fn remap_t6_state_bits_entry(
+    entries: &[u8; 36],
+    states: &mut Vec<[u32; 2]>,
+) -> [u8; asset_iw4::size::TECHNIQUE_SLOT_COUNT] {
+    let mut mapped = [0xff; asset_iw4::size::TECHNIQUE_SLOT_COUNT];
+    for (index, name) in IW4_TECHNIQUE_TYPE_NAMES.iter().enumerate() {
+        if let Some(entry) = t6_techniques_for_iw4_slot(name)
+            .into_iter()
+            .filter_map(|slot| entries.get(slot))
+            .find(|&&entry| entry != 0xff)
+        {
+            mapped[index] = *entry;
+        }
+    }
+    let caster = IW4_TECHNIQUE_TYPE_NAMES
+        .iter()
+        .position(|name| *name == "build shadowmap color")
+        .unwrap();
+    if let (Some(&[bits, more]), Ok(entry)) = (
+        states.get(usize::from(mapped[caster])),
+        u8::try_from(states.len()),
+    ) && entry != 0xff
+    {
+        states.push([bits | GFXS0_COLORWRITE_RGB, more]);
+        mapped[caster] = entry;
+    }
+    mapped
 }

@@ -161,6 +161,7 @@ pub fn prepare_model_materials(
     atlas: Option<Res<WorldModelLightingAtlas>>,
     bodies: Option<Res<assets::PreparedBodies>>,
     world_weapons: Option<Res<assets::PreparedWorldWeapons>>,
+    weapons: Option<Res<assets::PreparedWeapons>>,
     scene_models: Option<Res<asset_world::MapXModelSceneCatalog>>,
     projectiles: Option<Res<assets::PreparedProjectileMeshes>>,
     mut prepared: ResMut<PreparedModelMaterials>,
@@ -213,6 +214,27 @@ pub fn prepare_model_materials(
                 &mut by_name,
                 &mut refused,
             );
+        }
+    }
+    if let Some(weapons) = weapons.as_deref() {
+        for id in 1..=weapons.0.len() as u32 {
+            for camo in weapons.0.material_camouflages_of(id) {
+                for (_, key) in &camo.materials {
+                    if by_name.contains_key(&key.name) {
+                        continue;
+                    }
+                    let Some(authored) = tess.catalog.material_for_key(key) else {
+                        continue;
+                    };
+                    if let Some(material) = scene_lit_pass_material(
+                        &atlas,
+                        &tess,
+                        assets::MaterialIndex::from_order(usize::from(authored.asset_id.0)),
+                    ) {
+                        by_name.insert(key.name.clone(), material);
+                    }
+                }
+            }
         }
     }
     let mut by_authored = HashMap::new();

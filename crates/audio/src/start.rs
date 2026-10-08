@@ -62,17 +62,16 @@ pub enum StartFailure {
     NoFalloffCurve,
     FalloffEval,
     DecodeFailed,
-    MediaQueueFull,
     MediaRequestLimit,
     InvalidPcm(crate::media::PcmError),
     Expired,
+    OutputUnavailable,
 }
 
 impl From<crate::clip_store::ClipError> for StartFailure {
     fn from(error: crate::clip_store::ClipError) -> Self {
         match error {
             crate::clip_store::ClipError::InvalidPcm(reason) => Self::InvalidPcm(reason),
-            crate::clip_store::ClipError::QueueFull => Self::MediaQueueFull,
             crate::clip_store::ClipError::RequestLimit => Self::MediaRequestLimit,
             _ => Self::DecodeFailed,
         }
@@ -114,11 +113,11 @@ impl fmt::Display for StartOutcome {
             Self::Failed(StartFailure::NoListener) => f.write_str("FailedNoListener"),
             Self::Failed(StartFailure::NoFalloffCurve) => f.write_str("FailedNoFalloffCurve"),
             Self::Failed(StartFailure::FalloffEval) => f.write_str("FailedFalloffEval"),
-            Self::Failed(StartFailure::MediaQueueFull) => f.write_str("FailedMediaQueueFull"),
             Self::Failed(StartFailure::MediaRequestLimit) => f.write_str("FailedMediaRequestLimit"),
             Self::Failed(StartFailure::DecodeFailed) => f.write_str("FailedDecode"),
             Self::Failed(StartFailure::InvalidPcm(reason)) => write!(f, "FailedPcm{reason:?}"),
-            Self::Failed(StartFailure::Expired) => f.write_str("ExpiredAwaitingDecode"),
+            Self::Failed(StartFailure::Expired) => f.write_str("ExpiredStartDeadline"),
+            Self::Failed(StartFailure::OutputUnavailable) => f.write_str("OutputUnavailable"),
         }
     }
 }

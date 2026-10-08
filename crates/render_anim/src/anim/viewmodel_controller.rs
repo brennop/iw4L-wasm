@@ -463,8 +463,6 @@ impl ViewmodelController {
             self.tree
                 .set_time(WeaponAnimSlot::AdsDown.index(), time)
                 .expect("ads down index is within tree");
-            // The lowered pose stays on at the hip (see `new`); a melee
-            // turned it off, and the scrub alone would leave it so.
             let ads_down_weight =
                 if self.weapon.ads_overlay == AdsOverlayConvention::PlayAdsAnim && aiming {
                     INACTIVE_GOAL_WEIGHT

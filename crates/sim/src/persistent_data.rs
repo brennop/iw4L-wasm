@@ -15,6 +15,7 @@ pub struct AccountSnapshot {
     pub version: i32,
     pub checksum: u32,
     pub bytes: Vec<u8>,
+    pub skills: crate::SkillRatings,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PersistentDataError {
@@ -30,6 +31,8 @@ pub enum PersistentDataError {
     InvalidBuffer,
     SchemaMismatch,
     RevisionOverflow,
+    InvalidOpponent,
+    Skill(crate::SkillRatingError),
     Field(structured_data_iw4::Error),
 }
 impl From<structured_data_iw4::Error> for PersistentDataError {
@@ -45,6 +48,7 @@ struct AccountRecord {
     revision: u64,
     saved_revision: Option<u64>,
     temporary: bool,
+    skills: crate::SkillRatings,
 }
 #[derive(Resource, Clone, Debug, Default)]
 pub struct PersistentDataStore {
@@ -114,6 +118,7 @@ impl PersistentDataStore {
                 revision: snapshot.revision,
                 saved_revision: Some(snapshot.revision),
                 temporary: false,
+                skills: snapshot.skills,
             },
         );
         Ok(())
@@ -155,6 +160,7 @@ impl PersistentDataStore {
             version,
             checksum,
             bytes,
+            skills: crate::SkillRatings::default(),
         })?;
         self.accounts
             .get_mut(&account)
@@ -256,6 +262,7 @@ impl PersistentDataStore {
                     revision: 0,
                     saved_revision: None,
                     temporary: true,
+                    skills: crate::SkillRatings::default(),
                 },
             );
         }
@@ -426,6 +433,54 @@ impl PersistentDataStore {
             .definition
             .enum_index(&record.bytes, record.definition.lookup(keys)?)?)
     }
+    pub fn update_skill(
+        &mut self,
+        first: ClientId,
+        second: ClientId,
+        mode: &str,
+        score: f32,
+    ) -> Result<(), PersistentDataError> {
+        let first = self
+            .account(first)
+            .ok_or(PersistentDataError::UnknownClient)?;
+        let second = self
+            .account(second)
+            .ok_or(PersistentDataError::UnknownClient)?;
+        if first == second {
+            return Err(PersistentDataError::InvalidOpponent);
+        }
+        let a = self
+            .accounts
+            .get(&first)
+            .ok_or(PersistentDataError::UnknownAccount)?;
+        let b = self
+            .accounts
+            .get(&second)
+            .ok_or(PersistentDataError::UnknownAccount)?;
+        let (a_skills, b_skills) = a
+            .skills
+            .updated_pair(b.skills, mode, score)
+            .map_err(PersistentDataError::Skill)?;
+        let a_revision = a
+            .revision
+            .checked_add(1)
+            .ok_or(PersistentDataError::RevisionOverflow)?;
+        let b_revision = b
+            .revision
+            .checked_add(1)
+            .ok_or(PersistentDataError::RevisionOverflow)?;
+        for (account, record) in &mut self.accounts {
+            if *account == first {
+                record.skills = a_skills;
+                record.revision = a_revision;
+            } else if *account == second {
+                record.skills = b_skills;
+                record.revision = b_revision;
+            }
+        }
+        Ok(())
+    }
+
     pub fn snapshot(&self, account: AccountId) -> Option<AccountSnapshot> {
         let record = self.accounts.get(&account)?;
         Some(AccountSnapshot {
@@ -434,6 +489,7 @@ impl PersistentDataStore {
             version: record.definition.version,
             checksum: record.definition.checksum,
             bytes: record.bytes.clone(),
+            skills: record.skills,
         })
     }
     pub fn pending(&self) -> Vec<AccountSnapshot> {

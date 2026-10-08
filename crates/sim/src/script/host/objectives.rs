@@ -110,8 +110,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "objective_team", |world, _, args| {
         let index = index(args)?;
-        // Given a player instead of a team, it shows to that player alone
-        // (IW4 has no such form; the T6 equipment script needs it in FFA).
         if let Some(client) = world.resource::<Runtime>().player_client_of(arg(args, 1)?) {
             let mut objective = objective(world, index);
             objective.team = Team::Free;

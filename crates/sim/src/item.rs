@@ -418,6 +418,9 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
         return;
     };
     if !walker_can_touch(world, walker, &ps) {
+        if perf::enabled() {
+            record_rejected_touches(world, walker, &ps);
+        }
         return;
     }
     let candidates = world.dropped_item_numbers_sorted();
@@ -460,6 +463,23 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
         return;
     };
     grab_number(world, walker, number);
+}
+
+fn record_rejected_touches(world: &FrameWorld, walker: ClientId, ps: &PlayerState) {
+    for number in world.dropped_item_numbers_sorted() {
+        if let Some(item) = world.dropped_item_by_number(number)
+            && aabb_overlap(
+                ps.origin,
+                PLAYER_MINS,
+                PLAYER_MAXS,
+                item.origin,
+                ITEM_MINS,
+                ITEM_MAXS,
+            )
+        {
+            perf::pickup_rejected(walker.0, number, ps.pm_type);
+        }
+    }
 }
 
 fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {

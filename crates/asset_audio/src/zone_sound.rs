@@ -13,8 +13,6 @@ enum Capture {
     Iw4(SoundCatalog),
     Iw5(Iw5SoundCapture),
     T5(T5SoundCapture),
-    /// T6 aliases are read from the walk's `SndBank`s and the install's
-    /// sound asset banks by the walker, which hands the catalog over.
     T6(Option<SoundCatalog>),
 }
 
@@ -145,7 +143,6 @@ impl ZoneSoundCapture {
         }
     }
 
-    /// Hands a T6 capture the catalog its walker read.
     pub fn set_t6(&mut self, catalog: SoundCatalog) {
         if let Capture::T6(slot) = &mut self.capture {
             *slot = Some(catalog);
@@ -284,9 +281,6 @@ pub fn ensure_zone_sound(path: &Path) -> (Stored, ZoneSoundOrigin) {
             None => break,
         }
     }
-    // T6 aliases come only from a walk's capture (see `set_t6`): a request
-    // ahead of that walk is answered without claiming the zone, so the walk
-    // can still deposit what it reads.
     if crate::zone_game_for_path(path) == Some(ZoneGame::T6) {
         return (
             Err(format!(

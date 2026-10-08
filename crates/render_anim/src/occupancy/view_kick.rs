@@ -29,38 +29,7 @@ use render_scene::{WorldCameraPose, WorldScriptModelInstance};
 const MISSILE_CAM_FOV: f32 = 15.0;
 
 fn kick_params(k: &WeaponKickFacts) -> KickParams {
-    KickParams {
-        f_ads_view_kick_center_speed: k.f_ads_view_kick_center_speed,
-        f_hip_view_kick_center_speed: k.f_hip_view_kick_center_speed,
-        gun_max_pitch: k.gun_max_pitch,
-        gun_max_yaw: k.gun_max_yaw,
-        ads_gun_kick_reduced_kick_percent: k.ads_gun_kick_reduced_kick_percent,
-        ads_gun_kick_pitch_min: k.ads_gun_kick_pitch_min,
-        ads_gun_kick_pitch_max: k.ads_gun_kick_pitch_max,
-        ads_gun_kick_yaw_min: k.ads_gun_kick_yaw_min,
-        ads_gun_kick_yaw_max: k.ads_gun_kick_yaw_max,
-        ads_gun_kick_accel: k.ads_gun_kick_accel,
-        ads_gun_kick_speed_max: k.ads_gun_kick_speed_max,
-        ads_gun_kick_speed_decay: k.ads_gun_kick_speed_decay,
-        ads_gun_kick_static_decay: k.ads_gun_kick_static_decay,
-        ads_view_kick_pitch_min: k.ads_view_kick_pitch_min,
-        ads_view_kick_pitch_max: k.ads_view_kick_pitch_max,
-        ads_view_kick_yaw_min: k.ads_view_kick_yaw_min,
-        ads_view_kick_yaw_max: k.ads_view_kick_yaw_max,
-        hip_gun_kick_reduced_kick_percent: k.hip_gun_kick_reduced_kick_percent,
-        hip_gun_kick_pitch_min: k.hip_gun_kick_pitch_min,
-        hip_gun_kick_pitch_max: k.hip_gun_kick_pitch_max,
-        hip_gun_kick_yaw_min: k.hip_gun_kick_yaw_min,
-        hip_gun_kick_yaw_max: k.hip_gun_kick_yaw_max,
-        hip_gun_kick_accel: k.hip_gun_kick_accel,
-        hip_gun_kick_speed_max: k.hip_gun_kick_speed_max,
-        hip_gun_kick_speed_decay: k.hip_gun_kick_speed_decay,
-        hip_gun_kick_static_decay: k.hip_gun_kick_static_decay,
-        hip_view_kick_pitch_min: k.hip_view_kick_pitch_min,
-        hip_view_kick_pitch_max: k.hip_view_kick_pitch_max,
-        hip_view_kick_yaw_min: k.hip_view_kick_yaw_min,
-        hip_view_kick_yaw_max: k.hip_view_kick_yaw_max,
-    }
+    *k
 }
 
 #[derive(Resource, Default)]
@@ -217,11 +186,8 @@ pub fn tick_session_view_kick(
         kick.seeded_this_frame = n;
     }
 
-    let dt_ms = clock.frametime();
-    let weapon_index = if viewmodel == 0 { 0 } else { 1 };
     let params = kick_params(&facts.kick);
-    kick.state
-        .advance(&params, weapon_index, ps.f_weapon_pos_frac, dt_ms);
+    kick.state.advance(&params, ps.f_weapon_pos_frac, dt);
 
     let overlay_active = facts.overlay_reticle != 0;
     kick.sway.advance(

@@ -1,5 +1,3 @@
-//! Salsa20/20 with a 256-bit key and 64-bit nonce, block counter from zero.
-
 const SIGMA: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 
 fn quarter(x: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {

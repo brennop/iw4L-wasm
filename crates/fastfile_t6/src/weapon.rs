@@ -1,7 +1,3 @@
-//! Typed reads of a loaded `WeaponVariantDef` and the `WeaponDef` it points
-//! to. Offsets are the T6 PC layout (`WeaponVariantDef` 716 bytes,
-//! `WeaponDef` 2448 bytes).
-
 use crate::walk::{LoadedAsset, Ptr, ZoneLoad};
 
 pub mod variant {
@@ -9,29 +5,16 @@ pub mod variant {
     pub const WEAP_DEF: u32 = 8;
     pub const DISPLAY_NAME: u32 = 12;
     pub const ALT_WEAPON_NAME: u32 = 16;
-    /// `const char** szXAnims`, [`XANIM_COUNT`] names indexed by
-    /// [`super::weap_anim`].
     pub const XANIMS: u32 = 32;
     pub const XANIM_COUNT: u32 = 88;
-    /// `XModel** attachViewModel` and `attachWorldModel`: the models
-    /// attached to the gun, [`ATTACH_MODEL_COUNT`] slots (slot 0 the
-    /// optic, 6 the magazine).
     pub const ATTACH_VIEW_MODEL: u32 = 40;
     pub const ATTACH_WORLD_MODEL: u32 = 44;
-    /// `float attachViewModelOffsets[24]` … `attachWorldModelRotations[24]`:
-    /// each slot's placement on the gun's root bone, an offset and
-    /// `(pitch, yaw, roll)` degrees.
     pub const ATTACH_VIEW_MODEL_OFFSETS: u32 = 56;
     pub const ATTACH_WORLD_MODEL_OFFSETS: u32 = 152;
     pub const ATTACH_VIEW_MODEL_ROTATIONS: u32 = 248;
     pub const ATTACH_WORLD_MODEL_ROTATIONS: u32 = 344;
     pub const ATTACH_MODEL_COUNT: u32 = 8;
-    /// `WeaponAttachmentUnique** attachmentUniques`: what each attachment
-    /// (and each authored pair, see [`super::unique::COMBINED_MASK`]) does
-    /// to this weapon, [`ATTACHMENT_UNIQUE_COUNT`] slots.
     pub const ATTACHMENT_UNIQUES: u32 = 28;
-    /// `WeaponAttachment** attachments`: the attachments the variant takes,
-    /// indexed by attachment type ([`super::attachment`]).
     pub const ATTACHMENTS: u32 = 24;
     pub const ATTACHMENT_COUNT: u32 = 63;
     pub const ATTACHMENT_UNIQUE_COUNT: u32 = 95;
@@ -43,7 +26,6 @@ pub mod variant {
     pub const ADS_TRANS_IN_TIME: u32 = 496;
     pub const ADS_TRANS_OUT_TIME: u32 = 500;
     pub const ALT_RAISE_TIME: u32 = 504;
-    /// `Material* overlayMaterial`: a sniper scope's ADS overlay.
     pub const OVERLAY_MATERIAL: u32 = 596;
     pub const ADS_VIEW_KICK_CENTER_SPEED: u32 = 540;
     pub const HIP_VIEW_KICK_CENTER_SPEED: u32 = 544;
@@ -94,8 +76,6 @@ pub mod def {
     pub const MAX_AMMO: u32 = 972;
     pub const SHOT_COUNT: u32 = 976;
     pub const AMMO_COUNT_CLIP_RELATIVE: u32 = 993;
-    /// `int damage[6]` and `float damageRange[6]`: a falloff curve from
-    /// point blank (index 0) outwards.
     pub const DAMAGE: u32 = 996;
     pub const DAMAGE_RANGE: u32 = 1020;
     pub const DAMAGE_STEPS: usize = 6;
@@ -137,9 +117,6 @@ pub mod def {
     pub const OVERLAY_INTERFACE: u32 = 1432;
     pub const OVERLAY_WIDTH: u32 = 1436;
     pub const OVERLAY_HEIGHT: u32 = 1440;
-    /// `fHipSpreadStandMin` … `fHipSpreadProneDecay`: eleven floats in the
-    /// IW order (stand/ducked/prone min, the three max, decay, fire, turn,
-    /// move, ducked decay, prone decay).
     pub const HIP_SPREAD_STAND_MIN: u32 = 1456;
     pub const HIP_RETICLE_SIDE_POS: u32 = 1504;
     pub const ADS_IDLE_AMOUNT: u32 = 1508;
@@ -172,8 +149,6 @@ pub mod def {
     pub const DAMAGE_CONE_ANGLE: u32 = 1728;
     pub const PROJECTILE_SPEED: u32 = 1732;
     pub const PROJECTILE_SPEED_UP: u32 = 1736;
-    /// Upward along the thrower's view rather than the world: T6 grenades
-    /// arc with this, their world-up speed is 0.
     pub const PROJECTILE_SPEED_RELATIVE_UP: u32 = 1740;
     pub const PROJECTILE_SPEED_FORWARD: u32 = 1744;
     pub const PROJECTILE_ACTIVATE_DIST: u32 = 1752;
@@ -188,13 +163,10 @@ pub mod def {
     pub const HOLD_BUTTON_TO_THROW: u32 = 1854;
     pub const OFFHAND_HOLD_IS_CANCELABLE: u32 = 1855;
     pub const USE_AS_MELEE: u32 = 1872;
-    /// `float*` to one coefficient per surface type (`SURF_TYPE_NUM` = 32).
     pub const PARALLEL_BOUNCE: u32 = 1880;
     pub const PERPENDICULAR_BOUNCE: u32 = 1884;
     pub const SURF_TYPE_COUNT: usize = 32;
     pub const ADS_GUN_KICK_REDUCED_KICK_BULLETS: u32 = 1936;
-    /// `adsGunKickReducedKickPercent` then the ADS kick/scatter/spread floats
-    /// through `fAdsSpread`; the hip block starts at `HIP_GUN_KICK_…`.
     pub const ADS_GUN_KICK_REDUCED_KICK_PERCENT: u32 = 1940;
     pub const ADS_GUN_KICK_PITCH_MIN: u32 = 1944;
     pub const ADS_GUN_KICK_PITCH_MAX: u32 = 1948;
@@ -232,10 +204,6 @@ pub mod def {
     pub const SIZE: usize = 2448;
 }
 
-/// `weapAnimFiles_t`: the slots of `szXAnims` this crate's users read. T6
-/// keeps T5's order with fire-intro, final-shot and melee variants inserted
-/// (T5 + 7 from `RELOAD` through `SPRINT_OUT`), then sprint-empty, crawl,
-/// dive-to-prone and other slots before the ADS block.
 pub mod weap_anim {
     pub const IDLE: usize = 1;
     pub const EMPTY_IDLE: usize = 2;
@@ -268,8 +236,6 @@ pub mod weap_anim {
     pub const ADS_FIRE: usize = 61;
     pub const ADS_LASTSHOT: usize = 62;
     pub const ADS_RECHAMBER: usize = 64;
-    /// The left hand of a dual-wield pair (`*_lh_mp`), layered over the
-    /// right hand's clips on the same viewmodel.
     pub const DW_LEFT_FIRE: usize = 78;
     pub const DW_LEFT_LASTSHOT: usize = 79;
     pub const DW_LEFT_IDLE: usize = 81;
@@ -280,26 +246,18 @@ pub mod weap_anim {
     pub const ADS_DOWN: usize = 86;
 }
 
-/// `WeaponAttachmentUnique` (424 bytes): one attachment as one weapon
-/// carries it.
 pub mod unique {
     pub const NAME: u32 = 0;
-    /// `eAttachment`: the attachment table's index (`acog` 1, `gl` 11, …).
     pub const TYPE: u32 = 4;
-    /// Non-zero for an authored pair: `1 << type` of both attachments.
     pub const COMBINED_MASK: u32 = 16;
     pub const ALT_WEAPON_NAME: u32 = 20;
-    /// `unsigned short* hideTags`: 32 script strings.
     pub const HIDE_TAGS: u32 = 36;
     pub const HIDE_TAG_COUNT: u32 = 32;
     pub const VIEW_MODEL: u32 = 40;
     pub const VIEW_MODEL_ADDITIONAL: u32 = 44;
-    /// The first-person model drawn instead of the main one while aiming
-    /// (an optic's housing without the parts in front of the eye).
     pub const VIEW_MODEL_ADS: u32 = 48;
     pub const WORLD_MODEL: u32 = 52;
     pub const WORLD_MODEL_ADDITIONAL: u32 = 56;
-    /// The gun bone the models hang from; empty for the gun's root.
     pub const VIEW_MODEL_TAG: u32 = 60;
     pub const WORLD_MODEL_TAG: u32 = 64;
     pub const VIEW_MODEL_OFFSETS: u32 = 68;
@@ -310,34 +268,22 @@ pub mod unique {
     pub const WORLD_MODEL_ADD_OFFSETS: u32 = 128;
     pub const VIEW_MODEL_ADD_ROTATIONS: u32 = 140;
     pub const WORLD_MODEL_ADD_ROTATIONS: u32 = 152;
-    /// The weapon's own attached optic (or its magazine) is removed.
     pub const DISABLE_BASE_ATTACHMENT: u32 = 168;
     pub const DISABLE_BASE_CLIP: u32 = 169;
-    /// `Material* overlayMaterial`: the scope overlay the weapon shows
-    /// with this attachment (its own scope's, a variable zoom's), none
-    /// where the attachment is a sight looked through.
     pub const OVERLAY_MATERIAL: u32 = 196;
-    /// `const char** szXAnims`: the weapon's clips with this attachment, by
-    /// [`super::weap_anim`]; an empty name keeps the weapon's own.
     pub const XANIMS: u32 = 232;
     pub const FIRE_SOUND: u32 = 256;
     pub const FIRE_SOUND_PLAYER: u32 = 260;
 }
 
-/// `WeaponAttachment` (284 bytes): what an attachment does to any weapon
-/// of a class. Scales are 1 and zoom FOVs 1 where the attachment changes
-/// nothing.
 pub mod attachment {
     pub const NAME: u32 = 0;
     pub const TYPE: u32 = 8;
     pub const SILENCED: u32 = 44;
     pub const DUAL_MAG: u32 = 45;
     pub const LASER_SIGHT: u32 = 46;
-    /// The alternate weapon (select fire, dual optic) fires from the
-    /// weapon's own magazine.
     pub const SHARED_AMMO: u32 = 50;
     pub const DAMAGE_RANGE_SCALE: u32 = 52;
-    /// `fADSZoomFov1..3`.
     pub const ADS_ZOOM_FOV: u32 = 56;
     pub const ADS_ZOOM_IN_FRAC: u32 = 68;
     pub const ADS_ZOOM_OUT_FRAC: u32 = 72;
@@ -349,14 +295,11 @@ pub mod attachment {
     pub const HIP_SPREAD_MIN_SCALE: u32 = 160;
     pub const HIP_SPREAD_MAX_SCALE: u32 = 164;
     pub const FIRE_TIME_SCALE: u32 = 188;
-    /// Reload, empty reload, reload add, quick and quick empty reload.
     pub const RELOAD_TIME_SCALES: u32 = 192;
     pub const CLIP_SIZE_SCALE: u32 = 232;
-    /// `perks[2]`: FMJ's bullet penetration.
     pub const PERKS: u32 = 252;
 }
 
-/// A `WeaponAttachment` of a finished zone load.
 #[derive(Clone, Copy)]
 pub struct AttachmentView<'z> {
     load: &'z ZoneLoad,
@@ -394,12 +337,8 @@ impl<'z> AttachmentView<'z> {
     }
 }
 
-/// An attached model of a [`AttachmentUniqueView`]: its name, the gun bone
-/// it hangs from (`None` for the root) and its offset and `(pitch, yaw,
-/// roll)` degrees there.
 pub type UniqueModel<'z> = (&'z str, Option<&'z str>, [f32; 3], [f32; 3]);
 
-/// A `WeaponAttachmentUnique` of a finished zone load.
 #[derive(Clone, Copy)]
 pub struct AttachmentUniqueView<'z> {
     load: &'z ZoneLoad,
@@ -453,7 +392,6 @@ impl<'z> AttachmentUniqueView<'z> {
         self.str_at(off)
     }
 
-    /// The asset a model field named when this was loaded.
     fn model_name(&self, off: u32) -> Option<&'z str> {
         let model = &self.load.assets[self.asset.field(off)?];
         let p =
@@ -465,8 +403,6 @@ impl<'z> AttachmentUniqueView<'z> {
             .and_then(|b| core::str::from_utf8(b).ok())
     }
 
-    /// The models this attachment hangs on the first-person (`view`) or
-    /// world gun: the main one, then the additional one (a mount).
     pub fn models(&self, view: bool) -> [Option<UniqueModel<'z>>; 2] {
         use unique as u;
         let (model, add, tag, offsets, rotations, add_offsets, add_rotations) = if view {
@@ -505,14 +441,10 @@ impl<'z> AttachmentUniqueView<'z> {
         })
     }
 
-    /// The asset a pointer field named when this was loaded (an overlay
-    /// material).
     pub fn asset_field_name(&self, off: u32) -> Option<&'z str> {
         self.model_name(off).filter(|name| !name.is_empty())
     }
 
-    /// The first-person model that stands in for the main one while
-    /// aiming, placed as the main one is.
     pub fn ads_model(&self) -> Option<UniqueModel<'z>> {
         use unique as u;
         Some((
@@ -523,7 +455,6 @@ impl<'z> AttachmentUniqueView<'z> {
         ))
     }
 
-    /// The clip in `slot` ([`weap_anim`]), when this attachment names one.
     pub fn xanim(&self, slot: u32) -> Option<&'z str> {
         let arr = crate::walk::decode_ptr(self.u32_at(unique::XANIMS))?;
         let p = self.load.blocks.ptr_at(arr.at(4 * slot)).ok()??;
@@ -535,7 +466,6 @@ impl<'z> AttachmentUniqueView<'z> {
             .filter(|name| !name.is_empty())
     }
 
-    /// The gun bones this attachment hides (iron sights under an optic).
     pub fn hide_tags(&self) -> impl Iterator<Item = &'z str> + 'z {
         let load = self.load;
         let arr = crate::walk::decode_ptr(self.u32_at(unique::HIDE_TAGS));
@@ -547,7 +477,6 @@ impl<'z> AttachmentUniqueView<'z> {
     }
 }
 
-/// `weapType_t`.
 pub mod weap_type {
     pub const BULLET: i32 = 0;
     pub const GRENADE: i32 = 1;
@@ -560,7 +489,6 @@ pub mod weap_type {
     pub const RIOTSHIELD: i32 = 8;
 }
 
-/// `weapClass_t`.
 pub mod weap_class {
     pub const RIFLE: i32 = 0;
     pub const MG: i32 = 1;
@@ -578,7 +506,6 @@ pub mod weap_class {
     pub const PISTOL_SPREAD: i32 = 13;
 }
 
-/// `weapInventoryType_t`.
 pub mod inventory_type {
     pub const PRIMARY: i32 = 0;
     pub const OFFHAND: i32 = 1;
@@ -588,7 +515,6 @@ pub mod inventory_type {
     pub const DWLEFTHAND: i32 = 5;
 }
 
-/// `OffhandSlot`.
 pub mod offhand_slot {
     pub const NONE: i32 = 0;
     pub const LETHAL_GRENADE: i32 = 1;
@@ -597,7 +523,6 @@ pub mod offhand_slot {
     pub const SPECIFIC_USE: i32 = 4;
 }
 
-/// A weapon asset of a finished zone load.
 #[derive(Clone, Copy)]
 pub struct WeaponView<'z> {
     load: &'z ZoneLoad,
@@ -630,7 +555,6 @@ impl<'z> WeaponView<'z> {
         crate::walk::decode_ptr(self.variant_u32(off))
     }
 
-    /// The attachments the variant takes.
     pub fn attachments(&self) -> impl Iterator<Item = AttachmentView<'z>> + 'z {
         let load = self.load;
         let arr = self.variant_ptr(variant::ATTACHMENTS);
@@ -640,8 +564,6 @@ impl<'z> WeaponView<'z> {
         })
     }
 
-    /// The variant's attachment uniques: one per attachment it takes, and
-    /// one per authored pair.
     pub fn attachment_uniques(&self) -> impl Iterator<Item = AttachmentUniqueView<'z>> + 'z {
         let load = self.load;
         let arr = self.variant_ptr(variant::ATTACHMENT_UNIQUES);
@@ -652,8 +574,6 @@ impl<'z> WeaponView<'z> {
         })
     }
 
-    /// The asset a pointer field of the variant named when it was loaded
-    /// (its scope overlay).
     pub fn variant_asset_name(&self, off: u32) -> Option<&'z str> {
         let asset = &self.load.assets[self.asset.field(off)?];
         let p =
@@ -718,7 +638,6 @@ impl<'z> WeaponView<'z> {
             .and_then(|b| core::str::from_utf8(b).ok())
     }
 
-    /// `N` floats behind a `WeaponDef` `float*` field; `None` when null.
     pub fn def_f32_array<const N: usize>(&self, off: u32) -> Option<[f32; N]> {
         let p = self.load.blocks.ptr_at(self.def?.at(off)).ok()??;
         let bytes = self.load.blocks.bytes(p, 4 * N).ok()?;
@@ -731,10 +650,6 @@ impl<'z> WeaponView<'z> {
         self.variant_str(variant::INTERNAL_NAME)
     }
 
-    /// The name of the asset a `WeaponDef` pointer field refers to (an
-    /// `XModel*`, `Material*`, …), read from that asset's header.
-    /// The asset a `WeaponDef` pointer field named when the weapon was
-    /// loaded (its HUD icon).
     pub fn def_loaded_asset_name(&self, off: u32) -> Option<&'z str> {
         let asset = self.load.asset_in(self.asset, self.def?.at(off))?;
         let p =
@@ -751,15 +666,11 @@ impl<'z> WeaponView<'z> {
         asset_name(self.load, self.def?.at(off))
     }
 
-    /// Entry `index` of a `WeaponDef` pointer array such as `gunXModel`.
     pub fn def_asset_array_name(&self, off: u32, index: u32) -> Option<&'z str> {
         let arr = self.load.blocks.ptr_at(self.def?.at(off)).ok()??;
         asset_name(self.load, arr.at(4 * index))
     }
 
-    /// The model attached in `slot`, first-person or world, and its
-    /// placement on the gun's root bone: an offset and `(pitch, yaw, roll)`
-    /// degrees.
     pub fn attached_model(&self, slot: u32, view: bool) -> Option<(&'z str, [f32; 3], [f32; 3])> {
         use variant as v;
         let (models, offsets, rotations) = if view {
@@ -784,7 +695,6 @@ impl<'z> WeaponView<'z> {
         Some((name, vec3(offsets), vec3(rotations)))
     }
 
-    /// Entry `index` of `szXAnims`.
     pub fn xanim(&self, index: u32) -> Option<&'z str> {
         let arr = self.variant_ptr(variant::XANIMS)?;
         let p = self.load.blocks.ptr_at(arr.at(4 * index)).ok()??;
@@ -805,8 +715,6 @@ impl<'z> WeaponView<'z> {
     }
 }
 
-/// The name of the asset whose pointer is stored at `slot`: every asset
-/// header starts with its name except images, which keep it at 72.
 pub fn asset_name(load: &ZoneLoad, slot: Ptr) -> Option<&str> {
     let asset = load.asset_at(slot)?;
     let off = if asset.ty == crate::AssetType::Image {

@@ -7,10 +7,12 @@ mod asset_type;
 mod cipher;
 mod content;
 mod envelope;
+pub mod light_grid;
 mod salsa20;
 pub mod schema;
 mod walk;
 pub mod weapon;
+pub mod world;
 
 pub use asset_type::AssetType;
 pub use cipher::{STREAM_COUNT, ZoneCipher};

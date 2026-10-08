@@ -332,7 +332,6 @@ pub struct HostClassSlot {
     pub perks: [String; 3],
 
     pub deathstreak: String,
-    /// The primary's and secondary's camouflage; empty for none.
     pub camos: [String; 2],
 }
 

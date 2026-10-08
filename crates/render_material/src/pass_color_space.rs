@@ -29,7 +29,6 @@ pub fn pass_color_space(namespace: AssetNamespace, tech_slot: u8) -> PassColorSp
                 PassColorSpace::Unknown
             }
         }
-        // No T6 technique set is drawn: its materials are DX11.
         AssetNamespace::T6 => PassColorSpace::Unknown,
     }
 }

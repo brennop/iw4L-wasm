@@ -331,8 +331,6 @@ fn adopt_fired(world: &mut World) {
             object,
         );
         let name = weapon_name(world, weapon);
-        // What the T6 equipment script keys on: the name the throw was
-        // reported as, and a model showing the thrown weapon itself.
         let model = format!("{}{}", crate::WEAPON_MODEL_PREFIX, projectile.weapon);
         let native = weapon_name(world, projectile.weapon);
         {

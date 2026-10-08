@@ -97,7 +97,9 @@ The host can start a match with:
 make map mp_boneyard IW4L_MASTER_HOST_NAME='Friday match' IW4L_MASTER_MAX_PLAYERS=8
 ```
 
-Other players open `make menu` and select the room. Master networking needs
+Other players open `make menu` and select the room, including rooms marked
+`IN MATCH`. Joining an ongoing match loads its current map; password, capacity
+and installed-content checks still apply. Master networking needs
 MW2 multiplayer data; it is disabled during demo replay.
 
 When a setting appears in more than one place:

@@ -1,7 +1,9 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    time::Duration,
 };
+use web_time::Instant;
 
 // The browser has no real filesystem, locks or hard links: it goes through artifactfs only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -14,17 +16,22 @@ use bevy::prelude::*;
 use session::LocalAccount;
 use sim::{AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES};
 
-const MAGIC: &[u8; 8] = b"IW4LACC2";
+const MAGIC: &[u8; 8] = b"IW4LACC3";
+const KEYED_MAGIC: &[u8; 8] = b"IW4LACC2";
 const LEGACY_MAGIC: &[u8; 8] = b"IW4LACC1";
 const LEGACY_EMPTY_BYTES: usize = 25;
 const LEGACY_SNAPSHOT_BYTES: usize = LEGACY_EMPTY_BYTES + 16 + PLAYER_DATA_BUFFER_BYTES;
 const EMPTY_BYTES: usize = 57;
-const SNAPSHOT_BYTES: usize = EMPTY_BYTES + 16 + PLAYER_DATA_BUFFER_BYTES;
+const KEYED_SNAPSHOT_BYTES: usize = EMPTY_BYTES + 16 + PLAYER_DATA_BUFFER_BYTES;
+const SNAPSHOT_BYTES: usize = KEYED_SNAPSHOT_BYTES + sim::SKILL_RATING_BYTES;
+const SAVE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Resource, Default)]
 pub(crate) struct AccountPersistence {
     path: Option<PathBuf>,
     saved: Option<AccountSnapshot>,
+    retry_at: Option<Instant>,
+    last_error: Option<(io::ErrorKind, String)>,
 }
 
 pub(crate) fn load(
@@ -88,6 +95,8 @@ pub(crate) fn save(
         return;
     };
     if persistence.saved.as_ref() == Some(&snapshot) {
+        persistence.retry_at = None;
+        persistence.last_error = None;
         if let Some(receipt) = receipt.as_mut() {
             receipt.0 = Some(snapshot.clone());
         }
@@ -101,6 +110,12 @@ pub(crate) fn save(
         }
         return;
     };
+    if persistence
+        .retry_at
+        .is_some_and(|retry_at| Instant::now() < retry_at)
+    {
+        return;
+    }
 
     let next = LocalAccount {
         id: account.id,
@@ -109,6 +124,8 @@ pub(crate) fn save(
     };
     match save_current(&path, &next, persistence.saved.as_ref()) {
         Ok(()) => {
+            persistence.retry_at = None;
+            persistence.last_error = None;
             if *role == frame::RuntimeRole::Listen
                 && let Some(authority) = authority.as_mut()
             {
@@ -123,7 +140,18 @@ pub(crate) fn save(
             persistence.saved = Some(snapshot.clone());
             account.snapshot = Some(snapshot);
         }
-        Err(error) => warn!("could not save local account {}: {error}", path.display()),
+        Err(error) => {
+            let error = (error.kind(), error.to_string());
+            if persistence.last_error.as_ref() != Some(&error) {
+                warn!(
+                    "could not save local account {}: {}",
+                    path.display(),
+                    error.1
+                );
+                persistence.last_error = Some(error);
+            }
+            persistence.retry_at = Some(Instant::now() + SAVE_RETRY_DELAY);
+        }
     }
 }
 
@@ -156,19 +184,23 @@ fn encode(account: &LocalAccount) -> io::Result<Vec<u8>> {
         bytes.extend_from_slice(&snapshot.version.to_le_bytes());
         bytes.extend_from_slice(&snapshot.checksum.to_le_bytes());
         bytes.extend_from_slice(&snapshot.bytes);
+        bytes.extend_from_slice(&snapshot.skills.encode());
     }
     Ok(bytes)
 }
 
 fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
     let legacy = bytes.starts_with(LEGACY_MAGIC);
+    let keyed = bytes.starts_with(KEYED_MAGIC);
     let (empty, snapshot_length, tag) = if legacy {
         (LEGACY_EMPTY_BYTES, LEGACY_SNAPSHOT_BYTES, 24)
+    } else if keyed {
+        (EMPTY_BYTES, KEYED_SNAPSHOT_BYTES, 56)
     } else {
         (EMPTY_BYTES, SNAPSHOT_BYTES, 56)
     };
     if !matches!(bytes.len(), n if n == empty || n == snapshot_length)
-        || (!legacy && !bytes.starts_with(MAGIC))
+        || (!legacy && !keyed && !bytes.starts_with(MAGIC))
     {
         return Err(invalid("invalid account file version or length"));
     }
@@ -192,7 +224,14 @@ fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
             let header = tag + 1;
             let version = i32::from_le_bytes(bytes[header + 8..header + 12].try_into().unwrap());
             let checksum = u32::from_le_bytes(bytes[header + 12..header + 16].try_into().unwrap());
-            let data = &bytes[header + 16..];
+            let data_end = header + 16 + PLAYER_DATA_BUFFER_BYTES;
+            let data = &bytes[header + 16..data_end];
+            let skills = if legacy || keyed {
+                sim::SkillRatings::default()
+            } else {
+                sim::SkillRatings::decode(&bytes[data_end..])
+                    .map_err(|_| invalid("invalid account skill ratings"))?
+            };
             if data[..4] != version.to_le_bytes() || data[4..8] != checksum.to_le_bytes() {
                 return Err(invalid("account buffer schema stamp mismatch"));
             }
@@ -202,11 +241,12 @@ fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
                 version,
                 checksum,
                 bytes: data.to_vec(),
+                skills,
             })
         }
         _ => return Err(invalid("invalid account payload tag")),
     };
-    Ok((LocalAccount { id, key, snapshot }, legacy))
+    Ok((LocalAccount { id, key, snapshot }, legacy || keyed))
 }
 
 fn read(path: &Path) -> io::Result<(LocalAccount, bool)> {

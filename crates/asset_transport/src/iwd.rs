@@ -410,9 +410,6 @@ pub fn game_main_for_zone(zone_ff: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-/// Every `main/` directory under the search roots, grouped by root in
-/// search order (the games root first), each group sorted. A file in more
-/// than one title's archives is the games root's own.
 pub fn game_mains_by_root(games_root: &Path) -> Vec<Vec<PathBuf>> {
     crate::discover::search_roots(games_root)
         .into_iter()
@@ -451,7 +448,6 @@ pub fn game_mains_under(games_root: &Path) -> Vec<PathBuf> {
 
 pub fn read_iwd_named(games_root: &Path, want: &str) -> Option<Vec<u8>> {
     let want = want.replace('\\', "/");
-    // Popped last first: the games root is searched before the others.
     let mut stack: Vec<_> = crate::discover::search_roots(games_root)
         .into_iter()
         .rev()

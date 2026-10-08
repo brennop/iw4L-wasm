@@ -516,8 +516,6 @@ impl Iw5ZoneMemory {
     }
 }
 
-/// A T6 zone, decrypted and inflated; `parse_zone_image` wraps it in a
-/// `ZoneImage`.
 pub struct T6ZoneImage {
     pub header: fastfile_t6::FileHeader,
     pub bytes: Vec<u8>,
@@ -527,12 +525,8 @@ pub struct T6ZoneImage {
 pub enum T6ZoneError {
     Io(std::io::Error),
     Header(fastfile_t6::FileHeaderError),
-    /// The chunk length at this file offset runs past the end.
     ChunkOverrun(usize),
-    Inflate {
-        chunk: usize,
-        error: String,
-    },
+    Inflate { chunk: usize, error: String },
 }
 
 impl std::fmt::Display for T6ZoneError {
@@ -555,8 +549,6 @@ pub fn open_t6_zone(path: impl AsRef<Path>) -> Result<T6ZoneImage, T6ZoneError> 
     parse_t6_zone_image(&bytes)
 }
 
-/// Every chunk is its own raw-deflate stream once decrypted, so each is
-/// inflated to its end and appended.
 pub fn parse_t6_zone_image(bytes: &[u8]) -> Result<T6ZoneImage, T6ZoneError> {
     let header = fastfile_t6::parse_file_header(bytes).map_err(T6ZoneError::Header)?;
     let mut cipher = fastfile_t6::ZoneCipher::new(header.name());

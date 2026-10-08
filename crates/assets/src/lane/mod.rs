@@ -130,8 +130,6 @@ pub struct CommonCensus {
 
     pub pending_images: Option<asset_material::material_images::ImageDemandPlan>,
 
-    /// Models and material texels of a T6 walk, still to be bound to the IW4
-    /// pool's materials; see [`t6::T6Content`].
     pub t6_content: Option<t6::T6Content>,
 }
 

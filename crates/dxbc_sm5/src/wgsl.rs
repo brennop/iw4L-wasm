@@ -1,16 +1,3 @@
-//! A vertex and pixel shader pair lowered to one WGSL module.
-//!
-//! The module speaks the runtime's pass protocol (the one `d3d9_sm3` emits
-//! for Shader Model 3): one storage arena of `vec4<f32>` rows at group 0,
-//! indexed from a per-draw base passed as the instance index, and bindless
-//! texture and sampler tables at group 1. The caller decides which arena row
-//! each constant-buffer row a stage reads comes from ([`PassAbi`]); the
-//! texture slot words (`texture | sampler << 16`) follow the pixel rows.
-//!
-//! DXBC registers are typeless: comparisons write all-ones masks that `movc`
-//! and `if` test as integers. Registers are therefore `vec4<u32>` and float
-//! instructions bitcast their operands and results.
-
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -79,7 +66,6 @@ impl fmt::Display for WgslError {
     }
 }
 
-/// The kind of texture a resource register holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TextureDimension {
     D2,
@@ -87,14 +73,12 @@ pub enum TextureDimension {
     D3,
 }
 
-/// One constant-buffer row: `cb{buffer}[{row}]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstantRow {
     pub buffer: u32,
     pub row: u32,
 }
 
-/// A texture register sampled through a sampler register.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TextureSlot {
     pub texture: u32,
@@ -102,9 +86,6 @@ pub struct TextureSlot {
     pub dimension: TextureDimension,
 }
 
-/// How a vertex input register is produced: a vertex attribute at
-/// `location` of WGSL type `attribute_type`, and an expression over
-/// `attribute_{location}` giving the `vec4<f32>` the shader reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VertexInput {
     pub register: u32,
@@ -113,41 +94,24 @@ pub struct VertexInput {
     pub expression: String,
 }
 
-/// How a texture slot's samples are converted to what the program expects,
-/// applied in this order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SampleAdapter {
-    /// The slot, an index into [`PassAbi::textures`].
     pub slot: usize,
-    /// Alpha reads one: an LDR texture where an HDR one divides by its
-    /// alpha.
     pub opaque_alpha: bool,
-    /// Colour is squared: a gamma-space texture where the program reads
-    /// linear colour.
     pub square_rgb: bool,
-    /// Colour is scaled: the same quantity at another scale.
     pub rgb_scale: f32,
 }
 
-/// What the caller binds for a pass.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PassAbi {
     pub vertex_inputs: Vec<VertexInput>,
-    /// The vertex stage's arena rows, in order: row `i` of the stage's block.
     pub vertex_constants: Vec<ConstantRow>,
     pub pixel_constants: Vec<ConstantRow>,
-    /// The texture slot words after the pixel rows, four per row.
     pub textures: Vec<TextureSlot>,
-    /// Texture slots bound to a texture of another encoding than the
-    /// program expects, and how their samples are converted.
     pub sample_adapters: Vec<SampleAdapter>,
-    /// Extra fragment entry points: `(name, statement)`, the statement run
-    /// on the final colour `dx_colour` before it is returned (an alpha test
-    /// that discards).
     pub alpha_tests: Vec<(String, String)>,
 }
 
-/// One stage of a DXBC container, decoded.
 #[derive(Clone, Debug)]
 pub struct Shader {
     pub kind: ProgramKind,
@@ -156,7 +120,6 @@ pub struct Shader {
     pub output: Signature,
     pub instructions: Vec<DecodedInstruction>,
     pub temps: u32,
-    /// `t#` → its dimension, from `dcl_resource`.
     pub resources: BTreeMap<u32, TextureDimension>,
 }
 
@@ -225,7 +188,6 @@ impl Shader {
         })
     }
 
-    /// Every constant-buffer row the stage reads.
     pub fn constant_rows(&self) -> Result<BTreeSet<ConstantRow>, WgslError> {
         let mut rows = BTreeSet::new();
         for instruction in self
@@ -240,7 +202,6 @@ impl Shader {
         Ok(rows)
     }
 
-    /// Every texture/sampler pair the stage samples.
     pub fn texture_slots(&self) -> Result<BTreeSet<TextureSlot>, WgslError> {
         let mut slots = BTreeSet::new();
         for instruction in &self.instructions {
@@ -280,10 +241,8 @@ fn collect_rows(operand: &Operand, rows: &mut BTreeSet<ConstantRow>) -> Result<(
     Ok(())
 }
 
-/// `(t, s)` of a sampling instruction.
 fn sample_registers(instruction: &DecodedInstruction) -> Option<(u32, u32)> {
     match instruction.opcode.0 {
-        // sample, sample_c, sample_c_lz, sample_l, sample_d, sample_b
         0x45..=0x4a => Some((
             instruction.operands.get(2)?.register_number()?,
             instruction.operands.get(3)?.register_number()?,
@@ -304,7 +263,6 @@ enum Stage {
     Pixel,
 }
 
-/// What an expression's bits mean for the instruction reading them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Float,
@@ -320,7 +278,6 @@ struct Lowering<'a> {
     constants: BTreeMap<ConstantRow, usize>,
     textures: &'a [TextureSlot],
     sample_adapters: &'a [SampleAdapter],
-    /// The `return` this stage ends with.
     epilogue: String,
 }
 
@@ -333,7 +290,6 @@ impl Lowering<'_> {
         self.out.push('\n');
     }
 
-    /// The raw bits of a source operand, swizzled to four components.
     fn bits(&self, operand: &Operand) -> Result<String, WgslError> {
         let base = match operand.register {
             RegisterType::Temp => format!("r{}", reg(operand)?),
@@ -382,7 +338,6 @@ impl Lowering<'_> {
         })
     }
 
-    /// A source operand as a typed vector, with its modifiers applied.
     fn source(&self, operand: &Operand, kind: Kind) -> Result<String, WgslError> {
         let bits = self.bits(operand)?;
         let (ty, mut value) = match kind {
@@ -402,8 +357,6 @@ impl Lowering<'_> {
         Ok(value)
     }
 
-    /// Writes `value` (a `vec4` of `kind`) to the destination's masked
-    /// components, saturating float results when asked.
     fn store(
         &mut self,
         destination: &Operand,
@@ -470,7 +423,6 @@ impl Lowering<'_> {
             |cond: String| format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cond})");
         match i.opcode.0 {
             _ if is_declaration(i.opcode.0) => {}
-            // add, mul, div, min, max, mad
             0x00 => {
                 let v = float2(self, &|a, b| format!("({a} + {b})"))?;
                 self.store(op(0)?, &v, Kind::Float, sat)?;
@@ -500,7 +452,6 @@ impl Lowering<'_> {
                 );
                 self.store(op(0)?, &v, Kind::Float, sat)?;
             }
-            // dp2, dp3, dp4
             0x0f..=0x11 => {
                 let n = match i.opcode.0 {
                     0x0f => "xy",
@@ -510,7 +461,6 @@ impl Lowering<'_> {
                 let v = float2(self, &|a, b| format!("vec4<f32>(dot({a}.{n}, {b}.{n}))"))?;
                 self.store(op(0)?, &v, Kind::Float, sat)?;
             }
-            // mov: bits unless a modifier or saturate makes it a float move.
             0x36 => {
                 let source = op(1)?;
                 if sat || source.modifier != Default::default() {
@@ -521,7 +471,6 @@ impl Lowering<'_> {
                     self.store(op(0)?, &v, Kind::Uint, false)?;
                 }
             }
-            // movc
             0x37 => {
                 let cond = self.bits(op(1)?)?;
                 let floaty = sat
@@ -536,7 +485,6 @@ impl Lowering<'_> {
                 let v = format!("select({b}, {a}, {cond} != vec4<u32>(0u))");
                 self.store(op(0)?, &v, kind, sat)?;
             }
-            // Float compares: eq, ge, lt, ne.
             0x18 | 0x1d | 0x31 | 0x39 => {
                 let cmp = match i.opcode.0 {
                     0x18 => "==",
@@ -547,7 +495,6 @@ impl Lowering<'_> {
                 let v = float2(self, &|a, b| mask_of(format!("{a} {cmp} {b}")))?;
                 self.store(op(0)?, &v, Kind::Uint, false)?;
             }
-            // Float unary functions.
             0x19
             | 0x1a
             | 0x2f
@@ -581,13 +528,11 @@ impl Lowering<'_> {
                 };
                 self.store(op(0)?, &v, Kind::Float, sat)?;
             }
-            // sincos dst_sin, dst_cos, src
             0x4d => {
                 let a = self.source(op(2)?, Kind::Float)?;
                 self.store(op(0)?, &format!("sin({a})"), Kind::Float, sat)?;
                 self.store(op(1)?, &format!("cos({a})"), Kind::Float, sat)?;
             }
-            // Integer arithmetic and bitwise.
             0x1e | 0x24 | 0x25 | 0x29 | 0x2a | 0x01 | 0x3c | 0x57 | 0x55 | 0x53 | 0x54 => {
                 let kind = match i.opcode.0 {
                     0x1e | 0x24 | 0x25 | 0x2a => Kind::Int,
@@ -617,7 +562,6 @@ impl Lowering<'_> {
                 };
                 self.store(op(0)?, &v, Kind::Uint, false)?;
             }
-            // imad
             0x23 => {
                 let v = format!(
                     "bitcast<vec4<u32>>({} * {} + {})",
@@ -627,7 +571,6 @@ impl Lowering<'_> {
                 );
                 self.store(op(0)?, &v, Kind::Uint, false)?;
             }
-            // not, ineg
             0x3b => {
                 let v = format!("(~{})", self.source(op(1)?, Kind::Uint)?);
                 self.store(op(0)?, &v, Kind::Uint, false)?;
@@ -636,7 +579,6 @@ impl Lowering<'_> {
                 let v = format!("bitcast<vec4<u32>>(-{})", self.source(op(1)?, Kind::Int)?);
                 self.store(op(0)?, &v, Kind::Uint, false)?;
             }
-            // Integer compares: ieq, ige, ilt, ine, ult, uge.
             0x20 | 0x21 | 0x22 | 0x27 | 0x4f | 0x50 => {
                 let (kind, cmp) = match i.opcode.0 {
                     0x20 => (Kind::Int, "=="),
@@ -653,7 +595,6 @@ impl Lowering<'_> {
                 ));
                 self.store(op(0)?, &v, Kind::Uint, false)?;
             }
-            // Conversions: itof, utof, ftoi, ftou.
             0x2b => {
                 let v = format!("vec4<f32>({})", self.source(op(1)?, Kind::Int)?);
                 self.store(op(0)?, &v, Kind::Float, false)?;
@@ -673,7 +614,6 @@ impl Lowering<'_> {
                 let v = format!("vec4<u32>({})", self.source(op(1)?, Kind::Float)?);
                 self.store(op(0)?, &v, Kind::Uint, false)?;
             }
-            // Flow control.
             0x1f => {
                 let c = self.condition(op(0)?, i.test_nonzero())?;
                 self.line(&format!("if ({c}) {{"));
@@ -711,14 +651,11 @@ impl Lowering<'_> {
                 self.line(&format!("if ({c}) {{ {body} }}"));
             }
             0x3e => {
-                // A `ret` at the end of the program falls through to the
-                // epilogue; one inside a branch returns early.
                 if self.indent > 1 {
                     let epilogue = self.epilogue.clone();
                     self.line(&epilogue);
                 }
             }
-            // Sampling.
             0x45..=0x4a => self.sample(i)?,
             _ => return Err(WgslError::UnsupportedOpcode(i.opcode.to_string())),
         }
@@ -773,8 +710,6 @@ impl Lowering<'_> {
                     self.source(op(5)?, Kind::Float)?
                 )
             }
-            // sample_c / sample_c_lz: the shadow maps are colour textures;
-            // the compare (reference <= texel) is done here.
             0x46 | 0x47 => {
                 let reference = self.source(op(4)?, Kind::Float)?;
                 format!(
@@ -807,7 +742,6 @@ fn reg(operand: &Operand) -> Result<u32, WgslError> {
         .ok_or_else(|| WgslError::UnsupportedOperand(operand.to_string()))
 }
 
-/// The registers a stage writes, from `dcl_output*`.
 fn output_registers(shader: &Shader) -> BTreeSet<u32> {
     shader
         .instructions
@@ -928,8 +862,6 @@ fn stage_body(
     Ok(lowering.out)
 }
 
-/// The varying location of each vertex output register (SV_Position
-/// excluded), in register order.
 fn varying_locations(vertex: &Shader) -> BTreeMap<u32, u32> {
     vertex
         .output
@@ -993,7 +925,6 @@ pub fn lower_pass(abi: &PassAbi, vertex: &Shader, pixel: &Shader) -> Result<Stri
     )
     .unwrap();
 
-    // Vertex stage.
     writeln!(out, "@vertex\nfn {VERTEX_ENTRY}(").unwrap();
     for input in &abi.vertex_inputs {
         writeln!(
@@ -1034,7 +965,6 @@ pub fn lower_pass(abi: &PassAbi, vertex: &Shader, pixel: &Shader) -> Result<Stri
     )?);
     out.push_str("}\n\n");
 
-    // Pixel stage: inputs linked to the vertex outputs by semantic.
     let pixel_outputs = output_registers(pixel);
     if let Some(&other) = pixel_outputs.iter().find(|&&r| r != 0) {
         return Err(WgslError::UnsupportedPixelOutput(other));
@@ -1068,7 +998,7 @@ pub fn lower_pass(abi: &PassAbi, vertex: &Shader, pixel: &Shader) -> Result<Stri
     let colour = if pixel_outputs.contains(&0) {
         "bitcast<vec4<f32>>(o0)"
     } else {
-        "vec4<f32>(0.0)"
+        "vec4<f32>(varyings.position.z)"
     };
     let entries = core::iter::once((FRAGMENT_ENTRY.to_string(), String::new()))
         .chain(abi.alpha_tests.iter().cloned());

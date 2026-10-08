@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -139,13 +139,19 @@ impl ScriptModelPoseProduct {
 }
 
 struct ScriptSceneSlot<'a> {
-    hidden: bool,
+    skip: Option<&'static str>,
     skin_entries: &'a [dpvs_iw4::SceneEntSkinEntry],
 }
 
 fn script_scene_slot(scene: &render_scene::GfxScene, entnum: u32) -> ScriptSceneSlot<'_> {
     ScriptSceneSlot {
-        hidden: scene.scene_ent_skips_draw(entnum),
+        skip: if scene.scene_ent_hidden(entnum) {
+            Some("scene_ent_hidden")
+        } else if scene.scene_ent_surface_count(entnum) == Some(0) {
+            Some("scene_ent_empty")
+        } else {
+            None
+        },
         skin_entries: scene
             .scene_ent_skinned_surfs(entnum)
             .map(|surfs| surfs.entries.as_slice())
@@ -238,6 +244,7 @@ pub fn register_script_model_systems(app: &mut App) {
         .init_resource::<ScriptModelDrawPlan>()
         .init_resource::<ScriptModelDobjs>()
         .init_resource::<crate::anim::dobj_pose::ScriptModelDObjFrame>()
+        .init_resource::<crate::anim::dobj_pose::ScriptModelBoltDemand>()
         .init_resource::<ScriptModelPoseProduct>()
         .add_systems(
             Update,
@@ -258,6 +265,8 @@ pub fn register_script_model_systems(app: &mut App) {
             Update,
             (
                 publish_script_model_dobjs,
+                publish_script_model_bolt_poses
+                    .after(crate::anim::dobj_pose::begin_dobj_pose_frame),
                 pose_script_models,
                 commit_script_model_draw_plan,
             )
@@ -605,9 +614,9 @@ fn pose_script_models(
         let entnum = owner.gentity_number.map(u32::from);
 
         let slot = entnum.map(|entnum| script_scene_slot(&gfx_scene.scene, entnum));
-        if slot.as_ref().is_some_and(|slot| slot.hidden) {
+        if let Some(why) = slot.as_ref().and_then(|slot| slot.skip) {
             if let Some(id) = focused_owner_id {
-                focus.refuse(id, &owner.current_model.0, "scene_ent_skip");
+                focus.refuse(id, &owner.current_model.0, why);
             }
             continue;
         }
@@ -693,6 +702,13 @@ fn pose_script_models(
                 )
             };
             live_assets.push(index);
+            let clip = owner.dobj_state.tree.as_ref().and_then(|tree| {
+                tree.nodes
+                    .iter()
+                    .filter(|node| node.state.weight > 0.0)
+                    .find_map(|node| node.clip.as_deref())
+            });
+            perf::truck(id, None, None, clip, Some("posed"));
             index
         } else {
             let Some(index) =
@@ -1233,6 +1249,41 @@ fn lod_culled(
     skels.iter().all(|skel| {
         smodel_camera_lod(skel.lod, origin, 1.0, Some(Vec3::from_array(eye)), ramp).is_none()
     })
+}
+
+fn publish_script_model_bolt_poses(
+    owners: Query<(&WorldScriptModelInstance, &Transform)>,
+    persist: Res<ScriptModelDobjs>,
+    mut demand: ResMut<crate::anim::dobj_pose::ScriptModelBoltDemand>,
+    mut dobj_poses: ResMut<crate::anim::dobj_pose::HostDObjPoseFrame>,
+) {
+    if demand.is_empty() {
+        return;
+    }
+    let mut live = HashSet::new();
+    for (owner, transform) in &owners {
+        let Some(entnum) = owner.gentity_number.filter(|n| demand.contains(*n)) else {
+            continue;
+        };
+        live.insert(entnum);
+        let Some(slot) = owner
+            .authority_owner
+            .and_then(|owner| owner.script_model())
+            .and_then(|id| persist.by_id.get(&id.to_wire()))
+        else {
+            continue;
+        };
+        let Ok(local) = xmodel_runtime::pose_dobj_with_controller(
+            &slot.dobj,
+            &xmodel_runtime::DObjPoseRequest::bind_pose(),
+            Mat4::IDENTITY,
+            |_, _, _| {},
+        ) else {
+            continue;
+        };
+        let _ = dobj_poses.publish(u32::from(entnum), true, 0, transform.to_matrix(), &local);
+    }
+    demand.retain(|entnum| live.contains(&entnum));
 }
 
 fn publish_script_model_dobjs(

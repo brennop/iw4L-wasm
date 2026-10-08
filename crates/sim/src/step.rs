@@ -703,7 +703,8 @@ fn lifecycle_label(life: ClientLifecycle) -> &'static str {
     }
 }
 
-fn emit_snapshot_events(_world: &FrameWorld, snapshot: &Snapshot) {
+fn emit_snapshot_events(world: &FrameWorld, snapshot: &Snapshot) {
+    world.emit_script_entity_trace();
     for slot in &snapshot.meta.corpses.slots {
         perf::corpse(
             i64::from(slot.occupied),
@@ -1861,6 +1862,64 @@ struct ClipBackend<'a> {
 }
 
 impl CollisionBackend for ClipBackend<'_> {
+    fn penetrations(
+        &self,
+        input: GroundTraceInput,
+        contacts: &mut movement_iw4::recovery::ContactBuffer,
+    ) -> movement_iw4::recovery::Coverage {
+        use movement_iw4::recovery::Coverage;
+        let glass = |piece| {
+            let damage = self
+                .glass_damage
+                .iter()
+                .find(|(id, _)| *id == u32::from(piece))
+                .map_or(0, |(_, d)| *d);
+            crate::world_objects::glass_piece_is_solid(damage)
+        };
+        let scene = crate::penetration::RecoveryScene {
+            brushes: self.brushes,
+            bsp: self.bsp,
+            mesh: self.mesh,
+            cmodels: self.cmodels,
+            linked: self.linked_brushes,
+            models: self.model_brushes,
+            glass_is_solid: &glass,
+        };
+        let status = crate::penetration::contacts(&scene, input, contacts);
+        if status != Coverage::Complete {
+            return status;
+        }
+        if input.tracemask & crate::world::CONTENTS_BODY == 0 {
+            return status;
+        }
+        let Some(moving) = crate::penetration::capsule(input, true) else {
+            return Coverage::Unsupported;
+        };
+        for body in self
+            .bodies
+            .iter()
+            .filter(|body| body.entnum != self.self_entnum)
+        {
+            let body_input = GroundTraceInput {
+                start: body.origin,
+                end: body.origin,
+                mins: PLAYER_MINS,
+                maxs: PLAYER_MAXS,
+                tracemask: input.tracemask,
+            };
+            let Some(fixed) = crate::penetration::capsule(body_input, true) else {
+                return Coverage::Unsupported;
+            };
+            if let Err(status) = crate::penetration::append(
+                movement_iw4::penetration::capsule_capsule(moving, fixed),
+                contacts,
+            ) {
+                return status;
+            }
+        }
+        Coverage::Complete
+    }
+
     fn trace(&self, input: GroundTraceInput) -> Trace {
         let world_hit = clip_trace(
             self.brushes,

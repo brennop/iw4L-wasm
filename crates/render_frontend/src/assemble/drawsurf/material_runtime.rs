@@ -97,8 +97,6 @@ impl RuntimeProgramPort {
         )
     }
 
-    /// A T6 pass: DXBC programs lowered by `dxbc_sm5` against the same
-    /// arena and texture tables as SM3 passes.
     fn compile_dxbc(
         catalog: &RuntimeMaterialCatalog,
         pass: &RuntimePass,
@@ -1041,8 +1039,14 @@ fn leftover_iw5_common_yields_capacity_parts(has_iw5_state_bits: bool, zone: &st
     has_iw5_state_bits && zone == asset_core::ZoneOwner::COMMON_MP.as_str()
 }
 
+fn leftover_t6_yields_capacity(material: &asset_material::AuthoredMaterial) -> bool {
+    material.namespace == asset_core::AssetNamespace::T6
+}
+
 fn is_foreign_common_leftover(material: &asset_material::AuthoredMaterial) -> bool {
-    leftover_t5_common_yields_capacity(material) || leftover_iw5_common_yields_capacity(material)
+    leftover_t5_common_yields_capacity(material)
+        || leftover_iw5_common_yields_capacity(material)
+        || leftover_t6_yields_capacity(material)
 }
 
 fn insertion_sort_by_comparator(
@@ -1533,6 +1537,19 @@ pub fn capture_runtime_catalog(
             .or_insert(index);
     }
     let material_indices_by_name = material_indices_by_name.into_iter().collect();
+    let material_indices_by_key = materials
+        .iter()
+        .enumerate()
+        .map(|(index, material)| {
+            (
+                asset_core::MaterialKey {
+                    namespace: material.namespace,
+                    name: material.name.clone(),
+                },
+                index,
+            )
+        })
+        .collect();
 
     let shader_programs = source
         .shaders
@@ -1571,6 +1588,7 @@ pub fn capture_runtime_catalog(
         generation_id: mint_material_generation_id(),
         materials,
         material_indices_by_name,
+        material_indices_by_key,
         technique_sets,
         shader_programs,
         vertex_decls,

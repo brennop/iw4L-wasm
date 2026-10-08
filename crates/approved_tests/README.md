@@ -102,7 +102,8 @@ make approved SCENARIO=master_duo_chaos
 
 `master_duo_chaos` stages the Linux game binary directly in
 `context/simulated-iw4l-folder`. Both processes run from that directory and
-select its `community-dev.iw4l-server`. The runner refuses descriptors outside
+select `IW4L_COMMUNITY` when set, otherwise its `community-dev.iw4l-server`.
+The runner refuses descriptors outside
 the dev channel (port 4434 and a TLS name matching the descriptor host or `iw4l-dev`). Networking uses the descriptor's address,
 TLS name and embedded CA. Linux development binaries select the descriptor without fetching
 Windows updates.

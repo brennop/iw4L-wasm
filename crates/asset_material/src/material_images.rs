@@ -38,7 +38,6 @@ enum MipStorage {
     Bc1,
     Bc2,
     Bc3,
-    /// Two BC4 channels, kept as stored (`decode_iwi_texture_native`).
     Bc5,
 }
 
@@ -1063,6 +1062,7 @@ pub fn decode_reflection_probe_cubemap(source: &AuthoredImage) -> Result<Image, 
     let pixel_format = match source.format {
         21 => PixelFormat::Bgra8,
         value if value == u32::from_le_bytes(*b"DXT1") => PixelFormat::Bc1,
+        value if value == u32::from_le_bytes(*b"DXT5") => PixelFormat::Bc3,
         _ => {
             return Err(format!(
                 "{} has unsupported probe format {}",
@@ -1106,10 +1106,10 @@ pub fn decode_reflection_probe_cubemap(source: &AuthoredImage) -> Result<Image, 
                         data.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
                     }
                 }
-                PixelFormat::Bc1 => {
+                PixelFormat::Bc1 | PixelFormat::Bc3 => {
                     data.extend_from_slice(&decode_blocks(encoded, side, side, pixel_format)?);
                 }
-                _ => unreachable!("probe decoder admits only BGRA8 and BC1"),
+                _ => unreachable!(),
             }
         }
         level_offset += level_bytes;
@@ -1227,16 +1227,11 @@ pub fn decode_zone_image_rgba(
     decode_gfx_image(payload, width, height, format)?.into_top_level_rgba8()
 }
 
-/// A UI image decoded while its zone was read, as `(width, height, rgba)`.
 pub type ZoneUiRgba = (u32, u32, Arc<Vec<u8>>);
 
-/// UI images of games that ship no IWD archives (T6 streams its textures
-/// from image packages), decoded by their lane at load and keyed by
-/// namespace and lower-case material name.
 static ZONE_UI_IMAGES: RwLock<Vec<((asset_core::AssetNamespace, String), ZoneUiRgba)>> =
     RwLock::new(Vec::new());
 
-/// Makes `images` (material name → texels) the UI images of `namespace`.
 pub fn store_zone_ui_images(
     namespace: asset_core::AssetNamespace,
     images: impl IntoIterator<Item = (String, ZoneUiRgba)>,
@@ -1252,7 +1247,6 @@ pub fn store_zone_ui_images(
     );
 }
 
-/// The UI image [`store_zone_ui_images`] holds for `material`.
 pub fn zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> Option<ZoneUiRgba> {
     let name = crate::AssetRef::bare_name(material).to_ascii_lowercase();
     ZONE_UI_IMAGES
@@ -1263,7 +1257,6 @@ pub fn zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> O
         .map(|(_, image)| image.clone())
 }
 
-/// The top mip of an IWI file as RGBA8.
 pub fn decode_iwi_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     expand_top_level(decode_iwi_mips(bytes))
 }
@@ -1328,9 +1321,6 @@ pub fn decode_ui_image_from_main(
     Ok(None)
 }
 
-/// The `main/` directories a UI image is looked for in: the games root's
-/// before another title's (whose font atlases share the names), and within
-/// one title an already indexed directory first.
 fn ui_decode_mains(games_root: &Path) -> Vec<PathBuf> {
     let mut mains: Vec<PathBuf> = Vec::new();
     for mut group in asset_transport::game_mains_by_root(games_root) {
@@ -1348,6 +1338,19 @@ pub fn decode_map_preview(
     zone_ff: &Path,
     map_name: &str,
 ) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
+    if asset_transport::zone_game_for_path(zone_ff) == Some(asset_core::ZoneGame::T6) {
+        return Ok(zone_ui_image(
+            asset_core::AssetNamespace::T6,
+            &format!("loadscreen_{map_name}"),
+        )
+        .or_else(|| {
+            zone_ui_image(
+                asset_core::AssetNamespace::T6,
+                &format!("menu_{map_name}_map_select_final"),
+            )
+        })
+        .map(|(width, height, rgba)| (width, height, rgba.as_ref().clone())));
+    }
     let main = game_main_for_zone(zone_ff)?;
     let index = IwdIndex::open(&main)?;
     for stem in [
@@ -1557,7 +1560,6 @@ fn decode_iwi_mips(bytes: &[u8]) -> Result<DecodedMips, String> {
     decode_iwi_mips_with(bytes, false)
 }
 
-/// `keep_bc5` loads BC5 blocks as stored rather than as DXT5nm.
 fn decode_iwi_mips_with(bytes: &[u8], keep_bc5: bool) -> Result<DecodedMips, String> {
     if bytes.len() >= IWI_V8_HEADER_LEN
         && bytes[..3] == *b"IWi"
@@ -1811,8 +1813,6 @@ fn parse_iwi_header(bytes: &[u8]) -> Result<IwiHeaderInfo, String> {
                 mip0_start,
             })
         }
-        // T6: format, flags, u16 dimensions[3], gamma, maxGlossForMip[16],
-        // fileSizeForPicmip[8] — mips smallest first, like v13.
         27 => {
             if bytes.len() < 64 {
                 return Err("truncated IWI v27 header".into());
@@ -1834,8 +1834,6 @@ fn parse_iwi_header(bytes: &[u8]) -> Result<IwiHeaderInfo, String> {
     }
 }
 
-/// A whole IWI (any supported version) as a sampled texture, the way a
-/// catalog image decoded from an archive would be wrapped.
 pub fn decode_iwi_texture(
     bytes: &[u8],
     sampler_state: u8,
@@ -1854,17 +1852,6 @@ pub fn decode_iwi_texture(
     Ok(wrap_mips(&mips, data, wrap))
 }
 
-/// A T6 colour map with its specular map folded in, as a texture for the
-/// IW4 shaders.
-///
-/// T6 shades spec/gloss: metal keeps a near-black colour map and shows its
-/// colour through the specular map (RGB colour, gloss in alpha). IW4's
-/// shaders light a diffuse map that already looks like the surface, so a T6
-/// gun drawn with them is near black. In linear light each texel becomes
-/// `colour + specular × (1 − gloss)`: a rough surface reflects its specular
-/// colour broadly, much as a diffuse one does, while a glossy one keeps it for
-/// the specular term. Only the colour half of each block is re-encoded; BC3
-/// alpha blocks and BC1 punch-through blocks are kept as they are.
 pub fn decode_iwi_texture_t6_folded(
     color: &[u8],
     specular: &[u8],
@@ -1912,7 +1899,6 @@ pub fn decode_iwi_texture_t6_folded(
                     }
                     bcdec_rs::bc1(block, &mut tile, 16);
                 } else {
-                    // A BC3 colour block is four-colour whatever its endpoint order.
                     bcdec_rs::bc3(block, &mut tile, 16);
                 }
                 let (bx, by) = (
@@ -1952,9 +1938,6 @@ pub fn decode_iwi_texture_t6_folded(
     Ok(wrap_mips(&mips, data, wrap))
 }
 
-/// `specular × (1 − gloss)` in linear light, box-filtered down to 1×1, the
-/// largest level first.
-/// One level of a [`specular_pyramid`]: width, height and linear texels.
 type PyramidLevel = (usize, usize, Vec<[f32; 3]>);
 
 fn specular_pyramid(specular: &[u8]) -> Result<Vec<PyramidLevel>, String> {
@@ -2004,8 +1987,6 @@ fn srgb_byte_to_linear(v: u8) -> f32 {
     })[usize::from(v)]
 }
 
-/// Linear light to an sRGB value on the 0–255 scale, through a table fine
-/// enough that its steps stay under one 565 quantum.
 fn linear_to_srgb_byte(c: f32) -> f32 {
     const STEPS: usize = 4096;
     static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
@@ -2025,9 +2006,6 @@ fn linear_to_srgb_byte(c: f32) -> f32 {
     table[(c.clamp(0.0, 1.0) * STEPS as f32 + 0.5) as usize]
 }
 
-/// A four-colour BC1 block for 16 texels (0–255 per channel, row-major):
-/// endpoints at the extremes along the colours' principal axis, each texel
-/// the nearest of the four palette entries.
 fn encode_bc1_colour(texels: &[[f32; 3]; 16]) -> [u8; 8] {
     let mean: [f32; 3] = core::array::from_fn(|c| texels.iter().map(|t| t[c]).sum::<f32>() / 16.0);
     let mut cov = [[0f32; 3]; 3];
@@ -2096,9 +2074,6 @@ fn encode_bc1_colour(texels: &[[f32; 3]; 16]) -> [u8; 8] {
     out
 }
 
-/// A whole IWI as stored, for shaders of its own game: BC5 normal maps stay
-/// two-channel BC5 (`.rg` is the normal) and `use_srgb_reads` is the
-/// caller's (T6 shaders square their colour samples themselves).
 pub fn decode_iwi_texture_native(
     bytes: &[u8],
     sampler_state: u8,
@@ -2116,9 +2091,6 @@ pub fn decode_iwi_texture_native(
     Ok(wrap_mips(&mips, data, wrap))
 }
 
-/// `image` with every texel's alpha at one, in place in its blocks: BC2
-/// and BC3 alpha blocks become solid, and 8-bit RGBA texels take 255.
-/// Other formats (BC1 among them) are returned as they are.
 pub fn with_opaque_alpha(image: &Image) -> Image {
     let mut image = image.clone();
     let format = image.texture_descriptor.format;
@@ -2132,7 +2104,6 @@ pub fn with_opaque_alpha(image: &Image) -> Image {
             }
         }
         TextureFormat::Bc3RgbaUnorm | TextureFormat::Bc3RgbaUnormSrgb => {
-            // Both endpoints 255 and every index 0.
             for block in data.as_chunks_mut::<16>().0 {
                 block[..2].fill(0xff);
                 block[2..8].fill(0);
@@ -2151,7 +2122,6 @@ pub fn with_opaque_alpha(image: &Image) -> Image {
     image
 }
 
-/// A 1×1 texture of one colour, for a slot that has no texels of its own.
 pub fn solid_texture(rgba: [u8; 4], srgb: bool) -> Image {
     let mips = DecodedMips::single(1, 1, rgba.to_vec());
     let wrap = WrapRecipe {
@@ -2231,14 +2201,9 @@ enum PixelFormat {
     Bc1,
     Bc2,
     Bc3,
-    /// Two BC4 channels, x then y: T6 normal maps. Loaded as BC3 in the
-    /// DXT5nm layout the IW4 shaders sample (x in alpha, y in green).
     Bc5,
 }
 
-/// One BC5 block as a DXT5nm BC3 block. The x channel is a BC4 block, which
-/// is exactly a BC3 alpha block, so it is copied; y becomes the green of a
-/// four-colour BC1 block between its own extremes.
 fn bc5_block_to_dxt5nm(src: &[u8]) -> [u8; 16] {
     let mut out = [0u8; 16];
     out[..8].copy_from_slice(&src[..8]);
@@ -2441,6 +2406,11 @@ fn decode_blocks(
 pub fn lit_color(albedo_rgb: [f32; 3], lighting: [f32; 3]) -> [f32; 3] {
     let albedo = lighting_iw4::lit_albedo(albedo_rgb, [1.0, 1.0, 1.0]);
     lighting_iw4::lit_fragment_color(albedo, lighting, [0.0, 0.0, 0.0])
+}
+
+pub fn decode_iwi_cubemap_native(bytes: &[u8], srgb: bool) -> Result<Image, String> {
+    let (size, faces) = decode_iwi_cubemap(bytes)?;
+    Ok(pack_material_cubemap(size, &faces, srgb))
 }
 
 fn decode_iwi_cubemap(bytes: &[u8]) -> Result<(u32, CubemapFaces), String> {
@@ -3393,6 +3363,18 @@ fn claim(
         }
     }
     inline
+}
+
+pub fn plan_material_images_for_keys(
+    zone_ff: &Path,
+    catalog: &mut MaterialDefinitions,
+    keys: impl IntoIterator<Item = crate::MaterialKey>,
+    stage: &StageHandle,
+    pool: &TaskPool,
+) -> ImageDemandPlan {
+    let mut plan = ImageDemandPlan::new(zone_ff);
+    plan_images_for_keys(&mut plan, catalog, keys, stage, pool);
+    plan
 }
 
 pub fn plan_images_for_keys(

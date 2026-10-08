@@ -470,6 +470,58 @@ fn name(world: &World, id: i32) -> Result<String, String> {
         .ok_or_else(|| format!("effect id {id} was not loaded"))
 }
 
+fn fx_on_tag(
+    world: &mut World,
+    args: &[Value],
+    kind: entity_iw4::EntityEventKind,
+) -> Result<Value, String> {
+    let name = name(world, int(args, 0)?)?;
+    let entity = arg(args, 1)?.clone();
+    let tag = string(args, 2)?;
+    let presence = runtime(world).presence_of(&entity);
+    let fallback = (origin_of(world, &entity)?, [0.0, 0.0, 1.0]);
+    let mut frame = super::super::presence::settled(world);
+    let number = presence.and_then(|id| frame.gentity_number(id));
+    let dobj = presence.and_then(|id| {
+        frame
+            .entity_collision_capabilities()
+            .iter()
+            .find(|row| row.owner.script_model() == Some(id))?
+            .dobj
+            .as_ref()
+            .map(|dobj| (dobj.tag_bone(&tag), dobj.tag_world_pose(&tag)))
+    });
+    let (bone, pose) = dobj.unwrap_or((None, None));
+    let (origin, direction) = pose.unwrap_or(fallback);
+    let index = frame.effect_name_index(&name);
+    match (number, bone.and_then(|bone| i32::try_from(bone).ok())) {
+        (Some(number), Some(bone)) => {
+            let tick = world.resource::<crate::step::StepRequest>().tick;
+            crate::frame::FrameWorld::from_world(world).push_entity_event(
+                tick,
+                crate::EventAudience::All,
+                kind,
+                crate::EntityEventPayload {
+                    number,
+                    event_parm: i32::from(index) | bone << 8,
+                    origin,
+                    direction,
+                    ..Default::default()
+                },
+            );
+        }
+        _ if kind == entity_iw4::EntityEventKind::PLAY_FX_ON_TAG => world_event(
+            world,
+            entity_iw4::EntityEventKind::PLAY_FX,
+            index,
+            origin,
+            direction,
+        ),
+        _ => {}
+    }
+    Ok(Value::Undefined)
+}
+
 fn world_event(
     world: &mut World,
     kind: entity_iw4::EntityEventKind,
@@ -613,42 +665,36 @@ fn team_key(args: &[Value]) -> Result<String, String> {
     }
 }
 
-fn match_data_key(prefix: &str, keys: &[Value]) -> Result<String, String> {
-    let mut path = String::from(prefix);
-    for (i, key) in keys.iter().enumerate() {
-        path.push('.');
-        path.push_str(&match key {
-            Value::Int(n) => n.to_string(),
-            _ => string(keys, i)?,
-        });
+fn bind_match_data(
+    world: &mut World,
+    scope: super::super::match_data::Scope,
+    args: &[Value],
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("match data definition takes one schema name".into());
     }
-    Ok(path)
-}
-
-fn set_match_data(world: &mut World, prefix: &str, args: &[Value]) -> Result<Value, String> {
-    let (value, keys) = args.split_last().ok_or("wrong number of parameters")?;
-    let key = match_data_key(prefix, keys)?;
-    if !matches!(
-        value,
-        Value::Int(_) | Value::Float(_) | Value::String(_) | Value::LocalizedString(_)
-    ) {
-        return Err(format!(
-            "match data takes a number or string, not {}",
-            kind(value)
-        ));
-    }
-    runtime(world).engine.match_data.insert(key, value.clone());
-    Ok(Value::Undefined)
-}
-
-fn get_match_data(world: &mut World, prefix: &str, args: &[Value]) -> Result<Value, String> {
-    let key = match_data_key(prefix, args)?;
-    Ok(runtime(world)
+    let name = string(args, 0)?.replace('\\', "/").to_ascii_lowercase();
+    let store = world
+        .get_resource::<crate::PersistentDataStore>()
+        .ok_or("match data schema store is not installed")?;
+    let schema = store
+        .schemas()
+        .get(&name)
+        .cloned()
+        .ok_or_else(|| format!("match data schema '{name}' is not installed"))?;
+    runtime(world)
         .engine
         .match_data
-        .get(&key)
-        .cloned()
-        .unwrap_or(Value::Int(0)))
+        .bind(scope, Arc::clone(&schema))?;
+    let definition = &schema.definitions[0];
+    diag::info!(
+        Sim,
+        "match data schema bound: name={name} version={} checksum={} bytes={}",
+        definition.version,
+        definition.checksum,
+        definition.size
+    );
+    Ok(Value::Undefined)
 }
 
 fn weapon_facts(
@@ -1469,32 +1515,10 @@ fn register_sound_and_fx(registry: &mut NativeRegistry) {
         Ok(Value::Undefined)
     });
     registry.register(Function, "playfxontag", |world, _, args| {
-        let name = name(world, int(args, 0)?)?;
-        let entity = arg(args, 1)?.clone();
-        let tag = string(args, 2)?;
-        let presence = runtime(world).presence_of(&entity);
-        let fallback = (origin_of(world, &entity)?, [0.0, 0.0, 1.0]);
-        let mut frame = super::super::presence::settled(world);
-        let (origin, forward) = presence
-            .and_then(|id| {
-                frame
-                    .entity_collision_capabilities()
-                    .iter()
-                    .find(|row| row.owner.script_model() == Some(id))?
-                    .dobj
-                    .as_ref()?
-                    .tag_world_pose(&tag)
-            })
-            .unwrap_or(fallback);
-        let index = frame.effect_name_index(&name);
-        world_event(
-            world,
-            entity_iw4::EntityEventKind::PLAY_FX,
-            index,
-            origin,
-            forward,
-        );
-        Ok(Value::Undefined)
+        fx_on_tag(world, args, entity_iw4::EntityEventKind::PLAY_FX_ON_TAG)
+    });
+    registry.register(Function, "stopfxontag", |world, _, args| {
+        fx_on_tag(world, args, entity_iw4::EntityEventKind::STOP_FX_ON_TAG)
     });
     registry.register(Function, "playsoundatpos", |world, _, args| {
         let origin = vector(args, 0)?;
@@ -1802,17 +1826,35 @@ fn register_match(registry: &mut NativeRegistry) {
         drop(state);
         signal(world, MAP_RESTART)
     });
+    registry.register(Function, "setmatchdatadef", |world, _, args| {
+        bind_match_data(world, super::super::match_data::Scope::Match, args)
+    });
+    registry.register(Function, "setclientmatchdatadef", |world, _, args| {
+        bind_match_data(world, super::super::match_data::Scope::Client, args)
+    });
     registry.register(Function, "setmatchdata", |world, _, args| {
-        set_match_data(world, "match", args)
+        runtime(world)
+            .engine
+            .match_data
+            .set(super::super::match_data::Scope::Match, args)
     });
     registry.register(Function, "getmatchdata", |world, _, args| {
-        get_match_data(world, "match", args)
+        runtime(world)
+            .engine
+            .match_data
+            .get(super::super::match_data::Scope::Match, args)
     });
     registry.register(Function, "setclientmatchdata", |world, _, args| {
-        set_match_data(world, "client", args)
+        runtime(world)
+            .engine
+            .match_data
+            .set(super::super::match_data::Scope::Client, args)
     });
     registry.register(Function, "getclientmatchdata", |world, _, args| {
-        get_match_data(world, "client", args)
+        runtime(world)
+            .engine
+            .match_data
+            .get(super::super::match_data::Scope::Client, args)
     });
 }
 
@@ -1873,7 +1915,6 @@ fn register_level(registry: &mut NativeRegistry) {
         let mut origin = vector(args, origin_at)?;
         let mut forward = optional(args, orient_at, vector)?.unwrap_or([0.0, 0.0, 1.0]);
         let mut up = optional(args, orient_at + 1, vector)?;
-        // A foreign tactical insertion shows its own light, straight up.
         if let Some((light, at)) =
             crate::script::host::players::insertion_light(world, &name, origin)
         {
@@ -1955,12 +1996,7 @@ fn register_level(registry: &mut NativeRegistry) {
         "setslowmotion",
         super::scene_effects::set_slow_motion,
     );
-    presented![
-        "obituary",
-        "playfxontagforclients",
-        "stopfxontag",
-        "setclientnamemode",
-    ];
+    presented!["obituary", "playfxontagforclients", "setclientnamemode",];
     macro_rules! unavailable {
         ($reason:literal: $($name:literal),* $(,)?) => {$(
             registry.register(Function, $name, |world, _, _| {
@@ -1969,9 +2005,7 @@ fn register_level(registry: &mut NativeRegistry) {
         )*};
     }
     unavailable!("no script ranking service is connected": "sendranks", "setplayerteamrank");
-    unavailable!("no script skill-rating service is connected": "updateskill");
     unavailable!("no script match-data upload service is connected": "sendmatchdata", "sendclientmatchdata");
-    unavailable!("IW4 definition schemas are not supported by the local match-data store": "setmatchdatadef", "setclientmatchdatadef");
     unavailable!("IW4 lobby termination is not bound to the IW4L lobby lifecycle": "endlobby");
     unavailable!("IW4 party termination is not bound to the IW4L party lifecycle": "endparty");
 }

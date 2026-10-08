@@ -9,6 +9,7 @@ pub(crate) const DAMAGE: &str = "maps/mp/gametypes/_callbacksetup::codecallback_
 
 const VEHICLE_SLOTS: u8 = 8;
 const MPH: f32 = 17.6;
+const MAX_DRAG_SPEED: f32 = 60.0 * MPH;
 const TICK_S: f32 = crate::MATCH_TICK_MS as f32 / 1000.0;
 const ARRIVED: f32 = 4.0;
 const GUNNER_RANGE: f32 = 8192.0;
@@ -40,6 +41,11 @@ pub(crate) struct Heli {
     decel: f32,
     heading: [f32; 3],
     yaw_speed: f32,
+    yaw_accel: f32,
+    yaw_decel: f32,
+    yaw_overshoot: f32,
+    angle_vel: [f32; 3],
+    def_accel: f32,
     target_yaw: Option<f32>,
     goal_yaw: Option<f32>,
     look_at: Option<u64>,
@@ -111,11 +117,16 @@ impl Default for Heli {
             decel: 0.0,
             heading: [1.0, 0.0, 0.0],
             yaw_speed: 90.0,
+            yaw_accel: 25.0,
+            yaw_decel: 15.0,
+            yaw_overshoot: 0.0,
+            angle_vel: [0.0; 3],
+            def_accel: 0.0,
             target_yaw: None,
             goal_yaw: None,
             look_at: None,
-            max_pitch: 20.0,
-            max_roll: 30.0,
+            max_pitch: 25.0,
+            max_roll: 25.0,
             owner: None,
             compass: None,
             weapon: None,
@@ -192,13 +203,22 @@ fn fire_weapon(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Va
     let from = super::presence::tag_world(world, id, &tag)
         .map(|(origin, _)| origin)
         .unwrap_or_else(|| super::turrets::muzzle(world, id));
-    let aim = match args.get(1) {
+    let kind = crate::frame::FrameWorld::from_world(world)
+        .combat_facts_for(weapon)
+        .and_then(|f| weapon_iw4::fire_weapon_kind(f.weap_type, f.weap_class));
+    let bullet = matches!(kind, Some(weapon_iw4::FireWeaponKind::Bullet) | None);
+    let target = match args.get(1) {
         Some(target) if *target != Value::Undefined => {
             let target = super::natives::engine::entity_id(world, target)?;
             let offset = optional(args, 2, vector)?.unwrap_or([0.0; 3]);
             Some(TurretAim::Entity(target, offset))
         }
-        _ => turret,
+        _ => None,
+    };
+    let aim = if bullet {
+        turret.or(target)
+    } else {
+        target.or(turret)
     };
     let point = aim.and_then(|aim| aim_point(world, aim));
     let dir = point
@@ -206,10 +226,7 @@ fn fire_weapon(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Va
             glam::Vec3::from_array(std::array::from_fn(|i| p[i] - from[i])).try_normalize()
         })
         .map_or(heading, |d| d.to_array());
-    let kind = crate::frame::FrameWorld::from_world(world)
-        .combat_facts_for(weapon)
-        .and_then(|f| weapon_iw4::fire_weapon_kind(f.weap_type, f.weap_class));
-    if matches!(kind, Some(weapon_iw4::FireWeaponKind::Bullet) | None) {
+    if bullet {
         super::turrets::fire_bullet(world, id, from, dir, weapon, owner.map(crate::ClientId));
         return Ok(Value::Undefined);
     }
@@ -498,6 +515,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let frame = crate::frame::FrameWorld::from_world(world);
         let weapon = frame.vehicle_turret_weapon(&definition);
         let compass = frame.vehicle_compass(&definition).cloned();
+        let def_accel = frame.vehicle_accel(&definition).unwrap_or(0.0);
         spawn_vehicle(
             world,
             "script_vehicle",
@@ -508,6 +526,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 owner: Some(owner),
                 weapon,
                 compass,
+                def_accel,
                 ..Default::default()
             }),
         )
@@ -521,6 +540,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let frame = crate::frame::FrameWorld::from_world(world);
         let weapon = frame.vehicle_turret_weapon(&definition);
         let compass = frame.vehicle_compass(&definition).cloned();
+        let def_accel = frame.vehicle_accel(&definition).unwrap_or(0.0);
         let vehicle = spawn_vehicle(
             world,
             "script_vehicle",
@@ -530,6 +550,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             Some(Heli {
                 weapon,
                 compass,
+                def_accel,
                 ..Default::default()
             }),
         )?;
@@ -553,6 +574,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let frame = crate::frame::FrameWorld::from_world(world);
         let weapon = frame.vehicle_turret_weapon(&vehicle);
         let compass = frame.vehicle_compass(&vehicle).cloned();
+        let def_accel = frame.vehicle_accel(&vehicle).unwrap_or(0.0);
         spawn_vehicle(
             world,
             "script_vehicle",
@@ -563,6 +585,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 owner: Some(owner),
                 compass,
                 weapon,
+                def_accel,
                 ..Heli::default()
             }),
         )
@@ -628,7 +651,19 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "setyawspeed", |world, receiver, args| {
         let speed = float(args, 0)?.max(0.0);
-        heli(world, receiver)?.yaw_speed = speed;
+        let accel = float(args, 1)?.max(0.0);
+        let decel = optional(args, 2, float)?.map_or(accel, |decel| decel.max(0.0));
+        let overshoot = optional(args, 3, float)?;
+        if overshoot.is_some_and(|value| !(0.0..=1.0).contains(&value)) {
+            return Err("yaw overshoot must be between zero and one".into());
+        }
+        let heli = heli(world, receiver)?;
+        heli.yaw_speed = speed;
+        heli.yaw_accel = accel;
+        heli.yaw_decel = decel;
+        if let Some(overshoot) = overshoot {
+            heli.yaw_overshoot = overshoot;
+        }
         Ok(Value::Undefined)
     });
     registry.register(Method, "settargetyaw", |world, receiver, args| {
@@ -705,11 +740,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             return Err("SetDamageStage expects an integer stage".into());
         }
         int(args, 0)?;
-        super::registry::unavailable(
-            world,
-            "setdamagestage",
-            "helicopter damage-stage presentation is not implemented",
-        )
+        Ok(Value::Undefined)
     });
     registry.register(Method, "vehicleturretcontrolon", |world, receiver, args| {
         let client = world
@@ -862,6 +893,73 @@ fn approach_angle(from: f32, to: f32, step: f32) -> f32 {
     }
 }
 
+fn update_angle(angle: &mut f32, speed: &mut f32, target: f32, limits: [f32; 3], overshoot: f32) {
+    let [max_speed, accel, decel] = limits;
+    let delta = math_iw4::angle_subtract(target, *angle);
+    if delta * delta < 1e-4 && *speed * *speed < 0.0025 {
+        (*angle, *speed) = (target, 0.0);
+        return;
+    }
+    let (mut wanted, mut rate) = (max_speed, accel);
+    if *speed * delta >= 0.0
+        && decel > 0.0
+        && delta.abs() <= *speed * *speed / decel * 0.5 * (1.0 - overshoot)
+    {
+        (wanted, rate) = (0.0, decel);
+    }
+    if delta < 0.0 {
+        wanted = -wanted;
+    }
+    if rate * TICK_S <= speed.abs() || speed.abs() * TICK_S <= delta.abs() {
+        *speed = if wanted >= *speed {
+            (*speed + rate * TICK_S).min(wanted)
+        } else {
+            (*speed - rate * TICK_S).max(wanted)
+        };
+        *angle = math_iw4::angle_subtract(*angle + *speed * TICK_S, 0.0);
+    } else {
+        (*angle, *speed) = (target, 0.0);
+    }
+}
+
+fn body_tilt(
+    heli: &Heli,
+    velocity: [f32; 3],
+    yaw: f32,
+    speed_before: f32,
+    goal_left: f32,
+) -> [f32; 2] {
+    let moving =
+        heli.hover.is_some() || !heli.stop_at_goal || goal_left >= 15.0 || heli.speed >= 10.0 * MPH;
+    if !moving || heli.def_accel <= 0.0 {
+        return [0.0; 2];
+    }
+    let mut accel: [f32; 3] = std::array::from_fn(|i| (velocity[i] - heli.velocity[i]) / TICK_S);
+    let planar = velocity[0].hypot(velocity[1]);
+    if planar > f32::EPSILON {
+        let drag = (planar.min(MAX_DRAG_SPEED) / MAX_DRAG_SPEED).powi(2) * 100.0;
+        accel[0] += drag * velocity[0] / planar;
+        accel[1] += drag * velocity[1] / planar;
+    }
+    let length = accel.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let dir = accel.map(|v| v / if length > 0.0 { length } else { 1.0 });
+    let horizontal = accel[0].hypot(accel[1]);
+    let share = horizontal.min(heli.def_accel) / heli.def_accel;
+    let mut damping = 1.0;
+    if heli.stop_at_goal && heli.speed < speed_before && horizontal > 0.0 {
+        let ratio = planar / horizontal;
+        let threshold = share * 2.5 + (1.0 - share) * 3.5;
+        if ratio < threshold {
+            damping = ratio / threshold;
+        }
+    }
+    let (sin, cos) = yaw.to_radians().sin_cos();
+    let lean = (1.0 - share) * 0.1 + share;
+    let forward = (dir[1] * sin + dir[0] * cos) * damping;
+    let side = (dir[0] * sin - dir[1] * cos) * damping;
+    [heli.max_pitch * lean * forward, heli.max_roll * lean * side]
+}
+
 pub(crate) fn advance(world: &mut World) {
     {
         let mut runtime = world.resource_mut::<Runtime>();
@@ -911,6 +1009,7 @@ pub(crate) fn advance(world: &mut World) {
         let before = heli.speed;
         let mut notes = Vec::new();
         let mut next;
+        let mut goal_left = 0.0;
         match heli.goal.filter(|_| !(heli.arrived && heli.stop_at_goal)) {
             Some(goal) => {
                 let to: [f32; 3] = std::array::from_fn(|i| goal[i] - origin[i]);
@@ -926,7 +1025,7 @@ pub(crate) fn advance(world: &mut World) {
                     (heli.speed - heli.decel * TICK_S).max(wanted)
                 };
                 if dist > f32::EPSILON {
-                    if heli.turning >= 1.0 {
+                    if heli.turning >= 1.0 || heli.stop_at_goal {
                         heli.heading = to.map(|v| v / dist);
                     } else {
                         let desired = math_iw4::vect_to_angles(to);
@@ -948,6 +1047,7 @@ pub(crate) fn advance(world: &mut World) {
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f32>()
                     .sqrt();
+                goal_left = left;
                 if heli.near_goal > 0.0 && !heli.near_notified && left <= heli.near_goal {
                     heli.near_notified = true;
                     notes.push("near_goal");
@@ -981,15 +1081,33 @@ pub(crate) fn advance(world: &mut World) {
                     .then(|| math_iw4::vect_to_angles(heli.heading)[1]),
             )
             .unwrap_or(angles[1]);
-        let yaw = approach_angle(angles[1], desired_yaw, heli.yaw_speed * TICK_S);
-        let turn = math_iw4::angle_subtract(yaw, angles[1]) / TICK_S;
-        let accel = (heli.speed - before) / TICK_S;
-        let pitch = (accel / MPH)
-            .clamp(-heli.max_pitch, heli.max_pitch)
-            .clamp(-25.0, 25.0);
-        let roll = (turn * 0.25)
-            .clamp(-heli.max_roll, heli.max_roll)
-            .clamp(-35.0, 35.0);
+        let velocity: [f32; 3] = std::array::from_fn(|i| (next[i] - origin[i]) / TICK_S);
+        let mut angles = angles;
+        let yaw_vel = &mut heli.angle_vel[1];
+        update_angle(
+            &mut angles[1],
+            yaw_vel,
+            desired_yaw,
+            [heli.yaw_speed, heli.yaw_accel, heli.yaw_decel],
+            heli.yaw_overshoot,
+        );
+        let [pitch_target, roll_target] = body_tilt(heli, velocity, angles[1], before, goal_left);
+        let ratio = if heli.def_accel > 0.0 {
+            (heli.accel / heli.def_accel).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let angle_accel = ratio * 45.0 + (1.0 - ratio);
+        for (axis, target) in [(0, pitch_target), (2, roll_target)] {
+            update_angle(
+                &mut angles[axis],
+                &mut heli.angle_vel[axis],
+                target,
+                [45.0, angle_accel, angle_accel * 0.4],
+                0.0,
+            );
+        }
+        let [pitch, yaw, roll] = angles;
         match control {
             Some((view, attack)) => {
                 heli.turret = Some(TurretAim::Point(std::array::from_fn(|i| {
@@ -1011,7 +1129,7 @@ pub(crate) fn advance(world: &mut World) {
             heli.on_target = true;
             notes.push("turret_on_target");
         }
-        heli.velocity = std::array::from_fn(|i| (next[i] - origin[i]) / TICK_S);
+        heli.velocity = velocity;
         let reached_node = (heli.path_running && heli.arrived)
             .then_some(heli.path_node)
             .flatten();

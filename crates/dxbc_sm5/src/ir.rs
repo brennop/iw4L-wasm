@@ -1,11 +1,3 @@
-//! Shader Model 4/5 instructions decoded into operands.
-//!
-//! An operand token holds the component count and selection (mask,
-//! swizzle or single component), the register type and how each of its
-//! up-to-three indices is represented (immediate, relative to another
-//! operand, or both). Bit 31 announces an extended operand token carrying
-//! the source modifier (negate, absolute).
-
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
@@ -42,7 +34,6 @@ impl fmt::Display for IrError {
     }
 }
 
-/// `D3D10_SB_OPERAND_TYPE`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RegisterType {
     Temp,
@@ -103,18 +94,12 @@ impl RegisterType {
     }
 }
 
-/// How an operand picks its components.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Components {
-    /// A scalar or component-less operand (`sampler`, `null`, ...).
     None,
-    /// A one-component operand (an immediate scalar, a scalar input).
     One,
-    /// A destination write mask: bit `i` writes component `i`.
     Mask(u8),
-    /// A source swizzle: component `i` reads `swizzle[i]`.
     Swizzle([u8; 4]),
-    /// A source reading one component.
     Select(u8),
 }
 
@@ -137,12 +122,10 @@ pub struct Operand {
     pub components: Components,
     pub indices: Vec<Index>,
     pub modifier: Modifier,
-    /// The values of an immediate operand, as raw bits.
     pub immediate: Vec<u32>,
 }
 
 impl Operand {
-    /// The first index as an immediate register number.
     pub fn register_number(&self) -> Option<u32> {
         match self.indices.first()? {
             Index::Immediate(n) => Some(*n),
@@ -151,9 +134,6 @@ impl Operand {
     }
 }
 
-/// A decoded instruction: its opcode, control bits, any extended opcode
-/// tokens and its operands. Declarations that carry extra raw tokens after
-/// their operand keep them in `extra`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodedInstruction {
     pub opcode: OpcodeName,
@@ -164,12 +144,10 @@ pub struct DecodedInstruction {
 }
 
 impl DecodedInstruction {
-    /// `_sat`: the result is clamped to [0, 1].
     pub fn saturate(&self) -> bool {
         self.controls & 0x4 != 0
     }
 
-    /// `if`, `breakc`, `discard`, ...: true when the test is "non-zero".
     pub fn test_nonzero(&self) -> bool {
         self.controls & 0x80 != 0
     }
@@ -272,20 +250,13 @@ impl Cursor<'_> {
     }
 }
 
-/// Opcodes whose operand list is not just "operands until the end".
 fn raw_layout(opcode: u16) -> Option<RawLayout> {
     Some(match opcode {
-        // customdata: everything after the length is data.
         0x35 => RawLayout::AllRaw { skip: 2 },
-        // dcl_temps, dcl_global_flags: raw counts or nothing.
         0x68 => RawLayout::AllRaw { skip: 1 },
         0x6a => RawLayout::AllRaw { skip: 1 },
-        // dcl_indexable_temp: register, size, components.
         0x69 => RawLayout::AllRaw { skip: 1 },
-        // dcl_resource: operand, then the return type token.
         0x58 => RawLayout::OperandThenRaw,
-        // dcl_input_siv / dcl_input_sgv / dcl_input_ps_s*v / dcl_output_s*v:
-        // operand, then the system value name.
         0x60 | 0x61 | 0x63 | 0x64 | 0x66 | 0x67 => RawLayout::OperandThenRaw,
         _ => return None,
     })

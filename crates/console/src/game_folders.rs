@@ -1,7 +1,3 @@
-//! The Game Folders options page: the install folder of each title whose
-//! content is borrowed, picked with the system folder dialog. Content is
-//! found at startup, so a new folder is searched from the next launch.
-
 use std::path::{Path, PathBuf};
 #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,13 +6,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use bevy::prelude::*;
 use frame::OtherGame;
 
-/// The settings key a game's folder is stored under.
 fn settings_key(game: OtherGame) -> String {
     format!("game_folder_{}", game.key())
 }
 
-/// Parses a `game_folder_*` settings line into `settings`; false for any
-/// other key.
 pub(crate) fn parse_game_folder(
     key: &str,
     value: &str,
@@ -32,7 +25,6 @@ pub(crate) fn parse_game_folder(
     true
 }
 
-/// The `game_folder_*` settings lines.
 pub(crate) fn serialize_game_folders(settings: &frame::GameSettings) -> Vec<String> {
     OtherGame::ALL
         .into_iter()
@@ -43,8 +35,6 @@ pub(crate) fn serialize_game_folders(settings: &frame::GameSettings) -> Vec<Stri
         .collect()
 }
 
-/// The chosen install folders in the saved settings, for discovery to
-/// search before the game starts loading content.
 pub fn stored_game_folders(artifacts: &Path) -> Vec<PathBuf> {
     let Some(path) = crate::user_settings::settings_path(artifacts) else {
         return Vec::new();
@@ -74,7 +64,6 @@ fn zone_game(game: OtherGame) -> asset_transport::ZoneGame {
     }
 }
 
-/// Folder dialogs run on their own threads; their picks arrive here.
 #[derive(Resource)]
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) struct FolderPicks {
@@ -128,7 +117,6 @@ impl FolderPicks {
     }
 }
 
-/// The last `chars` characters of a path, so it fits on one menu line.
 fn tail(text: &str, chars: usize) -> String {
     let count = text.chars().count();
     if count <= chars {
@@ -138,9 +126,7 @@ fn tail(text: &str, chars: usize) -> String {
     format!("...{kept}")
 }
 
-/// What the page says about a game's folder.
 fn folder_line(games_root: Option<&Path>, game: OtherGame, folder: &str) -> String {
-    // What fits between the page's left edge and its label column.
     const WIDTH: usize = 40;
     if !folder.is_empty() {
         let path = Path::new(folder);

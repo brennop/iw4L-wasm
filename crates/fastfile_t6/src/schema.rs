@@ -1,11 +1,3 @@
-//! The T6 load plan (`schema/t6.sexp`) parsed into op trees.
-//!
-//! One `(asset …)` per loader. Inside it, `(load S …)` is `Load_S`,
-//! `(array D …)` is `LoadArray_D`, `(ptrarray D …)` is `LoadPtrArray_D` and
-//! `(loadptr S …)` is the asset's `LoadPtr_S`. Names are resolved to indices
-//! once, per asset: every loader has its own struct variables, as the
-//! generated loaders do.
-
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -47,8 +39,6 @@ pub enum Eval {
     Op(BinOp, Box<Eval>, Box<Eval>),
     Var {
         var: usize,
-        /// `(offset, deref)`: add the member offset, then follow the pointer
-        /// stored there when the member is not the last of the chain.
         steps: Vec<(u32, bool)>,
         indices: Vec<(Eval, u32)>,
         size: u8,
@@ -68,7 +58,6 @@ pub enum Op {
     Push(u8),
     Pop,
     If(Eval, Vec<Op>),
-    /// `if / else if / else`: `None` is the trailing `else`.
     Chain(Vec<(Option<Eval>, Vec<Op>)>),
     Block(u8, Vec<Op>),
     IfNonZero(u32, Vec<Op>),
@@ -144,10 +133,8 @@ pub struct ArrayFn {
 #[derive(Debug)]
 pub struct PtrArrayFn {
     pub size: u32,
-    /// `Load_S` for the element when it is a non-leaf struct.
     pub load: Option<usize>,
     pub reusable: bool,
-    /// The element is itself an asset: each entry is a nested `LoadPtr`.
     pub asset: Option<usize>,
     pub align: Eval,
 }
@@ -286,7 +273,6 @@ fn tokenize(src: &str) -> Result<Vec<Sx<'_>>, SchemaError> {
     Ok(top)
 }
 
-/// Name → index tables for one asset, filled on first sight.
 #[derive(Default)]
 struct Names<'a> {
     loads: Vec<&'a str>,

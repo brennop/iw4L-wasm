@@ -139,6 +139,7 @@ fn launch(
     cwd: &Path,
     run: &Path,
     games: &Path,
+    descriptor: &Path,
     role: &'static str,
 ) -> Result<Player> {
     let directory = run.join(role);
@@ -158,7 +159,7 @@ fn launch(
     let child = command
         .arg("menu")
         .current_dir(cwd)
-        .env("IW4L_COMMUNITY", "community-dev.iw4l-server")
+        .env("IW4L_COMMUNITY", descriptor)
         .env("IW4L_GAMES", games)
         .env("IW4L_ARTIFACTS_DIR", directory.join("iw4l-artifacts"))
         .env("IW4L_SETTINGS_PATH", directory.join("settings.cfg"))
@@ -193,7 +194,11 @@ pub fn run(root: &Path, source: &Path) -> Result<bool> {
         .join("context/simulated-iw4l-folder")
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    let descriptor = cwd.join("community-dev.iw4l-server");
+    let descriptor = cwd.join(
+        std::env::var_os("IW4L_COMMUNITY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("community-dev.iw4l-server")),
+    );
     let bytes =
         fs::read_to_string(&descriptor).map_err(|e| format!("{}: {e}", descriptor.display()))?;
     let community: updater::Community = toml::from_str(&bytes).map_err(|e| e.to_string())?;
@@ -242,7 +247,7 @@ pub fn run(root: &Path, source: &Path) -> Result<bool> {
     }
     crate::report::write(&run, &manifest)?;
     println!("run: {}", run.display());
-    let outcome = execute(&binary, &cwd, &run, &games, &mut manifest);
+    let outcome = execute(&binary, &cwd, &run, &games, &descriptor, &mut manifest);
     manifest["result"] = if outcome.is_ok() { "passed" } else { "failed" }.into();
     if let Err(error) = &outcome {
         manifest["failure"] = error.clone().into();
@@ -257,16 +262,17 @@ fn execute(
     cwd: &Path,
     run: &Path,
     games: &Path,
+    descriptor: &Path,
     manifest: &mut Value,
 ) -> Result<()> {
-    let mut host = launch(binary, cwd, run, games, "host")?;
+    let mut host = launch(binary, cwd, run, games, descriptor, "host")?;
     host.send(
         "set ui_mapname iw4:mp_boneyard; set ui_gametype dm; ui_create_lobby; ui_lobby_privacy",
     )?;
     let status = host.wait(|s, _| field(s, "state") == Some("hosting"))?;
     let room = field(&status, "room").ok_or("missing room ID")?.to_owned();
     manifest["room"] = room.clone().into();
-    let mut client = launch(binary, cwd, run, games, "client")?;
+    let mut client = launch(binary, cwd, run, games, descriptor, "client")?;
     client.send(&format!(
         "set ui_mapname iw4:mp_boneyard; set ui_gametype dm; ui_join_lobby_id {room}"
     ))?;

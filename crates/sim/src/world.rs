@@ -284,9 +284,6 @@ pub struct WeaponSetup {
     pub realm: crate::script::Realm,
     pub base: String,
     pub attachments: Vec<String>,
-    /// The script-realm weapon a class names in this one's place, when its
-    /// own name means nothing to the scripts (`sticky_grenade_mp` →
-    /// `semtex_mp`).
     pub stand_in: Option<String>,
 }
 
@@ -316,6 +313,7 @@ pub struct SimContentBuilder {
     weapon_script_aliases: std::collections::BTreeMap<String, u32>,
     vehicle_turrets: std::collections::BTreeMap<String, String>,
     vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
+    vehicle_accel: std::collections::BTreeMap<String, f32>,
     weapon_setups: Arc<[Option<WeaponSetup>]>,
     weapon_world_models: Vec<(String, Vec<String>)>,
     shield_models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
@@ -445,6 +443,10 @@ impl SimContentBuilder {
         rows: impl IntoIterator<Item = (String, ([String; 2], [i32; 2]))>,
     ) {
         self.vehicle_compass = rows.into_iter().collect();
+    }
+
+    pub fn set_vehicle_accel(&mut self, rows: impl IntoIterator<Item = (String, f32)>) {
+        self.vehicle_accel = rows.into_iter().collect();
     }
 
     pub fn set_vehicle_turrets(&mut self, turrets: Vec<(String, String)>) {
@@ -1257,6 +1259,10 @@ impl SimState {
         self.content.data.vehicle_compass.get(name)
     }
 
+    pub fn vehicle_accel(&self, name: &str) -> Option<f32> {
+        self.content.data.vehicle_accel.get(name).copied()
+    }
+
     pub fn vehicle_turret_weapon(&self, vehicle: &str) -> Option<u32> {
         let path = self.content.data.vehicle_turrets.get(vehicle)?;
         self.weapon_index_by_script_name(path.rsplit('/').next().unwrap_or(path))
@@ -1756,10 +1762,7 @@ impl SimState {
         mask: u32,
         exclude: Option<crate::AuthorityModelOwner>,
     ) -> trace_iw4::Trace {
-        self.trace_clip_maps_glass(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_mesh,
+        self.trace_world_hull_except(
             movement_iw4::GroundTraceInput {
                 start,
                 end,
@@ -1767,6 +1770,20 @@ impl SimState {
                 maxs: [0.0; 3],
                 tracemask: mask,
             },
+            exclude,
+        )
+    }
+
+    pub(crate) fn trace_world_hull_except(
+        &self,
+        input: movement_iw4::GroundTraceInput,
+        exclude: Option<crate::AuthorityModelOwner>,
+    ) -> trace_iw4::Trace {
+        self.trace_clip_maps_glass(
+            &self.content.data.clip_brushes,
+            &self.content.data.clip_bsp,
+            &self.content.data.clip_mesh,
+            input,
             false,
             exclude,
         )
@@ -1921,6 +1938,32 @@ impl SimState {
             hit,
             &self.model_movement_brushes_where(|row| Some(row.owner) != exclude),
             input,
+        )
+    }
+
+    pub fn penetrations(
+        &self,
+        input: movement_iw4::GroundTraceInput,
+        contacts: &mut movement_iw4::recovery::ContactBuffer,
+    ) -> movement_iw4::recovery::Coverage {
+        let linked: Vec<_> = self
+            .entity_collision_capabilities
+            .iter()
+            .flat_map(|row| row.solid_brushes().iter().cloned())
+            .collect();
+        let models = self.model_movement_brushes_where(|_| true);
+        crate::penetration::contacts(
+            &crate::penetration::RecoveryScene {
+                brushes: &self.content.data.clip_brushes,
+                bsp: &self.content.data.clip_bsp,
+                mesh: &self.content.data.clip_mesh,
+                cmodels: &self.content.data.clip_cmodels.models,
+                linked: &linked,
+                models: &models,
+                glass_is_solid: &|piece| self.world_objects.glass_is_solid(u32::from(piece)),
+            },
+            input,
+            contacts,
         )
     }
 
@@ -3426,6 +3469,14 @@ impl SimState {
             event,
             payload,
         });
+    }
+
+    pub fn entity_events(&self) -> &[EntityEventRecord] {
+        &self.entity_events
+    }
+
+    pub fn next_entity_event_sequence(&self) -> EventSequence {
+        self.next_entity_event
     }
 
     pub fn pellet_fx(&self) -> &[crate::PelletFxRecord] {

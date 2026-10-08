@@ -461,7 +461,7 @@ pub(super) fn hold_image_plan(
 
 impl HeldImagePlan {
     /// Put the plan on the load pool now, with every claim it made.
-    fn enqueue(self, progress: &LoadProgress) -> PendingImages {
+    pub(super) fn enqueue(self, progress: &LoadProgress) -> PendingImages {
         let Self { label, plan, job } = self;
         let job = job.enqueued();
         let progress = progress.clone();
@@ -842,11 +842,6 @@ pub(super) fn walk_t5_weapon_common(
     }
 }
 
-/// The T6 `common_mp` under the games root, walked for its weapons only.
-/// They carry no models or sounds of their own; the registry dresses them
-/// in IW4 stand-ins once they are absorbed.
-/// The class tables of a T6 install: `mp/statstable.csv` ships in
-/// `patch_mp`, not `common_mp`.
 fn t6_class_tables(
     root: &asset_transport::GamesRoot,
     report: &mut Vec<String>,
@@ -883,6 +878,7 @@ fn t6_class_tables(
         .filter(|table| {
             asset_game::is_stats_table_name(&table.name)
                 || table.name.eq_ignore_ascii_case("mp/attachmentTable.csv")
+                || table.name.eq_ignore_ascii_case("mp/mapstable.csv")
         })
         .collect();
     report.push(format!(
@@ -945,11 +941,6 @@ pub(super) fn walk_t6_weapon_bundle(
 
 const T6_RUNTIME_DECALS: [&str; 2] = ["mc/mtl_clan_tag", "mc/mtl_player_icon"];
 
-/// Binds a T6 walk's models to the IW4 pool: each T6 material becomes a
-/// stand-in material over the first material of its weapon's IW4 model, with
-/// the T6 colour, normal and specular maps (flat or neutral texels where it
-/// has none); each model then joins the first-person or world catalog in the
-/// IW4 namespace, where T6 weapons resolve their content.
 pub(super) fn bind_t6_content(
     content: crate::lane::t6::T6Content,
     weapons: &WeaponBuild,
@@ -978,9 +969,6 @@ pub(super) fn bind_t6_content(
                 } else if model.view {
                     &fpv.get(Iw4, weapons.gun_xmodel_of(id)?)?.material_keys
                 } else {
-                    // A stand-in with no world model of its own (IW4's
-                    // tactical insertion is planted by script) lends its
-                    // first-person model's.
                     match weapons
                         .world_model_of(id)
                         .and_then(|name| world.get(Iw4, name))
@@ -989,10 +977,6 @@ pub(super) fn bind_t6_content(
                         None => &fpv.get(Iw4, weapons.gun_xmodel_of(id)?)?.material_keys,
                     }
                 };
-                // The gun's (or arms') lit body: the material binding both a
-                // colour and a normal map, not a sight, glow or decal. The
-                // T6 material keeps the donor's draw states, so an opaque
-                // body is preferred over glass or a lens.
                 let lit_bodies: Vec<usize> = keys
                     .iter()
                     .flatten()
@@ -1012,9 +996,6 @@ pub(super) fn bind_t6_content(
                         has(asset_material::TS_COLOR_MAP) && has(asset_material::TS_NORMAL_MAP)
                     })
                     .collect();
-                // Glass and lenses sort after the opaque surfaces (and draw
-                // without depth writes); a body's lit techniques may still
-                // include additive light passes, so its sort tells it apart.
                 lit_bodies
                     .into_iter()
                     .min_by_key(|&index| materials.materials[index].sort_key)
@@ -1040,8 +1021,6 @@ pub(super) fn bind_t6_content(
             .iter()
             .map(|name| {
                 let name = name.as_ref()?;
-                // The emblem and clan-tag decals take texels the game draws per
-                // player at runtime; there is nothing to show on them here.
                 if T6_RUNTIME_DECALS.contains(&name.as_str()) {
                     return None;
                 }
@@ -1050,8 +1029,6 @@ pub(super) fn bind_t6_content(
                     return Some(asset_core::WalkLocalMaterialIndex::from_walk(index));
                 }
                 let captured = content.materials.get(name)?;
-                // A model draws with its own T6 technique set, the world
-                // model sharing the first-person model's material.
                 if let Some(&index) = bound.get(&(name.clone(), true))
                     && captured.native.is_some()
                 {
@@ -1061,8 +1038,6 @@ pub(super) fn bind_t6_content(
                 if let Some(native) = &captured.native
                     && let Some(set) = content.techsets.get(&native.technique_set)
                 {
-                    // A material drawn only emissive (an optic's reticle)
-                    // takes the emissive state's blend.
                     let (draw, state) = match (native.lit_state, native.emissive_state) {
                         (None, Some(emissive)) => {
                             (asset_material::t6_techset::T6Draw::Emissive, Some(emissive))
@@ -1109,8 +1084,6 @@ pub(super) fn bind_t6_content(
                         |(image, texture)| (image, texture, true),
                     )),
                 };
-                // The world model's stand-in is a material of its own: the
-                // same name would replace the first-person model's.
                 let stand_in_name = if model.view {
                     name.clone()
                 } else {
@@ -1136,12 +1109,8 @@ pub(super) fn bind_t6_content(
     )
 }
 
-/// IW4's own glow effect, whose material lends T6 effect materials their
-/// draw states (additive, emissive).
 const T6_FX_DONOR_EFFECT: &str = "misc/glow_stick_glow_green";
 
-/// T6 effects join the IW4 catalog; each material their sprites draw is an
-/// IW4 glow material wearing the T6 colour map.
 pub(super) fn bind_t6_fx(
     effects: Vec<asset_game::T6FxCapture>,
     fx_materials: std::collections::BTreeMap<String, crate::lane::t6::T6MaterialCapture>,
@@ -1325,7 +1294,6 @@ pub(super) fn load_localized_strings_beside(
         .and_then(|zone| zone.path.parent()?.file_name()?.to_str().map(str::to_owned));
     let mut plan = Vec::new();
     for (namespace, version, names) in lanes {
-        // Treyarch keeps its strings in per-language zones (`english/en_*`).
         let found: Vec<_> = if matches!(
             namespace,
             asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6

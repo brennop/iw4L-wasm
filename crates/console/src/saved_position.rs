@@ -1,6 +1,3 @@
-//! `save`, `load` and `loadspawn`: a practice position for the local player,
-//! put back with the same authority write as `move` (needs cheats).
-
 use bevy::prelude::*;
 use net::{
     ClientActionInbox, LocalPresentClient, LookState, PresentedSnapshot, look_angles_from_degrees,
@@ -9,8 +6,6 @@ use sim::ClientAction;
 
 use crate::{ConsoleCommand, ConsoleLine, ConsoleRegistry, ConsoleSettings, ConsoleState};
 
-/// The saved origin and `(pitch, yaw, roll)` view angles, and whether every
-/// respawn is moved to them.
 #[derive(Resource, Default)]
 pub(crate) struct SavedPosition {
     saved: Option<([f32; 3], [f32; 3])>,

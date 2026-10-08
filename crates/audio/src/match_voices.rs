@@ -125,6 +125,18 @@ const T5_LINES: &[(&str, &str)] = &[
     ("tm_death", "tdm_start"),
 ];
 
+const T6_LINES: &[(&str, &str)] = &[
+    ("captureflag", "ctf_start"),
+    ("demolition", "demo_start"),
+    ("domination", "dom_start"),
+    ("freeforall", "ffa_start"),
+    ("headquarters", "hq_start"),
+    ("obj_defend", "defend_start"),
+    ("obj_destroy", "destroy_start"),
+    ("searchdestroy", "sd_start"),
+    ("tm_death", "tdm_start"),
+];
+
 #[derive(Resource, Default)]
 pub(crate) struct AnnouncerRoutes(HashMap<String, (AssetNamespace, String)>);
 
@@ -149,7 +161,8 @@ impl AnnouncerRoutes {
         let lines: &[(&str, &str)] = match namespace {
             AssetNamespace::Iw4 => return Self::default(),
             AssetNamespace::T5 => T5_LINES,
-            AssetNamespace::Iw5 | AssetNamespace::T6 => &[],
+            AssetNamespace::T6 => T6_LINES,
+            AssetNamespace::Iw5 => &[],
         };
         let Some(native) = native else {
             return Self::default();

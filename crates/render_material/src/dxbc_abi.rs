@@ -1,13 +1,3 @@
-//! The pass ABI of a DXBC (Shader Model 4/5) pass: T6 technique passes, run
-//! through the same constant arena and texture tables as SM3 passes.
-//!
-//! A DXBC stage reads constant-buffer rows (`cb2[5]`) rather than numbered
-//! registers. The rows a stage reads, in sorted order, are numbered from 0
-//! and those numbers are the `destination` registers its arguments bind; the
-//! texture/sampler pairs the program samples are numbered the same way. The
-//! importer that builds the pass arguments numbers them identically (see
-//! [`dxbc_constant_rows`] and [`dxbc_texture_slots`]).
-
 use std::collections::BTreeSet;
 
 use asset_iw4::vertex_decl as vd;
@@ -24,13 +14,12 @@ use crate::sm3_abi::{
 use crate::stage::RuntimeShaderStage;
 use crate::vertex_decl::RuntimeVertexDecl;
 
-/// A shader program in a `DXBC` container rather than a D3D9 token stream.
+pub const CODE_T6_REFLECTION_SH: [u16; 3] = [0x303, 0x304, 0x305];
+
 pub fn is_dxbc_program(program: &[u8]) -> bool {
     program.starts_with(b"DXBC")
 }
 
-/// The constant-buffer rows a stage reads, in the order its virtual
-/// registers number them.
 pub fn dxbc_constant_rows(shader: &Shader) -> Result<Vec<ConstantRow>, PassAbiRefusal> {
     Ok(shader
         .constant_rows()
@@ -39,8 +28,6 @@ pub fn dxbc_constant_rows(shader: &Shader) -> Result<Vec<ConstantRow>, PassAbiRe
         .collect())
 }
 
-/// The texture/sampler pairs a pass samples, both stages together, in the
-/// order its virtual sampler registers number them.
 pub fn dxbc_texture_slots(
     vertex: &Shader,
     pixel: &Shader,
@@ -56,8 +43,6 @@ pub fn dxbc_texture_slots(
     Ok(slots.into_iter().collect())
 }
 
-/// The T5/T6 reflection probe is bound by custom sampler flag 0x01 to
-/// texture register 15.
 const REFLECTION_PROBE_FLAG: u8 = 0x01;
 const REFLECTION_PROBE_TEXTURE: u32 = 15;
 
@@ -75,17 +60,13 @@ fn semantic_of(name: &str, index: u32) -> Option<Semantic> {
     })
 }
 
-/// The WGSL that turns an IW4 packed-vertex attribute into what a T6 vertex
-/// shader reads for `semantic`:
-///
-/// * texture coordinates: two halves, `u` in the high 16 bits;
-/// * normals and tangents (`NORMAL`, `TEXCOORD2+`): IW4 scaled bytes
-///   (`(b - 127) * (w + 192) / 32385`) re-encoded the way T6's unorm
-///   10:10:10 fields read (`n / 2`, plus one when negative), which its
-///   shaders decode with `x >= 0.5 ? 2x - 2 : 2x`;
-/// * position: `xyz` and the binormal sign in `w`;
-/// * colour: the T6 bytes as stored.
-fn vertex_input(attribute: &VertexAttribute, register: u32) -> VertexInput {
+const BAKED_LIGHTING: Semantic = Semantic {
+    usage: vd::D3DDECLUSAGE_TEXCOORD,
+    usage_index: 1,
+};
+const UNIT_BAKED_LIGHTING: f32 = 0.176_776_7;
+
+fn vertex_input(attribute: &VertexAttribute, register: u32, vertex_type: u8) -> VertexInput {
     let location = attribute.location;
     let a = format!("attribute_{location}");
     let (attribute_type, expression) = match attribute.layout.decl_type {
@@ -94,8 +75,10 @@ fn vertex_input(attribute: &VertexAttribute, register: u32) -> VertexInput {
             let unit = format!(
                 "((vec3<f32>({a}.xyz) - vec3<f32>(127.0)) * ((f32({a}.w) + 192.0) / 32385.0))"
             );
-            let expression = if attribute.semantic.usage == vd::D3DDECLUSAGE_TEXCOORD
-                && attribute.semantic.usage_index < 2
+            let expression = if attribute.semantic == BAKED_LIGHTING {
+                format!("vec4<f32>(vec3<f32>({UNIT_BAKED_LIGHTING}), 1.0)")
+            } else if attribute.semantic.usage == vd::D3DDECLUSAGE_TEXCOORD
+                && attribute.semantic.usage_index == 0
             {
                 format!("vec4<f32>(unpack2x16float({packed}).yx, 0.0, 1.0)")
             } else {
@@ -104,6 +87,13 @@ fn vertex_input(attribute: &VertexAttribute, register: u32) -> VertexInput {
                 )
             };
             ("vec4<u32>", expression)
+        }
+        vd::D3dDeclType::Float4
+            if vertex_type >= 2
+                && attribute.semantic.usage == vd::D3DDECLUSAGE_TEXCOORD
+                && attribute.semantic.usage_index == 1 =>
+        {
+            ("vec4<f32>", format!("vec4<f32>({a}.zw, 0.0, 1.0)"))
         }
         vd::D3dDeclType::Float4 | vd::D3dDeclType::UByte4N | vd::D3dDeclType::D3dColor => {
             ("vec4<f32>", a)
@@ -144,8 +134,6 @@ fn constant_bindings(
                 } if s == stage && destination == register => {
                     Some(ConstantSource::Material { name_hash })
                 }
-                // A DXBC stage can read any rows of a matrix, so its
-                // arguments name the row they start at.
                 RuntimeArgumentBinding::CodeConstant {
                     stage: s,
                     destination,
@@ -170,8 +158,6 @@ fn constant_bindings(
         .collect()
 }
 
-/// The pass's program ABI, for the arena and pipeline layout, and the
-/// lowering ABI the WGSL is generated against.
 pub fn build_dxbc_pass_abi(
     vertex: &Shader,
     pixel: &Shader,
@@ -197,7 +183,7 @@ pub fn build_dxbc_pass_abi(
             }
             continue;
         };
-        vertex_inputs.push(vertex_input(attribute, element.register));
+        vertex_inputs.push(vertex_input(attribute, element.register, vertex_type));
         used_attributes.push(*attribute);
     }
 
@@ -223,10 +209,12 @@ pub fn build_dxbc_pass_abi(
                 }
                 _ => None,
             })
-            .or_else(|| {
-                (custom_sampler_flags & REFLECTION_PROBE_FLAG != 0
-                    && slot.texture == REFLECTION_PROBE_TEXTURE)
-                    .then_some(SamplerSource::SurfaceReflectionProbe)
+            .or_else(|| match (slot.texture, custom_sampler_flags) {
+                (REFLECTION_PROBE_TEXTURE, flags) if flags & REFLECTION_PROBE_FLAG != 0 => {
+                    Some(SamplerSource::SurfaceReflectionProbe)
+                }
+                (13, flags) if flags & 2 != 0 => Some(SamplerSource::SurfaceSecondaryLightmap),
+                _ => None,
             })
             .ok_or(PassAbiRefusal::SamplerRegisterUnbound { register })?;
         samplers.push(SamplerBinding {
@@ -237,7 +225,6 @@ pub fn build_dxbc_pass_abi(
                 TextureDimension::Cube => SamplerTextureDimension::Cube,
                 TextureDimension::D3 => SamplerTextureDimension::D3,
             },
-            // T6 shaders compare shadow-map depth themselves.
             depth_compare: false,
         });
     }
@@ -249,17 +236,6 @@ pub fn build_dxbc_pass_abi(
         .iter()
         .enumerate()
         .filter_map(|(slot, binding)| match binding.source {
-            // IW4's reflection probes are LDR and gamma-space; T6 shaders
-            // read linear colour divided by an HDR alpha.
-            SamplerSource::SurfaceReflectionProbe => Some(SampleAdapter {
-                slot,
-                opaque_alpha: true,
-                square_rgb: true,
-                rgb_scale: 1.0,
-            }),
-            // T6 lights a model with its light-grid sample as `32 s²`;
-            // IW4's volume holds what IW4 lights with as `(2 s)²`. Read
-            // through 1/√8, T6's lighting comes out as IW4's.
             source if source == model_lighting => Some(SampleAdapter {
                 slot,
                 opaque_alpha: false,

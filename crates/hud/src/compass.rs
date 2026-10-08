@@ -204,7 +204,16 @@ pub(crate) fn update_compass(
         let dist = radar_jam_nearest_distance(ps.origin, jammers);
         compass_fade_alpha(
             1.0,
-            radar_jam_intensity(dist, RADARJAM_DIST_MIN, RADARJAM_DIST_MAX, false),
+            radar_jam_intensity(
+                dist,
+                RADARJAM_DIST_MIN,
+                RADARJAM_DIST_MAX,
+                ps.other_flags & playerstate_iw4::other_flags::EMP_JAMMED != 0
+                    || presented
+                        .snapshot()
+                        .and_then(|snap| snap.meta.for_client(local.0))
+                        .is_some_and(|meta| meta.radar_blocked),
+            ),
         )
     };
     let map_item = items.map.1;
@@ -271,8 +280,6 @@ pub(crate) fn update_compass(
 
     let mut fonts = HashMap::new();
     if let Some(snapshot) = presented.snapshot() {
-        // Free-for-all shows only the objectives addressed to this player
-        // (a T6 sensor grenade's pings).
         let team_mode = snapshot.meta.kind.is_team();
         let team = snapshot
             .meta
@@ -369,7 +376,7 @@ pub(crate) fn update_compass(
                 ps.viewangles[1] - vehicle.yaw,
                 jam_fade,
                 icon,
-                vehicle_icon_uv(catalog.as_deref(), icon, cg_clock.time()),
+                crate::chrome::atlas_frame_st(catalog.as_deref(), icon, cg_clock.time()),
                 Draw2dProvenance::OwnerDraw(158),
             ));
         }
@@ -574,26 +581,6 @@ fn enemy_ping_cmds(
 
 fn same_team(local: i32, other: i32) -> bool {
     matches!(local, 1 | 2) && local == other
-}
-
-fn vehicle_icon_uv(catalog: Option<&MenuCatalog>, material: &str, time_ms: i32) -> [f32; 4] {
-    let [rows, columns] = catalog
-        .and_then(|catalog| {
-            catalog
-                .material_2d_plans
-                .get(&material.to_ascii_lowercase())
-        })
-        .map(|plan| plan.texture_atlas.map(|n| u32::from(n.max(1))))
-        .unwrap_or([1, 1]);
-    let frame = (time_ms.max(0) as u32 / 50) % (rows * columns);
-    let column = frame % columns;
-    let row = frame / columns;
-    [
-        column as f32 / columns as f32,
-        row as f32 / rows as f32,
-        (column + 1) as f32 / columns as f32,
-        (row + 1) as f32 / rows as f32,
-    ]
 }
 
 fn friendly_quad(

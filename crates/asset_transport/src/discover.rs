@@ -82,21 +82,14 @@ fn default_games_root() -> Result<PathBuf, String> {
     Err("IW4L_GAMES is not set — copy .env.example to .env and set the games root".to_owned())
 }
 
-/// Install folders of the other titles as Steam names them. One of them next
-/// to the games root is searched as if a shortcut pointed at it.
 const SIBLING_TITLES: [&str; 3] = [
     "Call of Duty Black Ops",
     "Call of Duty Black Ops II",
     "Call of Duty Modern Warfare 3",
 ];
 
-/// Install folders the player chose for the other titles, searched before
-/// the ones found beside the games root.
 static GAME_FOLDERS: std::sync::RwLock<Vec<PathBuf>> = std::sync::RwLock::new(Vec::new());
 
-/// Sets the chosen install folders. Only folders with a `zone/` directory
-/// are searched, as with the ones beside the games root: every search walks
-/// a root whole. Content already loaded keeps the folders it was found in.
 pub fn set_game_folders(folders: Vec<PathBuf>) {
     let folders = folders
         .into_iter()
@@ -107,8 +100,6 @@ pub fn set_game_folders(folders: Vec<PathBuf>) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = folders;
 }
 
-/// The install folder a picked folder belongs to: the folder itself, or the
-/// nearest one above it holding `zone/` (a pick inside `zone/all`).
 pub fn game_install_root(picked: &Path) -> PathBuf {
     picked
         .ancestors()
@@ -118,8 +109,6 @@ pub fn game_install_root(picked: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// Whether `folder` holds `game`'s zones: a FastFile of its envelope version
-/// within two levels under `zone/`.
 pub fn folder_holds_game(folder: &Path, game: crate::ZoneGame) -> bool {
     let version = zone_version(game);
     let mut pending = vec![(folder.join("zone"), 0)];
@@ -144,8 +133,6 @@ pub fn folder_holds_game(folder: &Path, game: crate::ZoneGame) -> bool {
     false
 }
 
-/// The folder `game` is found in when searching from `root`: a chosen one or
-/// one beside it.
 pub fn find_game_install(root: &Path, game: crate::ZoneGame) -> Option<PathBuf> {
     search_roots(root)
         .into_iter()
@@ -169,6 +156,12 @@ pub fn search_roots(root: &Path) -> Vec<PathBuf> {
             if sibling != root && sibling.join("zone").is_dir() && !roots.contains(&sibling) {
                 roots.push(sibling);
             }
+        }
+    }
+    #[cfg(not(windows))]
+    for installed in crate::steam::installed_game_roots(&roots) {
+        if !roots.contains(&installed) {
+            roots.push(installed);
         }
     }
     #[cfg(windows)]
@@ -457,14 +450,14 @@ pub fn map_load_title(key: &str, game: Option<crate::ZoneGame>) -> String {
     }
 }
 
-pub fn group_mp_maps(maps: &[String]) -> [Vec<&str>; 3] {
-    let mut cols = [Vec::new(), Vec::new(), Vec::new()];
+pub fn group_mp_maps(maps: &[String]) -> [Vec<&str>; 4] {
+    let mut cols = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     for map in maps {
         let col = match split_zone_key(map).0 {
             Some(crate::ZoneGame::Iw4) | None => 0,
             Some(crate::ZoneGame::Iw5) => 1,
             Some(crate::ZoneGame::T5) => 2,
-            Some(crate::ZoneGame::T6) => continue,
+            Some(crate::ZoneGame::T6) => 3,
         };
         cols[col].push(map.as_str());
     }
@@ -578,9 +571,6 @@ pub fn find_zone_for_tree(zone_ff: &Path, zone: &str) -> Result<ZoneFile, String
     find_named_zone_for_tree(zone_ff, zone)
 }
 
-/// The `zone` of the same title as `zone_ff`: titles share zone names
-/// (`code_post_gfx_mp`, `common_mp`), and the search from one title's tree
-/// reaches the others' install folders too.
 fn find_named_zone_for_tree(zone_ff: &Path, zone: &str) -> Result<ZoneFile, String> {
     let tree = game_root_for_zone(zone_ff)?;
     if let Some(version) = peek_zone_version(zone_ff)
@@ -735,8 +725,7 @@ pub fn list_mp_map_packs(root: &GamesRoot) -> Vec<MapPack> {
         if !(is_ff && stem.starts_with("mp_")) {
             continue;
         }
-        // T6 zones are read for their weapons; a T6 map does not load.
-        if let Some(game) = zone_game_for_path(&path).filter(|&g| g != crate::ZoneGame::T6) {
+        if let Some(game) = zone_game_for_path(&path) {
             zones.push((game.prefix(), stem, map_pack_folder(&path)));
         }
     }
@@ -816,9 +805,6 @@ pub fn find_t5_localized_zone(
     Ok(t5_localized_zone(&dir, &prefix, stem))
 }
 
-/// The T6 language zones holding localized strings, `patch_mp` first: it
-/// restates strings `code_post_gfx_mp` shipped with, and the first
-/// definition of a string wins.
 pub fn find_t6_localized_zones(
     anchor: &Path,
     language: Option<&str>,
@@ -840,8 +826,6 @@ fn t5_localized_zone(dir: &Path, prefix: &str, stem: &str) -> Option<ZoneFile> {
     })
 }
 
-/// The language directory and zone prefix (`english/`, `en_`) of `game`'s
-/// tree above `anchor`, preferring `language`.
 fn language_archive(
     anchor: &Path,
     language: Option<&str>,

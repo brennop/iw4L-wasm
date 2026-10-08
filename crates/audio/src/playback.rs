@@ -69,6 +69,13 @@ impl Plugin for PlayerSoundPlugin {
             .add_message::<LandSound>()
             .add_systems(
                 Update,
+                play_weapon_sound_messages
+                    .in_set(ClientSet::Predict)
+                    .after(frame::OwnerEventsPublished)
+                    .after(crate::backend::publish_audio_context),
+            )
+            .add_systems(
+                Update,
                 (
                     crate::ambient::boot_map_ambient_once,
                     crate::script_ambient::update_script_ambient
@@ -76,7 +83,6 @@ impl Plugin for PlayerSoundPlugin {
                     collect_cue_decisions
                         .after(play_alias_messages)
                         .before(play_footstep_messages)
-                        .before(play_weapon_sound_messages)
                         .before(play_land_sound_messages),
                     apply_svc_local_sound
                         .before(play_alias_messages)
@@ -86,9 +92,7 @@ impl Plugin for PlayerSoundPlugin {
                     play_alias_messages.after(FxSoundPublished),
                     play_footstep_messages,
                     crate::entity_events::play_viewmodel_notetrack_messages
-                        .before(play_weapon_sound_messages)
                         .before(play_bound_weapon_sounds),
-                    play_weapon_sound_messages,
                     play_bound_weapon_sounds.after(collect_cue_decisions),
                     play_land_sound_messages,
                     crate::destructible_loops::update,
@@ -141,6 +145,14 @@ fn apply_svc_local_sound(
             );
             continue;
         };
+        if crate::diagnostics::enabled() {
+            crate::diagnostics::emit(format!(
+                "audio diag: authority_local_sound alias={alias} stop={} index={} server_tick={:?}",
+                cmd.stop,
+                cmd.index,
+                adopted.next().map(|snapshot| snapshot.tick.0)
+            ));
+        }
         if cmd.stop {
             play.write(AliasCommand::Stop {
                 namespace,

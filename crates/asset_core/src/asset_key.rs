@@ -28,9 +28,6 @@ impl AssetNamespace {
         }
     }
 
-    /// The namespace this namespace's weapons resolve their models,
-    /// animations, sounds and icons in. T6 content is not loaded yet, so T6
-    /// weapons carry IW4 stand-in names and resolve them there.
     pub const fn content(self) -> Self {
         match self {
             Self::T6 => Self::Iw4,

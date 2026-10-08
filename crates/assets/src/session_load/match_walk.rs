@@ -233,7 +233,11 @@ pub(super) async fn walk_prepared_match(
 
     if matches!(
         map_namespace,
-        Some(asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::Iw5)
+        Some(
+            asset_core::AssetNamespace::T5
+                | asset_core::AssetNamespace::Iw5
+                | asset_core::AssetNamespace::T6
+        )
     ) && !foreign_faction_rows(&mut iw4_scripts, &facts.team_settings)
     {
         report.push(format!(
@@ -241,7 +245,7 @@ pub(super) async fn walk_prepared_match(
         ));
     }
     let map_scripts = match map_namespace {
-        Some(asset_core::AssetNamespace::T5) => {
+        Some(asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6) => {
             let scripts = t5_map_under_iw4_rules(&map_scripts, &zone_name, &facts);
             report.push(format!(
                 "map script: maps/mp/{zone_name} written from the T5 map's declarations; T5 map scripts left out"

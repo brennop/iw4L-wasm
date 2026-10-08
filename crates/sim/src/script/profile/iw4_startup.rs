@@ -21,7 +21,6 @@ impl Iw4Startup {
             entries.push(format!("{map}::main"));
             roots.push(map);
         }
-        // T6 equipment run as T6 runs it, when the match carries it.
         let t6_equipment = "iw4l_t6/equipment";
         if resolver.read_bytes(t6_equipment).is_ok() {
             roots.push(t6_equipment.to_owned());

@@ -130,6 +130,8 @@ pub mod eflags {
 
     pub const PRONE: u32 = 0x8;
 
+    pub const NODRAW: u32 = 0x20;
+
     pub const KILLCAM_PRESERVED: u32 = 0x80;
 
     pub const TURRET_ACTIVE_PRONE: u32 = 0x400;
@@ -141,6 +143,8 @@ pub mod eflags {
 
 pub mod other_flags {
     pub const AC130: u32 = 0x8000;
+
+    pub const EMP_JAMMED: u32 = 0x400;
 
     pub const DEAD_KILLCAM_TPV: u32 = 0x800;
 

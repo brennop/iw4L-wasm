@@ -74,6 +74,36 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
     }
 }
 
+pub(crate) fn crush_player(world: &mut World, victim: ClientId, pusher: u64, point: [f32; 3]) {
+    if crate::script_player::god_mode(&FrameWorld::from_world(world), victim) {
+        return;
+    }
+    let target = player_object(world, victim.0);
+    let Value::Object(object) = target else {
+        return;
+    };
+    let runtime = world.resource::<Runtime>();
+    if !runtime.entities[&object].accepts_damage(0) || !runtime.entities.contains_key(&pusher) {
+        return;
+    }
+    let args = vec![
+        Value::Object(pusher),
+        Value::Object(pusher),
+        Value::Int(99999),
+        Value::Int(0),
+        Value::string("MOD_CRUSH"),
+        Value::string("none"),
+        Value::Vector(point),
+        Value::Vector([0.0, 0.0, -1.0]),
+        Value::string("none"),
+        Value::Int(0),
+    ];
+    let now = now_ms(world);
+    if run_now(world, DAMAGE, target, args, now).is_ok() {
+        settle_deaths(world);
+    }
+}
+
 fn world_entity(world: &World) -> Value {
     world
         .resource::<Runtime>()
@@ -340,6 +370,10 @@ pub(crate) fn is_t5(world: &World) -> bool {
 }
 
 pub(crate) fn choose_default_class(world: &mut World, client: u32, index: u8) {
+    world
+        .resource_mut::<Runtime>()
+        .selected_classes
+        .remove(&client);
     let realm = world
         .resource::<Runtime>()
         .program
@@ -414,10 +448,6 @@ fn bridge_class_weapon(world: &mut World, client: u32, slot: usize, weapon: u32)
     bridge.push((stand_in, weapon));
 }
 
-/// A foreign offhand is handed to the scripts by name: its stand-in's when
-/// it has one (the scripts refuse a lethal they do not know), else its own,
-/// which can belong to the script realm's weapon (`concussion_grenade_mp`).
-/// `None` when that name is the offhand's own.
 fn offhand_stand_in(world: &mut World, weapon: u32) -> Option<u32> {
     let realm = world
         .resource::<Runtime>()
@@ -434,7 +464,6 @@ fn offhand_stand_in(world: &mut World, weapon: u32) -> Option<u32> {
         .filter(|&named| weapon != 0 && named != weapon)
 }
 
-/// The give of an offhand's stand-in is bridged back to the chosen one.
 fn bridge_offhand(world: &mut World, client: u32, weapon: u32) {
     let Some(stand_in) = offhand_stand_in(world, weapon) else {
         return;
@@ -445,9 +474,6 @@ fn bridge_offhand(world: &mut World, client: u32, weapon: u32) {
     bridge.push((stand_in, weapon));
 }
 
-/// T6 equipment IW4 has nothing like: the stand-in only carries it through
-/// the class script, and its throws and hits keep its own name for the T6
-/// equipment script (`iw4l_t6/equipment`) to run it as T6 does.
 const OWN_T6_EQUIPMENT: [&str; 5] = [
     "bouncingbetty_mp",
     "trophy_system_mp",
@@ -456,8 +482,6 @@ const OWN_T6_EQUIPMENT: [&str; 5] = [
     "proximity_grenade_mp",
 ];
 
-/// The weapon a throw or a hit is reported to the scripts as: the
-/// stand-in, or T6 equipment of its own under its own name.
 pub(crate) fn event_weapon(world: &mut World, client: u32, weapon: u32) -> u32 {
     let script = script_weapon(world, client, weapon);
     let frame = FrameWorld::from_world(world);
@@ -468,25 +492,16 @@ pub(crate) fn event_weapon(world: &mut World, client: u32, weapon: u32) -> u32 {
     }
 }
 
-/// IW4's tactical insertion, which its class script gives only as
-/// equipment (the `specialty_tacticalinsertion` perk).
 const INSERTION: &str = "flare_mp";
 
-/// The special grenade a tactical insertion in the tactical slot is handed
-/// to the class script as: one it accepts, given with the smoke class.
 const INSERTION_CARRIER: &str = "smoke_grenade_mp";
 
 const GIVE_PERK: &str = "maps/mp/perks/_perks::giveperk";
 
-/// The model IW4's scripts plant a tactical insertion's glow stick with.
 const INSERTION_GLOW_MODEL: &str = "mil_emergency_flare_mp";
 
-/// How far from its thrower a tactical insertion's glow stick is planted:
-/// at the thrower's last spot on the ground.
 const INSERTION_PLANT_REACH: f32 = 256.0;
 
-/// The flare glows IW4's scripts light on a tactical insertion (team, then
-/// enemy colour), and the T6 lights a foreign one shows in their place.
 const INSERTION_LIGHTS: [(&str, &str); 2] = [
     (
         "misc/flare_ambient_green",
@@ -495,12 +510,8 @@ const INSERTION_LIGHTS: [(&str, &str); 2] = [
     ("misc/flare_ambient", "misc/fx_equip_tac_insert_light_red"),
 ];
 
-/// How far from its glow stick the scripts light a flare: at the flare
-/// model's `tag_fire_fx`.
 const INSERTION_LIGHT_REACH: f32 = 16.0;
 
-/// The T6 light a flare glow lit on a foreign tactical insertion shows as,
-/// and where: on the insertion itself.
 pub(crate) fn insertion_light(
     world: &World,
     effect: &str,
@@ -523,9 +534,6 @@ pub(crate) fn insertion_light(
         .map(|(spot, _)| (*light, *spot))
 }
 
-/// IW4's scripts plant a thrown tactical insertion as a glow stick of their
-/// own and leave the grenade lying; a foreign one is noted for the glow
-/// stick to carry its model in the grenade's place.
 pub(crate) fn note_insertion_throw(
     world: &mut World,
     client: u32,
@@ -543,8 +551,6 @@ pub(crate) fn note_insertion_throw(
         .insert(client, (model, grenade));
 }
 
-/// A glow stick the scripts plant for a foreign tactical insertion, or put
-/// where one stood, carries that insertion's model.
 pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) {
     if model != INSERTION_GLOW_MODEL {
         return;
@@ -608,8 +614,6 @@ pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) 
     }
 }
 
-/// A tactical insertion chosen as the tactical is given in its carrier's
-/// place too.
 fn bridge_insertion_carrier(world: &mut World, client: u32, weapon: u32) {
     let frame = FrameWorld::from_world(world);
     let Some(carrier) = frame.weapon_index_by_script_name(INSERTION_CARRIER) else {
@@ -625,8 +629,6 @@ fn bridge_insertion_carrier(world: &mut World, client: u32, weapon: u32) {
     bridge.push((carrier, weapon));
 }
 
-/// Tells the T6 equipment script which offhands, by the names the class
-/// script gives them under, are T6 equipment (`t6lethal`, `t6tactical`).
 fn mark_t6_offhands(world: &mut World, client: u32, class: &crate::ClassDef) {
     let given = |world: &mut World, weapon: u32, tactical: bool| -> Value {
         let Some(stand_in) = offhand_stand_in(world, weapon) else {
@@ -650,9 +652,6 @@ fn mark_t6_offhands(world: &mut World, client: u32, class: &crate::ClassDef) {
     runtime.set_object_field(player, "t6tactical", tactical);
 }
 
-/// When the class script gives a tactical insertion's carrier, the perk
-/// that plants it is given as well: the class script never gives it
-/// beside a lethal.
 pub(crate) fn give_carried_insertion(
     world: &mut World,
     client: u32,
@@ -719,7 +718,22 @@ pub(crate) fn personal_class(
         .cloned()
 }
 
+pub(crate) fn selected_camouflage(world: &World, client: u32, weapon: u32) -> Option<u8> {
+    let runtime = world.resource::<Runtime>();
+    let class = runtime
+        .personal_classes
+        .get(&(client, *runtime.selected_classes.get(&client)?))?;
+    [class.primary, class.secondary]
+        .iter()
+        .position(|own| *own == weapon)
+        .map(|slot| class.camos[slot])
+}
+
 pub(crate) fn choose_class(world: &mut World, client: u32, class: &crate::ClassDef) {
+    world
+        .resource_mut::<Runtime>()
+        .selected_classes
+        .insert(client, class.id.0);
     world
         .resource_mut::<Runtime>()
         .personal_classes
@@ -743,8 +757,6 @@ pub(crate) fn choose_class(world: &mut World, client: u32, class: &crate::ClassD
         }
         return;
     }
-    // IW4's offhands are bridged by name: a fixed stand-in bridged ahead of
-    // them would hand the scripts a flash for a tactical insertion.
     bridge_offhand(world, client, class.lethal);
     bridge_offhand(world, client, class.tactical);
     bridge_insertion_carrier(world, client, class.tactical);
@@ -819,8 +831,6 @@ fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(Vec<Va
                 .unwrap_or("none"),
         );
     }
-    // IW4's class script takes the tactical insertion as equipment only as
-    // the perk that gives its flare (any other name is a frag).
     let equipment = match name(lethal) {
         _ if lethal == 0 => "specialty_null".to_owned(),
         insertion if insertion == INSERTION => "specialty_tacticalinsertion".to_owned(),
@@ -979,7 +989,10 @@ pub(crate) struct PlayerLink {
     pub angles: [f32; 3],
     pub view: LinkView,
     pub clamp: Option<[f32; 4]>,
-    pub parent_angles: [f32; 3],
+    pub parent_axis: [[f32; 3]; 3],
+    pub view_fraction: f32,
+    pub use_tag_angles: bool,
+    pub link_axis: [[f32; 3]; 3],
     pub restore_view: Option<[f32; 3]>,
 }
 
@@ -1055,7 +1068,9 @@ pub(crate) fn publish_radar(world: &mut World) {
         };
         let mut frame = FrameWorld::from_world(world);
         if frame.client_meta(ClientId(client)).is_some() {
-            frame.client_meta_mut(ClientId(client)).radar = radar;
+            let meta = frame.client_meta_mut(ClientId(client));
+            meta.radar = radar;
+            meta.radar_blocked = blocked || team_blocked;
         }
     }
 }
@@ -1112,6 +1127,7 @@ pub(crate) fn disconnect_player(world: &mut World, client: u32) {
             .personal_classes
             .retain(|(owner, _), _| *owner != client);
         runtime.weapon_bridge.remove(&client);
+        runtime.selected_classes.remove(&client);
         if runtime.local_presentation_client == Some(ClientId(client)) {
             runtime.pending_local_dvars.clear();
         }
@@ -1527,6 +1543,31 @@ pub(crate) fn unlink_player(world: &mut World, client: u32) {
     }
 }
 
+fn transpose(m: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    std::array::from_fn(|i| std::array::from_fn(|j| m[j][i]))
+}
+
+fn scale_rotation(m: [[f32; 3]; 3], fraction: f32) -> [[f32; 3]; 3] {
+    if fraction >= 1.0 {
+        return m;
+    }
+    let cos = ((m[0][0] + m[1][1] + m[2][2] - 1.0) * 0.5).clamp(-1.0, 1.0);
+    let angle = cos.acos() * fraction.max(0.0);
+    let axis = [m[1][2] - m[2][1], m[2][0] - m[0][2], m[0][1] - m[1][0]];
+    let len = axis.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if len < 1e-6 {
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    }
+    let [x, y, z] = axis.map(|v| v / len);
+    let (s, c) = angle.sin_cos();
+    let t = 1.0 - c;
+    [
+        [t * x * x + c, t * x * y + s * z, t * x * z - s * y],
+        [t * x * y - s * z, t * y * y + c, t * y * z + s * x],
+        [t * x * z + s * y, t * y * z - s * x, t * z * z + c],
+    ]
+}
+
 /// Carries linked players with their parents before pmove runs; pmove leaves
 /// a `PM_TYPE_NORMAL_LINKED` origin alone.
 pub(crate) fn apply_player_links(world: &mut World) {
@@ -1569,10 +1610,23 @@ pub(crate) fn apply_player_links(world: &mut World) {
         let Some(mut view) = frame.player(id).map(|ps| ps.viewangles) else {
             continue;
         };
+        let mut link_axis = link.link_axis;
         if matches!(link.view, LinkView::Delta | LinkView::WeaponDelta) {
-            for i in 0..2 {
-                view[i] += angle_delta(parent[i], link.parent_angles[i]);
-            }
+            let turn = scale_rotation(
+                math_iw4::matrix_multiply(transpose(link.parent_axis), axis),
+                link.view_fraction,
+            );
+            let turned = math_iw4::axis_to_angles(math_iw4::matrix_multiply(
+                math_iw4::angles_to_axis(view),
+                turn,
+            ));
+            view[0] = turned[0];
+            view[1] = turned[1];
+            link_axis = if link.use_tag_angles {
+                axis
+            } else {
+                math_iw4::matrix_multiply(link.link_axis, turn)
+            };
         }
         match (link.view, link.clamp) {
             (LinkView::Absolute, _) => view = math_iw4::axis_to_angles(child_axis),
@@ -1593,16 +1647,22 @@ pub(crate) fn apply_player_links(world: &mut World) {
             }
         }
         if link.view == LinkView::WeaponDelta {
+            let relative = math_iw4::axis_to_angles(math_iw4::matrix_multiply(
+                math_iw4::angles_to_axis(view),
+                transpose(link_axis),
+            ));
+            let angles = [view[0], view[1], -relative[2]];
             frame.client_meta_mut(id).linked_weapon_view = Some(crate::LinkedWeaponView {
                 entity_num,
                 origin,
-                angles: view,
+                angles,
             });
         }
         if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client)
             && let Some(link) = slot.link.as_mut()
         {
-            link.parent_angles = parent;
+            link.parent_axis = axis;
+            link.link_axis = link_axis;
         }
     }
 }

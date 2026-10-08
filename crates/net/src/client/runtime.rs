@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use entity_iw4::EntityEventKind;
 use frame::{HasWorld, MatchTornDown, RuntimeRole};
 use playerstate_iw4::UserCmd;
 
@@ -514,9 +515,13 @@ pub fn reconcile_prediction(
     mut pending: ResMut<PendingClientSends>,
     mut entity_events: ResMut<PendingPresentedEntityEvents>,
     mut pellet_fx: ResMut<PendingPelletFx>,
+    role: Res<RuntimeRole>,
+    cg_clock: Res<FrameClock>,
     trace: Option<ResMut<ClientPhaseTrace>>,
 ) {
     push_phase(trace, "Reconcile");
+    let render_time_ms = (*role != RuntimeRole::Replay && cg_clock.started())
+        .then(|| cg_clock.time().saturating_add(cg_clock.frametime()));
     last_adopted.applied_this_frame = false;
     while let Some(mut tick) = received.0.pop_front() {
         if !collect_received_entity_events(
@@ -527,6 +532,7 @@ pub fn reconcile_prediction(
         ) {
             continue;
         }
+        perf::net_leg("snap_adopt", tick.snapshot.tick.0, 0);
         pellet_fx.0.append(&mut tick.snapshot.meta.pellet_fx);
         reliable.apply(local.0, &tick.frame.reliable);
         let ack = tick.ack_for(local.0);
@@ -538,7 +544,8 @@ pub fn reconcile_prediction(
             last_adopted.snap = Some(old_next);
         }
         let snap = Arc::new(tick.snapshot);
-        proxy.0.push_arc(Arc::clone(&snap));
+        proxy.0.push_arc(Arc::clone(&snap), render_time_ms);
+        perf::net_leg("proxy_delay", snap.tick.0, proxy.0.delay_ms() as u32);
         last_adopted.next_snap = Some(snap);
         let newest = !received.0.iter().any(|pending| {
             pending.snapshot.tick.0 > last_adopted.next().expect("next snapshot").tick.0
@@ -923,10 +930,14 @@ pub fn sample_client_input(
             let events = [ps.events_0, ps.events_1, ps.events_2, ps.events_3];
             for age in (0..pending.min(4)).rev() {
                 let seq = ps.event_sequence.wrapping_sub(1 + age);
-                match events[(seq & 3) as usize] {
-                    6 => actions.client.stance_latch = 0,
-                    7 => actions.client.stance_latch = playerstate_iw4::buttons::CROUCH as i32,
-                    8 => actions.client.stance_latch = playerstate_iw4::buttons::PRONE as i32,
+                match EntityEventKind(events[(seq & 3) as usize]) {
+                    EntityEventKind::STANCE_FORCE_STAND => actions.client.stance_latch = 0,
+                    EntityEventKind::STANCE_FORCE_CROUCH => {
+                        actions.client.stance_latch = playerstate_iw4::buttons::CROUCH as i32;
+                    }
+                    EntityEventKind::STANCE_FORCE_PRONE => {
+                        actions.client.stance_latch = playerstate_iw4::buttons::PRONE as i32;
+                    }
                     _ => {}
                 }
             }
@@ -1599,7 +1610,10 @@ pub fn publish_presented(
         .iter()
         .any(|(id, ps)| *id == local.0 && !ps.is_live_frame());
     let snap_arc = if archived {
-        proxy.0.snapshot_at(cg_clock.time()).unwrap_or(snap_arc)
+        proxy
+            .0
+            .snapshot_at(local.0, cg_clock.time())
+            .unwrap_or(snap_arc)
     } else {
         snap_arc
     };
@@ -1664,7 +1678,7 @@ pub fn publish_presented(
     let body_time_ms = if *role == RuntimeRole::Replay {
         snapshot.tick.0 as i32 * AUTHORITY_MS - AUTHORITY_MS + clock.accumulator_ms as i32
     } else if archived {
-        cg_clock.time().saturating_sub(crate::PROXY_DELAY_MS)
+        cg_clock.time().saturating_sub(proxy.0.delay_ms())
     } else {
         cg_clock.time().saturating_sub(AUTHORITY_MS)
     };
@@ -1761,7 +1775,7 @@ pub fn publish_presented(
     presented.set_trajectory_sample(
         archived.then_some(body_time_ms),
         archived
-            .then(|| proxy.0.snapshot_after(cg_clock.time()))
+            .then(|| proxy.0.snapshot_after(local.0, cg_clock.time()))
             .flatten(),
     );
 }

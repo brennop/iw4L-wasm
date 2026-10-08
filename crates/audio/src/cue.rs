@@ -281,7 +281,7 @@ pub(crate) struct CueRequest {
 impl CueRequest {
     pub(crate) fn reject(self, reason: CueFailure) {
         self.state.resolved(Err(reason));
-        self.state.complete(crate::StartDecision {
+        let decision = crate::StartDecision {
             event: self.execution.event,
             namespace: self.namespace,
             alias: self.alias,
@@ -289,7 +289,11 @@ impl CueRequest {
             outcome: crate::StartOutcome::Failed(crate::StartFailure::CueRefused(reason)),
             secondary: None,
             detail: None,
-        });
+        };
+        if crate::diagnostics::enabled() {
+            crate::diagnostics::emit(decision.line());
+        }
+        self.state.complete(decision);
     }
 }
 

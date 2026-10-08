@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use asset_audio::{SoundCatalog, namespace_for_zone};
+use asset_audio::SoundCatalog;
 use asset_core::AssetNamespace;
 use asset_transport::GamesRoot;
 use assets::{NamespaceSoundIwd, NamespaceTrees};
@@ -256,9 +256,7 @@ pub(crate) fn install_sound_bank(
                         namespace: bank.namespace,
                         reused: true,
                     });
-                let namespace = identity.as_ref().map_or(AssetNamespace::Iw4, |identity| {
-                    namespace_for_zone(&GamesRoot(identity.games_root.clone()), &compose.zone)
-                });
+                let namespace = arrived.namespace;
                 let gaps = arrived.gaps;
                 let pool = AsyncComputeTaskPool::get_or_init(TaskPool::default);
                 compose.bank = Some(pool.spawn(async move {

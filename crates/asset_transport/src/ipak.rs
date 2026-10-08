@@ -1,17 +1,3 @@
-//! T6 image packages (`zone/**/*.ipak`): the pixels of streamed `GfxImage`s.
-//!
-//! ```text
-//! "KAPI" u32 version(0x50000) u32 size u32 sectionCount
-//! sections: { u32 type, u32 offset, u32 size, u32 itemCount }
-//!   type 1: index — { u32 dataHash, u32 nameHash, u32 offset, u32 size }
-//!   type 2: data  — entries at `data.offset + entry.offset`
-//! ```
-//!
-//! An entry is a run of 128-byte-aligned blocks: `u32 (offset:24, count:8)`
-//! then 31 commands `u32 (size:24, kind:8)`, each followed by `size` bytes —
-//! kind 0 raw, 1 LZO1X, anything else skipped. `offset` is how much of the
-//! entry the blocks before this one produced. The inflated entry is an IWI.
-
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -24,7 +10,6 @@ const BLOCK_HEADER: usize = 128;
 const COMMANDS_PER_BLOCK: usize = 31;
 const COMMAND_RAW: u32 = 0;
 const COMMAND_LZO: u32 = 1;
-/// One LZO command never inflates past a chunk.
 const COMMAND_OUTPUT_CAP: usize = 0x8000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -42,11 +27,9 @@ struct Entry {
 pub struct IPak {
     path: PathBuf,
     data_offset: u64,
-    /// Sorted by key.
     index: Vec<(Key, Entry)>,
 }
 
-/// The name hash T6 keys images by (`R_HashString`, case-folded).
 pub fn ipak_name_hash(name: &str) -> u32 {
     name.bytes()
         .fold(0u32, |hash, b| hash.wrapping_mul(33) ^ u32::from(b | 0x20))
@@ -140,7 +123,6 @@ impl IPak {
             .map(|i| self.index[i].1)
     }
 
-    /// The inflated entry, or `None` when this package does not hold it.
     pub fn read(&self, name_hash: u32, data_hash: u32) -> Option<Result<Vec<u8>, String>> {
         let entry = self.find(name_hash, data_hash)?;
         Some(self.read_entry(entry))

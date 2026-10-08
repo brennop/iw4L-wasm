@@ -306,6 +306,8 @@ pub struct MapPrimaryLights {
 
     pub t5_falloff: Vec<T5LightFalloffPack>,
 
+    pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
+
     pub dynamic: Option<DynamicLightBind>,
 }
 
@@ -327,7 +329,6 @@ pub struct GfxViewport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandContextRefusal {
     MissingViewProjection,
-    MissingFrameFog,
     PrimaryLightNotDir,
     ViewportHasZeroRenderTarget,
 }
@@ -540,6 +541,22 @@ pub fn produce_material_color_cmdbuf_init(sources: &mut RuntimeCodeSources) {
     );
 }
 
+const NO_FRAME_FOG: asset_world::ExpFog = asset_world::ExpFog {
+    start_dist: 0.0,
+    halfway_dist: 0.0,
+    color_rgb: [0.0; 3],
+    max_opacity: 0.0,
+    transition_time: 0.0,
+    sun: Some(asset_world::SunFog {
+        color_rgb: [0.0; 3],
+        sun_dir: [1.0, 0.0, 0.0],
+        begin_angle_deg: 0.0,
+        end_angle_deg: 0.0,
+        scale: 0.0,
+    }),
+    volumetric: None,
+};
+
 pub fn produce_top_pair_command_context(
     sources: &mut RuntimeCodeSources,
     clip_from_world: Mat4,
@@ -565,8 +582,9 @@ pub fn produce_top_pair_command_context(
     produce_material_color_cmdbuf_init(sources);
     produce_depth_from_clip(sources, false);
     produce_leftover_iw5_code_consts(sources, view_origin);
-    let Some(frame_fog) = fog else {
-        return Err(CommandContextRefusal::MissingFrameFog);
+    let (frame_fog, fog_enabled) = match fog {
+        Some(fog) => (fog, fog_enabled),
+        None => (&NO_FRAME_FOG, false),
     };
     super::t5_fog::produce(sources, frame_fog, view_origin.z, fog_enabled);
     produce_frame_fog(sources, frame_fog, fog_enabled)
@@ -641,7 +659,7 @@ pub fn produce_leftover_t5_hdrcontrol(sources: &mut RuntimeCodeSources, exposure
     );
 }
 
-fn produce_t5_sky_constants(sources: &mut RuntimeCodeSources, authored: [f32; 4], forward_z: f32) {
+fn produce_sky_constants(sources: &mut RuntimeCodeSources, authored: [f32; 4], forward_z: f32) {
     for (index, row) in [
         (18, [1.0, 0.0, 0.0, 0.0]),
         (19, [0.0, 1.0, 0.0, 0.0]),
@@ -654,7 +672,11 @@ fn produce_t5_sky_constants(sources: &mut RuntimeCodeSources, authored: [f32; 4]
             + asset_material::t5_code_remap::T5_CODE_SKY_TRANSITION,
         &[float4_bits([0.0; 4])],
     );
-    let intensity = t5_sky_intensity(authored, forward_z);
+    let intensity = sky_intensity(authored, forward_z);
+    sources.set_constant_rows(
+        asset_material::t6_techset::CODE_T6_SKY_COLOR_MULTIPLIER,
+        &[float4_bits([intensity; 4])],
+    );
     sources.set_constant_rows(
         asset_material::t5_code_remap::LEFTOVER_T5_CODE_BASE
             + asset_material::t5_code_remap::T5_CODE_SKY_COLOR_MULTIPLIER,
@@ -662,7 +684,7 @@ fn produce_t5_sky_constants(sources: &mut RuntimeCodeSources, authored: [f32; 4]
     );
 }
 
-fn t5_sky_intensity([angle0, angle1, factor0, factor1]: [f32; 4], forward_z: f32) -> f32 {
+fn sky_intensity([angle0, angle1, factor0, factor1]: [f32; 4], forward_z: f32) -> f32 {
     let radians = f32::from_bits(0x3c8efa35);
     let cos0 = (((90.0 - angle0) * radians) as f64).cos() as f32;
     let cos1 = (((90.0 - angle1) * radians) as f64).cos() as f32;
@@ -935,7 +957,6 @@ pub(crate) fn update_command_context_code_sources(
         fog_dvars.enabled,
     ) {
         Ok(()) => {}
-        Err(CommandContextRefusal::MissingFrameFog) => {}
         Err(CommandContextRefusal::MissingViewProjection) => {}
         Err(CommandContextRefusal::PrimaryLightNotDir) => {}
         Err(CommandContextRefusal::ViewportHasZeroRenderTarget) => {}
@@ -976,9 +997,32 @@ pub(crate) fn update_command_context_code_sources(
         .map(|e| e.exposure)
         .unwrap_or(T5_HDRCONTROL_HOST_EXPOSURE);
     produce_leftover_t5_hdrcontrol(&mut mat_frame.code_sources, hdr_exposure);
-    if let Some(authored) = scene.as_ref().and_then(|s| s.t5_sky_dynamic_intensity) {
+    let t6_exposure = scene.as_ref().and_then(|s| s.t6_exposure).unwrap_or(0.0);
+    let reciprocal = t6_exposure.exp2();
+    mat_frame.code_sources.set_constant_rows(
+        asset_material::t6_techset::CODE_T6_HDR_CONTROL_0,
+        &[float4_bits([
+            reciprocal.recip(),
+            0.0,
+            reciprocal,
+            reciprocal,
+        ])],
+    );
+    mat_frame.code_sources.set_constant_rows(
+        asset_material::t6_techset::CODE_T6_HDR_CONTROL_1,
+        &[float4_bits([1.0, 0.0, 0.0, 0.0])],
+    );
+    for (index, row) in asset_material::t6_techset::CODE_T6_REFLECTION_SH
+        .into_iter()
+        .zip([[1.0, 1.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0], [0.0; 4]])
+    {
+        mat_frame
+            .code_sources
+            .set_constant_rows(index, &[float4_bits(row)]);
+    }
+    if let Some(authored) = scene.as_ref().and_then(|s| s.sky_dynamic_intensity) {
         let forward_z = view.inverse().transform_vector3(Vec3::NEG_Z).z;
-        produce_t5_sky_constants(&mut mat_frame.code_sources, authored, forward_z);
+        produce_sky_constants(&mut mat_frame.code_sources, authored, forward_z);
     }
     produce_leftover_t5_light_hero_scale(&mut mat_frame.code_sources);
     produce_leftover_t5_hero_lighting_matrix(&mut mat_frame.code_sources);

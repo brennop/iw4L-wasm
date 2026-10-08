@@ -11,6 +11,7 @@ fn is_cac_table(name: &str) -> bool {
     asset_game::is_stats_table_name(name)
         || name.eq_ignore_ascii_case("mp/attachmentTable.csv")
         || name.eq_ignore_ascii_case("mp/attachmentCombos.csv")
+        || name.eq_ignore_ascii_case("mp/weaponoptions.csv")
 }
 
 fn iw5_cac_table(

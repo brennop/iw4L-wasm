@@ -2,8 +2,6 @@ pub fn unpack_unit_vec(packed: u32) -> [f32; 3] {
     dpvs_iw4::skin_unpack_unit_vec(packed)
 }
 
-/// T6's unit vector: three 10-bit signed fields, the lowest first. Each is
-/// reassembled into the mantissa of 3.0 and scaled back out.
 pub fn unpack_unit_vec_t6(packed: u32) -> [f32; 3] {
     let axis = |shift: u32| {
         let bits = (packed >> shift) & 0x3FF;
@@ -15,8 +13,6 @@ pub fn unpack_unit_vec_t6(packed: u32) -> [f32; 3] {
     [axis(0), axis(10), axis(20)]
 }
 
-/// The inverse of [`unpack_unit_vec`]: the byte scale whose decode keeps the
-/// direction best, as the IW tools pick it.
 pub fn pack_unit_vec(v: [f32; 3]) -> u32 {
     let n = normalize_or_up(v);
     let mut out = 0u32;
@@ -48,9 +44,6 @@ pub fn pack_unit_vec(v: [f32; 3]) -> u32 {
     out
 }
 
-/// A T6 `GfxPackedVertex` in the IW4/T5 packing the runtime's shaders read:
-/// texture coordinates swap halves (T6 keeps u low) and the normal and
-/// tangent move from T6's 10:10:10 fields to scaled bytes.
 pub fn repack_vertex_t6(mut vertex: [u8; 32]) -> [u8; 32] {
     let word = |v: &[u8; 32], o: usize| u32::from_le_bytes(v[o..o + 4].try_into().unwrap());
     let uv = word(&vertex, 20);

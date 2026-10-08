@@ -429,6 +429,7 @@ struct PendingBodySkin<'a> {
     gun_model: Option<u16>,
     attachments: Vec<(PendingGunSkin<'a>, u16, Option<u8>)>,
 
+    camouflage: Option<&'a asset_game::WeaponCamouflage>,
     dest: CpuBodyGeom,
 }
 
@@ -860,7 +861,7 @@ impl<'a> RemotePoseFrame<'a> {
                     posed_players,
                 )?;
             }
-            let hash = hash_skin_matrices(&skin);
+            let hash = hash_skin_matrices(&skin) ^ u64::from(sample.weapon_model);
             let pose_same = pose_hashes.remember_pose_hash(persist_key, hash);
 
             let skin_models = bind_remote_skin_models(dobj, &model_set)?;
@@ -880,6 +881,13 @@ impl<'a> RemotePoseFrame<'a> {
                     push_cached_surfaces(persist_key, transform, pose_hashes, submit);
                 }
                 RemoteSkinAction::Blend(mut job) => {
+                    job.camouflage = weapons.and_then(|registry| {
+                        registry
+                            .0
+                            .material_camouflages_of(weapon)
+                            .iter()
+                            .find(|camo| camo.slot == sample.weapon_model)
+                    });
                     job.dest = take_unique_geom(pose_hashes, persist_key);
                     pending.push(job);
                 }
@@ -927,6 +935,7 @@ fn remote_skin_action<'a>(
                 .zip(lods.attachments)
                 .map(|((skin, model), lod)| (skin, model, lod))
                 .collect(),
+            camouflage: None,
             dest: CpuBodyGeom::default(),
         }),
     }
@@ -1170,6 +1179,7 @@ fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> 
             )?;
         }
     }
+    let gun_first = geom.surfaces.len();
     match (&job.gun, job.gun_lod) {
         (None, _) | (Some(_), None) => {}
         (Some(gun), Some(lod)) => {
@@ -1203,6 +1213,17 @@ fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> 
             &mut geom,
             true,
         )?;
+    }
+    if let Some(camo) = job.camouflage {
+        for surface in &mut geom.surfaces[gun_first..] {
+            if let Some((_, to)) = camo
+                .materials
+                .iter()
+                .find(|(from, _)| surface.name.as_deref() == Some(from.name.as_str()))
+            {
+                surface.name = Some(to.name.clone());
+            }
+        }
     }
     let (radii, radius_parents) = radii(
         job.body,

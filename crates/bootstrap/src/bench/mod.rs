@@ -149,9 +149,6 @@ fn report_on_app_exit(mut exit: MessageReader<AppExit>) {
     }
 }
 
-/// Every exit ends the process (`console::exit_process`), so `App::run`
-/// never returns and nothing after it runs. Perfetto survives that on an exit
-/// hook (`diag::exit`); the report needs the same one, or `make bench <demo>`
 /// would measure a whole run and print nothing.
 #[cfg(unix)]
 fn arm_exit_hook() {

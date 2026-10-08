@@ -1,12 +1,3 @@
-//! Per-zone stream decryption.
-//!
-//! Chunks are dealt round-robin to four streams. Each stream owns a ring of
-//! 200 twenty-byte slots in one shared table, interleaved by stream: slot
-//! `(stream, n)` lives at `20 * (stream + 4 * (n % 200))`. The table starts as
-//! the zone name, each byte widened to four. A chunk is decrypted with the
-//! first eight bytes of its stream's current slot as the Salsa20 nonce; the
-//! SHA-1 of the plaintext is then XORed into the stream's next slot.
-
 use sha1::{Digest, Sha1};
 
 use crate::salsa20::apply_keystream;
@@ -30,7 +21,6 @@ pub struct ZoneCipher {
 }
 
 impl ZoneCipher {
-    /// `name` is `FileHeader::name`, which must not be empty.
     pub fn new(name: &[u8]) -> Self {
         let mut table = [0u8; TABLE_LEN];
         for (i, word) in table.as_chunks_mut::<4>().0.iter_mut().enumerate() {

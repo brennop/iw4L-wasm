@@ -42,10 +42,11 @@ SCENARIO_ZONE ?= mp_boneyard
 SCENARIO_CMDS ?= wait world; spawn 0; force_match_start; hold +attack; bot add 3; wait 3s; press +gostand; hold +forward; wait 5s; wait 4s; quit
 # Truck 234 roof looking down + 7 bots RPG into the floor. Local does not fire:
 # `hold +attack` made the truck splash a suicide, which has no killcam.
-# Bots fire twice so the dump ring contains missiles. It does not replace
-# SCENARIO_CMDS. Five-number move/tp only — pitch 85 is the test.
 # Gate: T1/R1/R2/T6/K0/K1/K2/K3/K4/K6/K7/L1/F1/C1/P1/P2.
-CHAOS_CMDS ?= wait world; spawn 0; wait 2s; move -1066 1391 7 174 85; wait 1s; bot add 7; bot hold on; wait 3s; bot tp 1 -1066 1391 127 174 85; bot tp 2 -1073 1362 80 174 85; bot tp 3 519 -44 16 61 85; bot tp 4 528 -14 16 61 85; bot tp 5 62 915 80 180 85; bot tp 6 62 900 80 180 85; bot tp 7 80 915 80 180 85; bot give 1 rpg; bot give 2 rpg; bot give 3 rpg; bot give 4 rpg; bot give 5 rpg; bot give 6 rpg; bot give 7 rpg; wait 1s; bot fire all; wait 3s; bot fire all; wait 12s; quit
+CHAOS_BOT_SETUP ?= bot tp 1 -1066 1391 127 174 85; bot tp 2 -1073 1362 80 174 85; bot tp 3 519 -44 16 61 85; bot tp 4 528 -14 16 61 85; bot tp 5 62 915 80 180 85; bot tp 6 62 900 80 180 85; bot tp 7 80 915 80 180 85; bot give 1 rpg; bot give 2 rpg; bot give 3 rpg; bot give 4 rpg; bot give 5 rpg; bot give 6 rpg; bot give 7 rpg; wait 1s
+CHAOS_BOT_SALVO ?= $(CHAOS_BOT_SETUP); bot fire all
+CHAOS_OBSERVER_SALVO ?= $(CHAOS_BOT_SETUP); spawn 0; move -1066 1391 500 174 85; bot fire all
+CHAOS_CMDS ?= wait world; spawn 0; force_match_start; wait 16s; wait 2s; move -1066 1391 7 174 85; wait 1s; bot add 7; bot hold on; wait 3s; $(CHAOS_BOT_SALVO); wait 12s; $(CHAOS_OBSERVER_SALVO); wait 4s; $(CHAOS_OBSERVER_SALVO); wait 4s; $(CHAOS_OBSERVER_SALVO); wait 4s; $(CHAOS_OBSERVER_SALVO); wait 12s; quit
 # Live trace run (not a demo). `force_match_start` so holds are not frozen in
 # warmup. Local `+attack`/`+forward` plus `mouserate` (hold-yaw; not one-shot
 # `mousemove`). `bot add 16` is the console clamp. Wait 10s, then quit so the

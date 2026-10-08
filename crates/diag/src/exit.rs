@@ -22,7 +22,6 @@ pub fn at_exit(hook: fn()) {
     arm_libc_exit();
 }
 
-/// Runs the registered hooks, each once.
 pub fn run_exit_hooks() {
     let hooks = std::mem::take(
         &mut *HOOKS
@@ -34,8 +33,6 @@ pub fn run_exit_hooks() {
     }
 }
 
-/// Runs the exit hooks and ends the process with `code`, without the C
-/// library's exit handlers.
 pub fn exit_now(code: i32) -> ! {
     run_exit_hooks();
     #[cfg(unix)]
@@ -65,7 +62,5 @@ fn arm_libc_exit() {
     let _ = unsafe { atexit(run_at_exit) };
 }
 
-/// `std::process::exit` on Windows runs no `atexit` handler; [`exit_now`]
-/// runs the hooks there.
 #[cfg(not(unix))]
 fn arm_libc_exit() {}

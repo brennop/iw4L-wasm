@@ -44,13 +44,9 @@ pub struct FpvAssembly {
     pub paired_bones: usize,
     pub combined_hands: bool,
     pub tags: FpvAssemblyTags,
-    /// Gun bones whose vertices fold away (see [`FpvHideMode::Bones`]).
     pub collapsed_bones: Vec<usize>,
 }
 
-/// How a gun hides its hide tags. IW4 guns keep hideable parts in
-/// surfaces of their own and skip those surfaces; a T6 gun's sights share
-/// its body's surfaces, and T6 folds the hidden bones' vertices away.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum FpvHideMode {
     #[default]
@@ -85,6 +81,7 @@ pub struct FpvAssemblyKey {
     pub knife: Option<FpvMeshIndex>,
     pub hide_tags: Vec<String>,
     pub hide_mode: FpvHideMode,
+    pub jammed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -92,9 +89,17 @@ pub struct FpvSideAssemblies {
     pub bare: Arc<FpvAssembly>,
     pub rocket: Option<Arc<FpvAssembly>>,
     pub melee: Option<Arc<FpvAssembly>>,
-    /// Drawn while aiming, when an attachment then swaps its model.
     pub ads: Option<Arc<FpvAssembly>>,
+    pub jammed: Option<Arc<FpvAssembly>>,
 }
+
+pub const EMP_RETICLE_TAGS: [&str; 5] = [
+    "tag_reticle_acog",
+    "tag_reticle_red_dot",
+    "tag_eotech_reticle",
+    "tag_reticle_tavor_scope",
+    "tag_reticle_thermal_scope",
+];
 
 impl FpvSideAssemblies {
     pub fn pick(&self, rocket: bool) -> &Arc<FpvAssembly> {
@@ -134,7 +139,17 @@ impl FpvAssembly {
         ads: bool,
         hide_tags: &[String],
         hide_mode: FpvHideMode,
+        jammed: bool,
     ) -> Result<Self, FpvAssemblyError> {
+        let reticle_tags: Vec<String> = if jammed {
+            EMP_RETICLE_TAGS
+                .iter()
+                .map(|tag| (*tag).to_owned())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let gun_tags: Vec<String> = hide_tags.iter().chain(&reticle_tags).cloned().collect();
         let pose_of = |model: FpvMeshIndex| -> Result<&ModelPoseSrc, FpvAssemblyError> {
             catalog
                 .get_at(model.order())
@@ -225,9 +240,13 @@ impl FpvAssembly {
             .into_iter()
             .zip(&dobj.models)
             .map(|((model, role, _), slot)| {
-                let hide = (role == FpvPartRole::Gun)
-                    .then(|| hide_words(catalog, model, hide_tags))
-                    .flatten();
+                let hide = match role {
+                    FpvPartRole::Gun => hide_words(catalog, model, &gun_tags),
+                    FpvPartRole::Attachment => {
+                        hide_words(catalog, model, &reticle_tags).filter(|words| *words != [0; 6])
+                    }
+                    _ => None,
+                };
                 let hide = match (hide_mode, hide) {
                     (FpvHideMode::Bones, Some(words)) => {
                         collapsed_bones.extend(

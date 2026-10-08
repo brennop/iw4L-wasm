@@ -11,6 +11,7 @@ pub mod meta_wire;
 pub mod netfields;
 pub mod protocol;
 pub mod reliable;
+pub mod segment_delta;
 pub mod udp_session;
 pub mod udp_socket;
 pub mod wire;

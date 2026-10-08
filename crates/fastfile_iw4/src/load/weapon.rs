@@ -1073,8 +1073,6 @@ fn follow_string_array(
     }
 }
 
-/// The names of a weapon's 16 model slots (`gunXModel` / `worldModel`): slot
-/// 0 is the plain model, the others its camouflage variants.
 fn follow_xmodel_array(
     s: &mut ZoneStream<'_>,
     links: &mut dyn AssetLinkSink,

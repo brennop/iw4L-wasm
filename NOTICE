@@ -89,6 +89,15 @@ Ghidra — https://github.com/NationalSecurityAgency/ghidra
   read with. A development tool: none of it, and none of its output, is
   committed here or distributed with IW4L. Licensed under Apache 2.0.
 
+FFmpeg — https://ffmpeg.org/
+  Read and queried during development of the native T5 WMA2 decoder.
+  Wire codeword mappings and exponent band grids were measured by submitting
+  decoder queries. No FFmpeg source or executable is distributed or linked.
+
+OxideAV WMA — https://github.com/OxideAV/oxideav-wma
+  Evaluated and read as a reference for WMA2 decoding. No source is vendored
+  or compiled into IW4L.
+
 --------------------------------------------------------------------------------
 Game content
 --------------------------------------------------------------------------------

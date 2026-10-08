@@ -922,7 +922,6 @@ pub struct WeaponGeometry {
     pub alternate_weapon_name: Option<Ptr>,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
-    /// `iFirstRaiseTime`: a weapon's first raise after it is given.
     pub first_raise_time_ms: i32,
 
     pub weap_def: Option<Ptr>,
@@ -931,14 +930,12 @@ pub struct WeaponGeometry {
 
     pub gun_xmodel_name: Option<Ptr>,
 
-    /// Every `gunXModel` slot: 0 is `gun_xmodel_name`, the others camouflage.
     pub gun_xmodel_names: [Option<Ptr>; 16],
 
     pub hand_xmodel_name: Option<Ptr>,
 
     pub world_model_name: Option<Ptr>,
 
-    /// Every `worldModel` slot, as `gun_xmodel_names`.
     pub world_model_names: [Option<Ptr>; 16],
 
     pub projectile_model_name: Option<Ptr>,
@@ -1425,6 +1422,7 @@ pub struct ZoneStream<'a> {
     weapon: Option<WeaponGeometry>,
     vehicle: Option<(Option<Ptr>, Option<Ptr>)>,
     vehicle_compass: ([[u8; 128]; 2], [i32; 2]),
+    vehicle_accel: f32,
     latest_material: Option<MaterialGeometry>,
     latest_image: Option<GfxImageGeometry>,
     latest_technique_set: Option<TechniqueSetGeometry>,
@@ -1530,6 +1528,7 @@ impl<'a> ZoneStream<'a> {
             weapon: None,
             vehicle: None,
             vehicle_compass: ([[0; 128]; 2], [0; 2]),
+            vehicle_accel: 0.0,
             latest_material: None,
             latest_image: None,
             latest_technique_set: None,
@@ -2123,6 +2122,14 @@ impl<'a> ZoneStream<'a> {
 
     pub(crate) fn record_vehicle_compass(&mut self, icons: [[u8; 128]; 2], size: [i32; 2]) {
         self.vehicle_compass = (icons, size);
+    }
+
+    pub(crate) fn record_vehicle_accel(&mut self, accel: f32) {
+        self.vehicle_accel = accel;
+    }
+
+    pub fn vehicle_accel(&self) -> f32 {
+        self.vehicle_accel
     }
 
     pub fn vehicle_compass(&self) -> ([&str; 2], [i32; 2]) {

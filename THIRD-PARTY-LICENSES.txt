@@ -1569,10 +1569,12 @@ Used by:
   d3d9_state 0.1.0
   diag 0.1.0
   dpvs_iw4 0.1.0
+  dxbc_sm5 0.1.0
   entity_iw4 0.1.0
   fastfile_iw4 0.1.0
   fastfile_iw5 0.1.0
   fastfile_t5 0.1.0
+  fastfile_t6 0.1.0
   frame 0.1.0
   fx 0.1.0
   fx_iw4 0.1.0
@@ -2706,6 +2708,7 @@ DEALINGS IN THE SOFTWARE.
 MIT License (MIT)
 --------------------------------------------------------------------------------
 Used by:
+  sha1 0.10.7 — https://github.com/RustCrypto/hashes
   sha2 0.10.9 — https://github.com/RustCrypto/hashes
 
 Copyright (c) 2006-2009 Graydon Hoare
@@ -5938,6 +5941,35 @@ SOFTWARE.
 MIT License (MIT)
 --------------------------------------------------------------------------------
 Used by:
+  rfd 0.17.2 — https://github.com/PolyMeilex/rfd
+
+MIT License
+
+Copyright (c) 2020 Bilal Elmoussaoui
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+================================================================================
+MIT License (MIT)
+--------------------------------------------------------------------------------
+Used by:
   tinyvec_macros 0.1.1 — https://github.com/Soveu/tinyvec_macros
 
 MIT License
@@ -6030,6 +6062,63 @@ Used by:
 MIT License
 
 Copyright (c) 2021 Hindrik Stegenga
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+================================================================================
+MIT License (MIT)
+--------------------------------------------------------------------------------
+Used by:
+  lzokay-native 0.1.0 — https://github.com/arma-tools/lzokay-native-rs/
+
+MIT License
+
+Copyright (c) 2022
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+MIT License (MIT)
+--------------------------------------------------------------------------------
+Used by:
+  rfd 0.17.2 — https://github.com/PolyMeilex/rfd
+
+MIT License
+
+Copyright (c) 2022 Bartłomiej Maryńczak
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -7392,12 +7481,14 @@ SOFTWARE.
 Mozilla Public License 2.0 (MPL-2.0)
 --------------------------------------------------------------------------------
 Used by:
+  symphonia-bundle-flac 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia-bundle-mp3 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia-codec-adpcm 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia-codec-pcm 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia-core 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia-format-riff 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia-metadata 0.5.5 — https://github.com/pdeljanov/Symphonia
+  symphonia-utils-xiph 0.5.5 — https://github.com/pdeljanov/Symphonia
   symphonia 0.5.5 — https://github.com/pdeljanov/Symphonia
 
 Mozilla Public License Version 2.0

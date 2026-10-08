@@ -236,8 +236,6 @@ pub(crate) fn update_iris(
         return;
     };
 
-    // A T6 weapon's overlay is its own UI image, kept in T6; its other
-    // content resolves in its stand-in's namespace.
     let weapon_ns = weapons
         .0
         .identity_namespace_of(viewmodel_index)

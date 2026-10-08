@@ -13,7 +13,7 @@ use render_frontend::prepare::scene::camera::SimCamera;
 
 use crate::{ConsoleCommand, ConsoleDispatch, ConsoleLine, ConsoleSettings, ConsoleState};
 
-use super::state_dump::{persist_bytes_atomic, state_dump_body};
+use super::state_dump::{audio_dump_section, persist_bytes_atomic, state_dump_body};
 
 pub(crate) fn route_replay_commands(
     mut events: MessageReader<ConsoleCommand>,
@@ -24,6 +24,13 @@ pub(crate) fn route_replay_commands(
     ),
     identity: Option<Res<LaunchIdentity>>,
     mut recorder: ResMut<ReplaySession>,
+    audio: (
+        Option<Res<audio::AudioReady>>,
+        Option<Res<audio::StartDecisions>>,
+        Option<Res<audio::MissingAliasGaps>>,
+        Option<Res<audio::ClipStore>>,
+        Option<Res<audio::AudioRuntime>>,
+    ),
     replay_inputs: (
         Option<Res<AuthorityWorld>>,
         Res<SimCamera>,
@@ -217,6 +224,13 @@ pub(crate) fn route_replay_commands(
                     );
                     continue;
                 };
+                let audio_section = audio_dump_section(
+                    audio.0.as_deref(),
+                    audio.1.as_deref(),
+                    audio.2.as_deref(),
+                    audio.3.as_deref(),
+                    audio.4.as_deref(),
+                );
                 match save_clip_package(
                     identity,
                     authority.as_deref().filter(|_| role.runs_authority()),
@@ -224,6 +238,7 @@ pub(crate) fn route_replay_commands(
                     ring.as_ref(),
                     clip_clock.as_deref().filter(|_| role.runs_authority()),
                     clip_presented.as_deref(),
+                    &audio_section,
                 ) {
                     Ok(saved) => {
                         echo(
@@ -293,6 +308,7 @@ fn save_clip_package(
     ring: &ClipRing,
     authority_clock: Option<&AuthorityClock>,
     presented: Option<&PresentedSnapshot>,
+    audio: &str,
 ) -> Result<SavedClip, String> {
     let (id, dir) = allocate_clip_dir(&identity.artifacts)?;
     let captured_unix_ns = SystemTime::now()
@@ -318,7 +334,7 @@ fn save_clip_package(
             authority_clock,
             world,
             presented,
-            None,
+            Some(audio),
         );
         persist_bytes_atomic(&dump_path, &body)?;
         let mut manifest = ::replay::clip_manifest(

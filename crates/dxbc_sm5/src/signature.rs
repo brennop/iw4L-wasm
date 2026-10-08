@@ -1,6 +1,3 @@
-//! `ISGN`/`OSGN` (and `ISG1`/`OSG1`/`OSG5`) chunks: the semantics a stage
-//! reads and writes, and the registers they live in.
-
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -22,9 +19,7 @@ impl fmt::Display for SignatureError {
 pub struct SignatureElement {
     pub semantic: String,
     pub semantic_index: u32,
-    /// `D3D_NAME`: 0 for an ordinary semantic, 1 `SV_Position`, ...
     pub system_value: u32,
-    /// `D3D_REGISTER_COMPONENT_TYPE`: 1 uint, 2 sint, 3 float.
     pub component_type: u32,
     pub register: u32,
     pub mask: u8,
@@ -43,8 +38,6 @@ pub(crate) fn read_cstr(bytes: &[u8], at: usize) -> String {
 }
 
 impl Signature {
-    /// `ISGN`/`OSGN` elements are 24 bytes; `stride` 28 adds the stream
-    /// index in front (`OSG5`), 32 the minimum precision behind (`*SG1`).
     pub fn parse(chunk: &[u8], stride: usize) -> Result<Self, SignatureError> {
         let err = |_| SignatureError::Truncated;
         let count = read_u32(chunk, 0).map_err(err)? as usize;

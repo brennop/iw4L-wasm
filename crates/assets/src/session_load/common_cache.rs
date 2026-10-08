@@ -506,6 +506,15 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let mut iw4_census_stats = Vec::new();
 
     let common_opened = common_open.await;
+    let runtime_namespace = common_opened
+        .as_ref()
+        .and_then(|(_, image)| image.as_ref().ok())
+        .map(|image| match image.game {
+            asset_core::ZoneGame::T5 => asset_core::AssetNamespace::T5,
+            asset_core::ZoneGame::Iw5 => asset_core::AssetNamespace::Iw5,
+            _ => asset_core::AssetNamespace::Iw4,
+        })
+        .unwrap_or(asset_core::AssetNamespace::Iw4);
 
     let (
         mut weapons,
@@ -694,8 +703,6 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let t6_melee = t6_content
         .as_ref()
         .and_then(|content| content.melee.clone());
-    // T6 clips carry a prefix IW4 names do not; one that still meets a taken
-    // name is left out, and its slot stays empty rather than play IW4's.
     let mut t6_anim_names = std::collections::BTreeSet::new();
     if let Some(content) = &mut t6_content {
         let (added, kept) = xanims.absorb_vacant(std::mem::take(&mut content.xanims));
@@ -740,8 +747,6 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         }),
         t6_melee.as_ref(),
     );
-    // Thrown and planted T6 models were bound as world guns; the missile
-    // renderer looks them up among the projectile meshes.
     let mut t6_projectiles = 0usize;
     for id in 1..weapons.len() as u32 {
         if weapons.identity_namespace_of(id) != Some(asset_core::AssetNamespace::T6) {
@@ -778,7 +783,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     ));
 
     let cac_tables: Vec<(asset_core::AssetNamespace, asset_game::CapturedStringTable)> = [
-        (asset_core::AssetNamespace::Iw4, iw4_stats, iw4_census_stats),
+        (runtime_namespace, iw4_stats, iw4_census_stats),
         (asset_core::AssetNamespace::Iw5, iw5_stats, iw5_census_stats),
         (
             asset_core::AssetNamespace::T5,
@@ -794,6 +799,53 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             .map(move |table| (namespace, table))
     })
     .collect();
+
+    let mut camouflage_images = None;
+    if let (Some((_, options)), Some((_, choices))) = (
+        cac_tables.iter().find(|(ns, t)| {
+            *ns == asset_core::AssetNamespace::T5
+                && t.name.eq_ignore_ascii_case("mp/weaponoptions.csv")
+        }),
+        cac_tables.iter().find(|(ns, t)| {
+            *ns == asset_core::AssetNamespace::T5
+                && t.name.eq_ignore_ascii_case("mp/attachmentTable.csv")
+        }),
+    ) {
+        let dressed = weapons.prepare_t5_camouflages(
+            options,
+            choices,
+            &mut material_seed,
+            &fpv_meshes,
+            &world_weapons,
+        );
+        common_report.push(format!(
+            "T5 camouflage: {dressed} weapon configurations prepared"
+        ));
+        let keys: Vec<_> = (1..=weapons.len() as u32)
+            .flat_map(|id| {
+                weapons
+                    .material_camouflages_of(id)
+                    .iter()
+                    .flat_map(|camo| camo.materials.iter().map(|(_, to)| to.clone()))
+            })
+            .collect();
+        if let Ok(zone) = games_root_from_env()
+            .and_then(|root| find_common_mp_for_envelope(&root, fastfile_t5::ZONE_VERSION_PC))
+        {
+            let stage = progress.begin_scoped(StageId::Images, "T5 camouflage", None);
+            let job = load_jobs::open(JobKind::ImageDecode).namespace("t5");
+            let plan = asset_material::material_images::plan_material_images_for_keys(
+                &zone.path,
+                &mut material_seed,
+                keys,
+                &stage,
+                load_pool(),
+            );
+            stage.done();
+            camouflage_images = hold_image_plan("T5 camouflage", Some(plan), job)
+                .map(|held| held.enqueue(&progress));
+        }
+    }
 
     weapons.set_family_tables(cac_tables.clone());
     let iw5_prepared = weapons.prepare_iw5_configurations();
@@ -897,6 +949,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             let mut kept = Vec::new();
             for (namespace, pending) in [
                 ("t5", t5_images),
+                ("t5", camouflage_images),
                 ("iw5", foreign_images),
                 ("iw5", bundle_images),
             ] {

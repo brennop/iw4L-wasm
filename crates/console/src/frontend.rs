@@ -104,6 +104,7 @@ pub(crate) fn route(
     mut menus: MessageWriter<UiMenuRequest>,
     mut transition: ResMut<session::SessionSwapRequest>,
     maps: Res<ui::MenuMapList>,
+    presentation: Option<Res<ui::frontend::maps::MapPresentation>>,
     settings: Res<frame::GameSettings>,
     localize: Option<Res<asset_game::LocalizeCatalog>>,
     catalog: Option<Res<asset_game::MenuCatalog>>,
@@ -112,6 +113,9 @@ pub(crate) fn route(
     mut state: Local<FrontendState>,
     mut echo: crate::feature_dispatch::ConsoleEcho,
 ) {
+    if services.browser.is_none() {
+        dvars.set("ui_master_status", "Master: Not connected");
+    }
     let mut returned_from_world = false;
     let mut returned_in_menu = false;
     for fact in returned.read() {
@@ -427,14 +431,11 @@ pub(crate) fn route(
                             })
                             .ok_or("Lobby is no longer available")?;
                         if advert.locked
-                            || advert.in_match
                             || advert.players >= advert.max_players
                             || !advert.missing.is_empty()
                         {
                             return Err(if advert.locked {
                                 "Lobby closed".into()
-                            } else if advert.in_match {
-                                "Match already in progress".into()
                             } else if advert.players >= advert.max_players {
                                 "Lobby is full".into()
                             } else {
@@ -619,9 +620,21 @@ pub(crate) fn route(
             "CHEATS: OFF"
         },
     );
-    let selected_label = map_label(dvars.get("ui_mapname").unwrap_or_default());
+    let label = |map: &str| {
+        presentation.as_ref().map_or_else(
+            || map_label(map),
+            |presentation| presentation.label(map, localize.as_deref()),
+        )
+    };
+    let preview_image = |map: &str| {
+        presentation.as_ref().map_or_else(
+            || map_preview(map),
+            |presentation| presentation.preview(map),
+        )
+    };
+    let selected_label = label(dvars.get("ui_mapname").unwrap_or(""));
     dvars.set("ui_map_label", selected_label);
-    let preview = map_preview(dvars.get("ui_mapname").unwrap_or_default());
+    let preview = preview_image(dvars.get("ui_mapname").unwrap_or(""));
     dvars.set("ui_lobby_preview", preview);
     let mode_label = dvars
         .get("ui_gametype")
@@ -632,17 +645,17 @@ pub(crate) fn route(
     let hovered_map = pack.get(state.map_page * PAGE_SIZE + state.map_hover);
     dvars.set(
         "ui_map_preview_title",
-        hovered_map.map_or_else(String::new, |map| map_label(map)),
+        hovered_map.map_or_else(String::new, |map| label(map)),
     );
     dvars.set(
         "ui_map_preview",
-        hovered_map.map_or_else(String::new, |map| map_preview(map)),
+        hovered_map.map_or_else(String::new, |map| preview_image(map)),
     );
     for row in 0..PAGE_SIZE {
         dvars.set(
             &format!("ui_map_{row}"),
             pack.get(state.map_page * PAGE_SIZE + row)
-                .map(|map| map_label(map))
+                .map(|map| label(map))
                 .unwrap_or_default(),
         );
     }
@@ -666,6 +679,15 @@ pub(crate) fn route(
     }
     if let Some(browser) = services.browser.as_ref() {
         let snapshot = browser.snapshot();
+        let connection = match snapshot.ping_ms {
+            Some(ping) => format!("{ping} ms"),
+            None if snapshot.error.is_some() => "Unavailable".to_owned(),
+            None => "Connecting...".to_owned(),
+        };
+        dvars.set(
+            "ui_master_status",
+            format!("Master: {} | {connection}", snapshot.community_name),
+        );
         let focused_row = services
             .menus
             .as_ref()
@@ -772,10 +794,10 @@ pub(crate) fn route(
                         "NEEDS {}",
                         net::content_names(advert.missing).to_uppercase()
                     )
-                } else if advert.in_match {
-                    "IN MATCH".into()
                 } else if advert.players >= advert.max_players {
                     "FULL".into()
+                } else if advert.in_match {
+                    "IN MATCH".into()
                 } else if advert.password_protected {
                     "PASSWORD".into()
                 } else {
@@ -793,7 +815,7 @@ pub(crate) fn route(
                             name.trim_start_matches("mp_").to_ascii_uppercase()
                         )
                     });
-                let fallback_map = map_label(&advert.map);
+                let fallback_map = label(&advert.map);
                 let map = map_key
                     .as_ref()
                     .and_then(|key| localize.as_ref()?.text(key))

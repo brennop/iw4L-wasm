@@ -1,15 +1,3 @@
-//! The on-disk preamble and the chunk framing that follows it.
-//!
-//! ```text
-//! 0x000  "TAff0100"            magic
-//! 0x008  u32 version           0x93 on PC
-//! 0x00C  "PHEEBs71"            encrypted-stream marker
-//! 0x014  u32                   unread
-//! 0x018  char[32] zone name    seeds the per-stream IV table
-//! 0x038  u8[256]               RSA signature, not checked
-//! 0x138  { u32 len; u8[len] }  chunks until len == 0 or end of file
-//! ```
-
 pub const MAGIC_SIGNED: &[u8; 8] = b"TAff0100";
 
 pub const MAGIC_ENCRYPTED: &[u8; 8] = b"PHEEBs71";
@@ -30,7 +18,6 @@ pub struct FileHeader {
 }
 
 impl FileHeader {
-    /// The zone name as written in the header: the IV seed, not the file name.
     pub fn name(&self) -> &[u8] {
         &self.name[..self.name_len]
     }
@@ -75,14 +62,10 @@ pub fn parse_file_header(bytes: &[u8]) -> Result<FileHeader, FileHeaderError> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Chunk<'a> {
-    /// Position in the file's chunk order; the stream is `index % STREAM_COUNT`.
     pub index: usize,
     pub bytes: &'a [u8],
 }
 
-/// Walks the length-prefixed chunks after the preamble. A zero length ends
-/// the list (small zones are padded with zeros to a sector); a length running
-/// past the file is reported once as `Err(offset)` and ends the walk.
 pub struct Chunks<'a> {
     file: &'a [u8],
     pos: usize,

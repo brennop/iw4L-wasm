@@ -3,6 +3,7 @@ use asset_material::t5_code_remap::{
     LEFTOVER_T5_CODE_BASE, T5_CODE_FOG, T5_CODE_FOG_COLOR, T5_CODE_FOG2, T5_CODE_SUN_FOG,
     T5_CODE_SUN_FOG_COLOR, T5_CODE_SUN_FOG_DIR,
 };
+use asset_material::t6_techset::CODE_T6_FOG;
 use asset_world::ExpFog;
 
 pub(super) fn produce(sources: &mut RuntimeCodeSources, fog: &ExpFog, eye_z: f32, enabled: bool) {
@@ -79,6 +80,25 @@ pub(super) fn produce(sources: &mut RuntimeCodeSources, fog: &ExpFog, eye_z: f32
     );
     put(sources, T5_CODE_FOG, fog_row);
     put(sources, T5_CODE_FOG2, fog2);
+    let scale = fog.volumetric.map_or(1.0, |volume| volume.color_scale);
+    let hdr = |rgb: [f32; 4]| {
+        [
+            rgb[0] * scale,
+            rgb[1] * scale,
+            rgb[2] * scale,
+            fog.max_opacity,
+        ]
+    };
+    for (code, row) in CODE_T6_FOG.into_iter().zip([
+        hdr(color),
+        fog_row,
+        fog2,
+        sun_dir,
+        hdr(sun_color),
+        [-end * slope, slope, 0.0, 0.0],
+    ]) {
+        sources.set_constant_rows(code, &[row.map(f32::to_bits)]);
+    }
 }
 
 fn density_rows(

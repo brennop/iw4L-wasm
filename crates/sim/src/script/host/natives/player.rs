@@ -185,7 +185,7 @@ fn data_error(error: crate::PersistentDataError) -> String {
     format!("player data: {error:?}")
 }
 
-fn check_data_write(world: &World) -> Result<(), String> {
+pub(crate) fn check_data_write(world: &World) -> Result<(), String> {
     if world
         .resource::<Runtime>()
         .program
@@ -477,11 +477,9 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         "pingplayer",
         "kc_regweaponforfxremoval",
         "setviewmodel",
-        "playerhide",
         "forceusehinton",
         "forceusehintoff",
         "predictstreampos",
-        "playerforcedeathanim",
     );
     macro_rules! answers {
         ($value:expr => $($name:literal),* $(,)?) => {$(
@@ -492,6 +490,56 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         )*};
     }
     answers!(Value::Int(1) => "isitemunlocked");
+    registry.register(Method, "playerhide", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let mut frame = FrameWorld::from_world(world);
+        if let Some(ps) = frame.player_mut(id) {
+            ps.e_flags |= playerstate_iw4::eflags::NODRAW;
+        }
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "playerforcedeathanim", |world, receiver, args| {
+        let id = client_of(world, receiver)?;
+        let inflictor = match args.first() {
+            Some(Value::Object(obj)) if world.resource::<Runtime>().live(obj) => {
+                match super::super::players::entity_field(world, *obj, "origin") {
+                    Value::Vector(v) => Some(v),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let means = optional(args, 1, string)?;
+        let weapon = optional(args, 2, string)?;
+        let hitloc = optional(args, 3, string)?;
+        let v_dir = optional(args, 4, vector)?;
+        let explosive_mod = matches!(
+            means.as_deref(),
+            Some(
+                "MOD_EXPLOSIVE_BULLET"
+                    | "MOD_GRENADE"
+                    | "MOD_GRENADE_SPLASH"
+                    | "MOD_PROJECTILE"
+                    | "MOD_PROJECTILE_SPLASH"
+                    | "MOD_EXPLOSIVE"
+            )
+        );
+        let hitloc = hitloc
+            .and_then(|name| weapon_iw4::HITLOC_NAMES.iter().position(|n| *n == name))
+            .map_or(0, |i| i as u8);
+        let mut frame = FrameWorld::from_world(world);
+        let weapon = weapon.and_then(|name| frame.weapon_index_by_script_name(&name));
+        crate::damage::force_death_anim(
+            &mut frame,
+            id,
+            weapon,
+            explosive_mod,
+            inflictor,
+            hitloc,
+            v_dir.unwrap_or([0.0; 3]),
+        );
+        Ok(Value::Int(0))
+    });
     registry.register(Method, "isusingturret", |world, receiver, _| {
         let id = client_of(world, receiver)?;
         let frame = FrameWorld::from_world(world);
@@ -851,6 +899,7 @@ pub(crate) fn link_to(
     } else {
         std::array::from_fn(|i| (0..3).map(|j| delta[j] * axis[i][j]).sum())
     };
+    let use_tag_angles = optional(args, 7, int)?.is_some_and(|value| value != 0);
     let restore_view = (view == LinkView::WeaponDelta)
         .then(|| {
             FrameWorld::from_world(world)
@@ -868,7 +917,14 @@ pub(crate) fn link_to(
             angles: [0.0; 3],
             view,
             clamp,
-            parent_angles: math_iw4::axis_to_angles(axis),
+            parent_axis: axis,
+            view_fraction: optional(args, 2, float)?.unwrap_or(1.0).clamp(0.0, 1.0),
+            use_tag_angles,
+            link_axis: if use_tag_angles {
+                axis
+            } else {
+                math_iw4::angles_to_axis([0.0; 3])
+            },
             restore_view,
         },
     );
@@ -1341,10 +1397,22 @@ fn register_inventory(registry: &mut NativeRegistry) {
         let id = client_of(world, receiver)?;
         let named = weapon_arg(world, args, 0)?;
         let weapon = player_weapon(world, id, args, 0)?;
-        // IW4 `giveWeapon( weapon, model, akimbo )`: the model is the
-        // camouflage slot of the weapon's `gunXModel` / `worldModel`.
-        let model = optional(args, 1, int)?.unwrap_or(0).clamp(0, 15) as u8;
-        let akimbo = optional(args, 2, int)?.unwrap_or(0) != 0;
+        let t5 = world
+            .resource::<Runtime>()
+            .program
+            .as_ref()
+            .is_some_and(|program| program.rules() == crate::script::Realm::T5);
+        let model = if t5 {
+            (optional(args, 2, int)?.unwrap_or(0) & 63) as u8
+        } else {
+            optional(args, 1, int)?.unwrap_or(0).clamp(0, 15) as u8
+        };
+        let model = if named != weapon {
+            super::super::players::selected_camouflage(world, id.0, weapon).unwrap_or(model)
+        } else {
+            model
+        };
+        let akimbo = !t5 && optional(args, 2, int)?.unwrap_or(0) != 0;
         script_player::give_weapon(&mut FrameWorld::from_world(world), id, weapon, akimbo)?;
         script_player::set_weapon_model(&mut FrameWorld::from_world(world), id, weapon, model);
         super::super::players::give_carried_insertion(world, id.0, receiver, named)?;

@@ -1,12 +1,3 @@
-//! Loads an inflated T6 image into its XFile blocks by interpreting the load
-//! plan, the way the game's `DB_Load*` functions consume the stream.
-//!
-//! Pointers inside block memory stay in zone encoding, `((block << 29) |
-//! offset) + 1`, after loading: a consumer reads a struct and follows its
-//! pointers with [`ZoneBlocks::ptr_at`]. Asset headers are copied out when
-//! their loader finishes — the game moves them to the asset pool, and the
-//! temp block they were read into is reused by the next asset.
-
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -80,23 +71,10 @@ pub(crate) fn decode_ptr(raw: u32) -> Option<Ptr> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalkError {
-    Truncated {
-        at: usize,
-    },
-    BlockOverflow {
-        block: u8,
-        end: usize,
-        size: usize,
-    },
-    BadPointer {
-        raw: u32,
-    },
-    /// A load landed somewhere other than the pushed block's cursor — the
-    /// plan and the stream disagree.
-    Misplaced {
-        expected: Ptr,
-        got: Ptr,
-    },
+    Truncated { at: usize },
+    BlockOverflow { block: u8, end: usize, size: usize },
+    BadPointer { raw: u32 },
+    Misplaced { expected: Ptr, got: Ptr },
     DelayBlock,
     StackUnderflow,
     NegativeCount(i64),
@@ -108,7 +86,6 @@ pub enum WalkError {
 
 pub type Result<T> = core::result::Result<T, WalkError>;
 
-/// XFile blocks after a load.
 pub struct ZoneBlocks {
     blocks: [Vec<u8>; MAX_XFILE_COUNT],
 }
@@ -137,7 +114,6 @@ impl ZoneBlocks {
         Ok(u32::from_le_bytes(self.slice(p, 4)?.try_into().unwrap()))
     }
 
-    /// The pointer stored at `p`; `None` for null.
     pub fn ptr_at(&self, p: Ptr) -> Result<Option<Ptr>> {
         let raw = self.u32_at(p)?;
         if raw == 0 {
@@ -179,25 +155,23 @@ impl ZoneBlocks {
     }
 }
 
-/// One loaded asset: its type, where its header ended up and a copy of the
-/// header taken as its loader finished.
 pub struct LoadedAsset {
     pub ty: AssetType,
-    /// Position in the zone's asset list, or `None` for an asset loaded
-    /// inline as another asset's dependency.
     pub list_index: Option<usize>,
     pub header: Vec<u8>,
-    /// The assets the header's own pointer fields named when it was
-    /// loaded, by field offset. Read these rather than [`ZoneLoad::asset_at`]
-    /// on the header's address, which later loads may reuse.
     pub fields: Vec<(u32, usize)>,
-    /// Every asset pointer slot bound while this asset loaded (its header's
-    /// and its arrays'), sorted by slot, with the asset each named then.
     pub bound: Vec<(Ptr, usize)>,
+    pub image_data: Option<LoadedImage>,
+}
+
+pub struct LoadedImage {
+    pub level_count: u8,
+    pub flags: u8,
+    pub format: u32,
+    pub payload: Vec<u8>,
 }
 
 impl LoadedAsset {
-    /// Index of the asset `slot` named while this asset loaded.
     pub fn bound_at(&self, slot: Ptr) -> Option<usize> {
         self.bound
             .binary_search_by(|(at, _)| at.cmp(&slot))
@@ -205,7 +179,6 @@ impl LoadedAsset {
             .map(|i| self.bound[i].1)
     }
 
-    /// Index (into [`ZoneLoad::assets`]) of the asset field `offset` names.
     pub fn field(&self, offset: u32) -> Option<usize> {
         self.fields
             .iter()
@@ -216,25 +189,16 @@ impl LoadedAsset {
 
 pub struct ZoneLoad {
     pub blocks: ZoneBlocks,
-    /// Every asset in load order, nested dependencies before their owner.
     pub assets: Vec<LoadedAsset>,
-    /// Where each asset pointer slot was left, keyed by the slot; the value
-    /// indexes `assets`. Covers aliases of already-loaded assets too.
     pub asset_slots: BTreeMap<Ptr, usize>,
-    /// The zone's script string table: `(array, count)`.
     pub script_strings: Option<(Ptr, usize)>,
 }
 
 impl ZoneLoad {
-    /// The asset a pointer field refers to, if the loader put one there.
-    /// Later loads may reuse a slot's memory: a slot of a loaded asset's
-    /// is better read through [`Self::asset_in`].
     pub fn asset_at(&self, slot: Ptr) -> Option<&LoadedAsset> {
         self.asset_slots.get(&slot).map(|&i| &self.assets[i])
     }
 
-    /// The asset `slot` named while `owner` loaded (`slot` in its header
-    /// or its arrays), else whatever the slot names now.
     pub fn asset_in(&self, owner: &LoadedAsset, slot: Ptr) -> Option<&LoadedAsset> {
         owner
             .bound_at(slot)
@@ -242,7 +206,6 @@ impl ZoneLoad {
             .or_else(|| self.asset_at(slot))
     }
 
-    /// Script string `id` (bone names, notetracks); `None` past the table.
     pub fn script_string(&self, id: u16) -> Option<&str> {
         let (arr, count) = self.script_strings?;
         if usize::from(id) >= count {
@@ -326,15 +289,11 @@ struct Walker<'a> {
     temp_saved: Vec<usize>,
     assets: Vec<LoadedAsset>,
     asset_slots: BTreeMap<Ptr, usize>,
-    /// Every slot bound, in order: an asset's own fields are the ones
-    /// bound while it loaded.
     slot_log: Vec<(Ptr, usize)>,
-    /// Each asset by where its header sits, as of now (memory is reused).
     addresses: BTreeMap<Ptr, usize>,
     script_strings: Option<(Ptr, usize)>,
 }
 
-/// One running loader: its asset's plan and the `var<Struct>` pointers.
 struct Frame<'s> {
     asset: &'s AssetSchema,
     vars: Vec<Option<Ptr>>,
@@ -400,8 +359,6 @@ impl<'a> Walker<'a> {
         Ok(bytes)
     }
 
-    /// `LoadDataInBlock`: `len` bytes at `dst`, which must be the pushed
-    /// block's cursor. Runtime blocks are zero-filled and read nothing.
     fn load(&mut self, dst: Ptr, len: usize) -> Result<()> {
         let cur = self.cursor()?;
         if cur != dst {
@@ -551,7 +508,6 @@ impl<'a> Walker<'a> {
         usize::try_from(n).map_err(|_| WalkError::NegativeCount(n))
     }
 
-    /// `varS->member` read as a pointer (`deref`) or taken as an address.
     fn access(&self, base: Ptr, off: u32, deref: bool) -> Result<Ptr> {
         let slot = base.at(off);
         if deref { self.deref(slot) } else { Ok(slot) }
@@ -632,7 +588,6 @@ impl<'a> Walker<'a> {
                 if follows {
                     self.run_body(frame, var, body, raw == PTR_INSERT)?;
                 } else if *temp {
-                    // ConvertOffsetToAlias: the pointer stored at the offset.
                     let target = Ptr::decode(raw).ok_or(WalkError::BadPointer { raw })?;
                     let aliased = self.mem.u32_at(target)?;
                     self.mem.write_u32(slot, aliased)?;
@@ -640,7 +595,6 @@ impl<'a> Walker<'a> {
                         self.bind_slot(slot, i);
                     }
                 }
-                // Otherwise the offset already is the pointer, in zone encoding.
             }
             Op::Alloc {
                 off,
@@ -807,7 +761,6 @@ impl<'a> Walker<'a> {
         self.slot_log.push((slot, index));
     }
 
-    /// `Loader_X::Load(&slot)` → `LoadPtr_X(false)`.
     fn load_asset(&mut self, asset: usize, slot: Ptr, list_index: Option<usize>) -> Result<()> {
         let schema: &'a AssetSchema = &self.schema.assets[asset];
         let log_start = self.slot_log.len();
@@ -837,6 +790,25 @@ impl<'a> Walker<'a> {
 
                 let ty = asset_type_for(&schema.name).ok_or(WalkError::Schema)?;
                 let header = self.mem.bytes(at, root.size as usize)?.to_vec();
+                let image_data = if ty == AssetType::Image {
+                    match self.mem.ptr_at(at)? {
+                        Some(data) => {
+                            let definition = self.mem.bytes(data, 12)?;
+                            let format = u32::from_le_bytes(definition[4..8].try_into().unwrap());
+                            let len =
+                                u32::from_le_bytes(definition[8..12].try_into().unwrap()) as usize;
+                            Some(LoadedImage {
+                                level_count: definition[0],
+                                flags: definition[1],
+                                format,
+                                payload: self.mem.bytes(data.at(12), len)?.to_vec(),
+                            })
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                };
                 let end = at.at(root.size);
                 let mut fields: Vec<(u32, usize)> = Vec::new();
                 let mut bound: BTreeMap<Ptr, usize> = BTreeMap::new();
@@ -856,6 +828,7 @@ impl<'a> Walker<'a> {
                     header,
                     fields,
                     bound,
+                    image_data,
                 });
                 self.bind_slot(slot, index);
                 self.addresses.insert(at, index);
@@ -871,7 +844,6 @@ impl<'a> Walker<'a> {
                     self.bind_slot(slot, i);
                 }
             } else if let Some(&i) = Ptr::decode(raw).and_then(|at| self.addresses.get(&at)) {
-                // A pointer to an asset loaded earlier, left as it is.
                 self.bind_slot(slot, i);
             }
         }
@@ -882,9 +854,6 @@ impl<'a> Walker<'a> {
     }
 }
 
-/// Loads every asset of an inflated T6 image. `on_asset` sees each asset of
-/// the list as it completes, with its index; returning `false` stops the walk
-/// early. The load is returned whole or partial, beside how the walk ended.
 pub fn load_zone(
     schema: &Schema,
     image: &[u8],
@@ -931,7 +900,6 @@ fn walk_list(
     w: &mut Walker<'_>,
     on_asset: &mut impl FnMut(usize, AssetType) -> bool,
 ) -> Result<()> {
-    // XAssetList is read raw, outside any block.
     let head = w.take(24)?;
     let rd = |o: usize| u32::from_le_bytes(head[o..o + 4].try_into().unwrap());
     let (string_count, strings, depend_count, depends, asset_count, assets) = (

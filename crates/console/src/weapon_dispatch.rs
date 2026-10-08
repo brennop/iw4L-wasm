@@ -326,7 +326,6 @@ pub(crate) fn route_weapon_commands(
 
 const GIVE_USAGE: &str = "give ammo | give killstreak/<name> | give weapon/<game:weapon> [attachment...] [camo=<name|slot>] — resupply ammo, acquire a reward, or equip a weapon";
 
-/// A `camo=<name|slot>` argument apart from the attachments.
 pub(crate) fn split_camo(args: &[String]) -> (Option<&str>, Vec<String>) {
     let mut camo = None;
     let mut attachments = Vec::new();
@@ -339,8 +338,6 @@ pub(crate) fn split_camo(args: &[String]) -> (Option<&str>, Vec<String>) {
     (camo, attachments)
 }
 
-/// The camouflage slot of `weapon` a name (`woodland`, by its number in
-/// IW4's camouflage table) or a slot number names.
 pub(crate) fn camo_slot(
     registry: &asset_game::WeaponRegistry,
     weapon: u32,
@@ -349,29 +346,21 @@ pub(crate) fn camo_slot(
     if camo.eq_ignore_ascii_case("none") {
         return Ok(0);
     }
-    let models = registry
-        .camo_models_of(weapon)
-        .filter(|models| !models.view.is_empty())
-        .ok_or_else(|| format!("{} has no camouflage", registry.name_of(weapon)))?;
-    let slot = match camo.parse::<u8>() {
-        Ok(slot) => slot,
-        Err(_) => match sim::match_state::iw4_camo_index(camo) {
-            0 => return Err(format!("no camouflage `{camo}`")),
-            slot => slot,
-        },
-    };
-    models
-        .view
-        .iter()
-        .any(|(own, _)| *own == slot)
-        .then_some(slot)
+    let slot = camo
+        .parse::<u8>()
+        .ok()
+        .or_else(|| registry.camouflage_slot(weapon, camo));
+    let choices = registry.camouflage_choices(weapon);
+    slot.filter(|slot| *slot == 0 || choices.iter().any(|(own, _)| own == slot))
         .ok_or_else(|| {
-            let names: Vec<&str> = models
-                .view
-                .iter()
-                .filter_map(|(own, _)| sim::match_state::IW4_CAMOS.get(usize::from(*own)).copied())
-                .collect();
-            format!("no camouflage `{camo}` (has {})", names.join(", "))
+            format!(
+                "no camouflage `{camo}` (has {})",
+                choices
+                    .iter()
+                    .map(|(_, name)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         })
 }
 

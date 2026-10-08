@@ -157,10 +157,6 @@ pub struct ModelPoseSrc {
 
     pub base_mat: Vec<(Quat, Vec3)>,
 
-    /// The first root bone's rest transform relative to the tag the model is
-    /// attached to; `None` rests it on the tag. A T6 attachment model is
-    /// placed off its gun's root (`attachViewModelOffsets`), and animation
-    /// translations add to it as to any bind translation.
     pub root_rest: Option<(Quat, Vec3)>,
 }
 

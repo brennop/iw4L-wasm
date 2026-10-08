@@ -55,6 +55,55 @@ impl SessionClassStore {
                 }
             }
         }
+        if slots.len() < PERSONAL_CLASS_SLOTS {
+            let families: Vec<_> = registry.weapon_families().offered().collect();
+            for primary in families
+                .iter()
+                .filter(|family| family.slot == asset_game::FamilySlot::Primary)
+            {
+                let mut slot = HostClassSlot {
+                    name: format!("custom_{}", slots.len() + 1),
+                    primary: primary.key.asset_key(),
+                    primary_attachments: Vec::new(),
+                    secondary: String::new(),
+                    secondary_attachments: Vec::new(),
+                    lethal: String::new(),
+                    tactical: String::new(),
+                    perks: Default::default(),
+                    deathstreak: String::new(),
+                    camos: Default::default(),
+                };
+                if !available(&slot) {
+                    continue;
+                }
+                for role in [
+                    asset_game::FamilySlot::Secondary,
+                    asset_game::FamilySlot::Lethal,
+                    asset_game::FamilySlot::Tactical,
+                ] {
+                    for family in families.iter().filter(|family| {
+                        family.slot == role && family.key.namespace == primary.key.namespace
+                    }) {
+                        let mut candidate = slot.clone();
+                        let reference = family.key.asset_key();
+                        match role {
+                            asset_game::FamilySlot::Secondary => candidate.secondary = reference,
+                            asset_game::FamilySlot::Lethal => candidate.lethal = reference,
+                            asset_game::FamilySlot::Tactical => candidate.tactical = reference,
+                            _ => unreachable!(),
+                        }
+                        if available(&candidate) {
+                            slot = candidate;
+                            break;
+                        }
+                    }
+                }
+                slots.push(slot);
+                if slots.len() == PERSONAL_CLASS_SLOTS {
+                    break;
+                }
+            }
+        }
         if !slots.is_empty() {
             let available = slots.clone();
             while slots.len() < PERSONAL_CLASS_SLOTS {
@@ -144,8 +193,6 @@ fn encode_slots(slots: &[ClassSlotState]) -> String {
             clean_field(&slot.deathstreak),
         ];
         out.push_str(&fields.join("\t"));
-        // Camouflage trails the row, and only when there is some: a file
-        // without it reads in builds that predate it.
         if slot.camos.iter().any(|camo| !camo.is_empty()) {
             for camo in &slot.camos {
                 out.push('\t');

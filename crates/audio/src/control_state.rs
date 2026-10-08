@@ -13,7 +13,7 @@ pub(crate) struct ControlState {
     pub(super) listener: Arc<ListenerState>,
     pub(super) event_context: Arc<crate::event::EventContextState>,
     pub(super) next_id: Arc<AtomicU64>,
-    pub(super) rejections: Arc<[AtomicU64; 6]>,
+    pub(super) rejections: Arc<[AtomicU64; 7]>,
     pub(super) cue_budget: crate::pending::PendingBudget,
     pub(super) resolver: CueResolver,
     pub(super) events: crate::event::EventJournal,
@@ -27,6 +27,12 @@ pub(crate) struct ControlState {
     pub(super) present_sources: HashSet<(SourceKey, u64)>,
     pub(super) source_cues: HashMap<(SourceKey, u64), Arc<crate::cue::CueState>>,
     pub(super) silence: [[f32; 2]; QUANTUM],
+    pub(super) device_enabled: bool,
+    pub(super) diag_anchor: Instant,
+    pub(super) diag_last: Instant,
+    pub(super) diag_max_pass: Duration,
+    pub(super) diag_previous_pass: Instant,
+    pub(super) diag_max_gap: Duration,
 }
 
 impl ControlState {
@@ -38,8 +44,9 @@ impl ControlState {
         listener: Arc<ListenerState>,
         event_context: Arc<crate::event::EventContextState>,
         next_id: Arc<AtomicU64>,
-        rejections: Arc<[AtomicU64; 6]>,
+        rejections: Arc<[AtomicU64; 7]>,
         cue_budget: crate::pending::PendingBudget,
+        device_enabled: bool,
     ) -> Self {
         Self {
             shared,
@@ -66,6 +73,12 @@ impl ControlState {
             present_sources: HashSet::with_capacity(LOGICAL_INSTANCES),
             source_cues: HashMap::with_capacity(crate::sources::SOURCE_HISTORY),
             silence: [[0.0; 2]; QUANTUM],
+            device_enabled,
+            diag_anchor: Instant::now(),
+            diag_last: Instant::now(),
+            diag_max_pass: Duration::ZERO,
+            diag_previous_pass: Instant::now(),
+            diag_max_gap: Duration::ZERO,
         }
     }
 

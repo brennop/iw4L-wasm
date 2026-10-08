@@ -25,6 +25,7 @@ pub struct MaterialExecFrame {
     pub primary_lights: Vec<lighting_iw4::GfxLightPack>,
     pub attenuation: Vec<LightAttenuationBind>,
     pub t5_falloff: Vec<T5LightFalloffPack>,
+    pub reflection_probe_sh: Vec<Option<[[f32; 4]; 3]>>,
 
     pub spot_receivers: Vec<Option<SpotShadowReceiver>>,
 }

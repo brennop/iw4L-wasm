@@ -1,4 +1,3 @@
-/// `XAssetType` as the zone's asset array spells it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u32)]
 pub enum AssetType {

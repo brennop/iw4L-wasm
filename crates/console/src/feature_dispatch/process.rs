@@ -5,7 +5,6 @@ use net::{MasterBridge, MasterBridgeState};
 
 const LEAVE_BUDGET: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// The exit code of an `AppExit` this frame, for [`exit_process`].
 #[derive(Resource)]
 pub(crate) struct PendingExit(i32);
 
@@ -32,11 +31,6 @@ pub(crate) fn request_exit(
 #[cfg(not(target_arch = "wasm32"))]
 const AUDIO_FADE: std::time::Duration = std::time::Duration::from_millis(60);
 
-/// Leaves the process: the audio is silenced first, then the exit hooks run
-/// and the process ends without the GPU driver's teardown (see
-/// [`diag::exit`]), which segfaulted with render threads still in the
-/// driver and froze the process, audio stream open, while its core was
-/// written.
 pub(crate) fn exit_process(world: &mut World) {
     let Some(PendingExit(code)) = world.remove_resource::<PendingExit>() else {
         return;

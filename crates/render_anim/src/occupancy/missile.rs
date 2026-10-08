@@ -255,10 +255,6 @@ fn occupy_missile_scene_ents(
             lighting_owner,
         });
     }
-    // A script model carrying a weapon's thrown model (a foreign tactical
-    // insertion planted by IW4's scripts) is drawn as that weapon's
-    // projectile: the script model catalog cannot resolve the attachment,
-    // so the script model itself is not drawn.
     for (entity, owner, transform, visibility) in &script_models {
         if *visibility == Visibility::Hidden {
             continue;

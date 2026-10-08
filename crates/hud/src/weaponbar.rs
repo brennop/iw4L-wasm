@@ -11,7 +11,7 @@ use hud_iw4::{
     low_ammo_warning_color_pair, low_ammo_warning_pulse_frac, perk_code_key, vec4_lerp,
 };
 use net::{FrameClock, LocalPresentClient, PresentedSnapshot, WeaponSelect};
-use playerstate_iw4::{PM_TYPE_DEAD, PlayerState};
+use playerstate_iw4::{ENTITYNUM_NONE, PM_TYPE_DEAD, PlayerState};
 use weapon_iw4::{get_viewmodel_weapon_index, player_weapons_find_slot};
 
 use crate::ammo::{
@@ -261,6 +261,21 @@ impl ExprHost for WeaponbarExprHost<'_> {
     }
     fn in_killcam(&self) -> Result<i32, ExprError> {
         Ok(i32::from(self.in_killcam))
+    }
+    fn in_killcam_npc(&self) -> Result<i32, ExprError> {
+        Ok(i32::from(
+            self.in_killcam
+                && self
+                    .ps
+                    .is_some_and(|ps| ps.kill_cam_entity != ENTITYNUM_NONE),
+        ))
+    }
+    fn is_reloading(&self) -> Result<i32, ExprError> {
+        Ok(i32::from(self.ps.is_some_and(|ps| {
+            [ps.weaponstate_primary, ps.weaponstate_secondary]
+                .iter()
+                .any(|state| (8..=12).contains(state))
+        })))
     }
     fn missilecam(&self) -> Result<i32, ExprError> {
         Ok(i32::from(self.missilecam))

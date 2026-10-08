@@ -21,6 +21,7 @@ pub fn refresh(
     frame.primary_lights.clear();
     frame.attenuation.clear();
     frame.t5_falloff.clear();
+    frame.reflection_probe_sh.clear();
     frame.spot_receivers.clear();
     let Some(inputs) = inputs else {
         frame.inv_image_height = None;
@@ -32,5 +33,8 @@ pub fn refresh(
         .extend_from_slice(&inputs.primary_lights);
     frame.attenuation.extend_from_slice(&inputs.attenuation);
     frame.t5_falloff.extend_from_slice(&inputs.t5_falloff);
+    frame
+        .reflection_probe_sh
+        .extend_from_slice(&inputs.reflection_probe_sh);
     frame.spot_receivers.clone_from(&res.spot_receivers);
 }

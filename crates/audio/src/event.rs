@@ -86,12 +86,25 @@ impl AudioEvent {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct EventContext {
     pub local_life: Option<(u32, u32)>,
     pub world: u64,
     pub timeline: u64,
     pub tick: u32,
+    pub owner_tick: Option<u32>,
+}
+
+impl EventContext {
+    fn tick_for(self, id: AudioEventId) -> u32 {
+        match id.occurrence {
+            AudioOccurrence::Entity {
+                domain: net::EntityEventDomain::Predicted,
+                ..
+            } => self.owner_tick.unwrap_or(self.tick),
+            _ => self.tick,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -139,11 +152,11 @@ impl EventJournal {
                 new.tick = old.tick;
             }
             self.context = Some(new);
-            if new.tick == old.tick {
+            if new.tick == old.tick && new.owner_tick == old.owner_tick {
                 return;
             }
-            self.accepted.retain(|_, tick| {
-                let age = new.tick.wrapping_sub(*tick);
+            self.accepted.retain(|id, tick| {
+                let age = new.tick_for(*id).wrapping_sub(*tick);
                 age < EVENT_WINDOW_TICKS || age >= 1 << 31
             });
         }
@@ -181,11 +194,12 @@ impl EventJournal {
         if !self.current(Some(event)) {
             return Err(CueFailure::StaleEvent);
         }
-        let age = context.tick.wrapping_sub(event.tick);
+        let context_tick = context.tick_for(id);
+        let age = context_tick.wrapping_sub(event.tick);
         if age >= EVENT_WINDOW_TICKS && age < 1 << 31 {
             return Err(CueFailure::StaleEvent);
         }
-        if age >= 1 << 31 && event.tick.wrapping_sub(context.tick) > FUTURE_TICKS {
+        if age >= 1 << 31 && event.tick.wrapping_sub(context_tick) > FUTURE_TICKS {
             return Err(CueFailure::StaleEvent);
         }
         if self.accepted.contains_key(&id) {

@@ -34,8 +34,6 @@ pub struct ScriptEffect {
     pub start_ms: Option<i32>,
     pub repeat_ms: i32,
     pub cull_distance: f32,
-    /// Hidden (`hide()`), it plays only for the clients in this mask
-    /// (`showToPlayer`); `None` plays it for everyone.
     pub viewers: Option<u64>,
 }
 
@@ -95,7 +93,6 @@ pub struct CompassObjective {
     pub origin: [f32; 3],
     pub team: Team,
     pub icon: String,
-    /// The one client it shows to, when `objective_team` was given a player.
     pub viewer: Option<u32>,
 }
 

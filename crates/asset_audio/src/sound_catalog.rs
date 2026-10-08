@@ -183,7 +183,6 @@ pub struct CapturedAlias {
 
     pub flags: Option<u32>,
 
-    /// Looping as read without an IW4 flag word (T6 aliases).
     pub looping: Option<bool>,
 
     pub slave_percentage: f32,
@@ -243,8 +242,6 @@ impl CapturedAlias {
             .filter(|name| !name.is_empty())
     }
 
-    /// Whether it loops: its flags say, else what the capture read
-    /// (T6 aliases carry no IW4 flag word).
     pub fn is_looping(&self) -> Option<bool> {
         self.decoded_flags()
             .map(SndAliasFlags::looping)

@@ -1041,7 +1041,6 @@ fn fanout_loopback(
             .map(|id| queues.pending_gamenotify.take_for(id.0))
             .unwrap_or_default();
         if let Err(e) = loopback.send_tick(
-            &tick.input,
             &listen_snapshot,
             acks.clone(),
             svc,
@@ -1064,11 +1063,10 @@ fn fanout_loopback(
     }
     if let Some(mut hub) = hub {
         if let Err(e) = hub.fanout_with_seats(
-            &tick.input,
             &tick.snapshot,
             &acks,
             |peer, live| {
-                crate::policy::seat::snapshot_for_viewer(
+                crate::policy::seat::snapshot_override_for_viewer(
                     &archive,
                     &seats,
                     live,

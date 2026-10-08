@@ -743,7 +743,6 @@ pub fn terrain_scorch_binding_hash(layer: usize) -> u32 {
     crate::fnv1a64(name.as_bytes()) as u32
 }
 
-/// The IW4 code constant named `name` (`VIEW_PROJECTION_MATRIX`).
 pub fn iw4_code_const_index(name: &str) -> Option<u16> {
     IW4_CODE_CONST
         .iter()
@@ -751,7 +750,6 @@ pub fn iw4_code_const_index(name: &str) -> Option<u16> {
         .map(|(_, index)| *index)
 }
 
-/// The IW4 code texture named `name` (`SHADOWMAP_SUN`).
 pub fn iw4_code_texture_index(name: &str) -> Option<u32> {
     IW4_CODE_TEXTURE
         .iter()

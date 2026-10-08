@@ -52,6 +52,12 @@ pub fn publish_process_cpus(cpus: Vec<usize>) {
     let _ = PROCESS_CPUS.set(cpus);
 }
 
+pub fn use_process_cpus() {
+    if let Some(cpus) = PROCESS_CPUS.get() {
+        set_thread_cpus(cpus);
+    }
+}
+
 pub fn load_workers() -> usize {
     PROCESS_CPUS
         .get()

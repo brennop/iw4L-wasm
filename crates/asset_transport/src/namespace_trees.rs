@@ -184,7 +184,6 @@ impl NamespaceSoundIwd {
         self.iw4.is_none() && self.t5.is_none() && self.iw5.is_none()
     }
 
-    /// `None` for T6: it ships no IWD archives, so there is no slot.
     fn slot_mut(&mut self, ns: AssetNamespace) -> Option<&mut Option<crate::iwd::IwdSoundIndex>> {
         match ns {
             AssetNamespace::Iw4 => Some(&mut self.iw4),

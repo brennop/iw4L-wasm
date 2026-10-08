@@ -35,7 +35,6 @@ pub struct CapturedCombatInput {
     pub alternate_weapon: u32,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
-    /// The raise of a weapon not raised since it was given.
     pub first_raise_time_ms: i32,
     pub reload_time_ms: i32,
     pub reload_empty_time_ms: i32,
@@ -165,7 +164,6 @@ impl AimAssistRanges {
 pub struct WeaponCombatFacts {
     pub aim_assist: AimAssistRanges,
     pub dual_wield: bool,
-    /// The fire button melees (a T6 riot shield bashes with it).
     pub fire_melees: bool,
     pub fire_time_ms: i32,
     pub fire_delay_ms: i32,
@@ -174,7 +172,6 @@ pub struct WeaponCombatFacts {
     pub alternate_weapon: u32,
     pub alternate_raise_time_ms: i32,
     pub alternate_drop_time_ms: i32,
-    /// The raise of a weapon not raised since it was given.
     pub first_raise_time_ms: i32,
     pub reload_time_ms: i32,
     pub reload_empty_time_ms: i32,
@@ -682,8 +679,6 @@ pub struct WeaponCmd {
     pub alternate_switch: bool,
 
     pub switch_quick_raise_time_ms: i32,
-    /// The weapon switched to is raised for the first time since it was
-    /// given: its first raise, when it has one.
     pub switch_first_raise_time_ms: i32,
 
     pub offhand: crate::offhand::OffhandCmd,
@@ -1178,7 +1173,6 @@ fn finish_weapon_tick(
             }
         };
 
-        // Its fire button melees instead (see `weapon_try_melee`).
         if trigger && !facts.fire_melees {
             if hand.clip <= 0 {
                 hand.shot_count = 0;
@@ -1443,7 +1437,6 @@ pub fn weapon_hands(
     cmd.melee_charge.pm_flags = cmd.pm_flags;
     cmd.melee_charge.pm_type = cmd.pm_type;
     cmd.melee_charge.e_flags = cmd.e_flags;
-    // A weapon that melees with the fire button presses melee with it.
     let melee_buttons = |buttons: u32| {
         if facts.fire_melees && buttons & BUTTON_ATTACK != 0 {
             buttons | crate::BUTTON_MELEE
@@ -1559,8 +1552,6 @@ pub fn spawn_clip_stock(facts: &WeaponCombatFacts, last_hand: i32) -> (i32, i32,
     (clip0, clip1, stock)
 }
 
-/// A hand holding `weapon` as it is put in it, raising; `first` for a
-/// weapon just given, which takes its first raise when it has one.
 pub fn spawn_weapon_hand(weapon: u32, facts: &WeaponCombatFacts, first: bool) -> WeaponHandState {
     let total = facts.start_ammo.max(0);
     let clip = if facts.clip_size > 0 {

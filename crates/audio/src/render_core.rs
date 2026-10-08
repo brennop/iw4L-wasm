@@ -8,6 +8,7 @@ use crate::media::RenderMedia;
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const QUANTUM: usize = 128;
 pub const PHYSICAL_VOICES: usize = 128;
+pub(crate) const MIN_ATTACK_FRAMES: u64 = SAMPLE_RATE as u64 / 50;
 
 const FREE: u8 = 0;
 const PUBLISHED: u8 = 1;
@@ -37,6 +38,7 @@ pub(crate) struct InstanceState {
     pub scope: AudioScope,
     pub epoch: u64,
     pub stopped: AtomicBool,
+    pub finish_attack: AtomicBool,
     pub paused: AtomicBool,
     pub audible: AtomicBool,
     pub gain: AtomicU32,
@@ -45,6 +47,11 @@ pub(crate) struct InstanceState {
     pub rejection: AtomicU8,
     pub cursor: AtomicU64,
     pub rendered_at: AtomicU64,
+    pub requested_at: web_time::Instant,
+    pub first_device_us: AtomicU64,
+    pub first_device_frame: AtomicU64,
+    pub device_frames: AtomicU64,
+    pub null_frames: AtomicU64,
     pub status: AtomicU8,
     pub transitions: AtomicU8,
 }
@@ -79,6 +86,7 @@ impl InstanceState {
     }
 
     pub fn reject(&self, reason: AdmissionFailure) {
+        self.stopped.store(true, Ordering::Release);
         self.rejection.store(reason as u8, Ordering::Release);
         self.retire();
     }
@@ -91,6 +99,7 @@ impl InstanceState {
             4 => Some(AdmissionFailure::Concurrency),
             5 => Some(AdmissionFailure::Cancelled),
             6 => Some(AdmissionFailure::StaleScope),
+            7 => Some(AdmissionFailure::OutputUnavailable),
             _ => None,
         }
     }
@@ -147,6 +156,8 @@ pub(crate) struct RenderShared {
     pub busy_blocks: AtomicU64,
     pub device_active: AtomicBool,
     pub device_blocks: AtomicU64,
+    pub device_callbacks: AtomicU64,
+    pub device_required: AtomicBool,
     pub null_blocks: AtomicU64,
     pub device_underruns: AtomicU64,
     pub cancelled: AtomicBool,
@@ -183,6 +194,8 @@ impl RenderShared {
             busy_blocks: AtomicU64::new(0),
             device_active: AtomicBool::new(false),
             device_blocks: AtomicU64::new(0),
+            device_callbacks: AtomicU64::new(0),
+            device_required: AtomicBool::new(false),
             null_blocks: AtomicU64::new(0),
             device_underruns: AtomicU64::new(0),
             cancelled: AtomicBool::new(false),
@@ -213,6 +226,7 @@ impl RenderShared {
         let frame = self.frame.load(Ordering::Relaxed);
         let epoch = self.match_epoch.load(Ordering::Acquire);
         let cancelled = self.cancelled.load(Ordering::Acquire);
+        let hold_one_shots = device == Some(false) && self.device_required.load(Ordering::Relaxed);
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.phase.load(Ordering::Acquire) != PUBLISHED {
                 continue;
@@ -220,14 +234,44 @@ impl RenderShared {
             let ended = {
                 // Control cannot replace a PUBLISHED payload until we retire it.
                 let assignment = unsafe { (&*slot.assignment.get()).as_ref().unwrap() };
-                render_assignment(
+                let (ended, rendered) = render_assignment(
                     assignment,
                     &mut state.cursors[index],
                     frame,
                     epoch,
                     cancelled,
+                    hold_one_shots,
                     output,
-                )
+                );
+                match device {
+                    Some(true) => {
+                        if rendered != 0
+                            && assignment.instance.first_device_us.load(Ordering::Relaxed)
+                                == u64::MAX
+                        {
+                            assignment
+                                .instance
+                                .first_device_frame
+                                .store(frame.max(assignment.start_frame), Ordering::Relaxed);
+                            assignment.instance.first_device_us.store(
+                                assignment.instance.requested_at.elapsed().as_micros() as u64,
+                                Ordering::Release,
+                            );
+                        }
+                        assignment
+                            .instance
+                            .device_frames
+                            .fetch_add(rendered as u64, Ordering::Relaxed);
+                    }
+                    Some(false) => {
+                        assignment
+                            .instance
+                            .null_frames
+                            .fetch_add(rendered as u64, Ordering::Relaxed);
+                    }
+                    None => {}
+                }
+                ended
             };
             if ended {
                 slot.phase.store(RETIRED, Ordering::Release);
@@ -290,8 +334,9 @@ fn render_assignment(
     frame: u64,
     epoch: u64,
     cancelled: bool,
+    hold_one_shots: bool,
     output: &mut [[f32; 2]; QUANTUM],
-) -> bool {
+) -> (bool, usize) {
     let instance = &assignment.instance;
     if cancelled
         || instance.stopped.load(Ordering::Acquire)
@@ -302,7 +347,10 @@ fn render_assignment(
         })
     {
         instance.set_status(InstanceStatus::Finished);
-        return true;
+        return (true, 0);
+    }
+    if hold_one_shots && !assignment.looping {
+        return (false, 0);
     }
     let rate = f32::from_bits(instance.rate.load(Ordering::Relaxed));
     let step = f64::from(assignment.media.rate()) / f64::from(SAMPLE_RATE) * f64::from(rate);
@@ -320,22 +368,23 @@ fn render_assignment(
             .store(cursor.position.to_bits(), Ordering::Release);
         instance.rendered_at.store(frame, Ordering::Release);
         instance.set_status(InstanceStatus::Virtual);
-        return true;
+        return (true, 0);
     }
     if instance.paused.load(Ordering::Relaxed) {
-        return false;
+        return (false, 0);
     }
     let first = assignment
         .start_frame
         .saturating_sub(frame)
         .min(QUANTUM as u64) as usize;
     if first == QUANTUM {
-        return false;
+        return (false, 0);
     }
     instance.set_status(InstanceStatus::Started);
     let gain = f32::from_bits(instance.gain.load(Ordering::Relaxed));
     let frames = assignment.media.frames();
     let gains = assignment.media.gains(&mut cursor.gains);
+    let mut rendered = 0;
     for (offset, target) in output[first..].iter_mut().enumerate() {
         let audio_frame = frame + first as u64 + offset as u64;
         if assignment
@@ -349,7 +398,7 @@ fn render_assignment(
                 .store(cursor.position.to_bits(), Ordering::Release);
             instance.rendered_at.store(audio_frame, Ordering::Release);
             instance.set_status(InstanceStatus::Finished);
-            return true;
+            return (true, rendered);
         }
         if cursor.position >= frames as f64 {
             if assignment.looping {
@@ -359,7 +408,7 @@ fn render_assignment(
                     .cursor
                     .store(cursor.position.to_bits(), Ordering::Release);
                 instance.set_status(InstanceStatus::SourceEnded);
-                return true;
+                return (true, rendered);
             }
         }
         let sample = assignment
@@ -369,6 +418,7 @@ fn render_assignment(
         target[0] += sample[0] * gain * gains[0];
         target[1] += sample[1] * gain * gains[1];
         cursor.position += step;
+        rendered += 1;
     }
     instance
         .cursor
@@ -378,7 +428,16 @@ fn render_assignment(
         .store(frame + QUANTUM as u64, Ordering::Release);
     if !assignment.looping && cursor.position >= frames as f64 {
         instance.set_status(InstanceStatus::SourceEnded);
-        return true;
+        return (true, rendered);
     }
-    false
+    if instance.finish_attack.load(Ordering::Acquire)
+        && instance.device_frames.load(Ordering::Relaxed)
+            + instance.null_frames.load(Ordering::Relaxed)
+            + rendered as u64
+            >= MIN_ATTACK_FRAMES
+    {
+        instance.set_status(InstanceStatus::Finished);
+        return (true, rendered);
+    }
+    (false, rendered)
 }

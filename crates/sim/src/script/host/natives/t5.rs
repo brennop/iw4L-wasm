@@ -418,6 +418,9 @@ fn profile_item(world: &mut World, client: u32, class: &str, slot: &str) -> i32 
         let Some(rest) = weapon_slot(prefix) else {
             continue;
         };
+        if rest == "camo" {
+            return i32::from(def.camos[index]);
+        }
         if rest == "grenade" {
             break;
         }
@@ -1238,8 +1241,16 @@ fn register_player(registry: &mut NativeRegistry) {
         Ok(Value::Int(pattern << 26))
     });
     registry.register(Method, "calcweaponoptions", |world, receiver, args| {
-        player_id(world, receiver)?;
-        Ok(Value::Int(int(args, 0)?))
+        let client = player_id(world, receiver)?;
+        let camo = if args.len() == 2 {
+            let class = crate::ClassId(int(args, 0)? as u32);
+            let slot = usize::from(int(args, 1)? != 0);
+            super::super::players::personal_class(world, client, class)
+                .map_or(0, |class| i32::from(class.camos[slot]))
+        } else {
+            int(args, 0)?
+        };
+        Ok(Value::Int(camo & 63))
     });
 }
 

@@ -326,8 +326,7 @@ fn poll_match_audio_ready(
         }
         match clips.ready(key) {
             Some(Err(
-                crate::clip_store::ClipError::QueueFull
-                | crate::clip_store::ClipError::RequestLimit
+                crate::clip_store::ClipError::RequestLimit
                 | crate::clip_store::ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit),
             )) => {
                 capacity_failure = true;
@@ -403,8 +402,7 @@ fn request_named(
     {
         match clips.ready(&key) {
             Some(Err(
-                crate::clip_store::ClipError::QueueFull
-                | crate::clip_store::ClipError::RequestLimit
+                crate::clip_store::ClipError::RequestLimit
                 | crate::clip_store::ClipError::InvalidPcm(crate::media::PcmError::MemoryLimit),
             )) => set.capacity_failure = true,
             Some(_) => {}

@@ -240,6 +240,43 @@ fn frame_room(world: &World, thread: &Thread) -> Result<(), String> {
     Ok(())
 }
 
+fn settle_owed_deaths(world: &mut World, parent: &mut Thread, now: i64) -> Result<(), String> {
+    {
+        let runtime = world.resource::<Runtime>();
+        if runtime.deaths.is_empty() || runtime.current_hit.is_some() {
+            return Ok(());
+        }
+    }
+    let mut runtime = world.resource_mut::<Runtime>();
+    runtime.suspended.push(parent.serial);
+    runtime.suspended_frames += parent.frames.len();
+    super::host::players::settle_deaths(world);
+    let mut runtime = world.resource_mut::<Runtime>();
+    runtime.suspended.pop();
+    runtime.suspended_frames -= parent.frames.len();
+    resume_suspended(world, parent, now)
+}
+
+fn resume_suspended(world: &mut World, parent: &mut Thread, now: i64) -> Result<(), String> {
+    let mut runtime = world.resource_mut::<Runtime>();
+    if runtime.fault.is_some() {
+        return Err(String::new());
+    }
+    let depth = runtime
+        .pending_unwinds
+        .iter()
+        .filter(|(serial, _)| *serial == parent.serial)
+        .map(|(_, depth)| *depth)
+        .min();
+    runtime
+        .pending_unwinds
+        .retain(|(serial, _)| *serial != parent.serial);
+    if let Some(depth) = depth.filter(|depth| *depth < parent.frames.len()) {
+        unwind(world, parent, depth, now, true);
+    }
+    Ok(())
+}
+
 fn run_inline(
     world: &mut World,
     program: &Program,
@@ -261,23 +298,7 @@ fn run_inline(
         world.spawn(child);
     }
     parent.stack.push(Value::Undefined);
-    let mut runtime = world.resource_mut::<Runtime>();
-    if runtime.fault.is_some() {
-        return Err(String::new());
-    }
-    let depth = runtime
-        .pending_unwinds
-        .iter()
-        .filter(|(serial, _)| *serial == parent.serial)
-        .map(|(_, depth)| *depth)
-        .min();
-    runtime
-        .pending_unwinds
-        .retain(|(serial, _)| *serial != parent.serial);
-    if let Some(depth) = depth.filter(|depth| *depth < parent.frames.len()) {
-        unwind(world, parent, depth, now, true);
-    }
-    Ok(())
+    resume_suspended(world, parent, now)
 }
 
 fn pop(thread: &mut Thread) -> Result<Value, String> {
@@ -852,6 +873,7 @@ fn instruction(
                     .map_err(|m| format!("{name}: {m}"))?;
                     thread.stack.push(value);
                     deliver_pending(world, thread, now)?;
+                    settle_owed_deaths(world, thread, now)?;
                 }
                 Callee::Unlinked(_) => return Err("invalid IR: unlinked call".into()),
             }
@@ -1596,7 +1618,6 @@ impl Runtime {
             pending.push(receiver.clone());
             pending.extend(args.iter().cloned());
         }
-        pending.extend(self.engine.match_data.values().cloned());
         pending.extend(self.engine.world.map(Value::Object));
         pending.extend(
             self.engine

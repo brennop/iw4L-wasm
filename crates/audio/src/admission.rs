@@ -40,6 +40,7 @@ pub enum AdmissionFailure {
     Concurrency,
     Cancelled,
     StaleScope,
+    OutputUnavailable,
 }
 
 pub(crate) struct Occupant {

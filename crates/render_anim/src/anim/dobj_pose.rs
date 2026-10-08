@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
@@ -127,6 +127,29 @@ pub fn begin_dobj_pose_frame(
 ) {
     dobj_poses.clear();
     posed_players.clear();
+}
+
+#[derive(Resource, Default)]
+pub struct ScriptModelBoltDemand {
+    entnums: HashSet<u16>,
+}
+
+impl ScriptModelBoltDemand {
+    pub fn insert(&mut self, entnum: u16) {
+        self.entnums.insert(entnum);
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entnums.is_empty()
+    }
+
+    pub(crate) fn contains(&self, entnum: u16) -> bool {
+        self.entnums.contains(&entnum)
+    }
+
+    pub(crate) fn retain(&mut self, live: impl Fn(u16) -> bool) {
+        self.entnums.retain(|entnum| live(*entnum));
+    }
 }
 
 #[derive(Resource, Default)]

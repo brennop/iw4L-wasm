@@ -163,12 +163,10 @@ impl PreparedFpvModel {
             if !surface.visible || surface.index_count == 0 {
                 continue;
             }
-            let Some(authored) = skel
-                .surface_materials
+            let Some(authored) = entry
+                .material_edges
                 .get(surface.surface_index)
-                .copied()
-                .flatten()
-                .map(|index| index.get())
+                .and_then(|edge| edge.bound_index())
             else {
                 continue;
             };
@@ -287,7 +285,6 @@ pub struct PreparedFpvGeometry {
     pub index_n: usize,
     pub surface_ranges: Vec<(u32, u32)>,
     pub materials: Vec<SmodelPassMaterial>,
-    /// The authored material each of `materials` was admitted for.
     pub material_authored: Vec<usize>,
     pub draws: Vec<FpvSurfaceDraw>,
     pub dest_n: usize,
@@ -606,7 +603,6 @@ impl PreparedFpvRig {
         let assembly = &self.composition.assembly;
         let world = assembly.dobj.pose(&instances, &self.parts, Mat4::IDENTITY);
         let mut skin = assembly.dobj.skin_matrices(&world);
-        // A hidden T6 gun bone takes its vertices to a point.
         for &bone in &assembly.collapsed_bones {
             if let (Some(skin), Some(world)) = (skin.get_mut(bone), world.get(bone)) {
                 *skin = Mat4::from_cols(

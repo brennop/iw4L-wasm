@@ -281,7 +281,7 @@ impl OwnedFxElemDef {
         (0x0fb, 0x0fc, "tail byte after useItemClip"),
     ];
 
-    pub fn runner_child_edge(&self, random_seed: u32) -> Option<FxChildEdge> {
+    pub fn runner_child_edge(&self, random_seed: u64) -> Option<FxChildEdge> {
         if self.view.elem_type != elem_type::RUNNER {
             return None;
         }
@@ -294,7 +294,7 @@ impl OwnedFxElemDef {
 
     pub fn sound_in_bank<'a>(
         &self,
-        random_seed: u32,
+        random_seed: u64,
         sounds: &'a crate::SoundCatalog,
     ) -> FxBankSound<'a> {
         if self.view.elem_type != elem_type::SOUND {
@@ -323,7 +323,7 @@ impl OwnedFxElemDef {
         }
     }
 
-    pub fn model_edge(&self, random_seed: u32) -> Option<FxElemModelEdge> {
+    pub fn model_edge(&self, random_seed: u64) -> Option<FxElemModelEdge> {
         if self.view.elem_type != elem_type::MODEL {
             return None;
         }
@@ -335,7 +335,7 @@ impl OwnedFxElemDef {
         }
     }
 
-    pub fn decal_mark_pair(&self, random_seed: u32) -> Option<&OwnedFxVisual> {
+    pub fn decal_mark_pair(&self, random_seed: u64) -> Option<&OwnedFxVisual> {
         if self.view.elem_type != elem_type::DECAL {
             return None;
         }
@@ -2300,9 +2300,6 @@ fn leftover_resolve_material_t5(
     }
 }
 
-/// A T6 `FxEffectDef` as read from its zone: its 76-byte header and each
-/// element with its samples and the names its visuals and child effects
-/// name. A T6 element is laid out as a T5 one.
 #[derive(Clone, Debug, Default)]
 pub struct T6FxCapture {
     pub name: String,
@@ -2315,30 +2312,22 @@ pub struct T6FxElemCapture {
     pub raw: Vec<u8>,
     pub vel_samples: Vec<u8>,
     pub vis_samples: Vec<u8>,
-    /// The material, model, runner or sound each visual names.
     pub visuals: Vec<String>,
     pub effect_on_impact: String,
     pub effect_on_death: String,
     pub effect_emitted: String,
 }
 
-/// T6 `FxEffectDef`: `flags` (u16), the element counts (i16) and the looping
-/// life.
 const T6_FX_EFFECT_DEF: usize = 76;
 const T6_FX_EFFECT_DEF_FLAGS_OFF: usize = 4;
 const T6_FX_EFFECT_DEF_LOOPING_OFF: usize = 8;
 const T6_FX_EFFECT_DEF_ONESHOT_OFF: usize = 10;
 const T6_FX_EFFECT_DEF_EMISSION_OFF: usize = 12;
 const T6_FX_EFFECT_DEF_MSEC_LOOPING_LIFE_OFF: usize = 20;
-/// T6's line, drawn along the effect's forward axis; IW4 draws it as a
-/// tail along its velocity.
 const T6_FX_ELEM_LINE: u8 = 4;
-/// `size[2]` in a visual state, after its colour and two rotations.
 const T6_FX_VIS_SIZE_OFF: usize = 12;
 
 impl FxCatalog {
-    /// Captures a T6 effect as an IW4 one in `namespace`, its materials
-    /// named for [`Self::resolve_materials`] to bind.
     pub fn capture_t6(&mut self, fx: &T6FxCapture, namespace: crate::AssetNamespace) {
         let h = &fx.header;
         if fx.name.is_empty() || h.len() < T6_FX_EFFECT_DEF {
@@ -2391,8 +2380,6 @@ fn capture_elem_t6(
     let vel_count = view.vel_interval_count as usize + 1;
     let mut vel_samples = elem.vel_samples.clone();
     if elem.raw[sz_t5::FX_ELEM_TYPE_OFF] == T6_FX_ELEM_LINE {
-        // A tail runs from its velocity back to the particle: one pointing
-        // down the effect's forward axis draws the line up it, unmoving.
         vel_samples = vec![0; vel_count * sz_t5::FX_ELEM_VEL_STATE_SAMPLE];
         for sample in vel_samples.chunks_mut(sz_t5::FX_ELEM_VEL_STATE_SAMPLE) {
             sample[0..4].copy_from_slice(&(-1.0e-3f32).to_le_bytes());
@@ -2441,9 +2428,6 @@ fn capture_elem_t6(
         capture_named_child(elem.effect_on_impact.clone());
     let (effect_on_death, effect_on_death_hint) = capture_named_child(elem.effect_on_death.clone());
     let (effect_emitted, effect_emitted_hint) = capture_named_child(elem.effect_emitted.clone());
-    // T6 keeps a sample's base and amplitude colours as RGBA, IW4 as BGRA.
-    // A line's sizes are its full width and length; a tail is drawn twice
-    // its sizes.
     let line = elem.raw[sz_t5::FX_ELEM_TYPE_OFF] == T6_FX_ELEM_LINE;
     let mut vis_samples = elem.vis_samples.clone();
     for sample in vis_samples.chunks_mut(sz_t5::FX_ELEM_VIS_STATE_SAMPLE) {

@@ -115,7 +115,8 @@ impl Plugin for BotsPlugin {
                     boot_bots,
                     apply_bot_tp,
                 )
-                    .chain(),
+                    .chain()
+                    .after(ClientSet::Load),
             )
             .add_systems(
                 Update,
@@ -152,6 +153,7 @@ fn drain_bot_add_queue(
     mut roster: ResMut<BotRoster>,
     local: Res<LocalPresentClient>,
     world: Option<Res<AuthorityWorld>>,
+    hub: Option<Res<net::UdpAuthorityHub>>,
 ) {
     let requests = queue.drain();
     if requests.is_empty() {
@@ -160,6 +162,9 @@ fn drain_bot_add_queue(
     let mut taken = vec![local.0];
     if let Some(world) = world.as_ref() {
         taken.extend(world.0.clients_scoreboard().into_iter().map(|(id, _)| id));
+    }
+    if let Some(hub) = hub.as_ref() {
+        taken.extend(hub.connections.clients().map(sim::ClientId));
     }
     for request in requests {
         let count = request.count;
@@ -248,11 +253,7 @@ fn boot_bots(
                 bot.id,
                 ClientAction::SetName {
                     request_id: name_request,
-                    name: entity_iw4::pack_client_state_name(if bot.brain.is_none() {
-                        "dummy"
-                    } else {
-                        "bot"
-                    }),
+                    name: entity_iw4::pack_client_state_name(bot.name),
                 },
             ),
         ];

@@ -55,6 +55,7 @@ pub struct PreparedMatchReady {
 
 #[derive(Resource)]
 pub struct PreparedMatchSound {
+    pub namespace: asset_core::AssetNamespace,
     pub load_key: frame::LocalLoadKey,
     pub zone: String,
     pub common_profile_id: u64,
@@ -72,6 +73,7 @@ fn start_match_load(
     abort: Option<Res<MatchLoadAbort>>,
     mut waiting_for_retirement: Local<Option<u64>>,
     mut inflight: ResMut<MatchLoadBusy>,
+    mut failed: MessageWriter<MapLoadFailed>,
 ) {
     let Some(request) = request else {
         return;
@@ -114,6 +116,22 @@ fn start_match_load(
         );
     }
     *waiting_for_retirement = None;
+    if let Some(error) = request
+        .zone_ff
+        .as_ref()
+        .err()
+        .or_else(|| request.common_mp.as_ref().err())
+    {
+        failed.write(MapLoadFailed {
+            request_id: request.request_id,
+            load_key: request.load_key,
+            zone: request.zone.clone(),
+            error: error.clone(),
+        });
+        commands.remove_resource::<MatchLoadRequest>();
+        inflight.0 = false;
+        return;
+    }
     let zone_ff = request.zone_ff.clone();
     let common_mp = request.common_mp.clone();
     let progress = request.progress.clone();
@@ -291,6 +309,11 @@ fn poll_match_load(
         return;
     }
     commands.insert_resource(PreparedMatchSound {
+        namespace: ready
+            .prepared
+            .prepared_map
+            .namespace
+            .unwrap_or(asset_core::AssetNamespace::Iw4),
         load_key: ready.load_key,
         zone: ready.zone.clone(),
         common_profile_id: ready.prepared.materials.common_profile_id,

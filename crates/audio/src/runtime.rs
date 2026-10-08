@@ -53,6 +53,8 @@ struct StartRequest {
     instance: Arc<InstanceState>,
     looping: bool,
     frame: u64,
+    start_deadline: Option<Instant>,
+    protect_attack: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -71,6 +73,7 @@ struct LogicalInstance {
     cursor: f64,
     advanced_at: u64,
     source: Option<SourceBinding>,
+    first_device_reported: bool,
 }
 
 #[derive(Resource)]
@@ -85,7 +88,7 @@ pub struct AudioRuntime {
     listener: Arc<ListenerState>,
     event_context: Arc<crate::event::EventContextState>,
     source_publisher: Mutex<SourcePublisher>,
-    rejections: Arc<[AtomicU64; 6]>,
+    rejections: Arc<[AtomicU64; 7]>,
     shutdown: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -99,6 +102,9 @@ impl Default for AudioRuntime {
 impl AudioRuntime {
     pub fn new(device_enabled: bool) -> Self {
         let shared = Arc::new(RenderShared::new());
+        shared
+            .device_required
+            .store(device_enabled, Ordering::Relaxed);
         let shutdown = Arc::new(AtomicBool::new(false));
         let (cue_tx, cue_rx) = sync_channel(LOGICAL_INSTANCES);
         let thread_shared = shared.clone();
@@ -123,6 +129,7 @@ impl AudioRuntime {
             control_ids,
             control_rejections,
             control_budget,
+            device_enabled,
         );
         // Threads cannot spawn on wasm32: the browser output runs `control_pass` on the
         // main thread once a frame (web_output.rs).
@@ -195,6 +202,9 @@ impl AudioRuntime {
 
     pub fn cancel_all(&self) {
         self.shared.cancelled.store(true, Ordering::Release);
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
+        }
         self.source_publisher
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -385,6 +395,8 @@ impl AudioRuntime {
             let (std::sync::mpsc::TrySendError::Full(request)
             | std::sync::mpsc::TrySendError::Disconnected(request)) = error;
             request.reject(CueFailure::QueueFull);
+        } else if let Some(worker) = &self.worker {
+            worker.thread().unpark();
         }
         handle
     }
@@ -406,6 +418,8 @@ pub(crate) use control_state::ControlState;
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn control(mut state: ControlState, shutdown: Arc<AtomicBool>, device_enabled: bool) {
+    assets::session_load::use_process_cpus();
+    crate::diagnostics::thread("audio-control");
     let device = device_enabled.then(|| {
         let shared = state.shared.clone();
         let shutdown = shutdown.clone();
@@ -416,7 +430,7 @@ fn control(mut state: ControlState, shutdown: Arc<AtomicBool>, device_enabled: b
     });
     while !shutdown.load(Ordering::Acquire) {
         control_pass(&mut state, Instant::now());
-        std::thread::sleep(Duration::from_millis(2));
+        std::thread::park_timeout(Duration::from_millis(2));
     }
     let ControlState {
         shared,
@@ -475,11 +489,59 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
         present_sources,
         source_cues,
         silence,
+        device_enabled,
+        diag_anchor,
+        diag_last,
+        diag_max_pass,
+        diag_previous_pass,
+        diag_max_gap,
     } = state;
     {
+        let diag_pass = Instant::now();
+        *diag_max_gap = (*diag_max_gap).max(diag_pass.duration_since(*diag_previous_pass));
+        *diag_previous_pass = diag_pass;
         let listener = listener.get();
         events.advance(event_context.get());
-        for logical in instances.iter() {
+        let diag_stage = crate::diagnostics::slow_stage("context", diag_pass);
+        for logical in instances.iter_mut() {
+            let first_us = logical
+                .request
+                .instance
+                .first_device_us
+                .load(Ordering::Acquire);
+            if crate::diagnostics::enabled()
+                && !logical.first_device_reported
+                && first_us != u64::MAX
+            {
+                crate::diagnostics::emit(format!(
+                    "audio diag: first_device instance={} request_to_device_us={} audio_frame={}",
+                    logical.request.instance.id,
+                    first_us,
+                    logical
+                        .request
+                        .instance
+                        .first_device_frame
+                        .load(Ordering::Relaxed)
+                ));
+                logical.first_device_reported = true;
+            }
+            if *device_enabled
+                && logical
+                    .request
+                    .start_deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                && (!shared.device_active.load(Ordering::Acquire)
+                    || !logical
+                        .request
+                        .instance
+                        .has_reached(InstanceStatus::Started))
+            {
+                reject(
+                    &logical.request.instance,
+                    rejections,
+                    AdmissionFailure::OutputUnavailable,
+                );
+            }
             if logical
                 .request
                 .cancellation
@@ -574,6 +636,7 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
             }
         }
         apply_source_render_budget(&instances);
+        let diag_stage = crate::diagnostics::slow_stage("source_parameters", diag_stage);
         let device_active = shared.device_active.load(Ordering::Acquire);
         if *device_was_active && !device_active {
             *null_anchor = now;
@@ -594,6 +657,9 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
         for index in 0..PHYSICAL_VOICES {
             // This thread is the sole publisher/reclaimer, even in null transport.
             if let Some(assignment) = unsafe { shared.reclaim(index) } {
+                if crate::diagnostics::enabled() {
+                    retire_diagnostic(&assignment.instance, shared.frame.load(Ordering::Acquire));
+                }
                 if assignment.instance.status() == InstanceStatus::Virtual {
                     if let Some(logical) = instances
                         .iter_mut()
@@ -610,18 +676,41 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 }
             }
         }
-        instances.retain(|logical| logical.request.instance.status() != InstanceStatus::Retired);
+        instances.retain(|logical| {
+            if logical.request.instance.status() == InstanceStatus::Retired {
+                if logical.slot.is_none() {
+                    retire_diagnostic(
+                        &logical.request.instance,
+                        shared.frame.load(Ordering::Acquire),
+                    );
+                }
+                false
+            } else {
+                true
+            }
+        });
 
+        let diag_stage = crate::diagnostics::slow_stage("null_and_reclaim", diag_stage);
         resolver.retain_epoch(shared.match_epoch.load(Ordering::Acquire));
         for _ in 0..CONTROL_BATCH {
             let Ok(request) = cue_rx.try_recv() else {
                 break;
             };
+            // Publication can race a control pass already processing source layers.
+            // Validate a newly received cue against the latest published clocks.
+            events.advance(event_context.get());
             if request.scope == AudioScope::Match
                 && request.epoch != shared.match_epoch.load(Ordering::Acquire)
             {
                 request.reject(CueFailure::StaleScope);
             } else if let Err(reason) = events.accept(request.execution.event) {
+                if crate::diagnostics::enabled() {
+                    crate::diagnostics::emit(format!(
+                        "audio diag: event_rejected reason={reason:?} event={:?} context={:?}",
+                        request.execution.event,
+                        event_context.get()
+                    ));
+                }
                 request.reject(reason);
             } else if pending_cues.len() == LOGICAL_INSTANCES {
                 request.reject(CueFailure::PendingBudget);
@@ -675,7 +764,12 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 work.request.execution.origin_inches = source.origin_inches;
             }
             let mut children = Vec::new();
-            let step = work.step(resolver, listener, &mut children);
+            let step = work.step(
+                resolver,
+                listener,
+                &mut children,
+                !*device_enabled || shared.device_active.load(Ordering::Acquire),
+            );
             match step {
                 CueStep::Waiting => pending_cues.push_back(work),
                 CueStep::Finished => {}
@@ -685,6 +779,12 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                         work.request.scope,
                         work.request.epoch,
                         &start.admission,
+                        work.request
+                            .execution
+                            .deadline
+                            .checked_sub(work.request.execution.class.start_wait())
+                            .filter(|_| work.source.is_none())
+                            .unwrap_or_else(Instant::now),
                     );
                     let source = work.source.and_then(|(key, version)| {
                         desired
@@ -703,6 +803,11 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                     admit(
                         StartRequest {
                             event: work.request.execution.event,
+                            start_deadline: (work.source.is_none() && !start.looping)
+                                .then_some(work.request.execution.deadline),
+                            protect_attack: work.source.is_none()
+                                && !start.looping
+                                && work.request.execution.class == crate::SoundClass::Weapon,
                             cancellation: Some(start.lease),
                             spatial: start.spatial,
                             admission: start.admission,
@@ -748,6 +853,7 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 }
             }
         }
+        let diag_stage = crate::diagnostics::slow_stage("cue_steps", diag_stage);
         apply_source_render_budget(&instances);
         instances.sort_by_key(|logical| logical.source.is_some());
         let now = shared.frame.load(Ordering::Acquire);
@@ -772,6 +878,7 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 || (instance.scope == AudioScope::Match && instance.epoch != epoch)
             {
                 instance.retire();
+                retire_diagnostic(instance, shared.frame.load(Ordering::Acquire));
                 return false;
             }
             if logical.source.is_none()
@@ -794,6 +901,7 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
                 logical.cursor %= frames;
             } else if logical.cursor >= frames {
                 instance.retire();
+                retire_diagnostic(instance, shared.frame.load(Ordering::Acquire));
                 return false;
             }
             instance
@@ -825,6 +933,7 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
             }
             true
         });
+        let diag_stage = crate::diagnostics::slow_stage("voice_scheduling", diag_stage);
         if !shared.cancelled.load(Ordering::Acquire) {
             present_sources.clear();
             present_sources.extend(instances.iter().filter_map(|logical| {
@@ -900,7 +1009,28 @@ pub(crate) fn control_pass(state: &mut ControlState, now: Instant) {
         sources.rendered.store(rendered, Ordering::Relaxed);
         sources.virtualized.store(virtualized, Ordering::Relaxed);
         sources.revision.store(desired.revision, Ordering::Release);
-    }
+        let _ = crate::diagnostics::slow_stage("source_intake", diag_stage);
+        if crate::diagnostics::enabled() {
+            *diag_max_pass = (*diag_max_pass).max(diag_pass.elapsed());
+            if diag_last.elapsed() >= Duration::from_secs(1) {
+                crate::diagnostics::emit(format!(
+                    "audio diag: transport elapsed_ms={:.3} audio_frame={} active={} device_blocks={} null_blocks={} underruns={} logical={} pending={} max_control_ms={:.3} max_control_gap_ms={:.3}",
+                    diag_anchor.elapsed().as_secs_f64() * 1000.0,
+                    shared.frame.load(Ordering::Acquire),
+                    shared.device_active.load(Ordering::Acquire),
+                    shared.device_blocks.load(Ordering::Relaxed),
+                    shared.null_blocks.load(Ordering::Relaxed),
+                    shared.device_underruns.load(Ordering::Relaxed),
+                    instances.len(),
+                    pending_cues.len(),
+                    diag_max_pass.as_secs_f64() * 1000.0,
+                    diag_max_gap.as_secs_f64() * 1000.0
+                ));
+                *diag_last = Instant::now();
+                *diag_max_pass = Duration::ZERO;
+                *diag_max_gap = Duration::ZERO;
+            }
+        }    }
 }
 
 fn apply_source_render_budget(instances: &[LogicalInstance]) {
@@ -992,6 +1122,35 @@ fn set_transport(instance: &InstanceState, rate: f32, audible: bool) {
     instance.audible.store(audible, Ordering::Release);
 }
 
+fn retire_diagnostic(instance: &InstanceState, frame: u64) {
+    if crate::diagnostics::enabled() {
+        crate::diagnostics::emit(format!(
+            "audio diag: retire instance={} status={:?} device_frames={} null_frames={} cursor={:.3} audio_frame={} first_device_us={} first_device_frame={} rejection={:?} stopped={}",
+            instance.id,
+            instance.status(),
+            instance.device_frames.load(Ordering::Relaxed),
+            instance.null_frames.load(Ordering::Relaxed),
+            f64::from_bits(instance.cursor.load(Ordering::Acquire)),
+            frame,
+            instance.first_device_us.load(Ordering::Acquire),
+            instance.first_device_frame.load(Ordering::Relaxed),
+            instance.rejection(),
+            instance.stopped.load(Ordering::Acquire)
+        ));
+    }
+}
+
+fn protected_attack(logical: &LogicalInstance) -> bool {
+    logical.request.protect_attack
+        && logical
+            .request
+            .instance
+            .device_frames
+            .load(Ordering::Relaxed)
+            + logical.request.instance.null_frames.load(Ordering::Relaxed)
+            < crate::render_core::MIN_ATTACK_FRAMES
+}
+
 fn live(instance: &InstanceState) -> bool {
     !instance.stopped.load(Ordering::Acquire)
         && !matches!(
@@ -1000,7 +1159,7 @@ fn live(instance: &InstanceState) -> bool {
         )
 }
 
-fn reject(instance: &InstanceState, counts: &[AtomicU64; 6], reason: AdmissionFailure) {
+fn reject(instance: &InstanceState, counts: &[AtomicU64; 7], reason: AdmissionFailure) {
     counts[reason as usize - 1].fetch_add(1, Ordering::Relaxed);
     instance.reject(reason);
 }
@@ -1030,12 +1189,14 @@ fn make_instance(
     scope: AudioScope,
     epoch: u64,
     policy: &AdmissionPolicy,
+    requested_at: Instant,
 ) -> Arc<InstanceState> {
     Arc::new(InstanceState {
         id,
         scope,
         epoch,
         stopped: AtomicBool::new(false),
+        finish_attack: AtomicBool::new(false),
         paused: AtomicBool::new(false),
         audible: AtomicBool::new(true),
         gain: AtomicU32::new(0),
@@ -1044,6 +1205,11 @@ fn make_instance(
         rejection: AtomicU8::new(0),
         cursor: AtomicU64::new(0.0f64.to_bits()),
         rendered_at: AtomicU64::new(0),
+        requested_at,
+        first_device_us: AtomicU64::new(u64::MAX),
+        first_device_frame: AtomicU64::new(u64::MAX),
+        device_frames: AtomicU64::new(0),
+        null_frames: AtomicU64::new(0),
         status: AtomicU8::new(InstanceStatus::Requested as u8),
         transitions: AtomicU8::new(1 << InstanceStatus::Requested as u8),
     })
@@ -1054,7 +1220,7 @@ fn admit(
     shared: &RenderShared,
     instances: &mut Vec<LogicalInstance>,
     listener: Option<ListenerSnapshot>,
-    rejections: &[AtomicU64; 6],
+    rejections: &[AtomicU64; 7],
     source: Option<SourceBinding>,
 ) {
     let failure = if shared.cancelled.load(Ordering::Acquire)
@@ -1106,7 +1272,8 @@ fn admit(
                     || (logical.source.is_none()
                         && logical.request.instance.audible.load(Ordering::Acquire)
                         && logical.request.instance.status() != InstanceStatus::Virtual))
-                && victims.binary_search(&logical.request.instance.id).is_err()
+                && (victims.binary_search(&logical.request.instance.id).is_err()
+                    || protected_attack(logical))
         })
         .count();
     if source.is_none()
@@ -1122,11 +1289,19 @@ fn admit(
     }
     for logical in instances.iter() {
         if victims.binary_search(&logical.request.instance.id).is_ok() {
-            logical
-                .request
-                .instance
-                .stopped
-                .store(true, Ordering::Release);
+            if protected_attack(logical) {
+                logical
+                    .request
+                    .instance
+                    .finish_attack
+                    .store(true, Ordering::Release);
+            } else {
+                logical
+                    .request
+                    .instance
+                    .stopped
+                    .store(true, Ordering::Release);
+            }
         }
     }
     request.instance.set_status(InstanceStatus::Accepted);
@@ -1137,5 +1312,6 @@ fn admit(
         cursor: 0.0,
         advanced_at: frame,
         source,
+        first_device_reported: false,
     });
 }

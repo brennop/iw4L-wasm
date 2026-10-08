@@ -23,7 +23,6 @@ impl core::fmt::Display for DisplayResolution {
     }
 }
 
-/// A title whose content is borrowed from its own install folder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OtherGame {
     BlackOps,
@@ -34,7 +33,6 @@ pub enum OtherGame {
 impl OtherGame {
     pub const ALL: [Self; 3] = [Self::BlackOps, Self::BlackOps2, Self::ModernWarfare3];
 
-    /// The settings key and menu dvar suffix.
     pub const fn key(self) -> &'static str {
         match self {
             Self::BlackOps => "black_ops",
@@ -75,9 +73,6 @@ pub struct GameSettings {
     pub sensitivity: f32,
     pub invert_mouse: bool,
     pub player_name: String,
-    /// The install folder chosen for each [`OtherGame`], by
-    /// [`OtherGame::ALL`] order; empty when the game is looked for beside
-    /// the MW2 folder. Read at startup.
     pub game_folders: [String; 3],
 
     pub pad_layout: u8,
