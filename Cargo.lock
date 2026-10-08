@@ -199,7 +199,6 @@ dependencies = [
  "serde_json",
  "toml",
  "updater",
- "zip",
 ]
 
 [[package]]

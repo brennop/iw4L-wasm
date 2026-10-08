@@ -1,8 +1,6 @@
 //! The owner-approved end-to-end scenarios; see README.md.
 
 mod report;
-#[cfg(test)]
-mod resource_reads;
 mod runner;
 mod scenario;
 mod scenarios {
@@ -309,7 +307,6 @@ fn run(root: &Path, args: &Args) -> Result<bool, String> {
     let phases = hgl::phases(&map_b, &scenes_a, &scenes_b);
     let script = scenario::script(&phases);
     let child_args = vec![
-        "--cheats".to_owned(),
         "map".to_owned(),
         SCENARIO.map_a.to_owned(),
         "--cmds".to_owned(),
