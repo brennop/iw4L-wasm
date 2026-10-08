@@ -3,6 +3,7 @@
 //! found at startup, so a new folder is searched from the next launch.
 
 use std::path::{Path, PathBuf};
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -75,6 +76,7 @@ fn zone_game(game: OtherGame) -> asset_transport::ZoneGame {
 
 /// Folder dialogs run on their own threads; their picks arrive here.
 #[derive(Resource)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) struct FolderPicks {
     sender: mpsc::Sender<(OtherGame, PathBuf)>,
     receiver: Mutex<mpsc::Receiver<(OtherGame, PathBuf)>>,
@@ -93,6 +95,13 @@ impl Default for FolderPicks {
 }
 
 impl FolderPicks {
+    // A page has no folders to browse; the native dialog is unavailable there.
+    #[cfg(target_arch = "wasm32")]
+    fn open_dialog(&self, _game: OtherGame, _start: Option<PathBuf>) {
+        warn!("game folders cannot be chosen in the browser");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_dialog(&self, game: OtherGame, start: Option<PathBuf>) {
         if self.dialog_open.swap(true, Ordering::AcqRel) {
             return;

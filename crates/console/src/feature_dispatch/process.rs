@@ -29,6 +29,7 @@ pub(crate) fn request_exit(
 /// How long the mixer is given to play silence before the process ends and
 /// the sound server drops its stream: a few device periods, so the sound
 /// stops rather than cuts.
+#[cfg(not(target_arch = "wasm32"))]
 const AUDIO_FADE: std::time::Duration = std::time::Duration::from_millis(60);
 
 /// Leaves the process: the audio is silenced first, then the exit hooks run
