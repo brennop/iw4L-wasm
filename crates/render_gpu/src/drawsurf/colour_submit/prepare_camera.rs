@@ -1,15 +1,18 @@
+use super::{
+    ArenaPack, Buffer, MaterialGenerationId, PackDraw, PreparedExactDraw, RunPackCache, TableEpoch,
+};
 use bevy::tasks::{ComputeTaskPool, TaskPool};
 use dpvs_iw4::GfxDrawSurf;
 use render_backend::MaterialRunCensus;
 
+use super::shadow_prepare::{ShadowLane, open_shadow_table_epoch, prepare_shadow_passes};
 use super::{
     BTreeMap, COLOUR_PREPARE_LANES, Camera3d, CameraPrepareState, CameraWorldPretess,
-    ColourPackPlan, ColourPrepareLane, ColourRowPlan, ColourSubmitScratch, DrawRefusalCensus,
-    ExactColourBindingCache, ExactColourGeometry, ExactColourPipeline, ExactColourSubmitCensus,
-    ExactConstantArena, ExactFloatZResolve, ExactPipelineRegistry, ExactPrepare,
-    ExactPrepareTarget, ExactShadowBindingCache, ExactTessBind, ExtractedColourRefs,
-    ExtractedRenderFrameProducts, ExtractedView, FrameProduct, FrameProductKind,
-    FrameProductStatus, GpuConstantArena, GpuSubmitRefusal, HashSet, InstalledRenderWorld, Mat4,
+    ColourPackPlan, ColourRowPlan, DrawRefusalCensus, ExactColourBindingCache, ExactColourGeometry,
+    ExactColourPipeline, ExactColourSubmitCensus, ExactConstantArena, ExactFloatZResolve,
+    ExactPipelineRegistry, ExactPrepare, ExactPrepareTarget, ExactShadowBindingCache,
+    ExactTessBind, ExtractedColourRefs, ExtractedRenderFrameProducts, ExtractedView, FrameProduct,
+    FrameProductKind, FrameProductStatus, GpuConstantArena, GpuSubmitRefusal, HashSet, Mat4,
     MaterialExecView, MaterialRefusal, MaterialRunExecutor, Msaa, PipelineCache, PortId,
     PrepareCost, PrepareTextureTables, PreparedColourRow, PublishedRenderFrame, Query,
     RenderDevice, RenderQueue, Res, ResMut, ResidentShadowStaticDraws, Resource, RetainedDrawKind,
@@ -21,13 +24,11 @@ use super::{
     build_colour_row_plan, colour_census_clock, colour_census_ms, colour_draw_at, colour_pack_key,
     colour_tech_at, draw_surf_list_work_colour, empty_world_run_gather, exec_tables,
     execution_binds_code_texture, floatz, gather_world_run_indices, is_viewmodel_colour_draw,
-    material_refusal_class, open_scene_table_epoch, open_shadow_table_epoch,
-    pack_sun_shadow_frontend, prepare_shadowmap_spot, prepare_shadowmap_sun,
-    publish_this_frame_spot_shadow_views, publish_this_frame_sun_shadow_view,
-    record_pipeline_not_ready, reset_exact_colour_census, smodel_skinned, spot_rt_for_light,
-    spot_shadow_view_missing, submit_refusal_class, submit_refusal_family, sun_shadow_view_missing,
-    upload_constant_arena, viewmodel_colour_submits_when_pipelines_ready, world_material_sorted,
-    world_packed_row_meta, world_pretess_dest_ib, world_pretess_key,
+    material_refusal_class, pack_sun_shadow_frontend, publish_this_frame_spot_shadow_views,
+    publish_this_frame_sun_shadow_view, record_pipeline_not_ready, smodel_skinned,
+    spot_rt_for_light, spot_shadow_view_missing, submit_refusal_class, submit_refusal_family,
+    sun_shadow_view_missing, upload_constant_arena, viewmodel_colour_submits_when_pipelines_ready,
+    world_material_sorted, world_packed_row_meta, world_pretess_dest_ib, world_pretess_key,
 };
 
 fn run_colour_lanes(camera: CameraLane<'_>, shadow: ShadowLane<'_>) {
@@ -48,8 +49,7 @@ pub(super) fn prepare_colour_lanes(
         ),
         With<Camera3d>,
     >,
-    (world, frame, installed, geometry, pipeline, registry, device, queue, uploaded): (
-        Res<InstalledRenderWorld>,
+    (frame, installed, geometry, pipeline, registry, device, queue, uploaded): (
         Res<PublishedRenderFrame>,
         Res<InstalledColourPass>,
         Res<ExactColourGeometry>,
@@ -105,7 +105,6 @@ pub(super) fn prepare_colour_lanes(
         CameraLane {
             view,
             extra_views,
-            world: &world,
             frame: &frame,
             installed: &installed,
             geometry: &geometry,
@@ -124,9 +123,8 @@ pub(super) fn prepare_colour_lanes(
             pretess: &mut pretess,
         },
         ShadowLane {
-            world: &world,
             frame: &frame,
-            installed: &installed,
+            installed_ready: installed.ready,
             geometry: &geometry,
             pipeline: &pipeline,
             registry: &registry,
@@ -148,7 +146,6 @@ pub(super) fn prepare_colour_lanes(
 pub(super) struct CameraLane<'a> {
     pub view: Option<CameraTargetView<'a>>,
     pub extra_views: usize,
-    pub world: &'a InstalledRenderWorld,
     pub frame: &'a PublishedRenderFrame,
     pub installed: &'a InstalledColourPass,
     pub geometry: &'a ExactColourGeometry,
@@ -171,7 +168,6 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
     let CameraLane {
         view,
         extra_views,
-        world,
         frame,
         installed,
         geometry,
@@ -190,14 +186,11 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
         pretess,
     } = lane;
     let _span = perf::Span::RenderPrepareCameraMs.enter();
-    let extracted = ExtractedColourRefs::new(world, frame);
+    let extracted = ExtractedColourRefs::new(frame);
     let products = &extracted.frame.frame_products;
     *cam = CameraPrepareState::default();
     let census_on = perf::recording();
-    if census_on {
-        reset_exact_colour_census(census);
-    }
-    census.submitted_keys.clear();
+    census.begin_prepare(census_on);
     scratch.skinned_tess.begin_frame();
     if !installed.ready {
         return;
@@ -601,99 +594,6 @@ struct CameraFrameTargets {
     needs_resolved_scene: bool,
 }
 
-pub(super) struct ShadowLane<'a> {
-    pub world: &'a InstalledRenderWorld,
-    pub frame: &'a PublishedRenderFrame,
-    pub installed: &'a InstalledColourPass,
-    pub geometry: &'a ExactColourGeometry,
-    pub pipeline: &'a ExactColourPipeline,
-    pub registry: &'a ExactPipelineRegistry,
-    pub device: &'a RenderDevice,
-    pub queue: &'a RenderQueue,
-    pub uploaded: &'a RuntimeUploadedImageRegistry,
-    pub binding_cache: &'a mut ExactShadowBindingCache,
-    pub shadow_table: &'a mut ShadowTextureTable,
-    pub shadow_arena: &'a mut ShadowmapSunArena,
-    pub spot_arena: &'a mut ShadowmapSpotArena,
-    pub static_draws: &'a mut ResidentShadowStaticDraws,
-    pub shadowmap: &'a mut ShadowmapSunGpu,
-    pub spotmap: &'a mut ShadowmapSpotGpu,
-    pub scratch: &'a mut ShadowSubmitScratch,
-}
-
-pub(super) fn prepare_shadow_passes(lane: ShadowLane<'_>) {
-    let ShadowLane {
-        world,
-        frame,
-        installed,
-        geometry,
-        pipeline,
-        registry,
-        device,
-        queue,
-        uploaded,
-        binding_cache,
-        shadow_table,
-        shadow_arena,
-        spot_arena,
-        static_draws,
-        shadowmap,
-        spotmap,
-        scratch,
-    } = lane;
-    let _span = perf::Span::RenderPrepareShadowMs.enter();
-    if !installed.ready {
-        return;
-    }
-    let Some(sampler_table) = world.sampler_table.as_ref() else {
-        return;
-    };
-    let extracted = ExtractedColourRefs::new(world, frame);
-    let products = &extracted.frame.frame_products;
-    let mut sun_exec = std::mem::take(&mut scratch.sun_exec);
-    let mut spot_exec = std::mem::take(&mut scratch.spot_exec);
-    scratch.skinned_tess.begin_frame();
-    let sun_prepared = prepare_shadowmap_sun(
-        products,
-        extracted,
-        geometry,
-        pipeline,
-        registry,
-        device,
-        queue,
-        uploaded,
-        binding_cache,
-        shadow_table,
-        shadow_arena,
-        shadowmap,
-        static_draws,
-        sampler_table,
-        &mut sun_exec,
-        &mut scratch.skinned_tess,
-    );
-    let spot_prepared = prepare_shadowmap_spot(
-        products,
-        extracted,
-        geometry,
-        pipeline,
-        registry,
-        device,
-        queue,
-        uploaded,
-        binding_cache,
-        shadow_table,
-        spot_arena,
-        spotmap,
-        sampler_table,
-        &mut spot_exec,
-        &mut scratch.skinned_tess,
-    );
-    scratch.sun_prepared = sun_prepared;
-    scratch.spot_prepared = spot_prepared;
-    scratch.sun_exec = sun_exec;
-    scratch.spot_exec = spot_exec;
-}
-
 pub(super) fn install_shared_colour_pass(
     views: Query<
         (
@@ -704,7 +604,6 @@ pub(super) fn install_shared_colour_pass(
         ),
         With<Camera3d>,
     >,
-    world: Res<InstalledRenderWorld>,
     frame: Res<PublishedRenderFrame>,
     pipeline: Res<ExactColourPipeline>,
     pipeline_cache: Res<PipelineCache>,
@@ -749,7 +648,7 @@ pub(super) fn install_shared_colour_pass(
     ),
 ) {
     *installed = InstalledColourPass::default();
-    let extracted = ExtractedColourRefs::new(&world, &frame);
+    let extracted = ExtractedColourRefs::new(&frame);
     let products = &extracted.frame.frame_products;
     let Some(shared) = install_shared_colour_resources(SharedColourInstall {
         products,
@@ -926,16 +825,8 @@ fn install_shared_colour_resources(
         return None;
     }
     let _sampler_table = install.extracted.world.sampler_table.as_ref()?;
-    if install.shadow_arena.generation != generation {
-        install.shadow_arena.generation = generation;
-        for gpu in &mut install.shadow_arena.gpu {
-            gpu.bind_group = None;
-        }
-    }
-    if install.spot_arena.generation != generation {
-        install.spot_arena.generation = generation;
-        install.spot_arena.gpu.bind_group = None;
-    }
+    install.shadow_arena.open_generation(generation);
+    install.spot_arena.open_generation(generation);
     let sun_shadow_view_ready = publish_this_frame_sun_shadow_view(
         install.products,
         install.uploaded,
@@ -1567,7 +1458,6 @@ fn prepare_camera_rows(
             device,
             queue,
             "iw4_exact_vs_constant_arena",
-            "iw4_exact_ps_constant_arena",
         );
         pending_viewmodel_prepared.extend(prepared.drain(split..));
         arena_ms = arena_started.elapsed().as_secs_f32() * 1000.0;
@@ -1621,4 +1511,75 @@ fn prepare_camera_rows(
         arena_vertex_n,
         arena_pixel_n,
     }
+}
+
+fn open_scene_table_epoch(
+    binding_cache: &mut ExactColourBindingCache,
+    scene_tables: &mut SceneTextureTables,
+    scratch: &mut ColourSubmitScratch,
+    uploaded: &RuntimeUploadedImageRegistry,
+    generation: MaterialGenerationId,
+) {
+    let epoch = TableEpoch {
+        generation,
+        replaced_revision: uploaded.replaced_revision(),
+    };
+    for table in &mut scene_tables.0 {
+        table.open_epoch(epoch);
+    }
+    scratch.prepared_scene_epoch = epoch;
+    binding_cache.open_epoch(generation, uploaded.views_revision());
+}
+
+#[derive(Default)]
+struct ColourPrepareLane {
+    run_pack: RunPackCache,
+    arena_pack: ArenaPack,
+    executor: MaterialRunExecutor,
+    prepared: Vec<PreparedExactDraw>,
+    submitted_keys: Vec<u64>,
+    pending_viewmodel_prepared: Vec<PreparedExactDraw>,
+    pending_viewmodel_keys: Vec<u64>,
+    world_exec_ready_keys: Vec<u64>,
+}
+
+#[derive(Resource, Default)]
+pub(super) struct ColourSubmitScratch {
+    lanes: [ColourPrepareLane; COLOUR_PREPARE_LANES],
+
+    pub(super) world_exec_ready_keys: Vec<u64>,
+    pub(super) prepared: Vec<PreparedExactDraw>,
+    pub(super) submitted_keys: Vec<u64>,
+    pending_viewmodel_prepared: Vec<PreparedExactDraw>,
+    pending_viewmodel_keys: Vec<u64>,
+    pack_draws: Vec<PackDraw>,
+
+    pack_plan: Option<ColourPackPlan>,
+
+    skinned_tess: smodel_skinned::SmodelSkinnedTess,
+
+    pub(super) prepared_scene_epoch: TableEpoch,
+
+    logged_skinned: Option<(usize, usize)>,
+}
+
+impl ColourSubmitScratch {
+    pub(super) fn upload_skinned(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> CameraSkinnedBuffers {
+        self.skinned_tess.upload(device, queue);
+        CameraSkinnedBuffers {
+            vertex: self.skinned_tess.vertex_buffer().cloned(),
+            index: self.skinned_tess.index_buffer().cloned(),
+            lighting: self.skinned_tess.vertex_lighting_buffer().cloned(),
+        }
+    }
+}
+
+pub(super) struct CameraSkinnedBuffers {
+    pub(super) vertex: Option<Buffer>,
+    pub(super) index: Option<Buffer>,
+    pub(super) lighting: Option<Buffer>,
 }

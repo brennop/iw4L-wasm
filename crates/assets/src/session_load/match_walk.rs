@@ -335,7 +335,6 @@ pub(super) async fn walk_prepared_match(
     let map_fpv_added = fpv_meshes.absorb(map_fpv);
     fpv_meshes.set_map_namespace(map_namespace);
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
-    weapons.resolve_fpv_hands(&fpv_meshes, &bodies);
 
     world_weapons.seal_identity();
     weapons.resolve_world_model_edges(&world_weapons);
@@ -617,7 +616,16 @@ pub(super) async fn walk_prepared_match(
         &mut report,
     );
     // Bind rigs and tracks to the finished mesh publication, after material linking.
-    let fpv_meshes = fpv_meshes.publish();
+    let fpv_meshes = Arc::new(fpv_meshes.publish());
+    let bodies = Arc::new(bodies.publish());
+    let xanims = Arc::new(xanims.publish());
+    let soldiers = asset_game::SoldierPresentations::prepare(
+        &bodies,
+        &fpv_meshes,
+        &player_anim_sources,
+        &xanims,
+    );
+    weapons.resolve_fpv_soldiers(&fpv_meshes, &soldiers);
     let assembly_started = std::time::Instant::now();
     let assemblies = weapons.resolve_fpv_assemblies(&fpv_meshes, &xanims);
     report.push(format!(
@@ -732,7 +740,6 @@ pub(super) async fn walk_prepared_match(
     }
     let mut fx = std::mem::take(&mut world.fx).publish();
     fx.set_map_namespace(map_family);
-    let xanims = xanims.publish();
     let destructible_death =
         crate::stamp_match_destructible_death(&xanims, &world.map_xmodel_scene_assets);
     for row in &destructible_death {
@@ -756,7 +763,8 @@ pub(super) async fn walk_prepared_match(
         clip: clip.map(Arc::new),
         weapons: Arc::new(weapons.publish()),
         fpv_meshes,
-        bodies: Arc::new(bodies.publish()),
+        bodies,
+        soldiers,
         world_weapons: world_weapons.publish(),
         projectile_meshes: projectile_meshes.publish(),
         xanims,

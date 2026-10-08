@@ -222,7 +222,27 @@ impl WeaponCatalog {
             gun_xmodel,
             hand_xmodel,
             world_model,
-            camo_models: WeaponCamoModels::default(),
+            camo_models: WeaponCamoModels {
+                choices: Vec::new(),
+                view: geometry
+                    .gun_xmodel_names
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter_map(|(slot, ptr)| {
+                        Some((slot as u8, leftover_cstr_iw5(stream, (*ptr)?)?))
+                    })
+                    .collect(),
+                world: geometry
+                    .world_model_names
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter_map(|(slot, ptr)| {
+                        Some((slot as u8, leftover_cstr_iw5(stream, (*ptr)?)?))
+                    })
+                    .collect(),
+            },
             skin_parent: None,
             projectile_model: geometry
                 .projectile_model_name

@@ -2,7 +2,6 @@ mod admission;
 pub mod readiness;
 pub use net::LocalAccount;
 pub use readiness::SessionReadinessPolicy;
-pub mod combat_table;
 pub mod content_manifest;
 pub mod life_front;
 pub mod lifecycle;
@@ -12,6 +11,8 @@ pub mod match_apply;
 pub mod plugin;
 pub mod startup;
 pub mod view_subject;
+mod weapon_content;
+pub use weapon_content::ClassWeaponAdmission;
 
 pub use content_manifest::{
     AuthorityWeaponProfile, ManifestFact, ManifestGap, RuntimeRuleset, SessionContentManifest,

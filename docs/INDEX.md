@@ -8,7 +8,7 @@ game. Keep them this short: nobody opens a long file twice.
 | [`BUILD.md`](BUILD.md) | system packages per distro (Fedora / Debian / Arch), macOS, what the Windows cross build needs | before your first build |
 | [`RUN.md`](RUN.md) | running (`make map`, `--cmds`), controls frozen until `Playing`, `force_match_start`, sync-by-default, the verb list and the traps | before your first live run |
 | [`WINDOWS.md`](WINDOWS.md) | portable `iw4l.exe`: community updates, shortcuts into CoD, writable `iw4l-artifacts/` | building and running on Windows |
-| [`DEPLOY.md`](DEPLOY.md) | `make release` / `publish` / `deploy`: the play profile, hashed `.zst`, master by SHA, provision kept separate | shipping a release, "why is the player on an old version" |
+| [`DEPLOY.md`](DEPLOY.md) | `make release` / `publish` / `deploy`: every root `.iw4l-server` is a server, hashed `.zst`, master by SHA, GitHub pre-release | shipping a release, "why is the player on an old version" |
 | [Approved scenarios](../crates/approved_tests/README.md) | gameplay lifecycle and two clients through the dev master | repeatable end-to-end checks |
 | [`MASTER.md`](MASTER.md) | your own master over ssh from the machine with the clone: `cargo xtask master install`, a self-signed certificate with no domain, what to hand players | standing up a relay for yourself or your friends |
 | [`PERF.md`](PERF.md) | native `.pftrace` — the only runtime truth; picking a UUID, the manifest, `IW4L_PERF`, SQL | traces, scenario SQL, why a frame took 80 ms |

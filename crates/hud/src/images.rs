@@ -272,9 +272,11 @@ impl HudImages {
         ns: AssetNamespace,
         name: &str,
     ) -> Option<render_material::CompiledPassState> {
-        (ns == HUD_CHROME_NAMESPACE)
-            .then(|| self.zone_states.get(&cache_key(name)).copied().flatten())
-            .flatten()
+        if ns == HUD_CHROME_NAMESPACE {
+            self.zone_states.get(&cache_key(name)).copied().flatten()
+        } else {
+            asset_material::zone_ui_material_state(ns, name)
+        }
     }
 
     pub(crate) fn blood_material_binding(&self) -> Result<BloodMaterialBinding, &str> {

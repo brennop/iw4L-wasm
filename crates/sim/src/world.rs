@@ -1,3 +1,16 @@
+mod bodies;
+mod collision;
+mod content;
+mod events;
+use bodies::{PlayerAnimInputs, PlayerBodyRuntime};
+use collision::{CollisionRuntime, LagcompPlan};
+pub use content::{
+    PlayerKitCollision, SimBrush, SimClipBsp, SimClipCmodels, SimClipMesh, SimContent,
+    SimContentBuilder, SimStaticModel, SimTriggerHull,
+};
+use events::{EventJournal, PresentationQueue};
+pub use events::{PendingLocalSound, PendingPlayerCardEvent, PendingPlayerCardKind, PendingPrint};
+
 use anim_iw4::{PLAYER_ANIM_RAW_MASK, PlayerAnimValue};
 use bevy_ecs::prelude::Component;
 use playerstate_iw4::{AnimPair, PlayerState};
@@ -12,37 +25,18 @@ use crate::identities::{
     ShotId,
 };
 use crate::match_state::{
-    ClientMatchState, EntityEventPayload, EntityEventRecord, EventAudience, EventRecord,
-    RngDebugMeta, SimEvent, SnapshotMeta,
+    ClientMatchState, EntityEventPayload, EntityEventRecord, EventAudience, RngDebugMeta, SimEvent,
+    SnapshotMeta,
 };
 use crate::player_anim_script::PlayerAnimScript;
 use crate::script_gaps::ScriptGaps;
 use crate::snapshot::Snapshot;
 use crate::spawn::MatchBootstrap;
 use crate::world_objects::WorldObjectState;
+use crate::{WeaponScriptSounds, WeaponSetup};
 use std::collections::HashMap;
 use std::sync::Arc;
 use weapon_iw4::WeaponCombatFacts;
-
-#[derive(Clone, Debug)]
-struct PlayerAnimTreeSlot {
-    runtime: xmodel_runtime::XAnimTreeRuntime,
-    leaf: u16,
-    restart_toggle: bool,
-    torso: u16,
-    torso_restart: bool,
-    kit: usize,
-    legs_rate_sample: xmodel_runtime::ClientAnimSample,
-    torso_rate_sample: xmodel_runtime::ClientAnimSample,
-    persist: i64,
-}
-
-#[derive(Clone, Debug)]
-struct PlayerDobjSlot {
-    dobj: xmodel_runtime::DObj,
-    reuse_key: xmodel_runtime::DObjReuseKey,
-    persist: i64,
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Tick(pub u32);
@@ -50,136 +44,7 @@ pub struct Tick(pub u32);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ClientId(pub u32);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PendingPlayerCardKind {
-    SetSlot {
-        source: ClientId,
-        slot: i32,
-    },
-    OpenMenu {
-        cs_index: i32,
-    },
-    Splash {
-        key: String,
-        slot: i32,
-        optional: i32,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingPlayerCardEvent {
-    pub recipient: ClientId,
-    pub kind: PendingPlayerCardKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingPrint {
-    pub recipient: Option<ClientId>,
-    pub bold: bool,
-    pub template: String,
-    pub arg: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PendingLocalSound {
-    pub recipient: ClientId,
-    pub stop: bool,
-    pub alias_index: u8,
-}
-
 pub(crate) const CONTENTS_BODY: u32 = 0x0200_0000;
-
-#[derive(Clone, Debug)]
-pub struct SimBrush {
-    pub planes: Vec<[f32; 4]>,
-    pub contents: u32,
-
-    pub plane_surface_flags: Vec<u32>,
-
-    pub glass_encoded: u16,
-}
-
-impl clipmap_iw4::BrushView for SimBrush {
-    fn planes(&self) -> &[[f32; 4]] {
-        &self.planes
-    }
-    fn contents(&self) -> u32 {
-        self.contents
-    }
-    fn plane_surface_flags(&self) -> &[u32] {
-        &self.plane_surface_flags
-    }
-    fn glass_encoded(&self) -> u16 {
-        self.glass_encoded
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct SimClipBsp {
-    pub nodes: Vec<clipmap_iw4::ClipNode>,
-    pub leaves: Vec<clipmap_iw4::ClipLeaf>,
-    pub leafbrushes: Vec<u16>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct SimClipMesh {
-    /// The immutable collision tables, shared with whoever else traces
-    /// against this map rather than copied per owner.
-    pub tables: std::sync::Arc<clipmap_iw4::ClipMeshTables>,
-
-    pub static_models: Vec<SimStaticModel>,
-
-    pub smodel_grid: crate::smodel_grid::SmodelGrid,
-}
-
-impl SimClipMesh {
-    pub fn rebuild_smodel_grid(&mut self) {
-        self.smodel_grid =
-            crate::smodel_grid::SmodelGrid::build(self.static_models.iter().map(|sm| {
-                crate::smodel_grid::SmodelBounds {
-                    mid: sm.model.bounds_mid,
-                    half: sm.model.bounds_half,
-                }
-            }));
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SimStaticModel {
-    pub index: u32,
-    pub name: String,
-    pub model: clipmap_iw4::ClipStaticModel,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct SimClipCmodels {
-    pub models: Vec<clipmap_iw4::ClipCmodel>,
-    pub triggers: Vec<Vec<SimTriggerHull>>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SimTriggerHull {
-    pub mid: [f32; 3],
-    pub half: [f32; 3],
-    pub slabs: Vec<([f32; 3], f32, f32)>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PlayerKitCollision {
-    pub body_key: String,
-    pub body: Option<Arc<xmodel_runtime::RetainedModelCapability>>,
-    pub head_key: String,
-    pub head: Option<Arc<xmodel_runtime::RetainedModelCapability>>,
-}
-
-impl PlayerKitCollision {
-    fn reuse_key(&self) -> xmodel_runtime::DObjReuseKey {
-        xmodel_runtime::DObjReuseKey {
-            e_type: entity_iw4::ET_PLAYER,
-            model: xmodel_runtime::model_token(&[self.body_key.as_str(), self.head_key.as_str()]),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HitvolDumpRow {
@@ -257,267 +122,6 @@ pub(crate) struct PredictionRemoteBody {
     pub life_sequence: crate::LifeSequence,
 }
 
-/// Immutable definitions shared by independently mutable simulations.
-#[derive(Debug)]
-pub struct SimContent {
-    data: SimContentBuilder,
-}
-
-impl SimContent {
-    pub fn clip_brushes(&self) -> &[SimBrush] {
-        &self.data.clip_brushes
-    }
-    pub fn clip_bsp(&self) -> &SimClipBsp {
-        &self.data.clip_bsp
-    }
-    pub fn clip_mesh(&self) -> &SimClipMesh {
-        &self.data.clip_mesh
-    }
-    pub fn clip_cmodels(&self) -> &SimClipCmodels {
-        &self.data.clip_cmodels
-    }
-}
-
-/// Installation work. Consuming this builder closes all definition writers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WeaponSetup {
-    pub realm: crate::script::Realm,
-    pub base: String,
-    pub attachments: Vec<String>,
-    pub stand_in: Option<String>,
-}
-
-#[derive(Debug, Default)]
-pub struct SimContentBuilder {
-    script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
-    clip_brushes: Vec<SimBrush>,
-    clip_bsp: SimClipBsp,
-    clip_mesh: SimClipMesh,
-    clip_cmodels: SimClipCmodels,
-    weapon_def_scales: Vec<(f32, f32, f32)>,
-    weapon_combat: Vec<WeaponCombatFacts>,
-    weapon_runnable: Vec<bool>,
-    weapon_transition_groups: Vec<u32>,
-    bullet_pen: Vec<weapon_iw4::BulletPenFacts>,
-    pen_table: weapon_iw4::PenetrationDepthTable,
-    pen_table_loaded: bool,
-    player_kits: [PlayerKitCollision; 2],
-    player_anim_tree: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
-    player_anim_node_names: Vec<String>,
-    player_axis_anim_tree: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
-    player_anim_properties: Vec<xmodel_runtime::PlayerAnimProperties>,
-    player_body_branches: Option<xmodel_runtime::PlayerBodyBranches>,
-    script_model_anims: std::collections::BTreeMap<String, crate::ScriptModelPlayAnim>,
-    xanims: Arc<crate::MantleXAnimBind>,
-    weapon_script_names: Arc<[String]>,
-    weapon_script_aliases: std::collections::BTreeMap<String, u32>,
-    vehicle_turrets: std::collections::BTreeMap<String, String>,
-    vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
-    vehicle_accel: std::collections::BTreeMap<String, f32>,
-    weapon_setups: Arc<[Option<WeaponSetup>]>,
-    weapon_world_models: Vec<(String, Vec<String>)>,
-    shield_models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
-    weapon_projectile_models: Vec<String>,
-    weapon_melee_only: Vec<bool>,
-    weapon_script_sounds: Vec<WeaponScriptSounds>,
-    equipment_runtime: Vec<EquipmentRuntimeFacts>,
-    team_voice_prefix_allies: Option<String>,
-    team_voice_prefix_axis: Option<String>,
-    map_custom: std::collections::BTreeMap<String, String>,
-    shocks: std::collections::BTreeMap<String, hud_iw4::ShockParams>,
-    player_anim_script: Option<Arc<PlayerAnimScript>>,
-}
-
-impl SimContentBuilder {
-    pub fn set_script_sound_aliases(
-        &mut self,
-        aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
-    ) {
-        self.script_sound_aliases = aliases.map(|names| {
-            names
-                .into_iter()
-                .map(|(name, looping)| (name.to_ascii_lowercase(), looping))
-                .collect()
-        });
-    }
-
-    pub fn finish(mut self) -> Arc<SimContent> {
-        self.clip_mesh.rebuild_smodel_grid();
-        Arc::new(SimContent { data: self })
-    }
-    pub fn set_weapon_def_scales(&mut self, scales: Vec<(f32, f32, f32)>) {
-        self.weapon_def_scales = scales;
-    }
-
-    pub fn set_script_model_anims(
-        &mut self,
-        anims: impl IntoIterator<Item = (String, crate::ScriptModelPlayAnim)>,
-    ) {
-        self.script_model_anims = anims
-            .into_iter()
-            .map(|(name, facts)| (name.to_ascii_lowercase(), facts))
-            .collect();
-    }
-
-    pub fn set_player_anim_script(&mut self, script: Option<Arc<PlayerAnimScript>>) {
-        self.player_anim_script = script;
-    }
-
-    pub fn set_weapon_combat_table(&mut self, rows: Vec<WeaponCombatFacts>) {
-        self.weapon_combat = rows;
-    }
-
-    pub fn set_weapon_runnable_table(&mut self, runnable: Vec<bool>) {
-        self.weapon_runnable = runnable;
-    }
-
-    pub fn set_weapon_transition_groups(&mut self, groups: Vec<u32>) {
-        self.weapon_transition_groups = groups;
-    }
-
-    pub fn set_bullet_pen_facts(&mut self, rows: Vec<weapon_iw4::BulletPenFacts>) {
-        self.bullet_pen = rows;
-    }
-
-    pub fn set_penetration_table(&mut self, table: weapon_iw4::PenetrationDepthTable) {
-        self.pen_table = table;
-    }
-
-    pub fn set_pen_table_loaded(&mut self, loaded: bool) {
-        self.pen_table_loaded = loaded;
-    }
-
-    pub fn set_player_kit_collisions(
-        &mut self,
-        allies: PlayerKitCollision,
-        axis: PlayerKitCollision,
-    ) {
-        self.player_kits = [allies, axis];
-    }
-
-    pub fn set_player_anim_tree(
-        &mut self,
-        definition: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
-        node_names: Vec<String>,
-    ) {
-        self.player_anim_tree = definition;
-        self.player_body_branches = node_names
-            .iter()
-            .position(|name| name == "legs")
-            .zip(node_names.iter().position(|name| name == "torso"))
-            .map(|(legs, torso)| xmodel_runtime::PlayerBodyBranches {
-                legs: xmodel_runtime::XAnimNodeId(legs as u16),
-                torso: xmodel_runtime::XAnimNodeId(torso as u16),
-            });
-        self.player_anim_node_names = node_names;
-    }
-
-    pub fn set_player_axis_anim_tree(
-        &mut self,
-        definition: Option<Arc<xmodel_runtime::XAnimTreeDefinition>>,
-    ) {
-        self.player_axis_anim_tree = definition;
-    }
-
-    pub fn set_player_anim_properties(
-        &mut self,
-        properties: Vec<xmodel_runtime::PlayerAnimProperties>,
-    ) {
-        self.player_anim_properties = properties;
-    }
-
-    pub fn set_mantle_xanims(&mut self, bind: crate::MantleXAnimBind) {
-        self.xanims = Arc::new(bind);
-    }
-
-    pub fn set_weapon_script_names(&mut self, names: Vec<String>) {
-        self.weapon_script_names = names.into();
-    }
-
-    pub fn set_weapon_script_aliases(&mut self, aliases: Vec<(String, u32)>) {
-        self.weapon_script_aliases = aliases.into_iter().collect();
-    }
-
-    pub fn set_vehicle_compass(
-        &mut self,
-        rows: impl IntoIterator<Item = (String, ([String; 2], [i32; 2]))>,
-    ) {
-        self.vehicle_compass = rows.into_iter().collect();
-    }
-
-    pub fn set_vehicle_accel(&mut self, rows: impl IntoIterator<Item = (String, f32)>) {
-        self.vehicle_accel = rows.into_iter().collect();
-    }
-
-    pub fn set_vehicle_turrets(&mut self, turrets: Vec<(String, String)>) {
-        self.vehicle_turrets = turrets.into_iter().collect();
-    }
-
-    pub fn set_weapon_setups(&mut self, setups: Vec<Option<WeaponSetup>>) {
-        self.weapon_setups = setups.into();
-    }
-
-    pub fn set_shield_models(
-        &mut self,
-        models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
-    ) {
-        self.shield_models = models;
-    }
-
-    pub fn set_weapon_world_models(&mut self, models: Vec<(String, Vec<String>)>) {
-        self.weapon_world_models = models;
-    }
-
-    pub fn set_weapon_projectile_models(&mut self, models: Vec<String>) {
-        self.weapon_projectile_models = models;
-    }
-
-    pub fn set_weapon_melee_only(&mut self, rows: Vec<bool>) {
-        self.weapon_melee_only = rows;
-    }
-
-    pub fn set_weapon_script_sounds(&mut self, rows: Vec<WeaponScriptSounds>) {
-        self.weapon_script_sounds = rows;
-    }
-
-    pub fn set_equipment_runtime_table(&mut self, rows: Vec<EquipmentRuntimeFacts>) {
-        self.equipment_runtime = rows;
-    }
-
-    pub fn set_team_voice_prefixes(&mut self, allies: Option<String>, axis: Option<String>) {
-        self.team_voice_prefix_allies = allies;
-        self.team_voice_prefix_axis = axis;
-    }
-
-    pub fn set_map_custom(&mut self, entry: std::collections::BTreeMap<String, String>) {
-        self.map_custom = entry;
-    }
-
-    pub fn set_shocks(&mut self, shocks: std::collections::BTreeMap<String, hud_iw4::ShockParams>) {
-        self.shocks = shocks;
-    }
-
-    pub fn set_clip_brushes(&mut self, brushes: Vec<SimBrush>) {
-        self.clip_brushes = brushes;
-        self.clip_bsp = SimClipBsp::default();
-        self.clip_mesh = SimClipMesh::default();
-        self.clip_cmodels = SimClipCmodels::default();
-    }
-
-    pub fn set_clip_map(
-        &mut self,
-        brushes: Vec<SimBrush>,
-        bsp: SimClipBsp,
-        mesh: SimClipMesh,
-        cmodels: SimClipCmodels,
-    ) {
-        self.clip_brushes = brushes;
-        self.clip_bsp = bsp;
-        self.clip_mesh = mesh;
-        self.clip_cmodels = cmodels;
-    }
-}
-
 #[derive(Component, Clone, Debug)]
 pub struct SimState {
     content: Arc<SimContent>,
@@ -537,13 +141,7 @@ pub struct SimState {
 
     old_cmd_angles: Vec<(ClientId, [i32; 3])>,
 
-    player_anim_trees: HashMap<u32, PlayerAnimTreeSlot>,
-
-    corpse_anim_trees: HashMap<i32, xmodel_runtime::XAnimTreeRuntime>,
-
-    player_dobjs: HashMap<u32, PlayerDobjSlot>,
-
-    player_body_materialize_error: Option<String>,
+    player_bodies: PlayerBodyRuntime,
 
     g_hudelems: Vec<crate::hudelem::GameHudElemSlot>,
 
@@ -574,29 +172,19 @@ pub struct SimState {
     next_shot: ShotId,
     next_projectile: ProjectileId,
 
-    collision_history: CollisionHistory,
-
-    entity_collision_history: EntityCollisionHistory,
-
-    lagcomp_sample: HashMap<ClientId, crate::bullet_collision::ShotSampleProvenance>,
-    lagcomp_commands: HashMap<(ClientId, i32), crate::bullet_collision::ShotSampleProvenance>,
+    collision_runtime: CollisionRuntime,
 
     content_digest: u64,
 
     content_components: crate::ContentComponents,
 
-    journal: Vec<EventRecord>,
+    events: EventJournal,
 
     shot_collision_verdicts: Vec<crate::combat::ShotCollisionVerdict>,
 
     projectile_impacts: Vec<ProjectileImpact>,
 
     projectile_impact_log: Vec<(Tick, ProjectileImpact)>,
-    next_event: EventSequence,
-    entity_events: Vec<EntityEventRecord>,
-    next_entity_event: EventSequence,
-
-    pellet_fx: Vec<crate::PelletFxRecord>,
 
     world_objects: WorldObjectState,
 
@@ -615,11 +203,7 @@ pub struct SimState {
     pub(crate) recent_kills: Vec<(ClientId, i32, u32)>,
     pub(crate) weapon_notes: Vec<crate::equipment::WeaponNote>,
 
-    pending_player_cards: Vec<PendingPlayerCardEvent>,
-
-    pending_prints: Vec<PendingPrint>,
-    pending_local_sounds: Vec<PendingLocalSound>,
-    pending_script_audio: Vec<crate::ScriptAudioCommand>,
+    presentation: PresentationQueue,
 
     pending_final_kill: Option<(ClientId, ClientId)>,
 
@@ -659,7 +243,7 @@ pub struct SimState {
 impl Default for SimState {
     fn default() -> Self {
         let mut world = Self {
-            content: SimContentBuilder::default().finish(),
+            content: SimContentBuilder::bootstrap().finish(),
             clients: Vec::new(),
             prediction_remote_bodies: Vec::new(),
             area_entity_world: None,
@@ -667,10 +251,7 @@ impl Default for SimState {
             model_library: Arc::default(),
             old_buttons: Vec::new(),
             old_cmd_angles: Vec::new(),
-            player_anim_trees: HashMap::new(),
-            corpse_anim_trees: HashMap::new(),
-            player_dobjs: HashMap::new(),
-            player_body_materialize_error: None,
+            player_bodies: PlayerBodyRuntime::default(),
             g_hudelems: Vec::new(),
             hud_elem_sound_ids: crate::hudelem::PulseFxSoundIds::default(),
             dying_missiles: Vec::new(),
@@ -688,24 +269,13 @@ impl Default for SimState {
             bot_rng: MatchRng::from_root(0, RngDomain::Bot),
             next_shot: ShotId(1),
             next_projectile: ProjectileId(1),
-            collision_history: CollisionHistory::with_capacity(
-                crate::bullet_collision::COLLISION_HISTORY_TICKS,
-            ),
-            entity_collision_history: EntityCollisionHistory::with_capacity(
-                crate::bullet_collision::COLLISION_HISTORY_TICKS,
-            ),
-            lagcomp_sample: HashMap::new(),
-            lagcomp_commands: HashMap::new(),
+            collision_runtime: CollisionRuntime::default(),
             content_digest: 0,
             content_components: crate::ContentComponents::default(),
-            journal: Vec::new(),
+            events: EventJournal::default(),
             shot_collision_verdicts: Vec::new(),
             projectile_impacts: Vec::new(),
             projectile_impact_log: Vec::new(),
-            next_event: EventSequence(1),
-            entity_events: Vec::new(),
-            next_entity_event: EventSequence(1),
-            pellet_fx: Vec::new(),
             world_objects: WorldObjectState::default(),
             script_gaps: ScriptGaps::default(),
             sound_alias_cs: crate::SoundAliasCs::default(),
@@ -715,10 +285,7 @@ impl Default for SimState {
             num_kills: 0,
             recent_kills: Vec::new(),
             weapon_notes: Vec::new(),
-            pending_player_cards: Vec::new(),
-            pending_prints: Vec::new(),
-            pending_local_sounds: Vec::new(),
-            pending_script_audio: Vec::new(),
+            presentation: PresentationQueue::default(),
             pending_final_kill: None,
             last_pmove_walking: HashMap::new(),
             stuck_holdrand: 0,
@@ -743,22 +310,6 @@ impl Default for SimState {
     }
 }
 
-#[derive(Clone, Copy)]
-enum LagcompPlan {
-    CurrentAuthority {
-        reason: crate::bullet_collision::CurrentAuthorityReason,
-    },
-    Refused {
-        requested: Tick,
-        reason: crate::bullet_collision::HistoryRefusalReason,
-    },
-    Rewind {
-        requested: Tick,
-        used: Tick,
-        clamped: bool,
-    },
-}
-
 impl SimState {
     pub fn new() -> Self {
         Self::default()
@@ -768,8 +319,8 @@ impl SimState {
         if self.running {
             return Err("MatchBootstrap refused: world already Running");
         }
-        if !self.content.data.weapon_combat.is_empty() {
-            let table_len = self.content.data.weapon_combat.len() as u32;
+        if !self.content.weapons().weapon_combat.is_empty() {
+            let table_len = self.content.weapons().weapon_combat.len() as u32;
             for class in &bootstrap.classes {
                 for id in class.weapon_slot_ids() {
                     if id != 0 && id >= table_len {
@@ -793,10 +344,7 @@ impl SimState {
         self.placement_cointoss_unwired = 0;
         self.weapon_notes.clear();
         self.next_shot = ShotId(1);
-        self.collision_history.clear();
-        self.entity_collision_history.clear();
-        self.lagcomp_sample.clear();
-        self.lagcomp_commands.clear();
+        self.collision_runtime.reset();
         self.shot_collision_verdicts.clear();
         self.projectile_impacts.clear();
         self.projectile_impact_log.clear();
@@ -806,10 +354,7 @@ impl SimState {
         self.bind_required_hud_materials();
         self.num_kills = 0;
         self.recent_kills.clear();
-        self.pending_player_cards.clear();
-        self.pending_prints.clear();
-        self.pending_local_sounds.clear();
-        self.pending_script_audio.clear();
+        self.presentation.reset();
         self.script_gaps = ScriptGaps::default();
         self.recompute_content_digest();
         Ok(())
@@ -879,8 +424,7 @@ impl SimState {
 
     pub fn script_sound_exists(&self, name: &str) -> Option<bool> {
         self.content
-            .data
-            .script_sound_aliases
+            .script_sound_aliases()
             .as_ref()
             .map(|names| names.contains_key(&name.to_ascii_lowercase()))
     }
@@ -888,8 +432,7 @@ impl SimState {
     pub fn script_sound_is_looping(&self, name: &str) -> Result<bool, &'static str> {
         let aliases = self
             .content
-            .data
-            .script_sound_aliases
+            .script_sound_aliases()
             .as_ref()
             .ok_or("sound alias catalog is not installed")?;
         aliases
@@ -915,27 +458,27 @@ impl SimState {
     }
 
     pub(crate) fn push_print(&mut self, print: PendingPrint) {
-        self.pending_prints.push(print);
+        self.presentation.prints.push(print);
     }
 
     pub(crate) fn take_pending_prints(&mut self) -> Vec<PendingPrint> {
-        core::mem::take(&mut self.pending_prints)
+        core::mem::take(&mut self.presentation.prints)
     }
 
     pub(crate) fn push_local_sound(&mut self, sound: PendingLocalSound) {
-        self.pending_local_sounds.push(sound);
+        self.presentation.local_sounds.push(sound);
     }
 
     pub(crate) fn push_script_audio(&mut self, command: crate::ScriptAudioCommand) {
-        self.pending_script_audio.push(command);
+        self.presentation.script_audio.push(command);
     }
 
     pub(crate) fn take_pending_script_audio(&mut self) -> Vec<crate::ScriptAudioCommand> {
-        core::mem::take(&mut self.pending_script_audio)
+        core::mem::take(&mut self.presentation.script_audio)
     }
 
     pub(crate) fn take_pending_local_sounds(&mut self) -> Vec<PendingLocalSound> {
-        core::mem::take(&mut self.pending_local_sounds)
+        core::mem::take(&mut self.presentation.local_sounds)
     }
 
     pub fn bind_required_hud_materials(&mut self) {
@@ -959,7 +502,7 @@ impl SimState {
     }
 
     pub fn push_hud_splash(&mut self, recipient: ClientId, key: String, slot: i32, optional: i32) {
-        self.pending_player_cards.push(PendingPlayerCardEvent {
+        self.presentation.player_cards.push(PendingPlayerCardEvent {
             recipient,
             kind: PendingPlayerCardKind::Splash {
                 key,
@@ -970,21 +513,21 @@ impl SimState {
     }
 
     pub fn push_player_card_slot(&mut self, recipient: ClientId, source: ClientId, slot: i32) {
-        self.pending_player_cards.push(PendingPlayerCardEvent {
+        self.presentation.player_cards.push(PendingPlayerCardEvent {
             recipient,
             kind: PendingPlayerCardKind::SetSlot { source, slot },
         });
     }
 
     pub fn push_player_card_open(&mut self, recipient: ClientId, cs_index: i32) {
-        self.pending_player_cards.push(PendingPlayerCardEvent {
+        self.presentation.player_cards.push(PendingPlayerCardEvent {
             recipient,
             kind: PendingPlayerCardKind::OpenMenu { cs_index },
         });
     }
 
     pub(crate) fn take_pending_player_cards(&mut self) -> Vec<PendingPlayerCardEvent> {
-        core::mem::take(&mut self.pending_player_cards)
+        core::mem::take(&mut self.presentation.player_cards)
     }
 
     pub(crate) fn take_pending_final_kill(&mut self) -> Option<(ClientId, ClientId)> {
@@ -1080,7 +623,7 @@ impl SimState {
     }
 
     pub fn player_anim_script(&self) -> Option<Arc<PlayerAnimScript>> {
-        self.content.data.player_anim_script.clone()
+        self.content.player_anim_script().clone()
     }
 
     pub(crate) fn set_anim_movement(&mut self, id: ClientId, movetype: u8, strafing: u8) {
@@ -1116,7 +659,7 @@ impl SimState {
     }
 
     pub fn pen_table_loaded(&self) -> bool {
-        self.content.data.pen_table_loaded
+        self.content.weapons().pen_table_loaded
     }
 
     fn collision_kit_index(&self, id: ClientId) -> usize {
@@ -1130,7 +673,7 @@ impl SimState {
     }
 
     fn collision_kit(&self, id: ClientId) -> &PlayerKitCollision {
-        &self.content.data.player_kits[self.collision_kit_index(id)]
+        &self.content.player_kits()[self.collision_kit_index(id)]
     }
 
     fn kit_assignment_is_axis(client_state_team: i32, ffa_team: Option<u8>) -> bool {
@@ -1142,19 +685,13 @@ impl SimState {
     }
 
     pub fn xanims(&self) -> Arc<crate::MantleXAnimBind> {
-        Arc::clone(&self.content.data.xanims)
+        Arc::clone(self.content.xanims())
     }
 
     pub fn player_body_pose_kind(&self) -> &'static str {
-        if self
-            .content
-            .data
-            .player_kits
-            .iter()
-            .all(|k| k.body.is_none())
-        {
+        if self.content.player_kits().iter().all(|k| k.body.is_none()) {
             "none"
-        } else if self.content.data.player_anim_tree.is_some() {
+        } else if self.content.player_anim_tree().is_some() {
             "anim"
         } else {
             "bind"
@@ -1162,12 +699,12 @@ impl SimState {
     }
 
     pub fn penetration_table(&self) -> &weapon_iw4::PenetrationDepthTable {
-        &self.content.data.pen_table
+        &self.content.weapons().pen_table
     }
 
     pub(crate) fn bullet_pen_facts_for(&self, weapon: u32) -> weapon_iw4::BulletPenFacts {
         self.content
-            .data
+            .weapons()
             .bullet_pen
             .get(weapon as usize)
             .copied()
@@ -1175,12 +712,12 @@ impl SimState {
     }
 
     pub fn weapon_script_names(&self) -> Arc<[String]> {
-        Arc::clone(&self.content.data.weapon_script_names)
+        Arc::clone(&self.content.weapons().weapon_script_names)
     }
 
     pub(crate) fn weapon_setup(&self, weapon: u32) -> Option<&WeaponSetup> {
         self.content
-            .data
+            .weapons()
             .weapon_setups
             .get(weapon as usize)?
             .as_ref()
@@ -1188,7 +725,7 @@ impl SimState {
 
     pub fn weapon_script_name(&self, weapon: u32) -> &str {
         self.content
-            .data
+            .weapons()
             .weapon_script_names
             .get(weapon as usize)
             .map(String::as_str)
@@ -1196,32 +733,34 @@ impl SimState {
     }
 
     pub(crate) fn shock(&self, name: &str) -> Option<&hud_iw4::ShockParams> {
-        self.content.data.shocks.get(&name.to_ascii_lowercase())
+        self.content.shocks().get(&name.to_ascii_lowercase())
     }
 
     pub(crate) fn map_custom(&self, key: &str) -> &str {
         self.content
-            .data
-            .map_custom
+            .map_custom()
             .get(&key.to_ascii_lowercase())
             .map_or("", String::as_str)
     }
 
     pub(crate) fn weapon_projectile_model(&self, weapon: u32) -> &str {
         self.content
-            .data
+            .weapons()
             .weapon_projectile_models
             .get(weapon as usize)
             .map_or("", String::as_str)
     }
 
     pub(crate) fn weapon_script_sounds(&self, weapon: u32) -> Option<&WeaponScriptSounds> {
-        self.content.data.weapon_script_sounds.get(weapon as usize)
+        self.content
+            .weapons()
+            .weapon_script_sounds
+            .get(weapon as usize)
     }
 
     pub(crate) fn weapon_is_melee_only(&self, weapon: u32) -> bool {
         self.content
-            .data
+            .weapons()
             .weapon_melee_only
             .get(weapon as usize)
             .copied()
@@ -1238,13 +777,13 @@ impl SimState {
             .filter_map(|weapon| u32::try_from(weapon).ok())
             .find(|weapon| {
                 self.content
-                    .data
+                    .weapons()
                     .weapon_world_models
                     .get(*weapon as usize)
                     .is_some_and(|(name, _)| name == model)
                     && self
                         .content
-                        .data
+                        .weapons()
                         .shield_models
                         .get(*weapon as usize)
                         .is_some_and(Option::is_some)
@@ -1253,31 +792,31 @@ impl SimState {
 
     pub(crate) fn weapon_world_model(&self, weapon: u32) -> Option<(&str, &[String])> {
         self.content
-            .data
+            .weapons()
             .weapon_world_models
             .get(weapon as usize)
             .map(|(model, tags)| (model.as_str(), tags.as_slice()))
     }
 
     pub fn vehicle_compass(&self, name: &str) -> Option<&([String; 2], [i32; 2])> {
-        self.content.data.vehicle_compass.get(name)
+        self.content.vehicle_compass().get(name)
     }
 
     pub fn vehicle_accel(&self, name: &str) -> Option<f32> {
-        self.content.data.vehicle_accel.get(name).copied()
+        self.content.vehicle_accel().get(name).copied()
     }
 
     pub fn vehicle_turret_weapon(&self, vehicle: &str) -> Option<u32> {
-        let path = self.content.data.vehicle_turrets.get(vehicle)?;
+        let path = self.content.vehicle_turrets().get(vehicle)?;
         self.weapon_index_by_script_name(path.rsplit('/').next().unwrap_or(path))
     }
 
     pub fn weapon_index_by_script_name(&self, name: &str) -> Option<u32> {
-        if let Some(&weapon) = self.content.data.weapon_script_aliases.get(name) {
+        if let Some(&weapon) = self.content.weapons().weapon_script_aliases.get(name) {
             return Some(weapon);
         }
         self.content
-            .data
+            .weapons()
             .weapon_script_names
             .iter()
             .position(|n| n == name)
@@ -1287,7 +826,7 @@ impl SimState {
 
     pub(crate) fn equipment_facts_for(&self, weapon: u32) -> Option<EquipmentRuntimeFacts> {
         self.content
-            .data
+            .weapons()
             .equipment_runtime
             .get(weapon as usize)
             .copied()
@@ -1296,7 +835,7 @@ impl SimState {
 
     pub(crate) fn offhand_loadout_row(&self, weapon: u32) -> Option<EquipmentRuntimeFacts> {
         self.content
-            .data
+            .weapons()
             .equipment_runtime
             .get(weapon as usize)
             .copied()
@@ -1305,7 +844,7 @@ impl SimState {
 
     pub(crate) fn missile_launch_facts(&self, weapon: u32) -> Option<EquipmentRuntimeFacts> {
         self.content
-            .data
+            .weapons()
             .equipment_runtime
             .get(weapon as usize)
             .copied()
@@ -1378,12 +917,12 @@ impl SimState {
     }
 
     pub fn weapon_combat_len(&self) -> usize {
-        self.content.data.weapon_combat.len()
+        self.content.weapons().weapon_combat.len()
     }
 
     pub fn weapon_combat_row(&self, weapon: u32) -> Option<WeaponCombatFacts> {
         self.content
-            .data
+            .weapons()
             .weapon_combat
             .get(weapon as usize)
             .copied()
@@ -1399,23 +938,23 @@ impl SimState {
 
     fn recompute_content_digest(&mut self) {
         self.content_digest = crate::content::content_digest(
-            &self.content.data.weapon_combat,
-            &self.content.data.bullet_pen,
-            &self.content.data.weapon_runnable,
-            &self.content.data.weapon_transition_groups,
-            &self.content.data.equipment_runtime,
+            &self.content.weapons().weapon_combat,
+            &self.content.weapons().bullet_pen,
+            &self.content.weapons().weapon_runnable,
+            &self.content.weapons().weapon_transition_groups,
+            &self.content.weapons().equipment_runtime,
             &self.bootstrap,
-            &self.content.data.clip_brushes,
+            self.content.clip_brushes(),
             &self.entity_collision_capabilities,
         );
         self.content_components = crate::content::content_components(
-            &self.content.data.weapon_combat,
-            &self.content.data.bullet_pen,
-            &self.content.data.weapon_runnable,
-            &self.content.data.weapon_transition_groups,
-            &self.content.data.equipment_runtime,
+            &self.content.weapons().weapon_combat,
+            &self.content.weapons().bullet_pen,
+            &self.content.weapons().weapon_runnable,
+            &self.content.weapons().weapon_transition_groups,
+            &self.content.weapons().equipment_runtime,
             &self.bootstrap,
-            &self.content.data.clip_brushes,
+            self.content.clip_brushes(),
             &self.entity_collision_capabilities,
         );
     }
@@ -1428,7 +967,7 @@ impl SimState {
 
     pub(crate) fn combat_facts_for(&self, weapon: u32) -> Option<WeaponCombatFacts> {
         self.content
-            .data
+            .weapons()
             .weapon_combat
             .get(weapon as usize)
             .copied()
@@ -1439,7 +978,7 @@ impl SimState {
         if from == 0 || from == to {
             return false;
         }
-        let groups = &self.content.data.weapon_transition_groups;
+        let groups = &self.content.weapons().weapon_transition_groups;
         let Some(&group) = groups.get(from as usize) else {
             return false;
         };
@@ -1448,7 +987,7 @@ impl SimState {
 
     pub(crate) fn weapon_runnable(&self, id: u32) -> bool {
         self.content
-            .data
+            .weapons()
             .weapon_runnable
             .get(id as usize)
             .copied()
@@ -1456,7 +995,7 @@ impl SimState {
     }
 
     fn reset_area_entity_world(&mut self) {
-        let Some(world_model) = self.content.data.clip_cmodels.models.first() else {
+        let Some(world_model) = self.content.clip_cmodels().models.first() else {
             self.area_entity_world = None;
             return;
         };
@@ -1536,10 +1075,8 @@ impl SimState {
     pub(crate) fn forget_client_membership(&mut self, id: ClientId) {
         self.unlink_player_area(id);
         self.clients.retain(|(c, _)| *c != id);
-        self.player_anim_trees.remove(&id.0);
-        self.player_dobjs.remove(&id.0);
-        self.lagcomp_sample.remove(&id);
-        self.lagcomp_commands.retain(|(client, _), _| *client != id);
+        self.player_bodies.forget_client(id);
+        self.collision_runtime.forget_client(id);
         self.last_pmove_walking.remove(&id);
         self.last_anim_movement.remove(&id);
         self.anim_command_buttons.remove(&id);
@@ -1565,19 +1102,19 @@ impl SimState {
     }
 
     pub fn clip_brushes(&self) -> &[SimBrush] {
-        &self.content.data.clip_brushes
+        self.content.clip_brushes()
     }
 
     pub fn clip_bsp(&self) -> &SimClipBsp {
-        &self.content.data.clip_bsp
+        self.content.clip_bsp()
     }
 
     pub fn clip_mesh(&self) -> &SimClipMesh {
-        &self.content.data.clip_mesh
+        self.content.clip_mesh()
     }
 
     pub fn clip_cmodels(&self) -> &SimClipCmodels {
-        &self.content.data.clip_cmodels
+        self.content.clip_cmodels()
     }
 
     pub fn entity_kernel(&self) -> &crate::gentity::EntityKernel {
@@ -1784,9 +1321,9 @@ impl SimState {
         exclude: Option<crate::AuthorityModelOwner>,
     ) -> trace_iw4::Trace {
         self.trace_clip_maps_glass(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_mesh,
+            self.content.clip_brushes(),
+            self.content.clip_bsp(),
+            self.content.clip_mesh(),
             input,
             false,
             exclude,
@@ -1802,9 +1339,9 @@ impl SimState {
         mask: u32,
     ) -> trace_iw4::Trace {
         clip_trace(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_mesh,
+            self.content.clip_brushes(),
+            self.content.clip_bsp(),
+            self.content.clip_mesh(),
             start,
             end,
             mins,
@@ -1815,8 +1352,7 @@ impl SimState {
     }
 
     pub fn has_world_clip(&self) -> bool {
-        !self.content.data.clip_brushes.is_empty()
-            || self.content.data.clip_mesh.tables.tri_count() >= 1
+        !self.content.clip_brushes().is_empty() || self.content.clip_mesh().tables.tri_count() >= 1
     }
 
     pub(crate) fn trace_clip(
@@ -1828,9 +1364,9 @@ impl SimState {
         mask: u32,
     ) -> trace_iw4::Trace {
         self.trace_clip_maps(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_mesh,
+            self.content.clip_brushes(),
+            self.content.clip_bsp(),
+            self.content.clip_mesh(),
             start,
             end,
             mins,
@@ -1877,9 +1413,9 @@ impl SimState {
         mask: u32,
     ) -> trace_iw4::Trace {
         self.trace_clip_maps_glass(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_mesh,
+            self.content.clip_brushes(),
+            self.content.clip_bsp(),
+            self.content.clip_mesh(),
             movement_iw4::GroundTraceInput {
                 start,
                 end,
@@ -1926,7 +1462,7 @@ impl SimState {
             .flat_map(|c| c.solid_brushes().iter());
         let hit = clip_move_to_bmodels(
             world_hit,
-            &self.content.data.clip_cmodels.models,
+            &self.content.clip_cmodels().models,
             &clip_bsp.leafbrushes,
             clip_brushes,
             linked,
@@ -1958,10 +1494,10 @@ impl SimState {
         let models = self.model_movement_brushes_where(|_| true);
         crate::penetration::contacts(
             &crate::penetration::RecoveryScene {
-                brushes: &self.content.data.clip_brushes,
-                bsp: &self.content.data.clip_bsp,
-                mesh: &self.content.data.clip_mesh,
-                cmodels: &self.content.data.clip_cmodels.models,
+                brushes: self.content.clip_brushes(),
+                bsp: self.content.clip_bsp(),
+                mesh: self.content.clip_mesh(),
+                cmodels: &self.content.clip_cmodels().models,
                 linked: &linked,
                 models: &models,
                 glass_is_solid: &|piece| self.world_objects.glass_is_solid(u32::from(piece)),
@@ -1972,94 +1508,37 @@ impl SimState {
     }
 
     pub fn collision_history(&self) -> &CollisionHistory {
-        &self.collision_history
+        &self.collision_runtime.players
     }
 
     pub fn entity_collision_history(&self) -> &EntityCollisionHistory {
-        &self.entity_collision_history
+        &self.collision_runtime.entities
     }
 
     fn lagcomp_plan(&self, attacker: ClientId, current: Tick) -> LagcompPlan {
-        use crate::bullet_collision::{
-            CurrentAuthorityReason, HistoryRefusalReason, LAGCOMP_MAX_REWIND_TICKS,
-        };
-
-        let Some(sample) = self.lagcomp_sample(attacker) else {
-            return LagcompPlan::CurrentAuthority {
-                reason: CurrentAuthorityReason::NoSampleClaim,
-            };
-        };
-        if !sample.quality.claims_history() {
-            return LagcompPlan::CurrentAuthority {
-                reason: CurrentAuthorityReason::NoSampleClaim,
-            };
-        }
-        if sample.right.0 > current.0 {
-            return LagcompPlan::Refused {
-                requested: sample.right,
-                reason: HistoryRefusalReason::SampleAfterShot,
-            };
-        }
-        if !sample.is_valid_for(current) {
-            return LagcompPlan::Refused {
-                requested: sample.requested_tick(),
-                reason: HistoryRefusalReason::SampleMalformed,
-            };
-        }
-        let requested = sample.requested_tick();
-        if requested == current {
-            return LagcompPlan::CurrentAuthority {
-                reason: CurrentAuthorityReason::SampleAtShot,
-            };
-        }
-        let oldest_allowed = Tick(current.0.saturating_sub(LAGCOMP_MAX_REWIND_TICKS));
-        let (used, clamped) = if requested.0 < oldest_allowed.0 {
-            (oldest_allowed, true)
-        } else {
-            (requested, false)
-        };
-        if self.collision_history.frame_at(used).is_none() {
-            return LagcompPlan::CurrentAuthority {
-                reason: CurrentAuthorityReason::HistoryUnavailable { requested: used },
-            };
-        }
-        LagcompPlan::Rewind {
-            requested,
-            used,
-            clamped,
-        }
+        self.collision_runtime.plan(attacker, current)
     }
-
     pub(crate) fn set_lagcomp_commands(
         &mut self,
         rows: impl IntoIterator<Item = ((ClientId, i32), crate::ShotSampleProvenance)>,
     ) {
-        self.lagcomp_sample.clear();
-        self.lagcomp_commands.clear();
-        self.lagcomp_commands.extend(rows);
+        self.collision_runtime.set_commands(rows);
     }
-
     pub(crate) fn select_lagcomp_command(&mut self, client: ClientId, command_time: i32) {
-        let sample = self
-            .lagcomp_commands
-            .remove(&(client, command_time))
-            .unwrap_or(crate::ShotSampleProvenance::NO_CLAIM);
-        self.set_lagcomp_sample(client, sample);
+        self.collision_runtime.select_command(client, command_time);
     }
-
     pub fn set_lagcomp_sample(
         &mut self,
         client: ClientId,
         sample: crate::bullet_collision::ShotSampleProvenance,
     ) {
-        self.lagcomp_sample.insert(client, sample);
+        self.collision_runtime.set_sample(client, sample);
     }
-
     pub fn lagcomp_sample(
         &self,
         client: ClientId,
     ) -> Option<crate::bullet_collision::ShotSampleProvenance> {
-        self.lagcomp_sample.get(&client).copied()
+        self.collision_runtime.sample(client)
     }
 
     pub fn lagcomp_query_for(
@@ -2100,7 +1579,7 @@ impl SimState {
                 used,
                 clamped,
             } => {
-                let Some(frame) = self.collision_history.frame_at(used) else {
+                let Some(frame) = self.collision_runtime.players.frame_at(used) else {
                     return HistorySample {
                         poses: Vec::new(),
                         verdict: HistorySampleVerdict::Refused {
@@ -2176,7 +1655,7 @@ impl SimState {
                 used,
                 clamped,
             } => {
-                let Some(frame) = self.entity_collision_history.frame_at(used) else {
+                let Some(frame) = self.collision_runtime.entities.frame_at(used) else {
                     return EntityCollisionSample {
                         rows: Vec::new(),
                         verdict: HistorySampleVerdict::Refused {
@@ -2244,7 +1723,8 @@ impl SimState {
         use crate::match_state::ClientLifecycle;
 
         let recorded = self
-            .collision_history
+            .collision_runtime
+            .players
             .latest_poses()
             .map_or(&[][..], |(_, poses)| poses);
         let mut alive = 0;
@@ -2371,10 +1851,10 @@ impl SimState {
                 None,
             )
         };
-        if self.content.data.player_anim_tree.is_none() || legs == 0 {
+        if self.content.player_anim_tree().is_none() || legs == 0 {
             return bind();
         }
-        let Some(slot) = self.player_anim_trees.get(&id.0) else {
+        let Some(slot) = self.player_bodies.player_anim_trees.get(&id.0) else {
             return bind();
         };
         if slot.leaf != legs {
@@ -2423,9 +1903,15 @@ impl SimState {
             .map(PlayerAnimValue::effective_index)
             .unwrap_or(0);
         if legs != 0
-            && !self.player_anim_trees.get(&id.0).is_some_and(|slot| {
-                slot.leaf == legs && slot.torso == torso && slot.kit == self.collision_kit_index(id)
-            })
+            && !self
+                .player_bodies
+                .player_anim_trees
+                .get(&id.0)
+                .is_some_and(|slot| {
+                    slot.leaf == legs
+                        && slot.torso == torso
+                        && slot.kit == self.collision_kit_index(id)
+                })
         {
             return Err(format!(
                 "player {} body tree unavailable for legs {legs}/torso {torso}",
@@ -2461,7 +1947,7 @@ impl SimState {
         if let Some(shield) = self.client_meta(id).and_then(|meta| meta.shield) {
             let capability = self
                 .content
-                .data
+                .weapons()
                 .shield_models
                 .get(shield.weapon as usize)
                 .and_then(Option::as_ref)
@@ -2534,7 +2020,7 @@ impl SimState {
             }
             return Ok((bones, Some(normal)));
         }
-        if let Some(slot) = self.player_dobjs.get(&id.0) {
+        if let Some(slot) = self.player_bodies.player_dobjs.get(&id.0) {
             return xmodel_runtime::collision_dobj_with_controller(
                 &slot.dobj, &models, &request, world, controller,
             )
@@ -2546,307 +2032,6 @@ impl SimState {
             .map_err(|e| format!("{e:?}"))
     }
 
-    fn skip_prediction_hitbox_tick(only: Option<&[ClientId]>, id: ClientId) -> bool {
-        only.is_some_and(|ids| !ids.iter().any(|cmd| *cmd == id))
-    }
-
-    fn tick_player_dobjs(&mut self, only: Option<&[ClientId]>) {
-        use crate::match_state::ClientLifecycle;
-        let ids: Vec<ClientId> = self
-            .clients
-            .iter()
-            .filter(|(_, meta)| meta.lifecycle == ClientLifecycle::Alive)
-            .map(|(id, _)| *id)
-            .collect();
-        let mut live = std::collections::HashSet::new();
-        for id in ids {
-            live.insert(id.0);
-            if Self::skip_prediction_hitbox_tick(only, id) {
-                continue;
-            }
-            let kit = self.content.data.player_kits[self.collision_kit_index(id)].clone();
-            let Some(body) = kit.body.as_ref() else {
-                self.player_dobjs.remove(&id.0);
-                continue;
-            };
-            let key = kit.reuse_key();
-            let reuse = self
-                .player_dobjs
-                .get(&id.0)
-                .is_some_and(|slot| xmodel_runtime::reuse_matches(slot.reuse_key, key));
-            if reuse {
-                if let Some(slot) = self.player_dobjs.get_mut(&id.0) {
-                    slot.persist = 1;
-                }
-                continue;
-            }
-            let mut specs: Vec<(
-                &xmodel_runtime::ModelPoseSrc,
-                Option<xmodel_runtime::Attach>,
-            )> = vec![(&body.pose, None)];
-            let tag = xmodel_runtime::tp_head_attach_tag(&body.pose.bone_names);
-            if let (Some(head), Some(tag)) = (kit.head.as_ref(), tag) {
-                specs.push((
-                    &head.pose,
-                    Some(xmodel_runtime::Attach {
-                        parent_model: 0,
-                        tag: tag.into(),
-                    }),
-                ));
-            }
-            match xmodel_runtime::DObj::build(&specs) {
-                Ok(dobj) => {
-                    self.player_dobjs.insert(
-                        id.0,
-                        PlayerDobjSlot {
-                            dobj,
-                            reuse_key: key,
-                            persist: 0,
-                        },
-                    );
-                }
-                Err(_) => {
-                    self.player_dobjs.remove(&id.0);
-                }
-            }
-        }
-        self.player_dobjs.retain(|k, _| live.contains(k));
-    }
-
-    fn tick_player_anim_trees(
-        &mut self,
-        msec: i32,
-        player: impl Fn(ClientId) -> Option<PlayerState>,
-        only: Option<&[ClientId]>,
-    ) {
-        use crate::match_state::ClientLifecycle;
-        let dt = msec as f32 / 1000.0;
-        if self.content.data.player_anim_tree.is_none()
-            && self.content.data.player_axis_anim_tree.is_none()
-        {
-            self.player_anim_trees.clear();
-            return;
-        }
-        let ids: Vec<ClientId> = self
-            .clients
-            .iter()
-            .filter(|(_, meta)| meta.lifecycle == ClientLifecycle::Alive)
-            .map(|(id, _)| *id)
-            .collect();
-        let mut live = std::collections::HashSet::new();
-        for id in ids {
-            live.insert(id.0);
-            if Self::skip_prediction_hitbox_tick(only, id) {
-                continue;
-            }
-            let Some(ps) = player(id) else {
-                continue;
-            };
-            let kit = self.collision_kit_index(id);
-            let definition = if kit == 0 {
-                self.content.data.player_anim_tree.clone()
-            } else {
-                self.content.data.player_axis_anim_tree.clone()
-            };
-            let Some(definition) = definition else {
-                self.player_anim_trees.remove(&id.0);
-                continue;
-            };
-            let Some(legs) =
-                PlayerAnimValue::from_raw((ps.legs_anim as u16) & PLAYER_ANIM_RAW_MASK)
-            else {
-                self.player_anim_trees.remove(&id.0);
-                continue;
-            };
-            let Some(torso) =
-                PlayerAnimValue::from_raw((ps.torso_anim as u16) & PLAYER_ANIM_RAW_MASK)
-            else {
-                self.player_anim_trees.remove(&id.0);
-                continue;
-            };
-            let leaf = legs.effective_index();
-            let torso_index = torso.effective_index();
-            let restart = legs.restart_toggle();
-            let torso_restart = torso.restart_toggle();
-            let previous = self
-                .player_anim_trees
-                .remove(&id.0)
-                .filter(|slot| slot.kit == kit);
-            let reused = previous.as_ref().is_some_and(|slot| {
-                slot.leaf == leaf
-                    && slot.torso == torso_index
-                    && slot.restart_toggle == restart
-                    && slot.torso_restart == torso_restart
-            });
-            let advanced = (|| -> Result<PlayerAnimTreeSlot, String> {
-                let mut slot = if reused {
-                    let mut slot = previous.expect("reuse checked");
-                    slot.persist = 1;
-                    slot
-                } else {
-                    let clip_at = |index: u16| match definition
-                        .nodes()
-                        .get(index as usize)
-                        .map(|node| &node.kind)
-                    {
-                        Some(xmodel_runtime::XAnimNodeKind::Leaf { clip, .. }) if index != 0 => {
-                            Ok(Arc::clone(clip))
-                        }
-                        _ => Err(format!("player body leaf {index} missing")),
-                    };
-                    let clip = clip_at(leaf)?;
-                    let torso_clip = if torso_index != 0 {
-                        Some(clip_at(torso_index)?)
-                    } else {
-                        None
-                    };
-                    let legs_for_tree = torso_clip.as_ref().map_or_else(
-                        || Arc::clone(&clip),
-                        |torso| Arc::new(xmodel_runtime::overlay_legs_clip(&clip, torso)),
-                    );
-                    let old_legs = previous.as_ref().map_or(0, |slot| slot.leaf);
-                    let old_torso = previous.as_ref().map_or(0, |slot| slot.torso);
-                    let legs_restart = previous
-                        .as_ref()
-                        .is_some_and(|slot| slot.restart_toggle != restart);
-                    let torso_restart_changed = previous
-                        .as_ref()
-                        .is_some_and(|slot| slot.torso_restart != torso_restart);
-                    let mut nodes = definition.nodes().to_vec();
-                    if let Some(slot) = &previous {
-                        for (index, state) in slot.runtime.states().iter().enumerate() {
-                            if (state.weight > 0.0 || state.goal_weight > 0.0)
-                                && let Some(clip) = slot
-                                    .runtime
-                                    .leaf_clip(xmodel_runtime::XAnimNodeId(index as u16))
-                                && let xmodel_runtime::XAnimNodeKind::Leaf { clip: bound, .. } =
-                                    &mut nodes[index].kind
-                            {
-                                *bound = clip;
-                            }
-                        }
-                    }
-                    if let xmodel_runtime::XAnimNodeKind::Leaf { clip, .. } =
-                        &mut nodes[leaf as usize].kind
-                    {
-                        *clip = legs_for_tree;
-                    }
-                    if let Some(torso_clip) = &torso_clip
-                        && let xmodel_runtime::XAnimNodeKind::Leaf { clip, .. } =
-                            &mut nodes[torso_index as usize].kind
-                    {
-                        *clip = Arc::clone(torso_clip);
-                    }
-                    let bound = Arc::new(
-                        xmodel_runtime::XAnimTreeDefinition::new(nodes)
-                            .map_err(|e| e.to_string())?,
-                    );
-                    let mut slot = match previous {
-                        Some(mut slot) => {
-                            slot.runtime.rebind(bound).map_err(|e| e.to_string())?;
-                            slot
-                        }
-                        None => PlayerAnimTreeSlot {
-                            runtime: xmodel_runtime::XAnimTreeRuntime::new(bound),
-                            leaf: 0,
-                            restart_toggle: false,
-                            torso: 0,
-                            torso_restart: false,
-                            kit,
-                            legs_rate_sample: Default::default(),
-                            torso_rate_sample: Default::default(),
-                            persist: 0,
-                        },
-                    };
-                    let old_legs_moving = slot.legs_rate_sample.move_speed > 0.0;
-                    let old_torso_moving = slot.torso_rate_sample.move_speed > 0.0;
-                    let properties = |index: u16| {
-                        self.content
-                            .data
-                            .player_anim_properties
-                            .get(index as usize)
-                            .copied()
-                            .unwrap_or_default()
-                    };
-                    let legs_properties = properties(leaf);
-                    let torso_properties = properties(torso_index);
-                    slot.legs_rate_sample.move_speed = if legs_properties.stationary {
-                        0.0
-                    } else {
-                        clip.move_speed()
-                    };
-                    slot.legs_rate_sample.ladder = legs_properties.ladder;
-                    slot.torso_rate_sample.move_speed = if torso_properties.stationary {
-                        0.0
-                    } else {
-                        torso_clip.as_ref().map_or(0.0, |clip| clip.move_speed())
-                    };
-                    slot.torso_rate_sample.ladder = torso_properties.ladder;
-                    let phase = if old_legs != leaf
-                        && old_legs_moving
-                        && slot.legs_rate_sample.move_speed > 0.0
-                        && clip.looping
-                        && slot
-                            .runtime
-                            .leaf_clip(xmodel_runtime::XAnimNodeId(old_legs))
-                            .is_some_and(|clip| clip.looping)
-                    {
-                        Some(slot.runtime.states()[old_legs as usize].time)
-                    } else {
-                        None
-                    };
-                    xmodel_runtime::apply_player_anim_goals(
-                        &mut slot.runtime,
-                        self.content
-                            .data
-                            .player_body_branches
-                            .ok_or("player body branches missing")?,
-                        old_legs,
-                        old_torso,
-                        leaf,
-                        torso_index,
-                        legs_restart,
-                        torso_restart_changed,
-                        old_legs_moving,
-                        old_torso_moving,
-                        slot.legs_rate_sample.move_speed > 0.0,
-                        slot.torso_rate_sample.move_speed > 0.0,
-                        [legs_properties.blend_ms, torso_properties.blend_ms],
-                    )?;
-                    if let Some(time) = phase {
-                        let mut state = slot.runtime.states()[leaf as usize];
-                        state.time = time;
-                        state.old_time = time;
-                        slot.runtime
-                            .set_state(xmodel_runtime::XAnimNodeId(leaf), state)
-                            .map_err(|e| e.to_string())?;
-                    }
-                    slot.leaf = leaf;
-                    slot.torso = torso_index;
-                    slot.restart_toggle = restart;
-                    slot.torso_restart = torso_restart;
-                    slot.persist = 0;
-                    slot
-                };
-                xmodel_runtime::apply_player_anim_rates(
-                    &mut slot.runtime,
-                    &mut slot.legs_rate_sample,
-                    &mut slot.torso_rate_sample,
-                    leaf,
-                    torso_index,
-                    ps.origin,
-                    ps.command_time,
-                )?;
-                slot.runtime.update(dt).map_err(|e| e.to_string())?;
-                Ok(slot)
-            })();
-            if let Ok(slot) = advanced {
-                self.player_anim_trees.insert(id.0, slot);
-            }
-        }
-        self.player_anim_trees.retain(|k, _| live.contains(k));
-    }
-
     pub(crate) fn record_collision_history(
         &mut self,
         tick: Tick,
@@ -2855,16 +2040,53 @@ impl SimState {
         hitbox_cmds: Option<&[ClientId]>,
     ) {
         use crate::bullet_collision::{HistoryFrame, HistoryPhase};
-        self.tick_player_dobjs(hitbox_cmds);
-        self.tick_player_anim_trees(msec, player, hitbox_cmds);
+        let alive = || {
+            self.clients
+                .iter()
+                .filter(|(_, meta)| meta.lifecycle == crate::ClientLifecycle::Alive)
+        };
+        self.player_bodies.tick_dobjs(
+            alive().map(|(id, meta)| {
+                (
+                    *id,
+                    &self.content.player_kits()[usize::from(Self::kit_assignment_is_axis(
+                        meta.client_state_team,
+                        meta.ffa_team,
+                    ))],
+                )
+            }),
+            hitbox_cmds,
+        );
+        self.player_bodies.tick_trees(
+            PlayerAnimInputs {
+                definitions: [
+                    self.content.player_anim_tree().as_ref(),
+                    self.content.player_axis_anim_tree().as_ref(),
+                ],
+                properties: self.content.player_anim_properties(),
+                branches: *self.content.player_body_branches(),
+            },
+            alive().map(|(id, meta)| {
+                (
+                    *id,
+                    usize::from(Self::kit_assignment_is_axis(
+                        meta.client_state_team,
+                        meta.ffa_team,
+                    )),
+                )
+            }),
+            msec,
+            player,
+            hitbox_cmds,
+        );
         let mut error = None;
         let poses = self.alive_collision_poses_inner(player, &[], |e| {
             if error.is_none() {
                 error = Some(e.to_owned());
             }
         });
-        self.player_body_materialize_error = error;
-        self.collision_history.push_frame(HistoryFrame {
+        self.player_bodies.materialize_error = error;
+        self.collision_runtime.players.push_frame(HistoryFrame {
             tick,
             phase: HistoryPhase::PostMovement,
             poses,
@@ -2882,7 +2104,8 @@ impl SimState {
                 row
             })
             .collect();
-        self.entity_collision_history
+        self.collision_runtime
+            .entities
             .push_frame(EntityCollisionFrame {
                 tick,
                 phase: HistoryPhase::PostMovement,
@@ -2899,22 +2122,23 @@ impl SimState {
             .entity_collision_capabilities
             .iter()
             .filter(|capabilities| {
-                capabilities.ray_may_hit(&self.content.data.clip_cmodels, query.start, query.end)
+                capabilities.ray_may_hit(self.content.clip_cmodels(), query.start, query.end)
             })
             .map(EntityCollisionCapabilities::trace_geom)
             .collect();
         let default = [];
         let players = poses.unwrap_or_else(|| {
-            self.collision_history
+            self.collision_runtime
+                .players
                 .latest_poses()
                 .map(|(_, p)| p)
                 .unwrap_or(&default)
         });
         crate::bullet_collision::bullet_trace_with_entity_models(
-            &self.content.data.clip_brushes,
-            &self.content.data.clip_bsp,
-            &self.content.data.clip_cmodels,
-            &self.content.data.clip_mesh,
+            self.content.clip_brushes(),
+            self.content.clip_bsp(),
+            self.content.clip_cmodels(),
+            self.content.clip_mesh(),
             players,
             &geoms,
             &query,
@@ -2932,7 +2156,7 @@ impl SimState {
     }
 
     pub fn clip_brush_count(&self) -> usize {
-        self.content.data.clip_brushes.len()
+        self.content.clip_brushes().len()
     }
 
     pub(crate) fn pmove_walking(&self, id: ClientId) -> Option<i32> {
@@ -2983,14 +2207,13 @@ impl SimState {
 
     pub(crate) fn script_model_anim(&self, name: &str) -> Option<crate::ScriptModelPlayAnim> {
         self.content
-            .data
-            .script_model_anims
+            .script_model_anims()
             .get(&name.to_ascii_lowercase())
             .copied()
     }
 
     pub(crate) fn player_anim_clip(&self, legs_anim: i32) -> Option<Arc<xmodel_runtime::AnimClip>> {
-        let definition = self.content.data.player_anim_tree.as_ref()?;
+        let definition = self.content.player_anim_tree().as_ref()?;
         let value = PlayerAnimValue::from_raw((legs_anim as u16) & PLAYER_ANIM_RAW_MASK)?;
         match &definition
             .nodes()
@@ -3006,7 +2229,7 @@ impl SimState {
         &self,
         name: &str,
     ) -> Option<Arc<xmodel_runtime::AnimClip>> {
-        let definition = self.content.data.player_anim_tree.as_ref()?;
+        let definition = self.content.player_anim_tree().as_ref()?;
         definition.nodes().iter().find_map(|node| match &node.kind {
             xmodel_runtime::XAnimNodeKind::Leaf { clip, .. }
                 if clip.name.eq_ignore_ascii_case(name) =>
@@ -3018,8 +2241,8 @@ impl SimState {
     }
 
     pub(crate) fn corpse_dobj_tree_install(&mut self, entnum: i32, legs_anim: i32) {
-        self.corpse_anim_trees.remove(&entnum);
-        let Some(definition) = self.content.data.player_anim_tree.clone() else {
+        self.player_bodies.corpse_anim_trees.remove(&entnum);
+        let Some(definition) = self.content.player_anim_tree().clone() else {
             return;
         };
         let Some(value) = PlayerAnimValue::from_raw((legs_anim as u16) & PLAYER_ANIM_RAW_MASK)
@@ -3042,17 +2265,17 @@ impl SimState {
         {
             return;
         }
-        self.corpse_anim_trees.insert(entnum, runtime);
+        self.player_bodies.corpse_anim_trees.insert(entnum, runtime);
     }
 
     pub(crate) fn corpse_dobj_tree_delta(&mut self, entnum: i32, msec: i32) -> Option<[f32; 3]> {
-        let runtime = self.corpse_anim_trees.get_mut(&entnum)?;
-        runtime.update(msec as f32 / 1000.0).ok()?;
-        runtime.calc_delta_translation()
+        self.player_bodies.corpse_delta(entnum, msec)
     }
 
     pub(crate) fn corpse_dobj_tree_retain(&mut self, live: &[i32]) {
-        self.corpse_anim_trees.retain(|k, _| live.contains(k));
+        self.player_bodies
+            .corpse_anim_trees
+            .retain(|k, _| live.contains(k));
     }
 
     pub(crate) fn item_pickups_mut(&mut self) -> &mut Vec<crate::ItemPickupRecord> {
@@ -3145,9 +2368,9 @@ impl SimState {
                 time_limit_ms: self.bootstrap.time_limit_ms,
                 kind: self.bootstrap.kind,
                 clients,
-                journal: self.journal.clone(),
-                entity_events: self.entity_events.clone(),
-                pellet_fx: self.pellet_fx.clone(),
+                journal: self.events.journal().to_vec(),
+                entity_events: self.events.entity_events().to_vec(),
+                pellet_fx: self.events.pellet_fx().to_vec(),
                 sound_aliases: self.sound_alias_cs.occupied(),
                 effect_names: self.effect_name_cs.occupied(),
                 hud_materials: self.hud_material_cs.occupied(),
@@ -3415,7 +2638,7 @@ impl SimState {
     }
 
     pub fn initialize_prediction_from(&mut self, other: &SimState) {
-        self.content = Arc::clone(&other.content);
+        self.replace_content(Arc::clone(&other.content));
         self.reset_area_entity_world();
         self.entity_collision_capabilities = other.entity_collision_capabilities.clone();
         self.model_library = Arc::clone(&other.model_library);
@@ -3435,28 +2658,9 @@ impl SimState {
     }
 
     pub(crate) fn push_event(&mut self, tick: Tick, audience: EventAudience, event: SimEvent) {
-        let sequence = self.next_event;
-        self.next_event = sequence.next();
-        if self.publishes_snapshot()
-            && let SimEvent::Died {
-                victim, attacker, ..
-            } = &event
-        {
-            let suicide = match attacker {
-                None => 1,
-                Some(a) if a == victim => 1,
-                Some(_) => 0,
-            };
-            perf::death(victim.0, attacker.map(|a| a.0), suicide, tick.0);
-        }
-        self.journal.push(EventRecord {
-            sequence,
-            tick,
-            audience,
-            event,
-        });
+        self.events
+            .push(tick, audience, event, self.publish_snapshot);
     }
-
     pub(crate) fn push_entity_event(
         &mut self,
         tick: Tick,
@@ -3464,36 +2668,24 @@ impl SimState {
         event: entity_iw4::EntityEventKind,
         payload: EntityEventPayload,
     ) {
-        let sequence = self.next_entity_event;
-        self.next_entity_event = sequence.next();
-        self.entity_events.push(EntityEventRecord {
-            sequence,
-            tick,
-            audience,
-            event,
-            payload,
-        });
+        self.events.push_entity(tick, audience, event, payload);
     }
-
     pub fn entity_events(&self) -> &[EntityEventRecord] {
-        &self.entity_events
+        self.events.entity_events()
     }
-
     pub fn next_entity_event_sequence(&self) -> EventSequence {
-        self.next_entity_event
+        self.events.next_entity_event_sequence()
     }
-
     pub fn pellet_fx(&self) -> &[crate::PelletFxRecord] {
-        &self.pellet_fx
+        self.events.pellet_fx()
     }
-
     pub(crate) fn push_pellet_fx(&mut self, record: crate::PelletFxRecord) {
-        self.pellet_fx.push(record);
+        self.events.push_pellet_fx(record);
     }
 
     pub(crate) fn scales_for(&self, weapon: u32) -> (f32, f32, f32) {
         self.content
-            .data
+            .weapons()
             .weapon_def_scales
             .get(weapon as usize)
             .copied()
@@ -3504,9 +2696,17 @@ impl SimState {
         Arc::clone(&self.content)
     }
 
-    pub fn install_content(&mut self, content: Arc<SimContent>) {
+    fn replace_content(&mut self, content: Arc<SimContent>) {
+        if !Arc::ptr_eq(&self.content, &content) {
+            self.player_bodies.reset();
+            self.collision_runtime.reset();
+        }
         self.content = content;
-        self.player_body_materialize_error = None;
+    }
+
+    pub fn install_content(&mut self, content: Arc<SimContent>) {
+        self.replace_content(content);
+        self.player_bodies.materialize_error = None;
         self.reset_area_entity_world();
         self.recompute_content_digest();
     }
@@ -3568,16 +2768,17 @@ impl SimState {
                 .iter()
                 .filter(|sm| sm.model.coll.surfs.iter().any(|s| !s.tris.is_empty()))
                 .count() as u32,
-            pen_table_loaded: self.content.data.pen_table_loaded,
+            pen_table_loaded: self.content.weapons().pen_table_loaded,
         };
 
         let poses = self
-            .collision_history
+            .collision_runtime
+            .players
             .latest_poses()
             .map(|(_, poses)| poses);
         let players = player_clip_census(
             poses.unwrap_or(&[]),
-            self.player_body_materialize_error.clone(),
+            self.player_bodies.materialize_error.clone(),
         );
 
         let entities = entity_clip_census(
@@ -3586,7 +2787,7 @@ impl SimState {
         );
 
         let mut kits = Vec::new();
-        for kit in &self.content.data.player_kits {
+        for kit in self.content.player_kits() {
             kits.push(ModelCollisionCensus::of(&kit.body_key, kit.body.as_deref()));
             kits.push(ModelCollisionCensus::of(&kit.head_key, kit.head.as_deref()));
         }
@@ -3603,9 +2804,9 @@ impl SimState {
         &self,
         player: impl Fn(ClientId) -> Option<PlayerState>,
     ) -> Vec<HitvolDumpRow> {
-        let pen_table_loaded = self.content.data.pen_table_loaded;
-        let error = self.player_body_materialize_error.clone();
-        match self.collision_history.latest_poses() {
+        let pen_table_loaded = self.content.weapons().pen_table_loaded;
+        let error = self.player_bodies.materialize_error.clone();
+        match self.collision_runtime.players.latest_poses() {
             Some((_, poses)) if !poses.is_empty() => poses
                 .iter()
                 .map(|pose| {
@@ -3614,16 +2815,21 @@ impl SimState {
                     let (pose_kind, leaf, clip, anim_time, persist, node_time, goal_weight) =
                         self.hitvol_anim_census(pose.client, ps.as_ref());
                     let (dobj_persist, dobj_models) = self
+                        .player_bodies
                         .player_dobjs
                         .get(&pose.client.0)
                         .map(|s| (s.persist, s.dobj.models.len() as i64))
                         .map_or((None, None), |(p, n)| (Some(p), Some(n)));
-                    let cycle_count = self.player_anim_trees.get(&pose.client.0).and_then(|s| {
-                        s.runtime
-                            .states()
-                            .get(s.leaf as usize)
-                            .map(|st| i64::from(st.cycle_count))
-                    });
+                    let cycle_count = self
+                        .player_bodies
+                        .player_anim_trees
+                        .get(&pose.client.0)
+                        .and_then(|s| {
+                            s.runtime
+                                .states()
+                                .get(s.leaf as usize)
+                                .map(|st| i64::from(st.cycle_count))
+                        });
                     let bone_count = pose.bones.len() as u32;
                     let first = pose.bones.first();
                     let pelvis = pose.bones.iter().find(|bone| bone.part_classification == 5);
@@ -3677,8 +2883,8 @@ impl SimState {
                 client: None,
                 bone_count: 0,
                 geom: "none",
-                body_key: self.content.data.player_kits[0].body_key.clone(),
-                head_key: self.content.data.player_kits[0].head_key.clone(),
+                body_key: self.content.player_kits()[0].body_key.clone(),
+                head_key: self.content.player_kits()[0].head_key.clone(),
                 pose_kind: self.player_body_pose_kind(),
                 anim: None,
                 leaf: None,
@@ -3738,8 +2944,7 @@ impl SimState {
             self.player_dobj_request(client, ps);
         let clip = self
             .content
-            .data
-            .player_anim_node_names
+            .player_anim_node_names()
             .get(leaf as usize)
             .cloned()
             .unwrap_or_default();
@@ -3777,17 +2982,10 @@ impl SimState {
     }
 
     pub(crate) fn clear_tick_events(&mut self, tick: Tick) {
-        self.journal.clear();
-        self.entity_events.retain(|record| {
-            tick.0
-                .saturating_sub(record.tick.0)
-                .saturating_mul(crate::MATCH_TICK_MS)
-                <= crate::gentity::GENTITY_TEMP_EVENT_LIFETIME_MS as u32
-        });
+        self.events.clear_tick(tick);
         self.item_pickups.clear();
         self.shot_collision_verdicts.clear();
         self.projectile_impacts.clear();
-        self.pellet_fx.clear();
     }
 }
 
@@ -4133,13 +3331,4 @@ pub(crate) fn spawn_player_state(origin: [f32; 3], viewangles: [f32; 3]) -> Play
     ps.other_flags |= playerstate_iw4::other_flags::PLAYER;
     ps.corpse_index = -1;
     ps
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WeaponScriptSounds {
-    pub fire: Option<String>,
-    pub fire_player: Option<String>,
-    pub pickup: Option<String>,
-    pub pickup_player: Option<String>,
-    pub proj_explosion: Option<String>,
 }

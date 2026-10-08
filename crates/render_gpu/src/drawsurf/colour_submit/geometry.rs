@@ -1,40 +1,132 @@
+use super::publication::PublishedRenderFrame;
 use super::residency;
-use super::*;
+use super::{CameraWorldPretess, ExactTessBind, NEUTRAL_VERTEX_LIGHTING};
+use crate::colour_world_smodel_static;
+use crate::drawsurf::smodel_cache_gpu::SmodelCacheGpu;
+use bevy::prelude::Resource;
+use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferInitDescriptor, BufferUsages};
+use bevy::render::renderer::{RenderDevice, RenderQueue};
+use render_frame::{CODE_MESH_INDEX_CAP, CODE_MESH_VERT_CAP, CODE_MESH_VERT_STRIDE};
+use render_material::MaterialGenerationId;
+
+#[derive(Resource, Default)]
+pub(super) struct ExactColourGeometry {
+    pub(super) generation: MaterialGenerationId,
+    pub(super) world_generation: frame::WorldGeneration,
+    pub(super) world_products: frame::WorldProducts,
+    pub(super) world_vertex: Option<Buffer>,
+    pub(super) world_layer: Option<Buffer>,
+    pub(super) world_effect: Option<Buffer>,
+    pub(super) world_index: Option<Buffer>,
+    pub(super) world_surface_ranges: Vec<(u32, u32)>,
+    pub(super) world_vertex_count: usize,
+    pub(super) world_layer_count: usize,
+    pub(super) world_index_count: usize,
+
+    pub(super) world_cpu_indices: Vec<u32>,
+    pub(super) smodel_vertex: Option<Buffer>,
+    pub(super) smodel_vertex_lighting: Option<Buffer>,
+    pub(super) smodel_index: Option<Buffer>,
+    pub(super) smodel_surface_ranges: Vec<(u32, u32)>,
+    pub(super) smodel_vertex_count: usize,
+    pub(super) smodel_index_count: usize,
+    pub(super) smodel_cached_vertex: Option<Buffer>,
+    pub(super) smodel_cached_index: Option<Buffer>,
+    pub(super) smodel_cached_vertex_count: usize,
+
+    pub(super) xmodel: residency::GpuMesh,
+    pub(super) xmodel_surface_ranges: Vec<(u32, u32)>,
+
+    pub(super) xmodel_resident_segments: render_frame::PackedSegments,
+
+    pub(super) xmodel_resident_allocation: u64,
+    pub(super) fx_vertex: Option<Buffer>,
+    pub(super) fx_index: Option<Buffer>,
+    pub(super) fx_surface_ranges: Vec<(u32, u32)>,
+    pub(super) fx_vertex_count: usize,
+    pub(super) fx_index_count: usize,
+    pub(super) fx_revision: u64,
+
+    pub(super) fx_copy_dst: bool,
+    pub(super) particle_cloud: residency::GpuMesh,
+    pub(super) particle_cloud_template_resident: Option<(u64, u64, (usize, usize))>,
+    pub(super) particle_cloud_surface_ranges: Vec<(u32, u32)>,
+    pub(super) mark_mesh: residency::GpuMesh,
+    pub(super) mark_mesh_surface_ranges: Vec<(u32, u32)>,
+    pub(super) glass_mesh: residency::GpuMesh,
+    pub(super) glass_mesh_surface_ranges: Vec<(u32, u32)>,
+    pub(super) last_xmodel_gpu_hash: Option<i64>,
+    pub(super) neutral_vertex_lighting: Option<Buffer>,
+    pub(super) neutral_vertex_lighting_count: usize,
+}
+
+impl ExactColourGeometry {
+    pub(super) fn world_ready(&self) -> bool {
+        self.world_vertex.is_some() && self.world_index.is_some()
+    }
+    pub(super) fn smodel_ready(&self) -> bool {
+        self.smodel_vertex.is_some() && self.smodel_index.is_some()
+    }
+    pub(super) fn xmodel_ready(&self) -> bool {
+        self.xmodel.drawable()
+    }
+    pub(super) fn fx_ready(&self) -> bool {
+        self.fx_vertex.is_some() && self.fx_index.is_some()
+    }
+    pub(super) fn particle_cloud_ready(&self) -> bool {
+        self.particle_cloud.drawable()
+    }
+    pub(super) fn mark_mesh_ready(&self) -> bool {
+        self.mark_mesh.drawable()
+    }
+    pub(super) fn glass_mesh_ready(&self) -> bool {
+        self.glass_mesh.drawable()
+    }
+
+    pub(super) fn xmodel_index_epochs(&self) -> &[Buffer] {
+        self.xmodel
+            .index
+            .buffer()
+            .map(std::slice::from_ref)
+            .unwrap_or(&[])
+    }
+}
+
+#[derive(Default)]
+pub(super) struct GeometryUploadResult {
+    pub(super) code_mesh_gpu_kind: Option<i32>,
+}
 
 pub(super) fn upload_exact_geometry(
-    world: Res<InstalledRenderWorld>,
-    frame: Res<PublishedRenderFrame>,
-    geometry: ResMut<ExactColourGeometry>,
-    mut smodel_cache_gpu: ResMut<SmodelCacheGpu>,
-    mut census: ResMut<ExactColourSubmitCensus>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-) {
-    let source = ExtractedColourRefs::new(&world, &frame);
-    let geometry = geometry.into_inner();
-    smodel_cache_gpu.ensure(&device);
-    for (lock, bytes) in &source.frame.smc_vb_patches {
-        let _ = smodel_cache_gpu.patch(&queue, *lock, bytes);
+    source: &PublishedRenderFrame,
+    geometry: &mut ExactColourGeometry,
+    smodel_cache_gpu: &mut SmodelCacheGpu,
+    device: &RenderDevice,
+    queue: &RenderQueue,
+) -> GeometryUploadResult {
+    smodel_cache_gpu.ensure(device);
+    for (lock, bytes) in &source.smc_vb_patches {
+        let _ = smodel_cache_gpu.patch(queue, *lock, bytes);
     }
-    for (off, bytes) in &source.frame.smc_ib_patches {
-        let _ = smodel_cache_gpu.patch_indices(&queue, *off, bytes);
+    for (off, bytes) in &source.smc_ib_patches {
+        let _ = smodel_cache_gpu.patch_indices(queue, *off, bytes);
     }
     if geometry.world_cpu_indices.is_empty()
-        && !source.world.static_geometry.world_indices.is_empty()
+        && !source.world().static_geometry.world_indices.is_empty()
     {
         geometry
             .world_cpu_indices
-            .clone_from(source.world.static_geometry.world_indices.as_ref());
+            .clone_from(source.world().static_geometry.world_indices.as_ref());
         if geometry.world_surface_ranges.is_empty() {
             geometry
                 .world_surface_ranges
-                .clone_from(source.world.static_geometry.world_surface_ranges.as_ref());
+                .clone_from(source.world().static_geometry.world_surface_ranges.as_ref());
         }
     }
-    let empty_source = source.world.static_geometry.world_vertices.is_empty()
-        && source.world.static_geometry.smodel_vertices.is_empty();
+    let empty_source = source.world().static_geometry.world_vertices.is_empty()
+        && source.world().static_geometry.smodel_vertices.is_empty();
     if empty_source && geometry.world_products.0.is_some() {
-        return;
+        return GeometryUploadResult::default();
     }
     let static_matches = colour_world_smodel_static(
         (geometry.world_generation, geometry.world_products),
@@ -43,50 +135,53 @@ pub(super) fn upload_exact_geometry(
         geometry.world_layer_count,
         geometry.smodel_vertex_count,
         geometry.smodel_index_count,
-        (source.world.world_generation, source.world.world_products),
-        source.world.static_geometry.world_vertices.len(),
-        source.world.static_geometry.world_indices.len(),
-        source.world.static_geometry.world_layer.len(),
-        source.world.static_geometry.smodel_vertices.len(),
-        source.world.static_geometry.smodel_indices.len(),
+        (
+            source.world().world_generation,
+            source.world().world_products,
+        ),
+        source.world().static_geometry.world_vertices.len(),
+        source.world().static_geometry.world_indices.len(),
+        source.world().static_geometry.world_layer.len(),
+        source.world().static_geometry.smodel_vertices.len(),
+        source.world().static_geometry.smodel_indices.len(),
     );
-    geometry.world_generation = source.world.world_generation;
+    geometry.world_generation = source.world().world_generation;
     if !static_matches {
-        geometry.world_products = source.world.world_products;
+        geometry.world_products = source.world().world_products;
         geometry.world_vertex = None;
         geometry.world_layer = None;
         geometry.world_effect = None;
         geometry.world_index = None;
         geometry.world_cpu_indices.clear();
         geometry.world_surface_ranges.clear();
-        geometry.world_vertex_count = source.world.static_geometry.world_vertices.len();
-        geometry.world_layer_count = source.world.static_geometry.world_layer.len();
-        geometry.world_index_count = source.world.static_geometry.world_indices.len();
+        geometry.world_vertex_count = source.world().static_geometry.world_vertices.len();
+        geometry.world_layer_count = source.world().static_geometry.world_layer.len();
+        geometry.world_index_count = source.world().static_geometry.world_indices.len();
         geometry.smodel_vertex = None;
         geometry.smodel_vertex_lighting = None;
         geometry.smodel_index = None;
         geometry.smodel_surface_ranges.clear();
-        geometry.smodel_vertex_count = source.world.static_geometry.smodel_vertices.len();
-        geometry.smodel_index_count = source.world.static_geometry.smodel_indices.len();
+        geometry.smodel_vertex_count = source.world().static_geometry.smodel_vertices.len();
+        geometry.smodel_index_count = source.world().static_geometry.smodel_indices.len();
         geometry.smodel_cached_vertex = None;
         geometry.smodel_cached_index = None;
         geometry.smodel_cached_vertex_count =
-            source.world.static_geometry.smodel_cached_vertices.len();
-        if !source.world.static_geometry.world_vertices.is_empty()
-            && !source.world.static_geometry.world_indices.is_empty()
+            source.world().static_geometry.smodel_cached_vertices.len();
+        if !source.world().static_geometry.world_vertices.is_empty()
+            && !source.world().static_geometry.world_indices.is_empty()
         {
             diag::info!(
                 World,
                 "exact geometry: upload static buffers for install {:?} — world {} + smodel {} vertices, products {:?}",
-                source.world.world_generation.0,
-                source.world.static_geometry.world_vertices.len(),
-                source.world.static_geometry.smodel_vertices.len(),
-                source.world.world_products.0,
+                source.world().world_generation.0,
+                source.world().static_geometry.world_vertices.len(),
+                source.world().static_geometry.smodel_vertices.len(),
+                source.world().world_products.0,
             );
             geometry.world_vertex = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_world_vb"),
                 contents: bytemuck::cast_slice(
-                    source.world.static_geometry.world_vertices.as_slice(),
+                    source.world().static_geometry.world_vertices.as_slice(),
                 ),
                 usage: BufferUsages::VERTEX,
             }));
@@ -99,43 +194,43 @@ pub(super) fn upload_exact_geometry(
             geometry.world_index = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_world_ib"),
                 contents: bytemuck::cast_slice(
-                    source.world.static_geometry.world_indices.as_slice(),
+                    source.world().static_geometry.world_indices.as_slice(),
                 ),
                 usage: BufferUsages::INDEX,
             }));
             geometry
                 .world_surface_ranges
-                .clone_from(source.world.static_geometry.world_surface_ranges.as_ref());
+                .clone_from(source.world().static_geometry.world_surface_ranges.as_ref());
             geometry
                 .world_cpu_indices
-                .clone_from(source.world.static_geometry.world_indices.as_ref());
+                .clone_from(source.world().static_geometry.world_indices.as_ref());
         }
-        if !source.world.static_geometry.world_layer.is_empty() {
+        if !source.world().static_geometry.world_layer.is_empty() {
             geometry.world_layer = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_world_layer_vb"),
-                contents: source.world.static_geometry.world_layer.as_slice(),
+                contents: source.world().static_geometry.world_layer.as_slice(),
                 usage: BufferUsages::VERTEX,
             }));
         }
-        if !source.world.static_geometry.smodel_vertices.is_empty()
-            && !source.world.static_geometry.smodel_indices.is_empty()
+        if !source.world().static_geometry.smodel_vertices.is_empty()
+            && !source.world().static_geometry.smodel_indices.is_empty()
         {
             geometry.smodel_vertex = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_smodel_vb"),
                 contents: bytemuck::cast_slice(
-                    source.world.static_geometry.smodel_vertices.as_slice(),
+                    source.world().static_geometry.smodel_vertices.as_slice(),
                 ),
                 usage: BufferUsages::VERTEX,
             }));
-            if source.world.static_geometry.smodel_vertex_lighting.len()
-                == source.world.static_geometry.smodel_vertices.len()
+            if source.world().static_geometry.smodel_vertex_lighting.len()
+                == source.world().static_geometry.smodel_vertices.len()
             {
                 geometry.smodel_vertex_lighting = Some(
                     device.create_buffer_with_data(&BufferInitDescriptor {
                         label: Some("iw4_exact_colour_smodel_vertex_lighting_vb"),
                         contents: bytemuck::cast_slice(
                             source
-                                .world
+                                .world()
                                 .static_geometry
                                 .smodel_vertex_lighting
                                 .as_slice(),
@@ -147,19 +242,23 @@ pub(super) fn upload_exact_geometry(
             geometry.smodel_index = Some(device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("iw4_exact_colour_smodel_ib"),
                 contents: bytemuck::cast_slice(
-                    source.world.static_geometry.smodel_indices.as_slice(),
+                    source.world().static_geometry.smodel_indices.as_slice(),
                 ),
                 usage: BufferUsages::INDEX,
             }));
-            geometry
-                .smodel_surface_ranges
-                .clone_from(source.world.static_geometry.smodel_surface_ranges.as_ref());
+            geometry.smodel_surface_ranges.clone_from(
+                source
+                    .world()
+                    .static_geometry
+                    .smodel_surface_ranges
+                    .as_ref(),
+            );
         }
     }
-    geometry.generation = source.world.generation;
+    geometry.generation = source.world().generation;
 
-    upload_xmodel_streams(geometry, source, &device, &queue);
-    upload_particle_cloud(geometry, source, &device, &queue);
+    upload_xmodel_streams(geometry, source, device, queue);
+    upload_particle_cloud(geometry, source, device, queue);
 
     upload_retained_mesh(
         &mut geometry.mark_mesh,
@@ -169,17 +268,17 @@ pub(super) fn upload_exact_geometry(
                 "iw4_exact_colour_mark_mesh_vb",
                 "iw4_exact_colour_mark_mesh_ib",
             ),
-            revision: source.frame.mark_mesh_revision,
-            vertices: bytemuck::cast_slice(source.frame.mark_mesh_vertices.as_slice()),
-            vertex_count: source.frame.mark_mesh_vertices.len(),
+            revision: source.mark_mesh_revision,
+            vertices: bytemuck::cast_slice(source.mark_mesh_vertices.as_slice()),
+            vertex_count: source.mark_mesh_vertices.len(),
             vertex_stride: asset_iw4::size::GFX_WORLD_VERTEX,
-            indices: bytemuck::cast_slice(source.frame.mark_mesh_indices.as_slice()),
-            index_count: source.frame.mark_mesh_indices.len(),
+            indices: bytemuck::cast_slice(source.mark_mesh_indices.as_slice()),
+            index_count: source.mark_mesh_indices.len(),
             index_stride: 2,
-            surface_ranges: &source.frame.mark_mesh_surface_ranges,
+            surface_ranges: &source.mark_mesh_surface_ranges,
         },
-        &device,
-        &queue,
+        device,
+        queue,
     );
 
     upload_retained_mesh(
@@ -190,17 +289,17 @@ pub(super) fn upload_exact_geometry(
                 "iw4_exact_colour_glass_mesh_vb",
                 "iw4_exact_colour_glass_mesh_ib",
             ),
-            revision: source.frame.glass_mesh_revision,
-            vertices: bytemuck::cast_slice(source.frame.glass_mesh_vertices.as_slice()),
-            vertex_count: source.frame.glass_mesh_vertices.len(),
+            revision: source.glass_mesh_revision,
+            vertices: bytemuck::cast_slice(source.glass_mesh_vertices.as_slice()),
+            vertex_count: source.glass_mesh_vertices.len(),
             vertex_stride: asset_iw4::size::GFX_PACKED_VERTEX,
-            indices: bytemuck::cast_slice(source.frame.glass_mesh_indices.as_slice()),
-            index_count: source.frame.glass_mesh_indices.len(),
+            indices: bytemuck::cast_slice(source.glass_mesh_indices.as_slice()),
+            index_count: source.glass_mesh_indices.len(),
             index_stride: 4,
-            surface_ranges: &source.frame.glass_mesh_surface_ranges,
+            surface_ranges: &source.glass_mesh_surface_ranges,
         },
-        &device,
-        &queue,
+        device,
+        queue,
     );
 
     let fx_kind = colour_code_mesh_upload_kind(
@@ -208,16 +307,15 @@ pub(super) fn upload_exact_geometry(
         geometry.fx_vertex_count,
         geometry.fx_index_count,
         geometry.fx_vertex.is_some() && geometry.fx_index.is_some() && geometry.fx_copy_dst,
-        source.frame.fx_revision,
-        source.frame.fx_vertices.len(),
-        source.frame.fx_indices.len(),
+        source.fx_revision,
+        source.fx_vertices.len(),
+        source.fx_indices.len(),
     );
-    census.code_mesh_gpu_kind = Some(fx_kind);
     if fx_kind == 0 {
-        if source.frame.fx_vertices.is_empty() || source.frame.fx_indices.is_empty() {
-            geometry.fx_revision = source.frame.fx_revision;
-            geometry.fx_vertex_count = source.frame.fx_vertices.len();
-            geometry.fx_index_count = source.frame.fx_indices.len();
+        if source.fx_vertices.is_empty() || source.fx_indices.is_empty() {
+            geometry.fx_revision = source.fx_revision;
+            geometry.fx_vertex_count = source.fx_vertices.len();
+            geometry.fx_index_count = source.fx_indices.len();
             geometry.fx_surface_ranges.clear();
         }
     } else {
@@ -236,29 +334,24 @@ pub(super) fn upload_exact_geometry(
             }));
             geometry.fx_copy_dst = true;
         }
-        geometry.fx_revision = source.frame.fx_revision;
-        geometry.fx_vertex_count = source.frame.fx_vertices.len();
-        geometry.fx_index_count = source.frame.fx_indices.len();
-        if !source.frame.fx_vertices.is_empty() && !source.frame.fx_indices.is_empty() {
+        geometry.fx_revision = source.fx_revision;
+        geometry.fx_vertex_count = source.fx_vertices.len();
+        geometry.fx_index_count = source.fx_indices.len();
+        if !source.fx_vertices.is_empty() && !source.fx_indices.is_empty() {
             if let (Some(vb), Some(ib)) = (geometry.fx_vertex.as_ref(), geometry.fx_index.as_ref())
             {
-                queue.write_buffer(
-                    vb,
-                    0,
-                    bytemuck::cast_slice(source.frame.fx_vertices.as_slice()),
-                );
-                queue.write_buffer(
-                    ib,
-                    0,
-                    bytemuck::cast_slice(source.frame.fx_indices.as_slice()),
-                );
+                queue.write_buffer(vb, 0, bytemuck::cast_slice(source.fx_vertices.as_slice()));
+                queue.write_buffer(ib, 0, bytemuck::cast_slice(source.fx_indices.as_slice()));
                 geometry
                     .fx_surface_ranges
-                    .clone_from(&*source.frame.fx_surface_ranges);
+                    .clone_from(&*source.fx_surface_ranges);
             }
         }
     }
-    ensure_neutral_vertex_lighting(geometry, &device);
+    ensure_neutral_vertex_lighting(geometry, device);
+    GeometryUploadResult {
+        code_mesh_gpu_kind: Some(fx_kind),
+    }
 }
 
 // Every packed stream that a T6 vertex-lit pipeline can draw from without
@@ -299,11 +392,11 @@ fn ensure_neutral_vertex_lighting(geometry: &mut ExactColourGeometry, device: &R
 // written again only when a stream is reallocated.
 fn upload_particle_cloud(
     geometry: &mut ExactColourGeometry,
-    source: ExtractedColourRefs<'_>,
+    source: &PublishedRenderFrame,
     device: &RenderDevice,
     queue: &RenderQueue,
 ) {
-    let frame = source.frame;
+    let frame = source;
     let vertex_count = frame.particle_cloud_vertices.len();
     let index_count = frame.particle_cloud_indices.len();
     let mesh = &mut geometry.particle_cloud;
@@ -452,17 +545,17 @@ fn upload_retained_mesh(
 
 fn upload_xmodel_streams(
     geometry: &mut ExactColourGeometry,
-    source: ExtractedColourRefs<'_>,
+    source: &PublishedRenderFrame,
     device: &RenderDevice,
     queue: &RenderQueue,
 ) {
-    let verts = source.frame.xmodel_vertices.len();
-    let indices = source.frame.xmodel_indices.len();
+    let verts = source.xmodel_vertices.len();
+    let indices = source.xmodel_indices.len();
     if verts == 0 || indices == 0 {
         geometry.xmodel.vertex.set_len(0);
         geometry.xmodel.index.set_len(0);
-        geometry.xmodel.uploaded_vertices = source.frame.xmodel_revision;
-        geometry.xmodel.uploaded_topology = source.frame.xmodel_topology_revision;
+        geometry.xmodel.uploaded_vertices = source.xmodel_revision;
+        geometry.xmodel.uploaded_topology = source.xmodel_topology_revision;
         geometry.xmodel_surface_ranges.clear();
         geometry.xmodel_resident_segments.forget();
         geometry.last_xmodel_gpu_hash = None;
@@ -475,8 +568,8 @@ fn upload_xmodel_streams(
         resident_indices: geometry.xmodel.index.len(),
         vertex_fits: geometry.xmodel.vertex.holds(verts),
         index_fits: geometry.xmodel.index.holds(indices),
-        cpu_vertices_revision: source.frame.xmodel_revision,
-        cpu_topology_revision: source.frame.xmodel_topology_revision,
+        cpu_vertices_revision: source.xmodel_revision,
+        cpu_topology_revision: source.xmodel_topology_revision,
         cpu_verts: verts,
         cpu_indices: indices,
     });
@@ -517,17 +610,17 @@ fn upload_xmodel_streams(
         if geometry.xmodel.index.write_at(
             queue,
             0,
-            bytemuck::cast_slice(source.frame.xmodel_indices.as_slice()),
+            bytemuck::cast_slice(source.xmodel_indices.as_slice()),
         ) {
-            geometry.xmodel.uploaded_topology = source.frame.xmodel_topology_revision;
+            geometry.xmodel.uploaded_topology = source.xmodel_topology_revision;
             geometry
                 .xmodel_surface_ranges
-                .clone_from(&*source.frame.xmodel_surface_ranges);
+                .clone_from(&*source.xmodel_surface_ranges);
         } else {
             diag::error!(
                 World,
                 "drawsurf geometry: xmodel index upload skipped — topology revision {} is not resident",
-                source.frame.xmodel_topology_revision,
+                source.xmodel_topology_revision,
             );
         }
     }
@@ -536,13 +629,13 @@ fn upload_xmodel_streams(
 
 fn upload_xmodel_vertices(
     geometry: &mut ExactColourGeometry,
-    source: ExtractedColourRefs<'_>,
+    source: &PublishedRenderFrame,
     queue: &RenderQueue,
     counts_stable: bool,
     stride: usize,
 ) {
-    let bytes: &[u8] = bytemuck::cast_slice(source.frame.xmodel_vertices.as_slice());
-    let published = source.frame.xmodel_packed_segments;
+    let bytes: &[u8] = bytemuck::cast_slice(source.xmodel_vertices.as_slice());
+    let published = source.xmodel_packed_segments;
     let resident = geometry.xmodel_resident_segments;
 
     let allocation = geometry.xmodel.vertex.allocation();
@@ -556,11 +649,11 @@ fn upload_xmodel_vertices(
             diag::error!(
                 World,
                 "drawsurf geometry: xmodel vertex upload skipped — revision {} is not resident",
-                source.frame.xmodel_revision,
+                source.xmodel_revision,
             );
             return;
         }
-        geometry.xmodel.uploaded_vertices = source.frame.xmodel_revision;
+        geometry.xmodel.uploaded_vertices = source.xmodel_revision;
         geometry.xmodel_resident_segments = published;
         geometry.xmodel_resident_allocation = allocation;
         return;
@@ -588,13 +681,13 @@ fn upload_xmodel_vertices(
             diag::error!(
                 World,
                 "drawsurf geometry: xmodel vertex segment [{start}, {end}) upload skipped — revision {} is not resident",
-                source.frame.xmodel_revision,
+                source.xmodel_revision,
             );
             geometry.xmodel_resident_segments = render_frame::PackedSegments::default();
             return;
         }
     }
-    geometry.xmodel.uploaded_vertices = source.frame.xmodel_revision;
+    geometry.xmodel.uploaded_vertices = source.xmodel_revision;
     geometry.xmodel_resident_segments = published;
     geometry.xmodel_resident_allocation = allocation;
 }
@@ -615,4 +708,185 @@ fn coalesce_stream_spans(spans: &mut [(usize, usize)]) -> &[(usize, usize)] {
         }
     }
     &spans[..merged + 1]
+}
+
+pub(super) fn record_geometry<'a>(
+    geometry: &'a ExactColourGeometry,
+    cache: &'a SmodelCacheGpu,
+    skinned: super::encode::RecordMesh<'a>,
+    pretess: &'a CameraWorldPretess,
+) -> super::encode::RecordGeometry<'a> {
+    use super::encode::{RecordGeometry, RecordMesh};
+    let mesh = |kind| {
+        let (vertex, index) = match kind {
+            ExactTessBind::World => (geometry.world_vertex.as_ref(), pretess.index()),
+            ExactTessBind::Smodel => (
+                geometry.smodel_vertex.as_ref(),
+                geometry.smodel_index.as_ref(),
+            ),
+            ExactTessBind::SmodelCached => (cache.vertex_buffer(), cache.dynamic_index_buffer()),
+            ExactTessBind::SmodelSkinned => (skinned.vertex, skinned.index),
+            ExactTessBind::XModel => (
+                geometry.xmodel.vertex.buffer(),
+                geometry.xmodel.index.buffer(),
+            ),
+            ExactTessBind::CodeMesh => (geometry.fx_vertex.as_ref(), geometry.fx_index.as_ref()),
+            ExactTessBind::ParticleCloud => (
+                geometry.particle_cloud.vertex.buffer(),
+                geometry.particle_cloud.index.buffer(),
+            ),
+            ExactTessBind::MarkMesh => (
+                geometry.mark_mesh.vertex.buffer(),
+                geometry.mark_mesh.index.buffer(),
+            ),
+            ExactTessBind::Glass => (
+                geometry.glass_mesh.vertex.buffer(),
+                geometry.glass_mesh.index.buffer(),
+            ),
+        };
+        RecordMesh {
+            vertex,
+            index,
+            lighting: vertex_lighting_stream(kind, geometry, skinned.lighting),
+        }
+    };
+    RecordGeometry {
+        world: mesh(ExactTessBind::World),
+        smodel: mesh(ExactTessBind::Smodel),
+        cached: mesh(ExactTessBind::SmodelCached),
+        skinned: mesh(ExactTessBind::SmodelSkinned),
+        xmodel: mesh(ExactTessBind::XModel),
+        code: mesh(ExactTessBind::CodeMesh),
+        particles: mesh(ExactTessBind::ParticleCloud),
+        marks: mesh(ExactTessBind::MarkMesh),
+        glass: mesh(ExactTessBind::Glass),
+        world_layer: geometry.world_layer.as_ref(),
+        world_effect: geometry.world_effect.as_ref(),
+        world_index_count: pretess.logical_index_count(),
+        world_layout_epoch: pretess.layout_epoch(),
+    }
+}
+
+fn vertex_lighting_stream<'a>(
+    tess: ExactTessBind,
+    geometry: &'a ExactColourGeometry,
+    smodel_skinned: Option<&'a Buffer>,
+) -> Option<&'a Buffer> {
+    match tess {
+        ExactTessBind::World => None,
+        ExactTessBind::Smodel => geometry
+            .smodel_vertex_lighting
+            .as_ref()
+            .or(geometry.neutral_vertex_lighting.as_ref()),
+        ExactTessBind::SmodelSkinned => smodel_skinned,
+        _ => geometry.neutral_vertex_lighting.as_ref(),
+    }
+}
+
+pub(super) fn shadow_record_geometry<'a>(
+    geometry: &'a ExactColourGeometry,
+    world_index: Option<&'a Buffer>,
+    smodel_index_epochs: &'a [Buffer],
+    xmodel_index_epochs: &'a [Buffer],
+    skinned: super::encode::RecordMesh<'a>,
+) -> super::shadow_encode::ShadowGeometry<'a> {
+    use super::encode::RecordMesh;
+    super::shadow_encode::ShadowGeometry {
+        world: RecordMesh {
+            vertex: geometry.world_vertex.as_ref(),
+            index: world_index,
+            lighting: None,
+        },
+        smodel: RecordMesh {
+            vertex: geometry.smodel_vertex.as_ref(),
+            index: None,
+            lighting: vertex_lighting_stream(ExactTessBind::Smodel, geometry, skinned.lighting),
+        },
+        cached: RecordMesh {
+            vertex: geometry.smodel_cached_vertex.as_ref(),
+            index: geometry.smodel_cached_index.as_ref(),
+            lighting: vertex_lighting_stream(
+                ExactTessBind::SmodelCached,
+                geometry,
+                skinned.lighting,
+            ),
+        },
+        skinned,
+        xmodel: RecordMesh {
+            vertex: geometry.xmodel.vertex.buffer(),
+            index: None,
+            lighting: vertex_lighting_stream(ExactTessBind::XModel, geometry, skinned.lighting),
+        },
+        smodel_index_epochs,
+        xmodel_index_epochs,
+        world_layer: geometry.world_layer.as_ref(),
+        world_effect: geometry.world_effect.as_ref(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum XModelUpload {
+    Resident,
+
+    Rewrite { vertices: bool, indices: bool },
+
+    Grow,
+}
+
+struct XModelUploadQuery {
+    uploaded_vertices: u64,
+    uploaded_topology: u64,
+    resident_verts: usize,
+    resident_indices: usize,
+
+    vertex_fits: bool,
+    index_fits: bool,
+    cpu_vertices_revision: u64,
+    cpu_topology_revision: u64,
+    cpu_verts: usize,
+    cpu_indices: usize,
+}
+
+fn colour_xmodel_upload(q: XModelUploadQuery) -> XModelUpload {
+    if !q.vertex_fits || !q.index_fits {
+        return XModelUpload::Grow;
+    }
+    let vertices =
+        q.uploaded_vertices != q.cpu_vertices_revision || q.resident_verts != q.cpu_verts;
+    let indices =
+        q.uploaded_topology != q.cpu_topology_revision || q.resident_indices != q.cpu_indices;
+    if !vertices && !indices {
+        return XModelUpload::Resident;
+    }
+    XModelUpload::Rewrite { vertices, indices }
+}
+
+fn colour_code_mesh_upload_kind(
+    gpu_revision: u64,
+    gpu_verts: usize,
+    gpu_indices: usize,
+    gpu_has_ring: bool,
+    cpu_revision: u64,
+    cpu_verts: usize,
+    cpu_indices: usize,
+) -> i32 {
+    let over =
+        cpu_verts > CODE_MESH_VERT_CAP as usize || cpu_indices > CODE_MESH_INDEX_CAP as usize;
+    if over {
+        return 0;
+    }
+    if cpu_verts == 0 || cpu_indices == 0 {
+        return 0;
+    }
+    if gpu_has_ring
+        && gpu_revision == cpu_revision
+        && gpu_verts == cpu_verts
+        && gpu_indices == cpu_indices
+    {
+        0
+    } else if gpu_has_ring {
+        1
+    } else {
+        2
+    }
 }

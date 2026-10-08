@@ -6,7 +6,7 @@
 
 Family catalog compilation calls `compile_material_state` with two authored state words and stores `CompiledPassState` rows. Shared table preparation indexes these products; FPV reads their prepared cull mode. `compile_material_state` remains the low-level state compiler for capture/preparation owners, including HUD installation. `CompiledPassState` owns decoded blend, alpha-test, cull, color-write, sRGB-write, fill, depth, stencil and offset rules, plus authored-field and unsupported-field diagnostics. Its fields and raw constructors are private. Authored words are available for provenance and exact-state admission checks. GPU adapters consume the semantic getters and convert them to wgpu values; they do not decode source state or choose an alpha-test family.
 
-IW4 and IW5 share the captured state encoding. T5 alpha testing uses its own source decoder. T6 retains the existing absent alpha-test contract. The remaining state fields retain the current shared encoding and host behavior. This is preservation of the existing supported runtime contract, not a claim that every native source state is implemented.
+IW4 and IW5 share the captured state encoding. `asset_iw4::alpha_test_from_state_bits` is the authority for alpha-test presence and rule, including field zero and the disable bit. Material preview classification and approximate cutoffs derive from it; a preview cutoff does not replace the exact comparator/reference pair. T5 alpha testing uses its own source decoder. T6 retains the existing absent alpha-test contract. The remaining state fields retain the current shared encoding and host behavior. This is preservation of the existing supported runtime contract, not a claim that every native source state is implemented.
 
 Both the ordinary blend and the existing multiply-pass adaptation are compiled together. The execution caller selects the already prepared multiply policy. Unknown blend factors and operations remain explicit `UnsupportedState` refusals; authored state words are never repaired. Stencil provenance and the existing host treatment are preserved.
 
@@ -42,3 +42,6 @@ T6 common and map materials use captured native headers, technique sets, state,
 constants and textures. Missing captures or wrong source families refuse before
 adding a compiled material. Common weapons do not inherit IW4 material surfaces.
 Packed state decoding is shared; family adapters own alpha-test and draw rules.
+
+Corrupt mip cache records with impossible level counts, truncation or trailing
+data are refused before construction.

@@ -159,6 +159,7 @@ fn reset_remote_kits(
 
 fn prepare_remote_kits(
     bodies: Option<Res<PreparedBodies>>,
+    soldiers: Option<Res<asset_game::SoldierPresentations>>,
     weapons: Option<Res<PreparedWeapons>>,
     world_weapons: Option<Res<PreparedWorldWeapons>>,
     presented: Res<PresentedSnapshot>,
@@ -166,7 +167,9 @@ fn prepare_remote_kits(
     mut kits: ResMut<PreparedRemoteKits>,
     remotes: Query<(&CEntityRuntime, &RemotePlayer)>,
 ) {
-    let (Some(bodies), Some(weapons), Some(world)) = (bodies, weapons, world_weapons) else {
+    let (Some(bodies), Some(soldiers), Some(weapons), Some(world)) =
+        (bodies, soldiers, weapons, world_weapons)
+    else {
         kits.clear();
         compositions.clear();
         return;
@@ -185,6 +188,7 @@ fn prepare_remote_kits(
         for camo in [0, sample.weapon_model] {
             kits.prepare(
                 &bodies,
+                &soldiers,
                 &weapons,
                 &world,
                 &mut compositions,
@@ -212,6 +216,7 @@ fn occupy_remote_scene_ents(
     subject: Option<Res<ViewSubject>>,
     settings: Res<frame::GameSettings>,
     bodies: Option<Res<PreparedBodies>>,
+    soldiers: Option<Res<asset_game::SoldierPresentations>>,
     weapons: Option<Res<PreparedWeapons>>,
     world_weapons: Option<Res<PreparedWorldWeapons>>,
     prepared_kits: Res<PreparedRemoteKits>,
@@ -225,6 +230,9 @@ fn occupy_remote_scene_ents(
         ),
     >,
 ) {
+    let Some(soldiers) = soldiers.as_deref() else {
+        return;
+    };
     let Some(bodies) = bodies.as_deref() else {
         return;
     };
@@ -237,10 +245,6 @@ fn occupy_remote_scene_ents(
         }
         _ => None,
     };
-    let kits = bodies.0.kits();
-    if kits.allies.is_none() && kits.axis.is_none() {
-        return;
-    }
     let eye = cameras.single().ok().map(|xf| xf.translation());
     let in_killcam = subject.as_ref().is_some_and(|s| s.in_killcam());
     let eyes = match subject.as_deref() {
@@ -275,6 +279,12 @@ fn occupy_remote_scene_ents(
         let ffa_team = meta.and_then(|m| m.ffa_team);
         let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
         let axis = asset_model::kit_assignment_is_axis(client_state_team, ffa_team);
+        let Ok(soldier) = soldiers.side(axis) else {
+            continue;
+        };
+        if !soldier.owns_bodies(&bodies.0) {
+            continue;
+        }
         let shield = meta.and_then(|meta| meta.shield);
         let held = remote_pose_sample(runtime).weapon;
         let (kit_models, radius, hide_part_bits) = match live_kits.filter(|_| shield.is_none()) {
@@ -289,10 +299,9 @@ fn occupy_remote_scene_ents(
             }
             None => {
                 let Some((models, radius)) = occupy_remote_kit_dobj(
-                    bodies,
+                    soldier,
                     weapons.as_deref(),
                     world_weapons.as_deref(),
-                    axis,
                     held,
                     true,
                     shield,
@@ -355,16 +364,16 @@ fn sync_remote_bodies(
     subject: Option<Res<ViewSubject>>,
     settings: Res<frame::GameSettings>,
     bodies: Option<Res<PreparedBodies>>,
+    soldiers: Option<Res<asset_game::SoldierPresentations>>,
     existing: Query<(Entity, &CEntity, &CEntityRuntime, Option<&RemotePlayer>)>,
 ) {
     let Some(bodies) = bodies else {
         return;
     };
 
-    let kits = bodies.0.kits();
-    if kits.allies.is_none() && kits.axis.is_none() {
+    let Some(soldiers) = soldiers else {
         return;
-    }
+    };
 
     let in_killcam = subject.as_ref().is_some_and(|s| s.in_killcam());
     let eyes = match subject.as_deref() {
@@ -409,7 +418,7 @@ fn sync_remote_bodies(
             .and_then(|snap| snap.meta.for_client(client));
         let ffa_team = meta.and_then(|m| m.ffa_team);
         let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
-        let Some(kit) = kits.kit(asset_model::kit_assignment_is_axis(
+        let Ok(soldier) = soldiers.side(asset_model::kit_assignment_is_axis(
             client_state_team,
             ffa_team,
         )) else {
@@ -420,7 +429,7 @@ fn sync_remote_bodies(
             }
             continue;
         };
-        let Some(body_entry) = bodies.0.get(&kit.body) else {
+        if !soldier.owns_bodies(&bodies.0) {
             if remote.is_some() {
                 commands
                     .entity(entity)
@@ -428,6 +437,7 @@ fn sync_remote_bodies(
             }
             continue;
         };
+        let body_entry = soldier.body();
         if body_entry.skel.positions.is_empty() || body_entry.skel.bones.is_empty() {
             if remote.is_some() {
                 commands
@@ -484,9 +494,8 @@ enum RemoteSkinAction<'a> {
 }
 
 struct RemotePoseFrame<'a> {
-    sources: &'a asset_anim::PlayerAnimSources,
+    soldiers: &'a asset_game::SoldierPresentations,
     tree: &'a asset_anim::CompiledAnimTreeDefinition,
-    catalog: &'a assets::PreparedXAnims,
     bodies: &'a PreparedBodies,
     weapons: Option<&'a PreparedWeapons>,
     world_weapons: Option<&'a PreparedWorldWeapons>,
@@ -536,7 +545,7 @@ fn pose_remote_bodies(
     time: Res<Time>,
     gaps: Res<RenderPresentationGaps>,
     sources: Option<Res<asset_anim::PlayerAnimSources>>,
-    xanims: Option<Res<assets::PreparedXAnims>>,
+    soldiers: Option<Res<asset_game::SoldierPresentations>>,
     bodies: Option<Res<PreparedBodies>>,
     weapons: Option<Res<PreparedWeapons>>,
     world_weapons: Option<Res<PreparedWorldWeapons>>,
@@ -634,9 +643,9 @@ fn pose_remote_bodies(
         });
         return;
     };
-    let Some(xanims) = xanims.as_deref() else {
+    let Some(soldiers) = soldiers.as_deref() else {
         gaps.raise(RenderGapCause::XAnimCalcFailed {
-            reason: "PreparedXAnims not installed".into(),
+            reason: "soldier presentations not installed".into(),
         });
         return;
     };
@@ -655,9 +664,8 @@ fn pose_remote_bodies(
     let mut live = HashSet::new();
     let last_cache_hits = pose_hashes.take_last_cache_hits();
     let mut pose_frame = RemotePoseFrame {
-        sources,
+        soldiers,
         tree,
-        catalog: xanims,
         bodies,
         weapons: weapons.as_deref(),
         world_weapons: world_weapons.as_deref(),
@@ -795,7 +803,6 @@ impl<'a> RemotePoseFrame<'a> {
         } else {
             ET_PLAYER
         };
-        let catalog = self.catalog;
         let bodies = self.bodies;
         let weapons = self.weapons;
         let world_weapons = self.world_weapons;
@@ -823,11 +830,14 @@ impl<'a> RemotePoseFrame<'a> {
         let world_gun_gap = &mut self.world_gun_gap;
         let result = (|| {
             let origin = transform.translation.to_array();
+            let soldier = self.soldiers.side(axis).map_err(str::to_owned)?;
+            if !soldier.owns_bodies(&bodies.0) {
+                return Err("soldier body owner differs from prepared bodies".into());
+            }
             let model_set = select_remote_models(
-                bodies,
+                soldier,
                 weapons,
                 world_weapons,
-                axis,
                 weapon,
                 sample.weapon_model,
                 remote.shield,
@@ -835,12 +845,9 @@ impl<'a> RemotePoseFrame<'a> {
                     .zip(world_weapons)
                     .and_then(|(w, c)| self.compositions.get(w, c, weapon, sample.weapon_model)),
             )?;
-            let binding = trees.bind_player(self.sources, bodies, catalog, axis, persist_key)?;
-            if !std::ptr::eq(binding.body(), model_set.body) {
-                return Err("remote model body differs from character animation binding".into());
-            }
+            let binding = soldier.animation().map_err(str::to_owned)?;
             let advanced = advance_remote_tree(
-                &binding,
+                binding,
                 legs,
                 torso,
                 persist_key,

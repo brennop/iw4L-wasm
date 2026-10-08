@@ -1,377 +1,21 @@
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, HashMap};
-use std::hash::Hash;
-
 use playerstate_iw4::AnimPair;
 use sim::{
     AreaEntityLinkSnapshot, AreaEntityWorldSnapshot, AreaSectorSnapshot, ClassId,
     ClassRejectReason, ClientAction, ClientId, ClientLifecycle, ClientSnapshotMeta,
-    ConfigurationChangeRejectReason, DamageSource, DestructibleLoopSound, DroppedItemAmmo,
-    EntityEventPayload, EntityEventRecord, EntityKernelOccupiedSnapshot, EntityKernelSlotSnapshot,
+    ConfigurationChangeRejectReason, DamageSource, DroppedItemAmmo, EntityEventPayload,
+    EntityEventRecord, EntityKernelOccupiedSnapshot, EntityKernelSlotSnapshot,
     EntityKernelSnapshot, EntityRef, EntityRelations, EntityRunKind, EventAudience, EventRecord,
-    EventSequence, GiveRejectReason, GlassCause, GlassPieceSnapshot, GlassPieceState,
-    GlassShatterSeed, ItemPickupRecord, LifeSequence, LoadoutSpec, MatchEndReason, MatchPhase,
-    PelletFxRecord, PlayerCorpsePool, PlayerCorpseSlot, RngDebugMeta, ScriptModelId, SimEvent,
-    SnapshotMeta, SpawnPick, Tick, WorldObjectSnapshot,
+    EventSequence, GiveRejectReason, ItemPickupRecord, LifeSequence, LoadoutSpec, MatchEndReason,
+    MatchPhase, PelletFxRecord, PlayerCorpsePool, PlayerCorpseSlot, RngDebugMeta, ScriptModelId,
+    SimEvent, SnapshotMeta, SpawnPick, Tick,
 };
 
 use crate::transport::wire::{WireError, WireReader, WireWriter};
 
-pub const WORLD_SYNC_PERIOD_TICKS: u32 = 200;
-
-#[derive(Debug, Default)]
-pub struct WorldObjectSyncEncoder {
-    baseline: WorldObjectSnapshot,
-    force_full: bool,
-}
-
-impl WorldObjectSyncEncoder {
-    pub fn reset(&mut self) {
-        self.baseline = WorldObjectSnapshot::default();
-        self.force_full = true;
-    }
-
-    pub fn adopt_baseline(&mut self, baseline: WorldObjectSnapshot) {
-        self.baseline = baseline;
-        self.force_full = false;
-    }
-
-    pub fn encode(&mut self, tick: Tick, current: &WorldObjectSnapshot) -> Vec<u8> {
-        let mut out = WireWriter::with_capacity(64);
-        let current = canonical_world_object_snapshot(tick, current);
-        out.put_i32(current.as_of_ms);
-        out.put_u32(current.map_round_epoch);
-        out.put_u32(current.fracture_profile_version);
-        let full = self.force_full || tick.0 % WORLD_SYNC_PERIOD_TICKS == 0;
-        if full {
-            out.put_u8(4);
-            encode_world_object_full(&mut out, &current);
-            self.baseline = current;
-            self.force_full = false;
-        } else {
-            let glass = world_object_delta(&self.baseline, &current);
-            let loops_spoke =
-                self.baseline.destructible_loop_sounds != current.destructible_loop_sounds;
-            if glass.is_empty() && !loops_spoke {
-                out.put_u8(0);
-                self.baseline.as_of_ms = current.as_of_ms;
-                self.baseline.map_round_epoch = current.map_round_epoch;
-                self.baseline.fracture_profile_version = current.fracture_profile_version;
-            } else {
-                out.put_u8(3);
-                encode_world_object_delta(&mut out, &self.baseline, &current);
-                self.baseline = current;
-            }
-        }
-        out.finish()
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct WorldObjectSyncDecoder {
-    state: WorldObjectSnapshot,
-}
-
-impl WorldObjectSyncDecoder {
-    pub fn reset(&mut self) {
-        self.state = WorldObjectSnapshot::default();
-    }
-
-    pub fn adopt_baseline(&mut self, baseline: WorldObjectSnapshot) {
-        self.state = baseline;
-    }
-
-    pub fn state(&self) -> &WorldObjectSnapshot {
-        &self.state
-    }
-
-    pub fn apply_wire(&mut self, wire: &[u8]) -> Result<WorldObjectSnapshot, WireError> {
-        let mut input = WireReader::new(wire);
-        decode_world_object_sync(&mut input, &mut self.state)?;
-        if !input.is_empty() {
-            return Err(WireError::Malformed(
-                "trailing bytes after world object sync",
-            ));
-        }
-        Ok(self.state.clone())
-    }
-}
-
-pub fn encode_world_object_sync(
-    encoder: &mut WorldObjectSyncEncoder,
-    tick: Tick,
-    current: &WorldObjectSnapshot,
-) -> Vec<u8> {
-    encoder.encode(tick, current)
-}
-
-pub fn decode_world_object_sync_wire(
-    decoder: &mut WorldObjectSyncDecoder,
-    wire: &[u8],
-) -> Result<WorldObjectSnapshot, WireError> {
-    decoder.apply_wire(wire)
-}
-
-#[derive(Debug)]
-struct PairDelta<K, V> {
-    changed: Vec<(K, V)>,
-    removed: Vec<K>,
-}
-
-impl<K, V> Default for PairDelta<K, V> {
-    fn default() -> Self {
-        Self {
-            changed: Vec::new(),
-            removed: Vec::new(),
-        }
-    }
-}
-
-impl<K, V> PairDelta<K, V> {
-    fn is_empty(&self) -> bool {
-        self.changed.is_empty() && self.removed.is_empty()
-    }
-}
-
-fn pair_delta<K: Copy + Eq + Ord + Hash, V: Copy + Eq>(
-    baseline: &[(K, V)],
-    current: &[(K, V)],
-) -> PairDelta<K, V> {
-    let base: HashMap<K, V> = baseline.iter().copied().collect();
-    let cur: HashMap<K, V> = current.iter().copied().collect();
-    let mut changed = Vec::new();
-    for (id, value) in current {
-        match base.get(id) {
-            Some(old) if old == value => {}
-            _ => changed.push((*id, *value)),
-        }
-    }
-    let mut removed = Vec::new();
-    for (id, _) in baseline {
-        if !cur.contains_key(id) {
-            removed.push(*id);
-        }
-    }
-    removed.sort_unstable();
-    changed.sort_by_key(|(id, _)| *id);
-    PairDelta { changed, removed }
-}
-
-fn world_object_delta(
-    baseline: &WorldObjectSnapshot,
-    current: &WorldObjectSnapshot,
-) -> PairDelta<u32, GlassPieceSnapshot> {
-    pair_delta(&baseline.glass_pieces, &current.glass_pieces)
-}
-
-fn canonical_world_object_snapshot(
-    _tick: Tick,
-    current: &WorldObjectSnapshot,
-) -> WorldObjectSnapshot {
-    current.clone()
-}
-
-fn encode_world_object_full(out: &mut WireWriter, snap: &WorldObjectSnapshot) {
-    debug_assert!(snap.glass_pieces.len() <= u16::MAX as usize);
-    out.put_u16(snap.glass_pieces.len() as u16);
-    for (id, row) in &snap.glass_pieces {
-        out.put_u32(*id);
-        encode_glass_piece_snapshot(out, *row);
-    }
-    encode_destructible_loop_sounds(out, &snap.destructible_loop_sounds);
-}
-
-fn encode_world_object_delta(
-    out: &mut WireWriter,
-    baseline: &WorldObjectSnapshot,
-    current: &WorldObjectSnapshot,
-) {
-    let glass = world_object_delta(baseline, current);
-    debug_assert!(glass.changed.len() <= u16::MAX as usize);
-    debug_assert!(glass.removed.len() <= u16::MAX as usize);
-    out.put_u16(glass.changed.len() as u16);
-    for (id, row) in &glass.changed {
-        out.put_u32(*id);
-        encode_glass_piece_snapshot(out, *row);
-    }
-    out.put_u16(glass.removed.len() as u16);
-    for id in &glass.removed {
-        out.put_u32(*id);
-    }
-    encode_destructible_loop_sounds(out, &current.destructible_loop_sounds);
-}
-
-fn encode_destructible_loop_sounds(out: &mut WireWriter, rows: &[DestructibleLoopSound]) {
-    debug_assert!(rows.len() <= u16::MAX as usize);
-    out.put_u16(rows.len() as u16);
-    for row in rows {
-        out.put_u32(row.owner.to_wire());
-        out.put_u32(row.snd_ent.unwrap_or(u32::MAX));
-        out.put_u8(row.alias_index);
-        for v in row.origin {
-            out.put_f32(v);
-        }
-    }
-}
-
-fn decode_destructible_loop_sounds(
-    input: &mut WireReader<'_>,
-    with_entity: bool,
-) -> Result<Vec<DestructibleLoopSound>, WireError> {
-    let count = input.get_u16()? as usize;
-    let mut rows = Vec::with_capacity(count.min(256));
-    for _ in 0..count {
-        let owner = ScriptModelId::from_wire(input.get_u32()?);
-        let snd_ent = if with_entity {
-            match input.get_u32()? {
-                u32::MAX => None,
-                number if number <= i32::MAX as u32 => Some(number),
-                _ => return Err(WireError::Malformed("invalid loop sound entity")),
-            }
-        } else {
-            None
-        };
-        let alias_index = input.get_u8()?;
-        let mut origin = [0.0; 3];
-        for v in &mut origin {
-            *v = input.get_f32()?;
-        }
-        rows.push(DestructibleLoopSound {
-            snd_ent,
-            owner,
-            alias_index,
-            origin,
-        });
-    }
-    Ok(rows)
-}
-
-fn apply_pair_delta<K: Copy + Ord, V: Copy>(table: &mut Vec<(K, V)>, delta: &PairDelta<K, V>) {
-    for id in &delta.removed {
-        table.retain(|(key, _)| key != id);
-    }
-    table.sort_by_key(|(id, _)| *id);
-    // A full sync may repeat a key; a change lands on its first row.
-    let existing = table.len();
-    let mut added: BTreeMap<K, usize> = BTreeMap::new();
-    for &(id, value) in &delta.changed {
-        let index = table[..existing].partition_point(|(key, _)| *key < id);
-        if index < existing && table[index].0 == id {
-            table[index].1 = value;
-            continue;
-        }
-        match added.entry(id) {
-            Entry::Occupied(row) => table[*row.get()].1 = value,
-            Entry::Vacant(slot) => {
-                slot.insert(table.len());
-                table.push((id, value));
-            }
-        }
-    }
-    table.sort_by_key(|(id, _)| *id);
-}
-
-fn decode_world_object_sync(
-    input: &mut WireReader<'_>,
-    state: &mut WorldObjectSnapshot,
-) -> Result<(), WireError> {
-    state.as_of_ms = input.get_i32()?;
-    state.map_round_epoch = input.get_u32()?;
-    state.fracture_profile_version = input.get_u32()?;
-    let tag = input.get_u8()?;
-    match tag {
-        0 => {}
-        1 | 3 => {
-            let glass_changed = input.get_u16()? as usize;
-            let mut glass = PairDelta::<u32, GlassPieceSnapshot>::default();
-            for _ in 0..glass_changed {
-                glass
-                    .changed
-                    .push((input.get_u32()?, decode_glass_piece_snapshot(input)?));
-            }
-            let glass_removed = input.get_u16()? as usize;
-            for _ in 0..glass_removed {
-                glass.removed.push(input.get_u32()?);
-            }
-            let destructible_loop_sounds = decode_destructible_loop_sounds(input, tag >= 3)?;
-
-            apply_pair_delta(&mut state.glass_pieces, &glass);
-            state.destructible_loop_sounds = destructible_loop_sounds;
-        }
-        2 | 4 => {
-            let glass_count = input.get_u16()? as usize;
-            let mut glass_pieces = Vec::with_capacity(glass_count.min(4096));
-            for _ in 0..glass_count {
-                glass_pieces.push((input.get_u32()?, decode_glass_piece_snapshot(input)?));
-            }
-            let destructible_loop_sounds = decode_destructible_loop_sounds(input, tag >= 3)?;
-            *state = WorldObjectSnapshot {
-                as_of_ms: state.as_of_ms,
-                map_round_epoch: state.map_round_epoch,
-                fracture_profile_version: state.fracture_profile_version,
-                glass_pieces,
-                destructible_loop_sounds,
-            };
-        }
-        _ => return Err(WireError::Malformed("unknown world object sync tag")),
-    }
-    Ok(())
-}
-
-fn encode_glass_piece_snapshot(out: &mut WireWriter, row: GlassPieceSnapshot) {
-    out.put_u8(row.state.as_u8());
-    out.put_u32(row.revision);
-    out.put_i32(row.last_state_change_time);
-    out.put_u8(row.cause.as_u8());
-    out.put_u64(row.deterministic_seed);
-    match row.shatter_seed {
-        None => out.put_u8(0),
-        Some(seed) => {
-            assert_eq!(
-                row.state,
-                GlassPieceState::Shattered,
-                "glass shatter seed on non-shattered state"
-            );
-            out.put_u8(1);
-            out.put_u8(seed.impact_dir);
-            out.put_u8(seed.impact_pos[0]);
-            out.put_u8(seed.impact_pos[1]);
-        }
-    }
-}
-
-fn decode_glass_piece_snapshot(
-    input: &mut WireReader<'_>,
-) -> Result<GlassPieceSnapshot, WireError> {
-    let state = GlassPieceState::from_u8(input.get_u8()?)
-        .ok_or(WireError::Malformed("unknown glass piece state"))?;
-    let revision = input.get_u32()?;
-    let last_state_change_time = input.get_i32()?;
-    let cause =
-        GlassCause::from_u8(input.get_u8()?).ok_or(WireError::Malformed("unknown glass cause"))?;
-    let deterministic_seed = input.get_u64()?;
-    let shatter_seed = match input.get_u8()? {
-        0 => None,
-        1 if state == GlassPieceState::Shattered => {
-            let impact_dir = input.get_u8()?;
-            let impact_pos = [input.get_u8()?, input.get_u8()?];
-            Some(
-                GlassShatterSeed::new(impact_dir, impact_pos)
-                    .ok_or(WireError::Malformed("invalid glass shatter seed"))?,
-            )
-        }
-        1 => return Err(WireError::Malformed("glass seed on non-shattered state")),
-        _ => return Err(WireError::Malformed("unknown glass shatter seed tag")),
-    };
-    Ok(GlassPieceSnapshot {
-        state,
-        revision,
-        last_state_change_time,
-        shatter_seed,
-        deterministic_seed,
-        cause,
-    })
-}
+pub use super::world_sync::{
+    WORLD_SYNC_PERIOD_TICKS, WorldObjectSyncDecoder, WorldObjectSyncEncoder, decode_snapshot_meta,
+    decode_world_object_sync_wire, encode_world_object_sync,
+};
 
 pub fn encode_actions(out: &mut WireWriter, actions: &[(ClientId, ClientAction)]) {
     debug_assert!(actions.len() <= u16::MAX as usize);
@@ -832,11 +476,16 @@ pub fn encode_snapshot_meta_body(
 
 pub const META_SEGMENTS: usize = 12;
 
-pub fn decode_snapshot_meta(
+pub(super) struct DecodedSnapshotMeta {
+    pub(super) body: SnapshotMeta,
+    pub(super) world_wire: Vec<u8>,
+    pub(super) world_update: super::world_object_wire::WorldObjectUpdate,
+}
+
+pub(super) fn decode_snapshot_meta_body(
     input: &mut WireReader<'_>,
-    world_decoder: &mut WorldObjectSyncDecoder,
     remaining_after: &mut [usize; META_SEGMENTS],
-) -> Result<(SnapshotMeta, Vec<u8>), WireError> {
+) -> Result<DecodedSnapshotMeta, WireError> {
     let phase = phase_from_tag(input.get_u8()?)?;
     let match_elapsed_ms = input.get_u32()?;
     let prematch_tag = input.get_u8()?;
@@ -901,9 +550,9 @@ pub fn decode_snapshot_meta(
     let mut wire = vec![0u8; wire_len];
     input.get_bytes(&mut wire)?;
     remaining_after[11] = input.remaining();
-    let world_objects = world_decoder.apply_wire(&wire)?;
-    Ok((
-        SnapshotMeta {
+    let world_update = super::world_object_wire::decode_sync(&wire)?;
+    Ok(DecodedSnapshotMeta {
+        body: SnapshotMeta {
             phase,
             match_elapsed_ms,
             prematch,
@@ -919,7 +568,7 @@ pub fn decode_snapshot_meta(
             hud_materials,
             hud_strings,
             rng,
-            world_objects,
+            world_objects: sim::WorldObjectSnapshot::default(),
             area_entities,
             objectives,
             entity_dobjs,
@@ -930,8 +579,9 @@ pub fn decode_snapshot_meta(
             item_ammo,
             item_pickups,
         },
-        wire,
-    ))
+        world_wire: wire,
+        world_update,
+    })
 }
 
 fn encode_area_entities(out: &mut WireWriter, snapshot: Option<&AreaEntityWorldSnapshot>) {

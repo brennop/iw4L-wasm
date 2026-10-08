@@ -340,7 +340,7 @@ impl WeaponBuild {
                 hand_xmodel_edge: AssetEdge::Absent,
                 rocket_model_edge: AssetEdge::Absent,
                 attachment_view_model_edges: Vec::new(),
-                fpv_hands: [None, None],
+                fpv_soldiers: [None, None],
                 fpv_mount_plan: None,
                 fpv_assemblies: [None, None],
                 world_model: entry.world_model,

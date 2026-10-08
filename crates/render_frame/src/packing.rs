@@ -57,6 +57,7 @@ pub fn pack_sun_shadow_frontend(
 ) -> PackedFrontendLists {
     let mut packed = PackedFrontendLists::default();
     for (draw_index, draw) in draws.iter().enumerate() {
+        note_sort_key(&mut packed.sort_key_by_rank, draw.key, draw.material_rank);
         match draw.kind {
             PackKind::World { surf, run, run_off } => {
                 if run > 1 {
@@ -330,6 +331,14 @@ fn push_xmodel(
         lighting_handle,
     ));
     packed.xmodel_draw_indices.push(draw_index);
+}
+
+fn note_sort_key(table: &mut Vec<u8>, key: u64, material_rank: u32) {
+    let rank = (material_rank & 0x7fff) as usize;
+    if table.len() <= rank {
+        table.resize(rank + 1, 0);
+    }
+    table[rank] = GfxDrawSurf { packed: key }.primary_sort_key();
 }
 
 fn backend_setup_key(key: u64, material_rank: u32) -> u32 {

@@ -181,6 +181,8 @@ pub struct CapturedAlias {
 
     pub stereo_speaker_gains: Option<[[f32; 2]; 2]>,
 
+    pub t6_speaker_pan: Option<[f32; 6]>,
+
     pub limit_count: Option<u8>,
 
     pub entity_limit_count: Option<u8>,

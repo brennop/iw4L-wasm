@@ -1,5 +1,7 @@
 # `sim::step` — the one funnel
 
+Replacing `SimContent` retires body caches and collision history/claims; reinstalling the same owner preserves them.
+
 ```rust
 pub fn step(
     world: &mut SimWorld,
@@ -28,9 +30,7 @@ differ only in `StepReason`:
 | `PredictNew` | the local client running ahead of the server |
 | `Replay` | a recorded input stream played back |
 
-A human at a keyboard and a bot both arrive as entries in `TickInput.cmds`.
-`sim` cannot tell them apart, and nothing downstream needs to.
-
+Humans and bots both arrive through `TickInput.cmds`.
 * **State is explicit.** `&mut SimWorld` owns the `bevy_ecs` world, so two of
   them step side by side without touching each other: one in
   `net::authority::runtime`, one in `net::client::predict`.

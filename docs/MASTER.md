@@ -6,34 +6,32 @@ simulates the match. It pulls in no engine dependency, so a VPS needs no assets 
 ## Install — from the machine with the clone; the VPS needs only ssh
 
 ```bash
-cargo xtask master install root@1.2.3.4
-cargo xtask master logs    root@1.2.3.4 --since 10min
+cargo xtask master install root@203.0.113.7 --name us-ny --port 4433
+cargo xtask master logs us-ny --since 10min
 ```
 
-`install` mints a CA and server certificate under `~/.iw4l/ca` (or `--ca DIR`),
-builds a static binary, writes the systemd unit and starts the selected service.
-Prod uses `/usr/local/lib/iw4l` and `/etc/iw4l`; dev uses
-`/usr/local/lib/iw4l-dev` and `/etc/iw4l-dev`. Update files go under the selected
-library directory's `updates/<channel>`. Populate that directory before handing
-out the descriptor. The CA key never leaves the local machine. `master update`,
-`status` and `uninstall` take the same channel; uninstall retains certificates.
-Use an independent CA directory for dev:
+`install` mints a CA and server certificate under `~/.iw4l/<name>` (or
+`--ca DIR`), builds a static binary, writes `iw4l-master-<name>.service` and
+starts it. Binary and served `updates/` live in `/usr/local/lib/iw4l-<name>`,
+certificates in `/etc/iw4l-<name>`. It writes `<name>.iw4l-server` into the
+root folder (`IW4L_GAMES`), where the game lists it and `make deploy <name>`
+publishes to it ([`DEPLOY.md`](DEPLOY.md)); an existing file there is kept. The
+CA key never leaves the local machine.
 
-```bash
-cargo xtask master install user@vps --channel dev --ca ~/.iw4l/dev-vpn-ca
-```
+`master update|status|logs|uninstall <name>` read that root descriptor and act
+on whichever unit serves its port. `update` restarts only when the binary
+changed; uninstall retains certificates and the descriptor.
 
 ## TLS identity
 
 The descriptor supplies `master.address`, `master.server_name` and an embedded
 CA. The client trusts that CA and verifies the server name independently of the
-connection address. Prod uses the fixed label `iw4l-prod`, so its certificate
-can follow the installation to a new VPS.
-
-Dev certificates also cover the VPS host; generated dev descriptors use that
-host as their TLS identity. For IP targets this retains CA and IP verification
-without sending a synthetic DNS label as SNI. This preserves the intended
-address through proxies that inspect QUIC names and replace destinations
+connection address. Install uses the fixed label `iw4l-<name>`, so the
+certificate can follow the installation to a new VPS. The certificate also
+covers the VPS host; a descriptor may use that host as its TLS name instead.
+For IP targets this retains CA and IP verification without sending a synthetic
+DNS label as SNI, which preserves the intended address through proxies that
+inspect QUIC names and replace destinations
 ([Xray sniffing configuration](https://xtls.github.io/config/inbound.html)).
 
 
@@ -65,10 +63,10 @@ Give players a trusted `community.iw4l-server` and the self-updating `iw4l.exe`:
 schema = 1
 name = "IW4L Community"
 [master]
-address = "1.2.3.4:4433"
-server_name = "iw4l-prod"
+address = "203.0.113.7:4433"
+server_name = "iw4l-us-ny"
 [updates]
-url = "https://1.2.3.4:4433/updates/manifest.toml"
+url = "https://203.0.113.7:4433/updates/manifest.toml"
 ca_pem = """
 -----BEGIN CERTIFICATE-----
 ... public iw4l-ca.pem contents ...

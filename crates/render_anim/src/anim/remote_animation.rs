@@ -1,61 +1,8 @@
 use super::*;
 
 #[derive(Clone, Debug)]
-pub struct PlayerAnimationBinding {
-    bodies: Arc<asset_model::BodyMeshCatalog>,
-    body_name: String,
-    tree: Arc<asset_anim::CompiledAnimTreeDefinition>,
-    script: Arc<asset_anim::ParsedPlayerAnimScript>,
-    catalog: Arc<asset_anim::XAnimCatalog>,
-    rig: Arc<xmodel_runtime::DObj>,
-}
-
-impl PlayerAnimationBinding {
-    pub fn body(&self) -> &asset_model::BodyMeshEntry {
-        self.bodies
-            .get(&self.body_name)
-            .expect("bound character body")
-    }
-
-    fn matches(
-        &self,
-        bodies: &assets::PreparedBodies,
-        body_name: &str,
-        tree: &Arc<asset_anim::CompiledAnimTreeDefinition>,
-        script: &Arc<asset_anim::ParsedPlayerAnimScript>,
-        catalog: &assets::PreparedXAnims,
-    ) -> bool {
-        Arc::ptr_eq(&self.bodies, &bodies.0)
-            && self.body_name == body_name
-            && Arc::ptr_eq(&self.tree, tree)
-            && Arc::ptr_eq(&self.script, script)
-            && Arc::ptr_eq(&self.catalog, &catalog.0)
-    }
-
-    fn decode_leaf(&self, index: u16) -> Result<Arc<xmodel_runtime::AnimClip>, String> {
-        let leaf = self
-            .tree
-            .node(index)
-            .filter(|node| node.child_count == 0)
-            .ok_or_else(|| format!("packed index {index} is not a character animation leaf"))?;
-        let body = self.body();
-        let clip = self
-            .catalog
-            .clip(body.namespace, &leaf.name)
-            .ok_or_else(|| format!("decode failed for character clip `{}`", leaf.name))?;
-        if !self.rig.tracks_for(&clip).iter().any(Option::is_some) {
-            return Err(format!(
-                "character clip `{}` has no tracks for body `{}`",
-                leaf.name, self.body_name
-            ));
-        }
-        Ok(clip)
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct PersistentRemoteTree {
-    binding: Arc<PlayerAnimationBinding>,
+    binding: Arc<asset_game::SoldierBodyAnimation>,
     pub(crate) runtime: xmodel_runtime::XAnimTreeRuntime,
     pub(crate) namespace: asset_core::AssetNamespace,
     pub(crate) dobj: Option<std::sync::Arc<xmodel_runtime::DObj>>,
@@ -84,66 +31,6 @@ pub struct RemoteBodyTrees {
 }
 
 impl RemoteBodyTrees {
-    pub(crate) fn bind_player(
-        &self,
-        sources: &asset_anim::PlayerAnimSources,
-        bodies: &assets::PreparedBodies,
-        catalog: &assets::PreparedXAnims,
-        axis: bool,
-        persist_key: u32,
-    ) -> Result<Arc<PlayerAnimationBinding>, String> {
-        let tree = sources
-            .compiled()
-            .and_then(|t| t.as_ref().ok())
-            .ok_or("character tree is not compiled")?;
-        let script = sources
-            .parsed_script()
-            .and_then(|s| s.as_ref().ok())
-            .ok_or("character script is not parsed")?;
-        let kit = bodies
-            .0
-            .kits()
-            .kit(axis)
-            .ok_or("no third-person character kit")?;
-        if let Some(slot) = self.by_ent.get(&persist_key)
-            && slot
-                .binding
-                .matches(bodies, &kit.body, tree, script, catalog)
-        {
-            return Ok(slot.binding.clone());
-        }
-        let body = bodies.0.get(&kit.body).ok_or("character body missing")?;
-        if sources.family() != Some(body.namespace) {
-            return Err(format!(
-                "{} character requires its own animation tree and script; supplied family {:?}",
-                body.namespace.as_str(),
-                sources.family()
-            ));
-        }
-        let pose = body
-            .skel
-            .pose
-            .as_ref()
-            .ok_or("character body pose missing")?;
-        let rig = xmodel_runtime::DObj::build(&[(pose, None)]).map_err(|e| e.to_string())?;
-        for name in ["legs", "torso"] {
-            let index = tree
-                .index_of(name)
-                .ok_or_else(|| format!("player tree {name} branch missing"))?;
-            if tree.node(index).is_none_or(|n| n.child_count == 0) {
-                return Err(format!("player tree {name} is not a branch"));
-            }
-        }
-        Ok(Arc::new(PlayerAnimationBinding {
-            bodies: bodies.0.clone(),
-            body_name: kit.body.clone(),
-            tree: tree.clone(),
-            script: script.clone(),
-            catalog: catalog.0.clone(),
-            rig: Arc::new(rig),
-        }))
-    }
-
     pub fn get(&self, persist_key: u32) -> Option<&PersistentRemoteTree> {
         self.by_ent.get(&persist_key)
     }
@@ -227,7 +114,7 @@ pub fn zero_anim() -> PlayerAnimValue {
 }
 
 pub fn advance_remote_tree(
-    binding: &Arc<PlayerAnimationBinding>,
+    binding: &Arc<asset_game::SoldierBodyAnimation>,
     legs: PlayerAnimValue,
     torso: PlayerAnimValue,
     persist_key: u32,
@@ -236,8 +123,8 @@ pub fn advance_remote_tree(
     pose_time_ms: i32,
     trees: &mut RemoteBodyTrees,
 ) -> Result<AdvancedRemoteTree, String> {
-    let tree = &binding.tree;
-    let script = &binding.script;
+    let tree = binding.tree();
+    let script = binding.script();
     let body = binding.body();
     let legs_index = legs.effective_index();
     let torso_index = torso.effective_index();

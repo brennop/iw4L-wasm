@@ -135,6 +135,7 @@ pub enum UnsupportedCueFeature {
 
 #[derive(Clone, Debug)]
 pub struct CueCompositionPolicy {
+    pub start_delay_ms: u32,
     pub secondary: Option<SecondaryLayerPolicy>,
     pub unsupported: Arc<[UnsupportedCueFeature]>,
 }

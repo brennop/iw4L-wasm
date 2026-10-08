@@ -11,7 +11,7 @@ GOAL := $(firstword $(MAKECMDGOALS))
 ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
 .PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
-.PHONY: build-windows setup-windows release publish provision
+.PHONY: build-windows setup-windows release publish github-release
 .PHONY: mr publish-check approved web web-serve dedicated mem-census
 .PHONY: $(ARGS)
 
@@ -30,10 +30,12 @@ ZONE_ARG = $(if $(ZONE),--zone $(ZONE),)
 
 # Live recipes use `[profile.play]` (Cargo.toml): release opt-level without
 # the fat-LTO link. PROFILE=release is the LTO binary. `make deploy`
-# uses this same PROFILE (default play); prod/dev is the publish channel.
+# uses this same PROFILE (default play).
 PROFILE ?= play
 PROFILE_ARG = --profile $(PROFILE)
 RELEASE ?=
+TAG ?=
+NOTES ?=
 CARGO = cargo
 
 # The scripted match. Jump on the spawn pad (open sky) before +forward carries under cover.
@@ -243,24 +245,22 @@ build-windows:
 setup-windows:
 	@$(XTASK) windows setup
 
+
 release:
-	@test "$(firstword $(ARGS))" = prod -o "$(firstword $(ARGS))" = dev || { echo "usage: make release prod|dev"; exit 2; }
-	@PROFILE="$(PROFILE)" $(XTASK) release $(firstword $(ARGS))
+	@PROFILE="$(PROFILE)" $(XTASK) release
 
 publish:
-	@test "$(firstword $(ARGS))" = prod -o "$(firstword $(ARGS))" = dev || { echo "usage: make publish prod|dev"; exit 2; }
-	@RELEASE="$(RELEASE)" $(XTASK) publish $(firstword $(ARGS))
+	@RELEASE="$(RELEASE)" $(XTASK) publish $(ARGS)
 
 deploy:
-	@test "$(firstword $(ARGS))" = prod -o "$(firstword $(ARGS))" = dev || { echo "usage: make deploy prod|dev"; exit 2; }
-	@$(MAKE) -C $(ROOT) release $(firstword $(ARGS)) PROFILE=$(PROFILE)
-	@$(MAKE) -C $(ROOT) publish $(firstword $(ARGS))
+	@PROFILE="$(PROFILE)" $(XTASK) deploy $(ARGS)
 
-provision:
-	@$(XTASK) provision
+github-release:
+	@test -n "$(TAG)" -a -n "$(NOTES)" || { echo "usage: make github-release TAG=v0.1.0-demo.N NOTES=notes.md [RELEASE=dist/releases/<id>]"; exit 2; }
+	@RELEASE="$(RELEASE)" $(XTASK) github-release $(TAG) --notes $(NOTES)
 
 logs:
-	@test "$(firstword $(ARGS))" = prod -o "$(firstword $(ARGS))" = dev || { echo "usage: make logs prod|dev [SINCE=2h]"; exit 2; }
+	@test -n "$(ARGS)" || { echo "usage: make logs NAME [SINCE=2h]"; exit 2; }
 	@SINCE="$(SINCE)" $(XTASK) logs $(firstword $(ARGS))
 
 # The agent-clone lifecycle, one verb:
@@ -380,13 +380,13 @@ help:
 	@echo "make launcher windows  build password-protected dev + prod portable ZIPs"
 	@echo "make build-windows     local Windows bins only (PROFILE=play)"
 	@echo "make setup-windows     rustup target + cargo-xwin (once)"
-	@echo "make release prod|dev  build+pack a local release; VPS untouched"
-	@echo "make publish prod|dev  upload RELEASE= (or dist/releases/<ch>/LATEST)"
-	@echo "make deploy prod|dev   release + publish; PROFILE=play unless set"
-	@echo "make provision         VPS users/dirs/caddy/systemd/certs/firewall"
-	@echo "make logs prod|dev [SINCE=2h]  print the bounded master journal"
-	@echo "cargo xtask master install user@host   your own relay on your own VPS"
-	@echo "                  then: master update|status|logs|uninstall (docs/MASTER.md)"
+	@echo "make release      build once, pack every .iw4l-server in IW4L_GAMES; VPS untouched"
+	@echo "make publish [NAME...]  upload RELEASE= (or dist/releases/LATEST) to its servers"
+	@echo "make deploy [NAME...]   release + publish that exact package"
+	@echo "make github-release TAG= NOTES=  public ZIP as a pre-release; digest-checked draft first"
+	@echo "make logs NAME [SINCE=2h]  print the bounded master journal"
+	@echo "cargo xtask master install user@host --name NAME --port PORT   a new master"
+	@echo "                  then: master update|status|logs|uninstall NAME (docs/MASTER.md)"
 	@echo "make mr new <name>   clone the repo for one agent under context/mrs/<name>"
 	@echo "make mr ship <name>  rebase → rustfmt touched .rs → FF onto master → rm clone"
 	@echo "make mr ls           the clones on disk and whose move each one is"

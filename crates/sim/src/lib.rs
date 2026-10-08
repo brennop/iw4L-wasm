@@ -154,7 +154,7 @@ pub fn weapon_model_attachment(model: &str) -> Option<u32> {
 pub use world::{
     ClientId, HitvolDumpRow, PendingLocalSound, PendingPlayerCardEvent, PendingPlayerCardKind,
     PendingPrint, PlayerKitCollision, SimBrush, SimClipBsp, SimClipCmodels, SimClipMesh,
-    SimStaticModel, SimTriggerHull, Tick, WeaponScriptSounds, blank_player_state,
+    SimStaticModel, SimTriggerHull, Tick, blank_player_state,
 };
 pub use world_objects::{
     DestructibleLoopSound, GLASS_BLAST_DAMAGE_SCALE, GLASS_BLAST_RADIUS_CAP,
@@ -176,7 +176,11 @@ pub use objectives::{
     VehicleHudTarget,
 };
 
-pub use world::{SimContent, SimContentBuilder, WeaponSetup};
+pub use world::{SimContent, SimContentBuilder};
+mod weapon_content;
+pub use weapon_content::{
+    SimWeaponContent, SimWeaponContentRefusal, SimWeaponRow, WeaponScriptSounds, WeaponSetup,
+};
 
 mod script_audio;
 pub use script_audio::{ScriptAmbient, ScriptAudioCommand};

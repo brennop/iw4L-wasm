@@ -217,20 +217,3 @@ fn is_hostish(host: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
 }
-
-/// `$IW4L_DEPLOY_ROOT`: absolute, no traversal, nothing that needs quoting in
-/// the remote shell snippets that interpolate it.
-pub fn check_deploy_root(root: &str) -> Res<()> {
-    let simple = root.starts_with('/')
-        && !root.contains("..")
-        && root
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'-'));
-    if simple {
-        Ok(())
-    } else {
-        Err(format!(
-            "IW4L_DEPLOY_ROOT must be a simple absolute path (got {root:?})"
-        ))
-    }
-}

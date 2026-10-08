@@ -1,7 +1,6 @@
 # Weapon configuration products
 
-`asset_game::WeaponCatalog` captures source rows. `WeaponBuild` links dependencies
-and publishes immutable effective rows, semantic policies and consumer projections.
+`asset_game::WeaponCatalog` captures source rows. `WeaponBuild` links dependencies and publishes immutable effective rows, semantic policies and consumer projections.
 `weapon_catalog/{capture_merge,catalog_linking,model_linking,publication}` own
 those operations; `configuration/{iw4,iw5,t5,t6}` own source selection rules.
 
@@ -42,9 +41,10 @@ optional attachments and camo-to-base fallback preserve policy. Replacement clea
 successes/refusals. Kits retain body/world catalogs; `models()` accepts no catalogs.
 Prepared DObj identity controls reuse. Optional heads and separate shield policy remain.
 `PlayerAnimationBinding` retains the character kit/rig, paired tree/script and clips.
-Multiplayer body-track compatibility validates leaves/tracks before advancement;
-tree/script/source family must match the soldier; missing native profiles refuse. Persistent trees reuse only the same binding.
-Body/tree/script/clip replacement resets animation and preserves corpse occupation;
-unchanged bindings preserve blend, phase and rate.
+Multiplayer body tracks validate leaves/tracks and soldier tree/script/clip family.
+Missing native profiles refuse; persistent trees reuse only the same binding.
+Body/tree/script/clip replacement resets animation and preserves corpse occupation; unchanged bindings preserve blend, phase and rate.
 
 GPU/media readiness uses separate match, material, FPV and audio milestones.
+BO1 camo tables and BO2 image/material recipes publish weapon-specific choices, localized captions and previews.
+Saved primary/secondary camo names resolve to material variants for first-person and player world weapons before Ready.

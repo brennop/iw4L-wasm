@@ -20,6 +20,15 @@ pub struct BoundWeapon<'a> {
 }
 
 impl<'a> BoundWeapon<'a> {
+    pub fn movement_scales(self) -> (f32, f32, f32) {
+        let facts = &self.registry.rows[self.handle.row as usize].facts;
+        (
+            facts.move_speed_scale,
+            facts.ads_move_speed_scale,
+            facts.sprint_duration_scale,
+        )
+    }
+
     pub fn preparation(self) -> &'a super::WeaponPreparationRecipe {
         &self.registry.rows[self.handle.row as usize].preparation
     }

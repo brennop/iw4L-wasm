@@ -158,12 +158,13 @@ pub struct PreparedMatch {
     pub materials: crate::MatchMaterials,
     pub clip: Option<Arc<ClipCollision>>,
     pub weapons: Arc<WeaponRegistry>,
-    pub fpv_meshes: FpvMeshCatalog,
+    pub fpv_meshes: Arc<FpvMeshCatalog>,
     pub bodies: Arc<BodyMeshCatalog>,
+    pub soldiers: asset_game::SoldierPresentations,
     pub world_weapons: WorldWeaponCatalog,
 
     pub projectile_meshes: asset_model::ProjectileMeshCatalog,
-    pub xanims: XAnimCatalog,
+    pub xanims: Arc<XAnimCatalog>,
     pub destructible_death: Vec<crate::DestructibleDeathRow>,
     pub player_anim_sources: asset_anim::PlayerAnimSources,
 

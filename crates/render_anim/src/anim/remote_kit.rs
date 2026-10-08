@@ -58,13 +58,15 @@ impl PreparedRemoteKit {
     }
 }
 
+struct RemoteKitOwner {
+    bodies: Arc<asset_model::BodyMeshCatalog>,
+    weapons: Arc<asset_game::WeaponRegistry>,
+    world: u64,
+}
+
 #[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct PreparedRemoteKits {
-    owner: Option<(
-        Arc<asset_model::BodyMeshCatalog>,
-        Arc<asset_game::WeaponRegistry>,
-        u64,
-    )>,
+    owner: Option<RemoteKitOwner>,
     kits: HashMap<(bool, u32, u8), Option<PreparedRemoteKit>>,
     built: HashMap<KitModels, Option<Arc<xmodel_runtime::DObj>>>,
 }
@@ -84,10 +86,10 @@ impl PreparedRemoteKits {
         weapons: &assets::PreparedWeapons,
         world_weapons: &assets::PreparedWorldWeapons,
     ) -> bool {
-        self.owner.as_ref().is_some_and(|(b, w, catalog)| {
-            Arc::ptr_eq(b, &bodies.0)
-                && w.revision() == weapons.registry().revision()
-                && *catalog == world_weapons.0.identity()
+        self.owner.as_ref().is_some_and(|owner| {
+            Arc::ptr_eq(&owner.bodies, &bodies.0)
+                && owner.weapons.revision() == weapons.registry().revision()
+                && owner.world == world_weapons.0.identity()
         })
     }
 
@@ -99,11 +101,11 @@ impl PreparedRemoteKits {
     ) {
         if !self.owned_by(bodies, weapons, world_weapons) {
             self.clear();
-            self.owner = Some((
-                Arc::clone(&bodies.0),
-                Arc::clone(&weapons.registry()),
-                world_weapons.0.identity(),
-            ));
+            self.owner = Some(RemoteKitOwner {
+                bodies: Arc::clone(&bodies.0),
+                weapons: Arc::clone(weapons.registry()),
+                world: world_weapons.0.identity(),
+            });
         }
     }
 
@@ -116,6 +118,7 @@ impl PreparedRemoteKits {
     pub(crate) fn prepare(
         &mut self,
         bodies: &assets::PreparedBodies,
+        soldiers: &asset_game::SoldierPresentations,
         weapons: &assets::PreparedWeapons,
         world_weapons: &assets::PreparedWorldWeapons,
         compositions: &mut PreparedItemCompositions,
@@ -142,11 +145,19 @@ impl PreparedRemoteKits {
                 }
             }
         };
+        let Ok(soldier) = soldiers.side(axis) else {
+            self.kits.insert((axis, weapon, camo), None);
+            return;
+        };
+        if !soldier.owns_bodies(&bodies.0) {
+            self.kits.insert((axis, weapon, camo), None);
+            return;
+        }
         let kit = self.compile(
             bodies,
+            soldier,
             weapons,
             world_weapons,
-            axis,
             weapon,
             camo,
             shared.as_deref(),
@@ -157,18 +168,17 @@ impl PreparedRemoteKits {
     fn compile(
         &mut self,
         bodies: &assets::PreparedBodies,
+        soldier: &asset_game::SoldierPresentation,
         weapons: &assets::PreparedWeapons,
         world_weapons: &assets::PreparedWorldWeapons,
-        axis: bool,
         weapon: u32,
         camo: u8,
         shared: Option<&ItemComposition>,
     ) -> Option<PreparedRemoteKit> {
         let (models, radius) = occupy_remote_kit_dobj(
-            bodies,
+            soldier,
             Some(weapons),
             Some(world_weapons),
-            axis,
             weapon,
             true,
             None,
@@ -182,10 +192,9 @@ impl PreparedRemoteKits {
             })
             .collect();
         let dobj = select_remote_models(
-            bodies,
+            soldier,
             Some(weapons),
             Some(world_weapons),
-            axis,
             weapon,
             camo,
             None,
@@ -267,18 +276,16 @@ pub struct KitModel<'a> {
 }
 
 pub(crate) fn occupy_remote_kit_dobj<'a>(
-    bodies: &'a assets::PreparedBodies,
+    soldier: &'a asset_game::SoldierPresentation,
     weapons: Option<&'a assets::PreparedWeapons>,
     world_weapons: Option<&'a assets::PreparedWorldWeapons>,
-    axis: bool,
     weapon: u32,
     with_hide_tags: bool,
     shield: Option<sim::ShieldAttachment>,
     shared: Option<&'a ItemComposition>,
 ) -> Option<(Vec<KitModel<'a>>, Option<f32>)> {
-    let kits = bodies.0.kits();
-    let kit = kits.kit(axis)?;
-    let body = bodies.0.get(&kit.body)?;
+    let kit = soldier.kit();
+    let body = soldier.body();
     if body.skel.positions.is_empty() || body.skel.bones.is_empty() {
         return None;
     }
@@ -290,7 +297,7 @@ pub(crate) fn occupy_remote_kit_dobj<'a>(
         source: KitSource::Body(kit.body.as_str()),
     }];
     if let Some(name) = kit.head.as_deref() {
-        if let Some(entry) = bodies.0.get(name) {
+        if let Some(entry) = soldier.head() {
             if let (Some(_head_pose), Some(_tag)) = (
                 entry.skel.pose.as_ref(),
                 xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names),
@@ -446,23 +453,16 @@ pub fn remote_dobj_reuses(
 }
 
 pub(crate) fn select_remote_models<'a>(
-    bodies: &'a assets::PreparedBodies,
+    soldier: &'a asset_game::SoldierPresentation,
     weapons: Option<&assets::PreparedWeapons>,
     world_weapons: Option<&'a assets::PreparedWorldWeapons>,
-    axis: bool,
     weapon: u32,
     camo: u8,
     shield: Option<sim::ShieldAttachment>,
     shared: Option<&'a ItemComposition>,
 ) -> Result<RemoteModelSet<'a>, String> {
-    let kits = bodies.0.kits();
-    let kit = kits
-        .kit(axis)
-        .ok_or_else(|| "no third-person kit".to_string())?;
-    let body = bodies
-        .0
-        .get(&kit.body)
-        .ok_or_else(|| format!("body `{}` missing from catalog", kit.body))?;
+    let kit = soldier.kit();
+    let body = soldier.body();
     let pose_src = body
         .skel
         .pose
@@ -473,9 +473,8 @@ pub(crate) fn select_remote_models<'a>(
     let head = match kit.head.as_deref() {
         None => None,
         Some(name) => {
-            let entry = bodies
-                .0
-                .get(name)
+            let entry = soldier
+                .head()
                 .ok_or_else(|| format!("head `{name}` missing from catalog"))?;
             let head_pose = entry
                 .skel

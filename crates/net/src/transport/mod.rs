@@ -16,3 +16,5 @@ pub mod segment_delta;
 pub mod udp_session;
 pub mod udp_socket;
 pub mod wire;
+mod world_object_wire;
+mod world_sync;

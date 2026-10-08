@@ -1,0 +1,141 @@
+use crate::EquipmentRuntimeFacts;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use weapon_iw4::WeaponCombatFacts;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeaponSetup {
+    pub realm: crate::script::Realm,
+    pub base: String,
+    pub attachments: Vec<String>,
+    pub stand_in: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeaponScriptSounds {
+    pub fire: Option<String>,
+    pub fire_player: Option<String>,
+    pub pickup: Option<String>,
+    pub pickup_player: Option<String>,
+    pub proj_explosion: Option<String>,
+}
+
+pub struct SimWeaponRow {
+    pub wire_id: u32,
+    pub scales: (f32, f32, f32),
+    pub combat: WeaponCombatFacts,
+    pub runnable: bool,
+    pub transition_group: u32,
+    pub penetration: weapon_iw4::BulletPenFacts,
+    pub script_name: String,
+    pub setup: Option<WeaponSetup>,
+    pub world_model: (String, Vec<String>),
+    pub shield_model: Option<Arc<xmodel_runtime::RetainedModelCapability>>,
+    pub projectile_model: String,
+    pub melee_only: bool,
+    pub script_sounds: WeaponScriptSounds,
+    pub equipment: crate::EquipmentRuntimeFacts,
+}
+
+#[derive(Debug)]
+pub struct SimWeaponContent {
+    pub(crate) weapon_def_scales: Vec<(f32, f32, f32)>,
+    pub(crate) weapon_combat: Vec<WeaponCombatFacts>,
+    pub(crate) weapon_runnable: Vec<bool>,
+    pub(crate) weapon_transition_groups: Vec<u32>,
+    pub(crate) bullet_pen: Vec<weapon_iw4::BulletPenFacts>,
+    pub(crate) pen_table: weapon_iw4::PenetrationDepthTable,
+    pub(crate) pen_table_loaded: bool,
+    pub(crate) weapon_script_names: Arc<[String]>,
+    pub(crate) weapon_script_aliases: BTreeMap<String, u32>,
+    pub(crate) weapon_setups: Arc<[Option<WeaponSetup>]>,
+    pub(crate) weapon_world_models: Vec<(String, Vec<String>)>,
+    pub(crate) shield_models: Vec<Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
+    pub(crate) weapon_projectile_models: Vec<String>,
+    pub(crate) weapon_melee_only: Vec<bool>,
+    pub(crate) weapon_script_sounds: Vec<WeaponScriptSounds>,
+    pub(crate) equipment_runtime: Vec<EquipmentRuntimeFacts>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimWeaponContentRefusal {
+    MissingSentinel,
+    NonDenseRows,
+    UnknownAlias,
+}
+
+impl SimWeaponContent {
+    pub(crate) fn bootstrap() -> Self {
+        Self {
+            weapon_def_scales: Default::default(),
+            weapon_combat: Default::default(),
+            weapon_runnable: Default::default(),
+            weapon_transition_groups: Default::default(),
+            bullet_pen: Default::default(),
+            pen_table: Default::default(),
+            pen_table_loaded: Default::default(),
+            weapon_script_names: Default::default(),
+            weapon_script_aliases: Default::default(),
+            weapon_setups: Default::default(),
+            weapon_world_models: Default::default(),
+            shield_models: Default::default(),
+            weapon_projectile_models: Default::default(),
+            weapon_melee_only: Default::default(),
+            weapon_script_sounds: Default::default(),
+            equipment_runtime: Default::default(),
+        }
+    }
+
+    pub fn compile(
+        rows: impl IntoIterator<Item = SimWeaponRow>,
+        aliases: impl IntoIterator<Item = (String, u32)>,
+        pen_table: weapon_iw4::PenetrationDepthTable,
+        pen_table_loaded: bool,
+    ) -> Result<Arc<Self>, SimWeaponContentRefusal> {
+        let mut result = Self {
+            pen_table,
+            pen_table_loaded,
+            ..Self::bootstrap()
+        };
+        let mut names = Vec::new();
+        let mut setups = Vec::new();
+        for row in rows {
+            if row.wire_id as usize != names.len() {
+                return Err(SimWeaponContentRefusal::NonDenseRows);
+            }
+            result.weapon_def_scales.push(row.scales);
+            result.weapon_combat.push(row.combat);
+            result.weapon_runnable.push(row.runnable);
+            result.weapon_transition_groups.push(row.transition_group);
+            result.bullet_pen.push(row.penetration);
+            result.weapon_world_models.push(row.world_model);
+            result.shield_models.push(row.shield_model);
+            result.weapon_projectile_models.push(row.projectile_model);
+            result.weapon_melee_only.push(row.melee_only);
+            result.weapon_script_sounds.push(row.script_sounds);
+            result.equipment_runtime.push(row.equipment);
+            names.push(row.script_name);
+            setups.push(row.setup);
+        }
+        if names.is_empty() {
+            return Err(SimWeaponContentRefusal::MissingSentinel);
+        }
+        for (name, id) in aliases {
+            if id as usize >= names.len() {
+                return Err(SimWeaponContentRefusal::UnknownAlias);
+            }
+            result.weapon_script_aliases.insert(name, id);
+        }
+        result.weapon_script_names = names.into();
+        result.weapon_setups = setups.into();
+        Ok(Arc::new(result))
+    }
+
+    pub fn combat(&self) -> &[WeaponCombatFacts] {
+        &self.weapon_combat
+    }
+
+    pub fn equipment(&self) -> &[EquipmentRuntimeFacts] {
+        &self.equipment_runtime
+    }
+}

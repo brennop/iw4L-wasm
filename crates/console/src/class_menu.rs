@@ -46,6 +46,34 @@ fn camo_preview(catalog: &ClassLoadoutCatalog, weapon: &str, camo: &str) -> Stri
         )
 }
 
+fn localized_camo_label(
+    catalog: &ClassLoadoutCatalog,
+    loc: &asset_game::LocalizeCatalog,
+    weapon: &str,
+    camo: &str,
+) -> String {
+    let label = || {
+        if camo.is_empty() {
+            return loc.text("MPUI_NONE");
+        }
+        let registry = catalog.resolver.0.as_deref()?;
+        let id = session::resolve_class_weapon(
+            registry,
+            weapon,
+            &[],
+            asset_game::LoadoutRules::default(),
+        )
+        .ok()?;
+        loc.text_in(
+            registry.identity_namespace_of(id)?,
+            registry.camouflage_caption(id, camo)?,
+        )
+    };
+    label()
+        .map(str::to_owned)
+        .unwrap_or_else(|| camo_label(camo))
+}
+
 fn camo_label(camo: &str) -> String {
     if camo.is_empty() {
         return "None".into();
@@ -157,11 +185,16 @@ pub(crate) fn route(
     mut state: Local<ClassMenuState>,
     mut store: ResMut<SessionClassStore>,
     catalog: Res<ClassLoadoutCatalog>,
-    loc: Res<asset_game::LocalizeCatalog>,
+    loc: (
+        Res<asset_game::LocalizeCatalog>,
+        Option<Res<assets::PreparedLocalizedStrings>>,
+    ),
     mut dvars: ResMut<UiMenuDvars>,
     mut menus: MessageWriter<UiMenuRequest>,
     mut echo: crate::feature_dispatch::ConsoleEcho,
 ) {
+    let (loc, prepared_loc) = loc;
+    let camo_loc = prepared_loc.as_ref().map_or(&*loc, |strings| &strings.0);
     for command in events
         .read()
         .filter(|command| command.name.starts_with("ui_class_"))
@@ -346,7 +379,7 @@ pub(crate) fn route(
                             "menu: class {} {} camouflage = {}",
                             selected + 1,
                             row.label(),
-                            camo_label(camo)
+                            localized_camo_label(&catalog, camo_loc, slot.row_value(row), camo)
                         ));
                     } else {
                         echo.write(format!(
@@ -632,7 +665,13 @@ pub(crate) fn route(
                         return format!(
                             "{}{}",
                             if selected { "* " } else { "" },
-                            camo_label(value)
+                            localized_camo_label(
+                                &catalog,
+                                camo_loc,
+                                slot.zip(state.row)
+                                    .map_or("", |(slot, row)| slot.row_value(row)),
+                                value
+                            )
                         );
                     }
                     let key = if state.attachments && !value.is_empty() {

@@ -243,8 +243,19 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         display_name,
         weap_def,
         gun_xmodel_name,
+        gun_xmodel_names: weap_def.map_or([None; sz::ATTACH_MODEL_COUNT], |body| {
+            xmodel_array_names(s, links, body, s.layout(4, 8))
+        }),
         hand_xmodel_name,
         world_model_name,
+        world_model_names: weap_def.map_or([None; sz::ATTACH_MODEL_COUNT], |body| {
+            xmodel_array_names(
+                s,
+                links,
+                body,
+                s.layout(sz::WEAPON_DEF_WORLD_MODEL_OFF, 752),
+            )
+        }),
         knife_xmodel_name,
         hide_tags,
         sz_xanims,
@@ -544,6 +555,19 @@ fn xmodel_array_name(
         return None;
     };
     xmodel_name(s, links, s.resolve_alias(ptr))
+}
+
+fn xmodel_array_names(
+    s: &ZoneStream<'_>,
+    links: &dyn AssetLinkSink,
+    body: Ptr,
+    field: usize,
+) -> [Option<Ptr>; sz::ATTACH_MODEL_COUNT] {
+    let Ok(ZonePtr::Offset(ptr)) = s.ptr_at(body, field) else {
+        return [None; sz::ATTACH_MODEL_COUNT];
+    };
+    let array = s.resolve_alias(ptr);
+    core::array::from_fn(|index| xmodel_name(s, links, array.at(index * s.pointer_bytes())))
 }
 
 fn follow_xmodel_array(

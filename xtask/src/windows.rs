@@ -28,24 +28,6 @@ pub fn profile(env: &Env) -> Res<String> {
     Ok(profile)
 }
 
-pub fn public_ca(env: &Env) -> Res<PathBuf> {
-    let ca = env
-        .get("IW4L_UPDATER_CA_CERT")
-        .or_else(|| {
-            env.get("IW4L_RELEASE_KEY")
-                .map(|dir| format!("{dir}/iw4l-ca.pem"))
-        })
-        .ok_or("set IW4L_UPDATER_CA_CERT to the public CA pem (or IW4L_RELEASE_KEY)")?;
-    let ca = PathBuf::from(ca);
-    if !ca.is_file() {
-        return Err(format!(
-            "missing public CA {}; create it with `cargo xtask certs HOST` — do not mint a new CA to paper over this",
-            ca.display()
-        ));
-    }
-    Ok(ca)
-}
-
 pub fn setup() -> Res<()> {
     require_tools(&["cargo", "rustup", "llvm-lib"])?;
     run(Command::new("rustup").args(["target", "add", TARGET]))?;
@@ -73,12 +55,9 @@ fn require_windows_tools() -> Res<()> {
     Ok(())
 }
 
-pub fn build(profile: &str, ca_cert: &Path) -> Res<WindowsBins> {
+pub fn build(profile: &str) -> Res<WindowsBins> {
     require_profile(profile)?;
     require_windows_tools()?;
-    if !ca_cert.is_file() {
-        return Err(format!("missing public CA {}", ca_cert.display()));
-    }
     let cache = std::env::var("XWIN_CACHE_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         format!("{home}/.cache/cargo-xwin")
@@ -195,8 +174,7 @@ pub fn run_cli(env: &Env, args: &[String]) -> Res<()> {
         "setup" => setup(),
         "build" => {
             let profile = profile(env)?;
-            let ca = public_ca(env)?;
-            let bins = build(&profile, &ca)?;
+            let bins = build(&profile)?;
             println!("iw4l.exe={}", bins.game.display());
             Ok(())
         }

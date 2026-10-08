@@ -15,7 +15,7 @@ impl WeaponBuild {
             row.hand_xmodel = hands
                 .filter(|name| fpv.get(crate::AssetNamespace::T6, name).is_some())
                 .map(str::to_owned);
-            row.fpv_hands = [None, None];
+            row.fpv_soldiers = [None, None];
             row.fpv_mount_plan = None;
             row.fpv_assemblies = [None, None];
             if row

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use master_protocol::{
-    ALPN, AdmissionFailure, Advert, AdvertId, Channel, ControlFrame, ControlHello, ControlRequest,
+    ALPN, AdmissionFailure, Advert, AdvertId, ControlFrame, ControlHello, ControlRequest,
     ControlResponse, EndpointRole, MAX_BOOTSTRAP_STREAM_BYTES, MAX_CONCURRENT_BOOTSTRAP,
     MAX_LIST_ADVERTS, MAX_RELAY_UNI_STREAMS, MemberId, PeerEvent, RelayDatagram, RequestBody,
     ResponseBody, RoomPhase, RoomView, SESSION_IDLE, SESSION_KEEP_ALIVE, ServiceError,
@@ -118,7 +118,8 @@ enum Command {
 /// a new flag cannot reach one without the other.
 struct UnitSpec {
     updates: PathBuf,
-    channel: Channel,
+    name: String,
+    port: u16,
     exec: PathBuf,
     cert: PathBuf,
     key: PathBuf,
@@ -445,7 +446,8 @@ fn parse_args() -> Result<Command> {
     let mut connect = None;
     let mut server_name = None;
     let mut ca_cert = None;
-    let mut channel = None;
+    let mut name = None;
+    let mut port = None;
     let mut exec = None;
     let mut user = None;
     let mut group = None;
@@ -467,7 +469,8 @@ fn parse_args() -> Result<Command> {
             "--connect" => connect = Some(value.parse()?),
             "--server-name" => server_name = Some(value),
             "--ca-cert" => ca_cert = Some(PathBuf::from(value)),
-            "--channel" => channel = Some(value.parse()?),
+            "--name" => name = Some(value),
+            "--port" => port = Some(value.parse()?),
             "--exec" => exec = Some(PathBuf::from(value)),
             "--user" => user = Some(value),
             "--group" => group = Some(value),
@@ -524,7 +527,8 @@ fn parse_args() -> Result<Command> {
         }
         "print-unit" => Ok(Command::PrintUnit(UnitSpec {
             updates,
-            channel: channel.ok_or("print-unit requires --channel prod|dev")?,
+            name: name.ok_or("print-unit requires --name NAME")?,
+            port: port.ok_or("print-unit requires --port PORT")?,
             exec: exec.ok_or("print-unit requires --exec PATH")?,
             cert: cert.ok_or("print-unit requires --cert PATH")?,
             key: key.ok_or("print-unit requires --key PATH")?,
@@ -535,21 +539,17 @@ fn parse_args() -> Result<Command> {
     }
 }
 
-/// The systemd unit for `spec`, on stdout. The binary that parses `serve`
-/// writes the `ExecStart` that invokes it: `cargo xtask master install` pipes
-/// this straight into `/etc/systemd/system/`, so the two cannot disagree about
-/// a flag, and `Channel` alone decides the port.
 fn print_unit(spec: &UnitSpec) -> Result<()> {
     let UnitSpec {
         updates,
-        channel,
+        name,
+        port,
         exec,
         cert,
         key,
         user,
         group,
     } = spec;
-    let port = channel.port();
     let updates = updates.display();
     let exec = exec.display();
     let cert = cert.display();
@@ -557,7 +557,7 @@ fn print_unit(spec: &UnitSpec) -> Result<()> {
     write!(
         std::io::stdout(),
         "[Unit]
-Description=IW4L {channel} master and relay
+Description=IW4L {name} master and relay
 After=network-online.target
 Wants=network-online.target
 

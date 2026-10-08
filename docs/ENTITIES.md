@@ -45,5 +45,11 @@ and leaves transport to `net`.
   controllers that observe through a sensor adapter, walk a ClipMap-baked graph
   and enter the same `TickInput`.
 
+`net/transport/meta_wire.rs` encodes and parses metadata messages. The pure
+`world_object_wire.rs` codec validates complete world-object updates;
+`world_sync.rs` owns mutable baselines and periodic full synchronization.
+Frame decoding commits its prepared world update after reliable and service
+sections succeed, so a refused frame leaves the world baseline intact.
+
 Snapshots publish the **semantics** of DObj composition, never runtime trees or
 posed vertices ([`ANIM.md`](ANIM.md)).

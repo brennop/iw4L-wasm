@@ -1,16 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::prelude::*;
 use render_material::RuntimeMaterialCatalog;
 use render_scene::{SmodelPassMaterial, TessMaterials, WorldModelLightingAtlas};
 
-type ModelMaterialsOwner = (
-    Arc<RuntimeMaterialCatalog>,
-    Option<bevy::asset::AssetId<Image>>,
-    Option<usize>,
-    Option<u64>,
-);
+struct ModelMaterialsOwner {
+    catalog: Arc<RuntimeMaterialCatalog>,
+    images: Arc<Vec<Option<Handle<Image>>>>,
+    atlas: Option<bevy::asset::AssetId<Image>>,
+    bodies: Option<Arc<asset_model::BodyMeshCatalog>>,
+    world: Option<u64>,
+    weapons: Option<u64>,
+    scene_models: bool,
+    projectiles: bool,
+}
 
 #[derive(Resource, Default)]
 pub struct PreparedModelMaterials {
@@ -23,21 +27,10 @@ pub struct PreparedModelMaterials {
 }
 
 impl PreparedModelMaterials {
-    fn owns(&self, owner: &ModelMaterialsOwner) -> bool {
-        self.owner
-            .as_ref()
-            .is_some_and(|(catalog, atlas, bodies, world)| {
-                Arc::ptr_eq(catalog, &owner.0)
-                    && *atlas == owner.1
-                    && *bodies == owner.2
-                    && *world == owner.3
-            })
-    }
-
     pub fn settled_for(&self, catalog: &Arc<RuntimeMaterialCatalog>) -> bool {
         self.owner
             .as_ref()
-            .is_some_and(|(owned, ..)| Arc::ptr_eq(owned, catalog))
+            .is_some_and(|owner| Arc::ptr_eq(&owner.catalog, catalog))
     }
 
     pub fn material(
@@ -95,17 +88,19 @@ fn admit_keys<'a>(
     atlas: &WorldModelLightingAtlas,
     catalog: &RuntimeMaterialCatalog,
     by_key: &mut HashMap<asset_core::MaterialKey, SmodelPassMaterial>,
-    refused: &mut Vec<asset_core::MaterialKey>,
+    refused: &mut HashSet<asset_core::MaterialKey>,
 ) {
     for key in keys {
-        if by_key.contains_key(key) || refused.iter().any(|seen| seen == key) {
+        if by_key.contains_key(key) || refused.contains(key) {
             continue;
         }
         match crate::body_lit_pass_material(atlas, catalog, key) {
             Some(material) => {
                 by_key.insert(key.clone(), material);
             }
-            None => refused.push(key.clone()),
+            None => {
+                refused.insert(key.clone());
+            }
         }
     }
 }
@@ -173,17 +168,44 @@ pub fn prepare_model_materials(
     if tess.material_images.is_empty() {
         return;
     }
-    let owner: ModelMaterialsOwner = (
-        Arc::clone(&tess.catalog()),
-        atlas.as_ref().map(|atlas| atlas.image.id()),
-        bodies
+    let atlas_id = atlas.as_ref().map(|atlas| atlas.image.id());
+    let world_id = world_weapons.as_ref().map(|world| world.0.identity());
+    let weapons_revision = weapons
+        .as_ref()
+        .map(|weapons| weapons.registry().revision());
+    let bodies_catalog = bodies.as_ref().map(|bodies| &bodies.0);
+    if prepared.owner.as_ref().is_some_and(|owner| {
+        Arc::ptr_eq(&owner.catalog, tess.catalog())
+            && Arc::ptr_eq(&owner.images, &tess.material_images)
+            && owner.atlas == atlas_id
+            && owner.world == world_id
+            && owner.weapons == weapons_revision
+            && owner.scene_models == scene_models.is_some()
+            && owner.projectiles == projectiles.is_some()
+            && match (&owner.bodies, bodies_catalog) {
+                (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
+                (None, None) => true,
+                _ => false,
+            }
+    }) && !scene_models
+        .as_ref()
+        .is_some_and(|models| models.is_changed())
+        && !projectiles
             .as_ref()
-            .map(|bodies| Arc::as_ptr(&bodies.0) as usize),
-        world_weapons.as_ref().map(|world| world.0.identity()),
-    );
-    if prepared.owns(&owner) {
+            .is_some_and(|meshes| meshes.is_changed())
+    {
         return;
     }
+    let owner = ModelMaterialsOwner {
+        catalog: Arc::clone(tess.catalog()),
+        images: Arc::clone(&tess.material_images),
+        atlas: atlas_id,
+        bodies: bodies_catalog.cloned(),
+        world: world_id,
+        weapons: weapons_revision,
+        scene_models: scene_models.is_some(),
+        projectiles: projectiles.is_some(),
+    };
     let (Some(atlas), Some(bodies), Some(world)) = (atlas, bodies, world_weapons) else {
         diag::info!(
             World,
@@ -197,7 +219,7 @@ pub fn prepare_model_materials(
     };
     let started = web_time::Instant::now();
     let mut by_key = HashMap::new();
-    let mut refused = Vec::new();
+    let mut refused = HashSet::new();
     for name in bodies.0.names() {
         if let Some(entry) = bodies.0.get(name) {
             admit_keys(
@@ -303,6 +325,10 @@ pub fn prepare_model_materials(
             }
         }
     }
+    let mut refused: Vec<_> = refused.into_iter().collect();
+    refused.sort_by(|left, right| {
+        (left.namespace.as_str(), &left.name).cmp(&(right.namespace.as_str(), &right.name))
+    });
     diag::info!(
         World,
         "model materials prepared before Ready: admitted={} map_model_materials={} map_model_dobjs={} projectile_materials={} projectile_dobjs={} refused={} elapsed={:.1}ms{}",

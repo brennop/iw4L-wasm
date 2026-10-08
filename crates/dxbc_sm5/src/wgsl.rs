@@ -6,7 +6,7 @@ use core::fmt::{self, Write};
 
 use crate::ir::{Components, DecodedInstruction, Index, Operand, RegisterType};
 use crate::program::{Program, ProgramKind};
-use crate::reflection::Reflection;
+use crate::reflection::{BindingKind, Reflection};
 use crate::signature::Signature;
 use crate::{Container, decode_instruction};
 
@@ -198,10 +198,65 @@ impl Shader {
             .filter(|i| !is_declaration(i.opcode.0))
         {
             for operand in &instruction.operands {
-                collect_rows(operand, &mut rows)?;
+                self.collect_rows(operand, &mut rows)?;
             }
         }
         Ok(rows)
+    }
+
+    fn collect_rows(
+        &self,
+        operand: &Operand,
+        rows: &mut BTreeSet<ConstantRow>,
+    ) -> Result<(), WgslError> {
+        for index in &operand.indices {
+            if let Index::Relative(inner) | Index::ImmediatePlusRelative(_, inner) = index {
+                self.collect_rows(inner, rows)?;
+            }
+        }
+        if operand.register == RegisterType::ConstantBuffer {
+            match operand.indices.as_slice() {
+                [Index::Immediate(buffer), Index::Immediate(row)] => {
+                    rows.insert(ConstantRow {
+                        buffer: *buffer,
+                        row: *row,
+                    });
+                }
+                [Index::Immediate(buffer), row] => {
+                    let base = match row {
+                        Index::ImmediatePlusRelative(base, _) => *base,
+                        _ => 0,
+                    };
+                    let array = self.indexed_array(*buffer, base).ok_or_else(|| {
+                        WgslError::UnsupportedOperand(format!("relative {operand}"))
+                    })?;
+                    rows.extend(array.map(|row| ConstantRow {
+                        buffer: *buffer,
+                        row,
+                    }));
+                }
+                _ => return Err(WgslError::UnsupportedOperand(format!("relative {operand}"))),
+            }
+        }
+        Ok(())
+    }
+
+    fn indexed_array(&self, buffer: u32, base: u32) -> Option<core::ops::Range<u32>> {
+        let binding = self
+            .reflection
+            .bindings
+            .iter()
+            .find(|b| b.kind == BindingKind::ConstantBuffer && b.bind_point == buffer)?;
+        let variable = self
+            .reflection
+            .constant_buffers
+            .iter()
+            .find(|cb| cb.name == binding.name)?
+            .variables
+            .iter()
+            .find(|v| v.start_offset <= base * 16 && base * 16 < v.start_offset + v.size)?;
+        let first = variable.start_offset / 16;
+        Some(first..(variable.start_offset + variable.size).div_ceil(16))
     }
 
     pub fn texture_slots(&self) -> Result<BTreeSet<TextureSlot>, WgslError> {
@@ -221,26 +276,6 @@ impl Shader {
         }
         Ok(slots)
     }
-}
-
-fn collect_rows(operand: &Operand, rows: &mut BTreeSet<ConstantRow>) -> Result<(), WgslError> {
-    for index in &operand.indices {
-        if let Index::Relative(inner) | Index::ImmediatePlusRelative(_, inner) = index {
-            collect_rows(inner, rows)?;
-        }
-    }
-    if operand.register == RegisterType::ConstantBuffer {
-        match operand.indices.as_slice() {
-            [Index::Immediate(buffer), Index::Immediate(row)] => {
-                rows.insert(ConstantRow {
-                    buffer: *buffer,
-                    row: *row,
-                });
-            }
-            _ => return Err(WgslError::UnsupportedOperand(format!("relative {operand}"))),
-        }
-    }
-    Ok(())
 }
 
 fn sample_registers(instruction: &DecodedInstruction) -> Option<(u32, u32)> {
@@ -310,6 +345,38 @@ impl Lowering<'_> {
                         });
                     }
                     format!("cb{}_{}", row.buffer, row.row)
+                }
+                [Index::Immediate(buffer), row] => {
+                    let (base, inner) = match row {
+                        Index::ImmediatePlusRelative(base, inner) => (*base, inner),
+                        Index::Relative(inner) => (0, inner),
+                        Index::Immediate(_) => unreachable!(),
+                    };
+                    let array = self
+                        .shader
+                        .indexed_array(*buffer, base)
+                        .ok_or_else(|| WgslError::UnsupportedOperand(operand.to_string()))?;
+                    let first = ConstantRow {
+                        buffer: *buffer,
+                        row: array.start,
+                    };
+                    let arena =
+                        *self
+                            .constants
+                            .get(&first)
+                            .ok_or(WgslError::UnassignedConstant {
+                                buffer: first.buffer,
+                                row: first.row,
+                            })?;
+                    let index = format!(
+                        "clamp(bitcast<i32>(({}).x) + {}, 0, {})",
+                        self.bits(inner)?,
+                        i64::from(base) - i64::from(array.start),
+                        array.len() - 1
+                    );
+                    format!(
+                        "bitcast<vec4<u32>>(sm3_constants.c[sm3_constant_base + {arena}u + u32({index})])"
+                    )
                 }
                 _ => return Err(WgslError::UnsupportedOperand(operand.to_string())),
             },

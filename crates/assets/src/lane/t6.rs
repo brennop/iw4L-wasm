@@ -1,3 +1,4 @@
+mod camouflage;
 mod common_compile;
 
 use std::collections::BTreeMap;
@@ -23,6 +24,7 @@ struct T6MaterialCapture {
     pub native: Option<T6NativeMaterial>,
 }
 
+#[derive(Clone)]
 struct T6NativeMaterial {
     pub header: Vec<u8>,
     pub technique_set: String,
@@ -44,6 +46,7 @@ struct T6Content {
     pub melee: Option<asset_game::T6Melee>,
     pub fx: Vec<asset_game::T6FxCapture>,
     pub fx_materials: BTreeMap<String, T6MaterialCapture>,
+    pub camouflages: BTreeMap<String, Vec<asset_game::WeaponCamouflage>>,
     pub report: Vec<String>,
 }
 
@@ -228,7 +231,14 @@ fn capture_sounds(
     );
     let (banks, mut report) = asset_audio::t6_sound_banks(path);
     let foley = foley_zone(path, &mut report);
-    let loads: Vec<&fastfile_t6::ZoneLoad> = std::iter::once(load).chain(&foley).collect();
+    let code = sound_zone(&path.with_file_name("code_post_gfx_mp.ff"), &mut report);
+    let loads: Vec<&fastfile_t6::ZoneLoad> =
+        std::iter::once(load).chain(&foley).chain(&code).collect();
+    names.extend(
+        asset_audio::t6_sound_names(&loads)
+            .into_iter()
+            .filter(|name| name.starts_with("mus_") || name.starts_with("uin_")),
+    );
     let (catalog, filled, gaps) =
         asset_audio::capture_t6_sounds(path, &loads, &banks, names.iter().map(String::as_str));
     report.push(format!(
@@ -267,6 +277,17 @@ fn patch_zone(common: &Path, report: &mut Vec<String>) -> Option<fastfile_t6::Zo
     Some(load)
 }
 
+fn sound_zone(path: &Path, report: &mut Vec<String>) -> Option<fastfile_t6::ZoneLoad> {
+    let image = asset_transport::open_t6_zone(path)
+        .map_err(|error| report.push(format!("t6 sound source {}: {error:?}", path.display())))
+        .ok()?;
+    let (load, walked) = fastfile_t6::load_zone(schema().ok()?, &image.bytes, |_, _| true);
+    if let Err(error) = walked {
+        report.push(format!("t6 sound source {}: {error:?}", path.display()));
+    }
+    Some(load)
+}
+
 fn foley_zone(common: &Path, report: &mut Vec<String>) -> Option<fastfile_t6::ZoneLoad> {
     let dir = common.parent()?;
     let smallest = std::fs::read_dir(dir)
@@ -294,9 +315,7 @@ fn foley_zone(common: &Path, report: &mut Vec<String>) -> Option<fastfile_t6::Zo
             return None;
         }
     };
-    let (load, walked) = fastfile_t6::load_zone(schema().ok()?, &image.bytes, |_, ty| {
-        ty != fastfile_t6::AssetType::SoundBank
-    });
+    let (load, walked) = fastfile_t6::load_zone(schema().ok()?, &image.bytes, |_, _| true);
     if let Err(error) = walked {
         report.push(format!("t6 sounds: {} walk: {error:?}", path.display()));
     }
@@ -536,7 +555,7 @@ enum ColourMapAlpha {
 fn capture_native(
     load: &fastfile_t6::ZoneLoad,
     zones: &[&fastfile_t6::ZoneLoad],
-    address: fastfile_t6::Ptr,
+    address: Option<fastfile_t6::Ptr>,
     material: &fastfile_t6::LoadedAsset,
     colour_alpha: ColourMapAlpha,
     ipaks: &[asset_transport::IPak],
@@ -547,7 +566,7 @@ fn capture_native(
     let techset = material
         .field(MATERIAL_TECHNIQUE_SET)
         .map(|index| &load.assets[index])
-        .or_else(|| load.asset_at(address.at(MATERIAL_TECHNIQUE_SET)))?;
+        .or_else(|| load.asset_at(address?.at(MATERIAL_TECHNIQUE_SET)))?;
     let technique_set = header_str(load, &techset.header, 0)?
         .trim_start_matches(',')
         .to_owned();
@@ -823,7 +842,7 @@ fn capture_weapon_icons(
     loads: &[&fastfile_t6::ZoneLoad],
     ipaks: &[asset_transport::IPak],
     report: &mut Vec<String>,
-) -> Vec<(String, Arc<[u8]>)> {
+) -> Vec<(String, asset_material::ZoneUiImage)> {
     let mut wanted = std::collections::BTreeSet::new();
     for load in loads {
         for asset in &load.assets {
@@ -898,7 +917,13 @@ fn capture_weapon_icons(
                 continue;
             }
             match capture_icon(load, asset, &all, ipaks) {
-                Ok(iwi) => icons.push((name, iwi)),
+                Ok(iwi) => icons.push((
+                    name,
+                    asset_material::ZoneUiImage {
+                        iwi,
+                        state: capture_ui_state(load, asset),
+                    },
+                )),
                 Err(error) => failed.push(format!("{name}: {error}")),
             }
         }
@@ -919,7 +944,7 @@ fn capture_weapon_icons(
             match decoded {
                 Ok(iwi) => {
                     wanted.remove(&name);
-                    icons.push((name, iwi));
+                    icons.push((name, asset_material::ZoneUiImage { iwi, state: None }));
                 }
                 Err(error) => failed.push(format!("{name}: {error}")),
             }
@@ -932,6 +957,27 @@ fn capture_weapon_icons(
         wanted.len()
     ));
     icons
+}
+
+fn capture_ui_state(
+    load: &fastfile_t6::ZoneLoad,
+    material: &fastfile_t6::LoadedAsset,
+) -> Option<render_material::CompiledPassState> {
+    let header = &material.header;
+    let row = *header.get(MATERIAL_STATE_BITS_ENTRY + 2)?;
+    if row == u8::MAX || row >= *header.get(86)? {
+        return None;
+    }
+    let table = decode_ptr(header_u32(header, MATERIAL_STATE_BITS_TABLE)?)?;
+    let bytes = load
+        .blocks
+        .bytes(table.at(u32::from(row) * MATERIAL_STATE_BITS), 8)
+        .ok()?;
+    let state = asset_material::compile_material_state(
+        asset_core::FamilyId::T6,
+        [header_u32(bytes, 0)?, header_u32(bytes, 4)?],
+    );
+    state.unsupported_host_fields().is_none().then_some(state)
 }
 
 fn capture_icon(
@@ -1121,9 +1167,13 @@ fn capture_content(
                         capture_native(
                             load,
                             &zones,
-                            address,
+                            Some(address),
                             material,
-                            ColourMapAlpha::Mask,
+                            if hands {
+                                ColourMapAlpha::Mask
+                            } else {
+                                ColourMapAlpha::Gloss
+                            },
                             ipaks,
                             &mut native_textures,
                             &mut content.techsets,
@@ -1147,6 +1197,7 @@ fn capture_content(
             view,
         });
     }
+    camouflage::capture(load, &zones, ipaks, &mut native_textures, &mut content);
     content.report.push(format!(
         "t6 content: {} models ({failed} failed), {} materials, {decoded} native textures decoded, {missing} missing; {} image packages",
         content.models.len(),
@@ -1298,7 +1349,7 @@ fn capture_effect(
                             capture_native(
                                 load,
                                 zones,
-                                address,
+                                Some(address),
                                 material,
                                 ColourMapAlpha::Mask,
                                 ipaks,
@@ -1497,7 +1548,7 @@ fn capture_soldiers(
                 let native = capture_native(
                     material_load,
                     &zones,
-                    address,
+                    Some(address),
                     material,
                     ColourMapAlpha::Mask,
                     ipaks,
@@ -1631,7 +1682,8 @@ fn map_teams(
             spawn: value("music/spawn_").map(|s| format!("mus_{}", s.to_ascii_lowercase())),
             victory: value("music/victory_").map(|s| format!("mus_{}", s.to_ascii_lowercase())),
             defeat: Some("mus_loss".into()),
-            ..Default::default()
+            winning: Some("mus_time_running_out".into()),
+            losing: Some("mus_time_running_out".into()),
         };
         if index == 0 {
             settings.allies = icon;
@@ -1834,10 +1886,7 @@ impl ZoneLane for T6Lane {
                     let native = capture_native(
                         &load,
                         &image_loads,
-                        fastfile_t6::Ptr {
-                            block: 0,
-                            offset: 0,
-                        },
+                        None,
                         material,
                         ColourMapAlpha::Gloss,
                         &ipaks,
@@ -2124,14 +2173,22 @@ impl ZoneLane for T6Lane {
                 [&team_settings.allies_music, &team_settings.axis_music]
                     .into_iter()
                     .flat_map(|music| {
-                        [&music.spawn, &music.victory, &music.defeat]
-                            .into_iter()
-                            .filter_map(|alias| alias.clone())
+                        [
+                            &music.spawn,
+                            &music.victory,
+                            &music.defeat,
+                            &music.winning,
+                            &music.losing,
+                        ]
+                        .into_iter()
+                        .filter_map(|alias| alias.clone())
                     }),
             );
             sound_names.sort();
             sound_names.dedup();
             sound_loads.extend(&shared_loads);
+            let code = sound_zone(&path.with_file_name("code_post_gfx_mp.ff"), &mut report);
+            sound_loads.extend(&code);
             let (banks, bank_report) = asset_audio::t6_sound_banks(path);
             report.extend(bank_report);
             let (sound_catalog, filled, sound_gaps) = asset_audio::capture_t6_sounds(

@@ -405,14 +405,16 @@ pub(crate) fn update_scorebar(
     }
     let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     for cmd in &mut list.cmds {
-        if cmd.material_namespace == asset_core::AssetNamespace::T5
-            && let Some(icon) = [teams.0.allies.as_ref(), teams.0.axis.as_ref()]
-                .into_iter()
-                .flatten()
-                .find(|icon| {
-                    icon.namespace == cmd.material_namespace
-                        && cmd.material.strip_suffix("_fade") == Some(icon.name.as_str())
-                })
+        if matches!(
+            cmd.material_namespace,
+            asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6
+        ) && let Some(icon) = [teams.0.allies.as_ref(), teams.0.axis.as_ref()]
+            .into_iter()
+            .flatten()
+            .find(|icon| {
+                icon.namespace == cmd.material_namespace
+                    && cmd.material.strip_suffix("_fade") == Some(icon.name.as_str())
+            })
         {
             cmd.material.clone_from(&icon.name);
         }

@@ -1,37 +1,20 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use master_protocol::Channel;
-
 use crate::shell::{Res, capture, run};
 
 const SERVER_DAYS: &str = "825";
 const CA_DAYS: &str = "3650";
 
-pub enum San {
-    Labels,
-    WithHost(String),
+pub struct San {
+    pub label: String,
+    pub host: String,
 }
 
 impl San {
     fn value(&self) -> String {
-        let labels = Channel::ALL
-            .iter()
-            .map(|channel| format!("DNS:{}", channel.server_name()))
-            .collect::<Vec<_>>()
-            .join(",");
-        match self {
-            Self::Labels => labels,
-            Self::WithHost(host) if is_ipv4(host) => format!("{labels},IP:{host}"),
-            Self::WithHost(host) => format!("{labels},DNS:{host}"),
-        }
-    }
-
-    fn host(&self) -> Option<&str> {
-        match self {
-            Self::Labels => None,
-            Self::WithHost(host) => Some(host),
-        }
+        let host = if is_ipv4(&self.host) { "IP" } else { "DNS" };
+        format!("DNS:{},{host}:{}", self.label, self.host)
     }
 }
 
@@ -109,14 +92,13 @@ impl Ca {
     fn ensure_server(&self, san: &San) -> Res<()> {
         let (key, cert) = (self.server_key(), self.server_cert());
         if key.is_file() && cert.is_file() {
-            let Some(host) = san.host() else {
-                return Ok(());
-            };
-            if cert_covers_host(&cert, host)? {
+            if cert_covers(&cert, &format!("DNS:{}", san.label))?
+                && cert_covers_host(&cert, &san.host)?
+            {
                 return Ok(());
             }
             return Err(format!(
-                "server cert under {} does not cover {host} ({}); refusing to replace it",
+                "server cert under {} does not cover {}; refusing to replace it",
                 self.dir.display(),
                 san.value()
             ));
@@ -130,7 +112,7 @@ impl Ca {
         gen_key(&key)?;
         let csr = self.dir.join("server.csr");
         let ext = self.dir.join("server.ext");
-        let subject = format!("/CN={}", Channel::Prod.server_name());
+        let subject = format!("/CN={}", san.label);
         run(Command::new("openssl")
             .args(["req", "-new", "-key"])
             .arg(&key)
@@ -187,17 +169,21 @@ pub fn is_ipv4(value: &str) -> bool {
 }
 
 fn cert_covers_host(cert: &Path, host: &str) -> Res<bool> {
+    let entry = if is_ipv4(host) {
+        format!("IP Address:{host}")
+    } else {
+        format!("DNS:{host}")
+    };
+    cert_covers(cert, &entry)
+}
+
+fn cert_covers(cert: &Path, entry: &str) -> Res<bool> {
     let sans = capture(
         Command::new("openssl")
             .args(["x509", "-in"])
             .arg(cert)
             .args(["-noout", "-ext", "subjectAltName"]),
     )?;
-    let entry = if is_ipv4(host) {
-        format!("IP Address:{host}")
-    } else {
-        format!("DNS:{host}")
-    };
     // openssl prints the extension name on its own line, then the
     // comma-separated entries; both separators have to split.
     Ok(sans.split(['\n', ',']).any(|item| item.trim() == entry))
@@ -215,12 +201,13 @@ fn set_mode(_path: &Path, _mode: u32) -> Res<()> {
     Ok(())
 }
 
-/// `cargo xtask certs <host>` — the release CA named by `IW4L_RELEASE_KEY`.
 pub fn run_cli(env: &crate::dotenv::Env, args: &[String]) -> Res<()> {
-    let host = args
-        .first()
-        .ok_or("usage: cargo xtask certs <host>")?
-        .clone();
+    let [name, host] = args else {
+        return Err("usage: cargo xtask certs <name> <host>".to_string());
+    };
     let dir = env.require("IW4L_RELEASE_KEY")?;
-    Ca::new(PathBuf::from(dir)).ensure(&San::WithHost(host))
+    Ca::new(PathBuf::from(dir)).ensure(&San {
+        label: format!("iw4l-{name}"),
+        host: host.clone(),
+    })
 }

@@ -80,17 +80,7 @@ pub(crate) fn route_class_commands(
             }
 
             "spawn" => {
-                if let Some(arg) = cmd.args.first()
-                    && class_index_by_name(&store, arg).is_none()
-                {
-                    echo(
-                        format!("spawn: unknown_class `{arg}`"),
-                        &mut console,
-                        &mut line,
-                    );
-                    continue;
-                }
-                match spawn_gate(change_allowed.0, cmd.background) {
+                match spawn_gate(change_allowed.0 && !store.slots.is_empty(), cmd.background) {
                     SpawnGate::RefuseNow => {
                         let reason = block_reason
                             .0
@@ -164,7 +154,7 @@ pub(crate) fn complete_pending_spawn(
         console.echo(msg, capacity);
         return;
     }
-    if !change_allowed.0 {
+    if !change_allowed.0 || store.slots.is_empty() {
         return;
     }
     let class = dispatch.pending_spawn_class.take();

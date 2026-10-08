@@ -340,11 +340,11 @@ pub fn seal_render_frame(
     let mut smc_index_baked = Vec::new();
     let smodel_pretess_indices = retained
         .as_ref()
-        .map(|retained| Arc::clone(&retained.smodel_pretess_indices))
+        .map(|retained| Arc::clone(retained.smodel_pretess_indices()))
         .unwrap_or_else(|| Arc::new(Vec::new()));
     let smodel_index_layout_revision = retained
         .as_ref()
-        .map(|retained| retained.smodel_index_layout_revision)
+        .map(|retained| retained.smodel_index_layout_revision())
         .unwrap_or(0);
     if let Some(cache) = smc.as_ref() {
         smc_vb_patches = cache.vb_patches().to_vec();

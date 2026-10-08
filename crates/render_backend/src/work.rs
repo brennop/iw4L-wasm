@@ -59,6 +59,7 @@ pub type ColourDrawListWork = ShadowDrawListWork;
 
 struct WorldListWorker<'a> {
     entries: &'a [GfxTrianglesListEntry],
+    sort_keys: &'a [u8],
     cur: usize,
     flushes: &'a mut Vec<TrianglesListFlush>,
     emit: Option<&'a RefCell<Vec<PackedEmit>>>,
@@ -99,12 +100,15 @@ impl DrawSurfListWorker for WorldListWorker<'_> {
     }
 
     fn peek_sort_key(&self) -> u32 {
-        self.entries.get(self.cur).map(|e| e.sort_key).unwrap_or(0)
+        self.entries
+            .get(self.cur)
+            .map_or(0, |e| rank_sort_key(self.sort_keys, e.sort_key))
     }
 }
 
 struct SmodelListWorker<'a> {
     entries: &'a [GfxSmodelRigidEntry],
+    sort_keys: &'a [u8],
     cur: usize,
     flushes: &'a mut Vec<SmodelRigidFlush>,
     emit: Option<&'a RefCell<Vec<PackedEmit>>>,
@@ -144,13 +148,13 @@ impl DrawSurfListWorker for SmodelListWorker<'_> {
     fn peek_sort_key(&self) -> u32 {
         self.entries
             .get(self.cur)
-            .map(|e| e.packed_key)
-            .unwrap_or(0)
+            .map_or(0, |e| rank_sort_key(self.sort_keys, e.packed_key))
     }
 }
 
 struct XModelListWorker<'a> {
     entries: &'a [GfxXModelRigidEntry],
+    sort_keys: &'a [u8],
     cur: usize,
     flushes: &'a mut Vec<XModelRigidFlush>,
     emit: Option<&'a RefCell<Vec<PackedEmit>>>,
@@ -189,9 +193,17 @@ impl DrawSurfListWorker for XModelListWorker<'_> {
     fn peek_sort_key(&self) -> u32 {
         self.entries
             .get(self.cur)
-            .map(|e| e.packed_key)
-            .unwrap_or(0)
+            .map_or(0, |e| rank_sort_key(self.sort_keys, e.packed_key))
     }
+}
+
+// Merge on the primary sort key, not the batching key: its surf_type bits would
+// draw every smodel before a lower-sort xmodel such as the T6 sky.
+fn rank_sort_key(sort_keys: &[u8], key: u32) -> u32 {
+    sort_keys
+        .get((key & 0x7fff) as usize)
+        .copied()
+        .map_or(0, u32::from)
 }
 
 #[derive(Clone, Copy)]
@@ -304,6 +316,7 @@ fn run_packed_work(
     let emit = if sorted { Some(&emit_cell) } else { None };
     let mut world = WorldListWorker {
         entries: &packed.world,
+        sort_keys: &packed.sort_key_by_rank,
         cur: 0,
         flushes: &mut world_flushes,
         emit,
@@ -311,6 +324,7 @@ fn run_packed_work(
     };
     let mut xmodel = XModelListWorker {
         entries: &packed.xmodel,
+        sort_keys: &packed.sort_key_by_rank,
         cur: 0,
         flushes: &mut xmodel_flushes,
         emit,
@@ -318,6 +332,7 @@ fn run_packed_work(
     };
     let mut smodel = SmodelListWorker {
         entries: &packed.smodel,
+        sort_keys: &packed.sort_key_by_rank,
         cur: 0,
         flushes: &mut smodel_flushes,
         emit,
@@ -326,6 +341,7 @@ fn run_packed_work(
     };
     let mut pretess = SmodelListWorker {
         entries: &packed.smodel_pretess,
+        sort_keys: &packed.sort_key_by_rank,
         cur: 0,
         flushes: &mut smodel_pretess_flushes,
         emit,
@@ -334,6 +350,7 @@ fn run_packed_work(
     };
     let mut cached = SmodelListWorker {
         entries: &packed.smodel_cached,
+        sort_keys: &packed.sort_key_by_rank,
         cur: 0,
         flushes: &mut smodel_cached_flushes,
         emit,
@@ -343,6 +360,7 @@ fn run_packed_work(
     let mut smodel_skinned_flushes = Vec::new();
     let mut skinned = SmodelListWorker {
         entries: &packed.smodel_skinned,
+        sort_keys: &packed.sort_key_by_rank,
         cur: 0,
         flushes: &mut smodel_skinned_flushes,
         emit,

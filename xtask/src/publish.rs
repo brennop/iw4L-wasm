@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use master_protocol::Channel;
 use serde_json::Value;
 
 use crate::dotenv::Env;
-use crate::release::file_sha256;
-use crate::shell::{Res, Ssh, capture, check_deploy_root, require_tools, run};
+use crate::release::{file_sha256, release_dir, sha256_hex};
+use crate::server::{Descriptor, Remote, root_dir};
+use crate::shell::{Res, Ssh, capture, require_tools, run};
 
 /// How long the restarted master gets to answer `status` with the protocol the
 /// release was built against, before its predecessor is put back.
@@ -26,7 +26,6 @@ const MISSING: &str = "MISSING";
 /// One shipped file, as `deployment.json` describes it.
 struct Row {
     local: String,
-    /// Relative to `IW4L_DEPLOY_ROOT`.
     remote: String,
     sha256: String,
     size: u64,
@@ -40,7 +39,6 @@ impl Row {
     }
 }
 
-/// Holds the per-channel publish lock for as long as it is alive.
 struct Lock<'a> {
     ssh: &'a Ssh,
     dir: String,
@@ -103,9 +101,7 @@ fn u64_field(value: &Value, key: &str, path: &Path) -> Res<u64> {
         .ok_or_else(|| format!("{}: {key} is not a number", path.display()))
 }
 
-/// Where a file goes under `IW4L_DEPLOY_ROOT`. Only the master lives outside
-/// the channel's release directory: it is shared and addressed by its own SHA.
-fn rows_of(descriptor: &Value, channel: Channel, path: &Path) -> Res<Vec<Row>> {
+fn rows_of(descriptor: &Value, remote: &Remote, path: &Path) -> Res<Vec<Row>> {
     let files = field(descriptor, "files", path)?
         .as_array()
         .ok_or_else(|| format!("{}: files is not an array", path.display()))?;
@@ -113,11 +109,11 @@ fn rows_of(descriptor: &Value, channel: Channel, path: &Path) -> Res<Vec<Row>> {
         .iter()
         .map(|entry| {
             let role = str_field(entry, "role", path)?;
-            let remote = str_field(entry, "remote", path)?;
-            let remote = if role == "master" {
-                remote
+            let name = str_field(entry, "remote", path)?;
+            let remote = if role == "game-blob" {
+                format!("{}/{name}", remote.updates)
             } else {
-                format!("releases/{channel}/{remote}")
+                format!("{}/{name}", remote.lib)
             };
             Ok(Row {
                 local: str_field(entry, "local", path)?,
@@ -131,28 +127,6 @@ fn rows_of(descriptor: &Value, channel: Channel, path: &Path) -> Res<Vec<Row>> {
             })
         })
         .collect()
-}
-
-fn release_dir(root: &Path, channel: Channel) -> Res<PathBuf> {
-    if let Ok(explicit) = std::env::var("RELEASE")
-        && !explicit.is_empty()
-    {
-        let dir = PathBuf::from(&explicit);
-        return Ok(if dir.is_absolute() {
-            dir
-        } else {
-            root.join(explicit)
-        });
-    }
-    let channel_dir = root.join("dist/releases").join(channel.as_str());
-    let latest = channel_dir.join("LATEST");
-    let id = std::fs::read_to_string(&latest).map_err(|_| {
-        format!(
-            "no RELEASE= and no {}; run `cargo xtask release {channel}` first",
-            latest.display()
-        )
-    })?;
-    Ok(channel_dir.join(id.trim()))
 }
 
 fn remote_inventory(ssh: &Ssh, paths: &[String]) -> Res<Vec<(String, String)>> {
@@ -172,42 +146,89 @@ fn lookup(inventory: &[(String, String)], path: &str) -> String {
         .map_or(MISSING.to_string(), |(_, hash)| hash.clone())
 }
 
-pub fn run_cli(root: &Path, env: &Env, args: &[String]) -> Res<()> {
-    let channel: Channel = args
-        .first()
-        .ok_or("usage: cargo xtask publish <prod|dev>")?
-        .parse()
-        .map_err(|_| "usage: cargo xtask publish <prod|dev>".to_string())?;
-    publish(root, env, channel)
+fn preflight(servers: &[Descriptor]) -> Res<()> {
+    require_tools(&["curl", "rsync", "ssh"])?;
+    for server in servers {
+        let ssh = server.ssh()?;
+        ssh.run("true")
+            .map_err(|error| format!("ssh {} is not usable: {error}", ssh.target()))?;
+        Remote::find(&ssh, server.port()?)?;
+    }
+    Ok(())
 }
 
-pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
-    require_tools(&["curl", "rsync", "ssh"])?;
-    let ssh = Ssh::new(&env.require("IW4L_DEPLOY_HOST")?)?;
-    let deploy_root = env.require("IW4L_DEPLOY_ROOT")?;
-    check_deploy_root(&deploy_root)?;
+pub fn run_cli(root: &Path, args: &[String]) -> Res<()> {
+    let dir = release_dir(root)?;
+    let servers = Descriptor::select(Descriptor::all_in(&dir.join("client"))?, args)?;
+    preflight(&servers)?;
+    publish_all(&dir, &servers)
+}
 
-    let dir = release_dir(root, channel)?;
+pub fn deploy(root: &Path, env: &Env, args: &[String]) -> Res<()> {
+    let named = Descriptor::select(Descriptor::all_in(&root_dir(env)?)?, args)?;
+    preflight(&named)?;
+    let (_, dir) = crate::release::release(root, env)?;
+    let servers = Descriptor::select(Descriptor::all_in(&dir.join("client"))?, args)?;
+    publish_all(&dir, &servers)
+}
+
+fn publish_all(dir: &Path, servers: &[Descriptor]) -> Res<()> {
+    for (index, server) in servers.iter().enumerate() {
+        if let Err(error) = publish(dir, server) {
+            let rest = servers[index..]
+                .iter()
+                .map(Descriptor::name)
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Err(format!(
+                "{}: {error}\nresume with:\n  make publish {rest} RELEASE={}",
+                server.name(),
+                dir.display()
+            ));
+        }
+        println!(
+            "publish.{}: complete release={}",
+            server.name(),
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
+struct CaFile(PathBuf);
+
+impl CaFile {
+    fn write(server: &Descriptor) -> Res<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "iw4l-ca-{}-{}.pem",
+            std::process::id(),
+            server.name()
+        ));
+        std::fs::write(&path, server.ca_pem())
+            .map_err(|error| format!("writing {}: {error}", path.display()))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for CaFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
     let descriptor_path = dir.join("deployment.json");
     if !descriptor_path.is_file() {
         return Err(format!("not a prepared release: {}", dir.display()));
     }
-    let descriptor = read_json(&descriptor_path)?;
-    let release_id = str_field(&descriptor, "id", &descriptor_path)?;
-    let protocol = u64_field(&descriptor, "protocol", &descriptor_path)?;
-    let desc_channel = str_field(&descriptor, "channel", &descriptor_path)?;
-    let desc_port = u64_field(&descriptor, "master_port", &descriptor_path)?;
-    if desc_channel != channel.as_str() {
-        return Err(format!("release channel {desc_channel} != {channel}"));
-    }
-    if desc_port != u64::from(channel.port()) {
-        return Err(format!(
-            "release master_port {desc_port} != {}",
-            channel.port()
-        ));
-    }
+    let deployment = read_json(&descriptor_path)?;
+    let release_id = str_field(&deployment, "id", &descriptor_path)?;
+    let protocol = u64_field(&deployment, "protocol", &descriptor_path)?;
+    let ssh = &server.ssh()?;
+    let remote = Remote::find(ssh, server.port()?)?;
+    println!("publish: {} unit={}", server.summary(), remote.unit);
 
-    let rows = rows_of(&descriptor, channel, &descriptor_path)?;
+    let rows = rows_of(&deployment, &remote, &descriptor_path)?;
     for row in &rows {
         let local = dir.join(&row.local);
         if !local.is_file() {
@@ -227,47 +248,48 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
         return Err("client/master protocol mismatch inside the release".to_string());
     }
 
-    let master_local = dir.join("server/iw4l-master");
-    let master_sha = file_sha256(&master_local)?;
-    let bin_link = format!("{deploy_root}/bin/iw4l-master-{channel}");
-    let new_master = format!("{deploy_root}/masters/{master_sha}/iw4l-master");
-    let staging = format!("{deploy_root}/staging/{channel}/{release_id}");
-    let remote_releases = format!("{deploy_root}/releases/{channel}");
-
-    ssh.run(&format!("install -d -m 0755 '{deploy_root}/locks'"))?;
-    let lock_dir = format!("{deploy_root}/locks/{channel}");
-    if !ssh.try_run(&format!("mkdir '{lock_dir}'"))? {
+    let lib = &remote.lib;
+    let installed_ca = ssh
+        .capture(&format!("sha256sum '{}' | cut -d' ' -f1", remote.ca()))?
+        .trim()
+        .to_string();
+    if installed_ca != sha256_hex(server.ca_pem().as_bytes()) {
         return Err(format!(
-            "publish: channel {channel} already being published"
+            "{} trusts a CA other than {} on {}; players would reject this server",
+            server.path.display(),
+            remote.ca(),
+            ssh.host(),
         ));
     }
-    let _lock = Lock {
-        ssh: &ssh,
-        dir: lock_dir,
-    };
+
+    let master_local = dir.join("server/iw4l-master");
+    let master_sha = file_sha256(&master_local)?;
+    let staging = format!("{lib}/staging/{release_id}");
+    let lock_dir = format!("{lib}/publish.lock");
+    if !ssh.try_run(&format!("mkdir '{lock_dir}'"))? {
+        return Err(format!("publish: {} already being published", remote.unit));
+    }
+    let _lock = Lock { ssh, dir: lock_dir };
 
     ssh.run(&format!(
-        "install -d -m 0755 '{staging}' '{remote_releases}/manifests' '{deploy_root}/masters/{master_sha}' '{deploy_root}/bin'"
+        "install -d -m 0755 '{staging}' '{lib}/manifests' '{lib}/masters/{master_sha}' '{updates}'",
+        updates = remote.updates,
     ))?;
 
     let inventory_started = Instant::now();
-    let finals: Vec<String> = rows
-        .iter()
-        .map(|row| format!("{deploy_root}/{}", row.remote))
-        .collect();
-    let inventory = remote_inventory(&ssh, &finals)?;
+    let finals: Vec<String> = rows.iter().map(|row| row.remote.clone()).collect();
+    let inventory = remote_inventory(ssh, &finals)?;
 
     let mut need = Vec::new();
     let (mut upload_bytes, mut skipped) = (0_u64, 0_usize);
     for row in &rows {
-        let final_path = format!("{deploy_root}/{}", row.remote);
-        let existing = lookup(&inventory, &final_path);
+        let existing = lookup(&inventory, &row.remote);
         if existing == row.sha256 {
             skipped += 1;
             continue;
         }
         if existing != MISSING && row.immutable {
-            return Err(format!("immutable collision at {final_path}"));
+            return Err(format!("immutable collision at {}", row.remote));
         }
         upload_bytes += row.size;
         need.push(row);
@@ -294,7 +316,7 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
             .iter()
             .map(|row| format!("{staging}/{}", row.local))
             .collect();
-        let landed = remote_inventory(&ssh, &staged)?;
+        let landed = remote_inventory(ssh, &staged)?;
         for (row, path) in need.iter().zip(&staged) {
             if lookup(&landed, path) != row.sha256 {
                 return Err(format!("staged sha256 mismatch: {path}"));
@@ -313,10 +335,7 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
         .filter(|row| !row.is_manifest())
         .map(|row| {
             let mode = if row.role == "master" { "755" } else { "644" };
-            format!(
-                "{staging}/{}\t{deploy_root}/{}\t{mode}\n",
-                row.local, row.remote
-            )
+            format!("{staging}/{}\t{}\t{mode}\n", row.local, row.remote)
         })
         .collect();
     if !promote.is_empty() {
@@ -324,11 +343,9 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
     }
 
     let master = MasterSwitch {
-        ssh: &ssh,
-        channel,
-        deploy_root: &deploy_root,
-        bin_link: &bin_link,
-        new_master: &new_master,
+        ssh,
+        remote: &remote,
+        server_name: server.server_name(),
         master_sha: &master_sha,
         protocol,
     };
@@ -343,66 +360,68 @@ pub fn publish(root: &Path, env: &Env, channel: Channel) -> Res<()> {
         ));
     }
 
-    activate_manifest(&ssh, &dir, &staging, &remote_releases, &release_id)?;
-
-    let ca_pem = dir.join("client/iw4l-ca.pem");
-    verify_published_manifest(&ssh, channel, &ca_pem, &manifest_path)?;
-    println!("verify.manifest: ok release={release_id}");
+    let previous = activate_manifest(ssh, &remote, dir, &staging, &release_id)?;
+    let ca_pem = CaFile::write(server)?;
+    let updates = dir.join("server/updates");
+    if let Err(error) = verify_served(server, &ca_pem.0, &updates, &manifest.file.path) {
+        let restored = match &previous {
+            Some(previous) => restore_manifest(ssh, &remote, previous).map_or_else(
+                |e| format!("restoring {previous} failed: {e}"),
+                |()| format!("restored {previous}"),
+            ),
+            None => "no previous manifest to restore".to_string(),
+        };
+        return Err(format!("{error}; {restored}"));
+    }
+    println!("verify.served: ok manifest+blob release={release_id}");
 
     println!("[deploy] master health (on {})", ssh.host());
-    ssh.run(&format!(
-        "'{bin_link}' status --connect 127.0.0.1:{port} --server-name '{name}' --ca-cert /etc/iw4l/iw4l-ca.pem",
-        port = channel.port(),
-        name = channel.server_name(),
-    ))?;
+    ssh.run(&remote.probe_command(server.server_name()))?;
 
-    local_reachability(&ssh, channel, &master_local, &ca_pem)?;
+    local_reachability(server, &master_local, &ca_pem.0)?;
     println!(
-        "[deploy] {channel} healthy: master udp/{port}, releases https://{host}:{port}/updates/",
-        port = channel.port(),
-        host = ssh.host(),
+        "[deploy] {} healthy: master udp/{port}, updates {url}",
+        server.name(),
+        port = remote.port,
+        url = server.community.updates.url,
     );
     ssh.run(&format!("rm -rf '{staging}'"))
 }
 
 struct MasterSwitch<'a> {
     ssh: &'a Ssh,
-    channel: Channel,
-    deploy_root: &'a str,
-    bin_link: &'a str,
-    new_master: &'a str,
+    remote: &'a Remote,
+    server_name: &'a str,
     master_sha: &'a str,
     protocol: u64,
 }
 
 impl MasterSwitch<'_> {
-    fn probe(&self) -> Res<String> {
-        self.ssh.capture(&format!(
-            "'{link}' status --connect 127.0.0.1:{port} --server-name '{name}' --ca-cert /etc/iw4l/iw4l-ca.pem",
-            link = self.bin_link,
-            port = self.channel.port(),
-            name = self.channel.server_name(),
-        ))
-    }
-
     fn running_protocol(&self) -> Option<u64> {
-        let status = self.probe().ok()?;
+        let status = self
+            .ssh
+            .capture(&self.remote.probe_command(self.server_name))
+            .ok()?;
         parse_protocol(&status)
     }
 
     fn point_at(&self, sha: &str) -> Res<()> {
+        let lib = &self.remote.lib;
         self.ssh.run(&format!(
             "set -eu
-            ln -sfn '../masters/{sha}/iw4l-master' '{link}.new'
-            mv -T '{link}.new' '{link}'
+            cp '{lib}/masters/{sha}/iw4l-master' '{bin}.new'
+            chmod 755 '{bin}.new'
+            mv -T '{bin}.new' '{bin}'
             systemctl restart '{unit}'",
-            link = self.bin_link,
-            unit = self.channel.unit(),
+            bin = self.remote.bin,
+            unit = self.remote.unit,
         ))
     }
 
     fn activate(&self) -> Res<()> {
-        let unit = self.channel.unit();
+        let unit = &self.remote.unit;
+        let lib = &self.remote.lib;
+        let bin = &self.remote.bin;
         let old_pid = self
             .ssh
             .capture(&format!("systemctl show -p MainPID --value '{unit}'"))
@@ -411,8 +430,7 @@ impl MasterSwitch<'_> {
         let current_sha = self
             .ssh
             .capture(&format!(
-                "if [ -e '{link}' ]; then sha256sum '{link}' | cut -d' ' -f1; fi",
-                link = self.bin_link
+                "if [ -f '{bin}' ]; then sha256sum '{bin}' | cut -d' ' -f1; fi"
             ))
             .unwrap_or_else(|_| String::new());
         let current_sha = current_sha.trim().to_string();
@@ -433,14 +451,12 @@ impl MasterSwitch<'_> {
         // something to go back to even if it was never published from here.
         self.ssh.run(&format!(
             "set -eu
-            if [ -n '{current_sha}' ] && [ ! -f '{root}/masters/{current_sha}/iw4l-master' ] && [ -e '{link}' ]; then
-              install -d -m 0755 '{root}/masters/{current_sha}'
-              cp -L '{link}' '{root}/masters/{current_sha}/iw4l-master'
+            if [ -n '{current_sha}' ] && [ ! -f '{lib}/masters/{current_sha}/iw4l-master' ]; then
+              install -d -m 0755 '{lib}/masters/{current_sha}'
+              cp '{bin}' '{lib}/masters/{current_sha}/iw4l-master'
             fi
-            test -f '{new}'",
-            root = self.deploy_root,
-            link = self.bin_link,
-            new = self.new_master,
+            test -f '{lib}/masters/{new}/iw4l-master'",
+            new = self.master_sha,
         ))?;
         self.point_at(self.master_sha)?;
 
@@ -494,15 +510,16 @@ fn parse_protocol(status: &str) -> Option<u64> {
 
 fn activate_manifest(
     ssh: &Ssh,
+    remote: &Remote,
     dir: &Path,
     staging: &str,
-    remote_releases: &str,
     release_id: &str,
-) -> Res<()> {
+) -> Res<Option<String>> {
+    let lib = &remote.lib;
     let local = dir.join("server/updates/manifest.toml");
     let local_sha = file_sha256(&local)?;
-    let live = format!("{remote_releases}/manifest.toml");
-    let archived = format!("{remote_releases}/manifests/{release_id}.toml");
+    let live = format!("{}/manifest.toml", remote.updates);
+    let archived = format!("{lib}/manifests/{release_id}.toml");
     let remote_live = ssh
         .capture(&format!(
             "if [ -f '{live}' ]; then sha256sum '{live}' | cut -d' ' -f1; fi"
@@ -511,8 +528,10 @@ fn activate_manifest(
         .to_string();
     if remote_live == local_sha {
         println!("activate.manifest: unchanged release={release_id}");
-        return Ok(());
+        return Ok(None);
     }
+    let previous = (!remote_live.is_empty())
+        .then(|| format!("{lib}/manifests/replaced-{}.toml", &remote_live[..16]));
     // The manifest may have been skipped above — its archived copy can already
     // match while the live one does not, which is exactly a rollback. Put it in
     // staging unconditionally; it is one small file.
@@ -521,70 +540,85 @@ fn activate_manifest(
     ssh.rsync(&["--chmod=F644"], &local, &staged)?;
     ssh.run(&format!(
         "set -eu
-        install -d -m 0755 '{remote_releases}/manifests'
+        if [ -n '{previous}' ]; then cp -f '{live}' '{previous}'; fi
         cp -f '{staged}' '{archived}'
         chmod 644 '{archived}'
         mv -T '{staged}' '{live}.new'
         chmod 644 '{live}.new'
-        mv -T '{live}.new' '{live}'"
+        mv -T '{live}.new' '{live}'",
+        previous = previous.as_deref().unwrap_or(""),
     ))?;
     println!("activate.manifest: done release={release_id}");
-    Ok(())
+    Ok(previous)
 }
 
-fn verify_published_manifest(
-    ssh: &Ssh,
-    channel: Channel,
+fn restore_manifest(ssh: &Ssh, remote: &Remote, previous: &str) -> Res<()> {
+    let live = format!("{}/manifest.toml", remote.updates);
+    ssh.run(&format!(
+        "set -eu
+        cp -f '{previous}' '{live}.new'
+        chmod 644 '{live}.new'
+        mv -T '{live}.new' '{live}'"
+    ))
+}
+
+fn verify_served(
+    community: &Descriptor,
     ca_pem: &Path,
-    local_manifest: &Path,
+    local_updates: &Path,
+    blob: &str,
 ) -> Res<()> {
-    let got = std::env::temp_dir().join(format!("iw4l-manifest-{}.toml", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!("iw4l-verify-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let result = (|| {
+        for (name, timeout) in [("manifest.toml", "10"), (blob, "300")] {
+            let got = scratch.join(name);
+            fetch(community, ca_pem, name, timeout, &got)?;
+            if file_sha256(&got)? != file_sha256(&local_updates.join(name))? {
+                return Err(format!("served {name} does not match the prepared release"));
+            }
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&scratch);
+    result
+}
+
+fn fetch(community: &Descriptor, ca_pem: &Path, name: &str, timeout: &str, out: &Path) -> Res<()> {
+    let port = master_port(community);
+    let tls = community.server_name();
     run(Command::new("curl")
         .args([
             "--fail",
             "--show-error",
             "--silent",
             "--connect-timeout",
-            "3",
-            "--max-time",
-            "10",
-            "--cacert",
+            "5",
         ])
+        .args(["--max-time", timeout, "--cacert"])
         .arg(ca_pem)
         .args(["--noproxy", "*", "--connect-to"])
-        .arg(format!(
-            "{}:{}:{}:{}",
-            channel.server_name(),
-            channel.port(),
-            ssh.host(),
-            channel.port()
-        ))
+        .arg(format!("{tls}:{port}:{}:{port}", community.host()))
         .arg("-o")
-        .arg(&got)
-        .arg(format!(
-            "https://{name}:{port}/updates/manifest.toml",
-            name = channel.server_name(),
-            port = channel.port()
-        )))?;
-    let matches = file_sha256(&got)? == file_sha256(local_manifest)?;
-    let _ = std::fs::remove_file(&got);
-    if matches {
-        Ok(())
-    } else {
-        Err("published manifest does not match the prepared release".to_string())
-    }
+        .arg(out)
+        .arg(format!("https://{tls}:{port}/updates/{name}")))
+}
+
+fn master_port(community: &Descriptor) -> &str {
+    let address = &community.community.master.address;
+    address.rsplit_once(':').map_or("", |(_, port)| port)
 }
 
 /// A relay the VPS can reach but this machine cannot is usually a tun/VPN
 /// device that forwards TCP and drops UDP — not a broken deploy.
-fn local_reachability(ssh: &Ssh, channel: Channel, master_bin: &Path, ca_pem: &Path) -> Res<()> {
+fn local_reachability(community: &Descriptor, master_bin: &Path, ca_pem: &Path) -> Res<()> {
     println!("[deploy] master reachability (from this machine)");
     let reachable = Command::new("timeout")
         .arg("5")
         .arg(master_bin)
         .arg("status")
-        .args(["--connect", &format!("{}:{}", ssh.host(), channel.port())])
-        .args(["--server-name", channel.server_name()])
+        .args(["--connect", &community.community.master.address])
+        .args(["--server-name", community.server_name()])
         .arg("--ca-cert")
         .arg(ca_pem)
         .status()
@@ -593,7 +627,8 @@ fn local_reachability(ssh: &Ssh, channel: Channel, master_bin: &Path, ca_pem: &P
     if reachable {
         return Ok(());
     }
-    let host_ip = capture(Command::new("getent").args(["ahostsv4", ssh.host()]))
+    let host = community.host();
+    let host_ip = capture(Command::new("getent").args(["ahostsv4", host]))
         .ok()
         .and_then(|text| {
             text.lines()
@@ -614,45 +649,41 @@ fn local_reachability(ssh: &Ssh, channel: Channel, master_bin: &Path, ca_pem: &P
             None
         })
         .unwrap_or_else(|| "unknown".to_string());
+    let port = master_port(community);
     eprintln!(
-        "[deploy] WARNING: udp/{port} unreachable from this machine, though the host answers itself.",
-        port = channel.port()
+        "[deploy] WARNING: udp/{port} unreachable from this machine, though the host answers itself."
     );
     eprintln!(
-        "[deploy]   route to {host} leaves via {egress}; a tun/VPN device forwards TCP but often drops UDP.",
-        host = ssh.host()
+        "[deploy]   route to {host} leaves via {egress}; a tun/VPN device forwards TCP but often drops UDP."
     );
     eprintln!(
         "[deploy]   this is not automatically a VPS fault; set IW4L_DEPLOY_REQUIRE_LOCAL_UDP=1 to make this fatal."
     );
     if std::env::var("IW4L_DEPLOY_REQUIRE_LOCAL_UDP").as_deref() == Ok("1") {
-        return Err(format!(
-            "udp/{} unreachable from this machine",
-            channel.port()
-        ));
+        return Err(format!("udp/{port} unreachable from this machine"));
     }
     Ok(())
 }
 
-/// `cargo xtask logs <prod|dev> [--since 2h]` — the bounded master journal on
-/// our release host. A master of your own is `cargo xtask master logs`.
 pub fn logs(env: &Env, args: &[String]) -> Res<()> {
-    let (channel, rest) = args
-        .split_first()
-        .ok_or("usage: cargo xtask logs <prod|dev> [--since 2h]")?;
-    let channel: Channel = channel
-        .parse()
-        .map_err(|_| format!("usage: cargo xtask logs <prod|dev> (got {channel:?})"))?;
+    const USAGE: &str = "usage: cargo xtask logs NAME [--since 2h]";
+    let (name, rest) = args.split_first().ok_or(USAGE)?;
     let since = match rest {
-        // `make logs prod` forwards an empty SINCE rather than unsetting it.
         [] => std::env::var("SINCE")
             .ok()
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "2h".to_string()),
         [flag, value] if flag == "--since" => value.clone(),
-        _ => return Err("usage: cargo xtask logs <prod|dev> [--since 2h]".to_string()),
+        _ => return Err(USAGE.to_string()),
     };
     crate::master::check_since(&since)?;
-    let ssh = Ssh::new(&env.require("IW4L_DEPLOY_HOST")?)?;
-    crate::master::journal(&ssh, channel, &since)
+    let [server] = &Descriptor::select(
+        Descriptor::all_in(&root_dir(env)?)?,
+        std::slice::from_ref(name),
+    )?[..] else {
+        return Err(USAGE.to_string());
+    };
+    let ssh = server.ssh()?;
+    let remote = Remote::find(&ssh, server.port()?)?;
+    crate::master::journal(&ssh, &remote.unit, &since)
 }

@@ -2,7 +2,7 @@
 
 Players download `iw4l-windows.zip` from the GitHub release; it holds the executable.
 A server operator hands out the `.iw4l-server` descriptor separately.
-`make release prod|dev` includes the descriptor; `make launcher windows` writes the pair under `dist/windows/`.
+`make release` packs every `.iw4l-server` in the root folder unchanged into `iw4l-windows-community.zip`; `make launcher windows` writes the same under `dist/windows/`.
 The archive password is `t.me/contextrot`. Extract into a dedicated writable folder:
 
 ```text

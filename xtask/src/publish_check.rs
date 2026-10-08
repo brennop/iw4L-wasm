@@ -98,6 +98,9 @@ fn leak(rel: &str) -> Option<&'static str> {
     {
         return Some("key or certificate material");
     }
+    if ext == "iw4l-server" {
+        return Some("operator server descriptor");
+    }
     // A piece of somebody's game install. IW4L reads these; it never ships one.
     if matches!(
         ext,
@@ -406,6 +409,43 @@ fn scan_line(line: &str) -> Option<String> {
     None
 }
 
+fn public_ipv4(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !bytes[start].is_ascii_digit()
+            || (start > 0 && (bytes[start - 1].is_ascii_digit() || bytes[start - 1] == b'.'))
+        {
+            start += 1;
+            continue;
+        }
+        let end = bytes[start..]
+            .iter()
+            .position(|b| !b.is_ascii_digit() && *b != b'.')
+            .map_or(bytes.len(), |n| start + n);
+        let token = &line[start..end];
+        start = end;
+        let octets: Vec<u8> = token
+            .split('.')
+            .filter_map(|part| (part.len() <= 3).then(|| part.parse().ok()).flatten())
+            .collect();
+        if token.split('.').count() != 4 || octets.len() != 4 {
+            continue;
+        }
+        let private = match octets[..] {
+            [0 | 10 | 127, ..] => true,
+            [169, 254, ..] | [192, 168, ..] => true,
+            [172, b, ..] => (16..32).contains(&b),
+            [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _] => true,
+            _ => false,
+        };
+        if !private {
+            return Some(token.to_string());
+        }
+    }
+    None
+}
+
 /// Git's own rule: a NUL in the head of the file means binary. Such a file has
 /// no lines to scan — the offset scan skips it, and what a binary could be
 /// hiding is caught by `leak` on its path instead.
@@ -464,6 +504,14 @@ pub fn run_cli(root: &Path) -> Res<()> {
         }
         scanned += 1;
         for (n, line) in text.lines().enumerate() {
+            if let Some(address) = public_ipv4(line) {
+                leaks.push(Finding {
+                    path: path.clone(),
+                    line: n + 1,
+                    what: format!("public IPv4 address {address}"),
+                    text: "(address)".to_string(),
+                });
+            }
             if let Some(what) = scan_line(line) {
                 offsets.push(Finding {
                     path: path.clone(),

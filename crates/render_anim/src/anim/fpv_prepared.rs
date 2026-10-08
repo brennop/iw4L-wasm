@@ -142,7 +142,7 @@ impl FpvPreparationJob {
                     if !seen_assemblies.insert(assembly_key(assembly)) {
                         continue;
                     }
-                    for part in &assembly.parts {
+                    for part in assembly.parts() {
                         let order = part.model.order();
                         if fpv.get_at(order).is_none() {
                             continue;

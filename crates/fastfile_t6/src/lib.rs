@@ -12,6 +12,7 @@ mod salsa20;
 pub mod schema;
 mod walk;
 pub mod weapon;
+pub mod weapon_camo;
 pub mod world;
 
 pub use asset_type::AssetType;

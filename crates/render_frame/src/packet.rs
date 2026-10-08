@@ -45,6 +45,8 @@ pub struct PackedFrontendLists {
     pub smodel_skinned: Vec<GfxSmodelRigidEntry>,
     pub smodel_skinned_draw_indices: Vec<u32>,
 
+    pub sort_key_by_rank: Vec<u8>,
+
     pub skipped_other: u32,
     pub skipped_empty_ib: u32,
 }

@@ -9,7 +9,8 @@ aliases, channels or mixer groups requires publication again; existing audio
 work retains its bank and checks scope/epoch and media bank revision.
 
 `AliasPlaybackPolicy` exposes interpreted channel admission, limits, gain,
-pitch, layers, routing and spatial requirements. Its constructors are internal.
+pitch, start delay, layers, routing and spatial requirements. Its constructors
+are internal.
 Looping is `OneShot`, `Loop` or `UnknownOneShotCompatibility`; the last preserves
 one-shot playback when capture supplied no looping fact. Cue decisions retain
 that policy's name. The executor applies explicit source-lifetime and sound-class

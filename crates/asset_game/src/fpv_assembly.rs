@@ -37,16 +37,16 @@ pub struct FpvAssemblyTags {
 
 #[derive(Debug)]
 pub struct FpvAssembly {
-    pub family: crate::FpvFamilyConnection,
+    family: crate::FpvFamilyConnection,
     mesh_identity: u64,
-    pub dobj: Arc<DObj>,
-    pub parts: Vec<FpvAssemblyPart>,
-    pub view_bone: usize,
-    pub camera_bone: Option<usize>,
-    pub paired_bones: usize,
-    pub combined_hands: bool,
-    pub tags: FpvAssemblyTags,
-    pub collapsed_bones: Vec<usize>,
+    dobj: Arc<DObj>,
+    parts: Vec<FpvAssemblyPart>,
+    view_bone: usize,
+    camera_bone: Option<usize>,
+    paired_bones: usize,
+    combined_hands: bool,
+    tags: FpvAssemblyTags,
+    collapsed_bones: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -89,6 +89,7 @@ pub enum FpvAssemblyError {
     Catalog(&'static str),
     Skeleton(DObjError),
     NoTagView,
+    ClipSourceMismatch(usize),
 }
 
 impl core::fmt::Display for FpvAssemblyError {
@@ -97,6 +98,12 @@ impl core::fmt::Display for FpvAssemblyError {
             Self::Catalog(what) => write!(f, "{what} missing from the first-person catalog"),
             Self::Skeleton(error) => write!(f, "combined skeleton: {error}"),
             Self::NoTagView => write!(f, "combined skeleton has no tag_view"),
+            Self::ClipSourceMismatch(index) => {
+                write!(
+                    f,
+                    "clip index {index} is already bound to a different clip or mesh owner"
+                )
+            }
         }
     }
 }
@@ -327,6 +334,42 @@ impl FpvAssembly {
         })
     }
 
+    pub fn family(&self) -> crate::FpvFamilyConnection {
+        self.family
+    }
+
+    pub fn dobj(&self) -> &DObj {
+        &self.dobj
+    }
+
+    pub fn parts(&self) -> &[FpvAssemblyPart] {
+        &self.parts
+    }
+
+    pub fn view_bone(&self) -> usize {
+        self.view_bone
+    }
+
+    pub fn camera_bone(&self) -> Option<usize> {
+        self.camera_bone
+    }
+
+    pub fn paired_bones(&self) -> usize {
+        self.paired_bones
+    }
+
+    pub fn combined_hands(&self) -> bool {
+        self.combined_hands
+    }
+
+    pub fn tags(&self) -> FpvAssemblyTags {
+        self.tags
+    }
+
+    pub fn collapsed_bones(&self) -> &[usize] {
+        &self.collapsed_bones
+    }
+
     pub fn mesh_identity(&self) -> u64 {
         self.mesh_identity
     }
@@ -358,7 +401,6 @@ impl FpvAssembly {
 
 #[derive(Clone, Debug, Default)]
 pub struct FpvClipTracks {
-    tables: HashMap<(usize, FpvMeshIndex), Arc<[u16]>>,
     sources: HashMap<usize, FpvClipSource>,
 }
 
@@ -366,6 +408,13 @@ pub struct FpvClipTracks {
 struct FpvClipSource {
     mesh_identity: u64,
     clip: Arc<AnimClip>,
+    tables: HashMap<FpvMeshIndex, Arc<[u16]>>,
+}
+
+impl FpvClipSource {
+    fn matches(&self, mesh_identity: u64, clip: &AnimClip) -> bool {
+        self.mesh_identity == mesh_identity && std::ptr::eq(self.clip.as_ref(), clip)
+    }
 }
 
 impl FpvClipTracks {
@@ -378,11 +427,9 @@ impl FpvClipTracks {
         mesh_identity: u64,
         model: FpvMeshIndex,
     ) -> Option<&[u16]> {
-        self.owns_clip(mesh_identity, clip_index, clip)
-            .then_some(())?;
-        self.tables
-            .get(&(clip_index, model))
-            .map(|tracks| &tracks[..])
+        let source = self.sources.get(&clip_index)?;
+        source.matches(mesh_identity, clip).then_some(())?;
+        source.tables.get(&model).map(|tracks| &tracks[..])
     }
 
     pub fn owns_clip(&self, mesh_identity: u64, clip_index: usize, clip: &AnimClip) -> bool {
@@ -396,20 +443,20 @@ impl FpvClipTracks {
         clip: Option<&AnimClip>,
     ) -> bool {
         match self.sources.get(&clip_index) {
-            Some(source) => {
-                source.mesh_identity == mesh_identity
-                    && clip.is_some_and(|clip| std::ptr::eq(source.clip.as_ref(), clip))
-            }
+            Some(source) => clip.is_some_and(|clip| source.matches(mesh_identity, clip)),
             None => clip.is_none(),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.tables.len()
+        self.sources
+            .values()
+            .map(|source| source.tables.len())
+            .sum()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tables.is_empty()
+        self.sources.is_empty()
     }
 
     pub fn bind(
@@ -418,15 +465,23 @@ impl FpvClipTracks {
         clip_index: usize,
         clip: Arc<AnimClip>,
         model: FpvMeshIndex,
-    ) {
-        if catalog.identity() == 0 || self.tables.contains_key(&(clip_index, model)) {
-            return;
+    ) -> Result<(), FpvAssemblyError> {
+        if catalog.identity() == 0 {
+            return Err(FpvAssemblyError::Catalog("published mesh owner"));
+        }
+        if let Some(source) = self.sources.get(&clip_index) {
+            if !source.matches(catalog.identity(), &clip) {
+                return Err(FpvAssemblyError::ClipSourceMismatch(clip_index));
+            }
+            if source.tables.contains_key(&model) {
+                return Ok(());
+            }
         }
         let Some(pose) = catalog
             .get_at(model.order())
             .and_then(|entry| entry.skel.pose.as_ref())
         else {
-            return;
+            return Err(FpvAssemblyError::Catalog("clip model pose"));
         };
         let mut first_by_name: HashMap<&str, u16> = HashMap::with_capacity(pose.num_bones);
         for (index, name) in pose.bone_names.iter().take(pose.num_bones).enumerate() {
@@ -444,10 +499,15 @@ impl FpvClipTracks {
                     .unwrap_or(Self::NONE)
             })
             .collect();
-        self.sources.entry(clip_index).or_insert(FpvClipSource {
-            mesh_identity: catalog.identity(),
-            clip,
-        });
-        self.tables.insert((clip_index, model), table);
+        self.sources
+            .entry(clip_index)
+            .or_insert_with(|| FpvClipSource {
+                mesh_identity: catalog.identity(),
+                clip,
+                tables: HashMap::new(),
+            })
+            .tables
+            .insert(model, table);
+        Ok(())
     }
 }

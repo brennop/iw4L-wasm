@@ -9,6 +9,7 @@ use crate::CapturedStringTable;
 pub struct WeaponCamouflage {
     pub slot: u8,
     pub name: String,
+    pub caption_key: String,
     pub preview: String,
     pub materials: Vec<(MaterialKey, MaterialKey)>,
 }
@@ -155,6 +156,7 @@ pub(crate) fn prepare_t5(
                     .strip_prefix("MPUI_CAMO_")
                     .unwrap_or(choices.cell(choice, 4))
                     .to_ascii_lowercase(),
+                caption_key: choices.cell(choice, 3).to_owned(),
                 preview: format!("t5:material/{}", choices.cell(choice, 6)),
                 materials: swaps,
             });

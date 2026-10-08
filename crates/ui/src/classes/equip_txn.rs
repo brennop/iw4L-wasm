@@ -234,11 +234,13 @@ fn consume_class_select_handoff(
     if !handoff.pending {
         return;
     }
+    let Some(weapons) = weapons else {
+        return;
+    };
     if catalog.resolver.0.is_none() {
-        let Some(weapons) = weapons else {
-            return;
-        };
         *catalog = crate::ClassLoadoutCatalog::from_weapon_registry(weapons.registry().clone());
+    } else {
+        catalog.resolver.0 = Some(weapons.registry().clone());
     }
     catalog.revision = catalog.revision.wrapping_add(1);
     catalog.primary = std::mem::take(&mut handoff.primary);

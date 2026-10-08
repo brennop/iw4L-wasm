@@ -726,6 +726,16 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     })
     .collect();
 
+    if let Some((_, table)) = cac_tables.iter().find(|(ns, table)| {
+        *ns == asset_core::AssetNamespace::Iw5
+            && table.name.eq_ignore_ascii_case("mp/camoTable.csv")
+    }) {
+        let dressed = weapons.prepare_iw5_camouflages(table, &material_seed, &fpv_meshes);
+        common_report.push(format!(
+            "IW5 camouflage: {dressed} weapon configurations prepared"
+        ));
+    }
+
     let mut camouflage_images = None;
     if let (Some((_, options)), Some((_, choices))) = (
         cac_tables.iter().find(|(ns, t)| {
@@ -781,7 +791,6 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         t6_prepared.prepared, t6_prepared.refused
     ));
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
-    weapons.resolve_fpv_hands(&fpv_meshes, &asset_model::BodyMeshCatalog::default());
     weapons.resolve_world_model_edges(&world_weapons);
 
     common_report.push(format!(

@@ -70,7 +70,6 @@ pub(super) fn init_or_update_pipeline(
 }
 
 pub(super) fn kick_extracted_colour_pipelines(
-    world: Option<Res<InstalledRenderWorld>>,
     frame: Option<Res<PublishedRenderFrame>>,
     views: Query<(&ViewTarget, Option<&Msaa>), (With<Camera3d>, With<ViewUpscalingPipeline>)>,
     device: Res<RenderDevice>,
@@ -79,6 +78,14 @@ pub(super) fn kick_extracted_colour_pipelines(
     mut kicked: ResMut<ExactPipelineKickCache>,
     mut warmup: ResMut<WorldPipelineWarmup>,
 ) {
+    let extracted = frame.as_deref().map(ExtractedColourRefs::new);
+    let world = extracted
+        .filter(|extracted| extracted.world.catalog.is_some())
+        .map_or_default(|extracted| extracted.world.world_generation);
+    if registry.set_world(world) {
+        *kicked = ExactPipelineKickCache::default();
+        *warmup = WorldPipelineWarmup::default();
+    }
     registry.poll();
 
     for key in registry.take_discovered() {
@@ -86,10 +93,6 @@ pub(super) fn kick_extracted_colour_pipelines(
             request_exact_pipeline(&mut registry, &pipeline, &device, key);
         }
     }
-    let extracted = world
-        .as_deref()
-        .zip(frame.as_deref())
-        .map(|(world, frame)| ExtractedColourRefs::new(world, frame));
     kick_admitted_pipelines(
         extracted,
         &views,

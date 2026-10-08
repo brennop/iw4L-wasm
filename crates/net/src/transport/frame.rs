@@ -5,7 +5,7 @@ use sim::{ClientId, Snapshot, SnapshotMeta, Tick};
 use crate::client::predict::CmdSeq;
 use crate::transport::delta::SnapshotDelta;
 use crate::transport::meta_wire::{
-    META_SEGMENTS, SnapshotMetaSectionBytes, WorldObjectSyncDecoder, decode_snapshot_meta,
+    META_SEGMENTS, SnapshotMetaSectionBytes, WorldObjectSyncDecoder, decode_snapshot_meta_body,
     encode_snapshot_meta_body, encode_world_objects_wire,
 };
 use crate::transport::netfields::compute_state_hash;
@@ -258,8 +258,7 @@ impl Frame {
         let snapshot_delta = SnapshotDelta::decode(input)?;
         let head_end = input.remaining();
         let mut meta_ends = [0usize; META_SEGMENTS];
-        let (snapshot_meta, world_objects_wire) =
-            decode_snapshot_meta(input, world_decoder, &mut meta_ends)?;
+        let decoded_meta = decode_snapshot_meta_body(input, &mut meta_ends)?;
         let reliable = decode_reliable_payload(input)?;
         let svc_sounds = crate::svc_sound::decode_svc_sounds(input)?;
         let svc_scores = crate::svc_scores::decode_svc_scores(input)?;
@@ -275,6 +274,9 @@ impl Frame {
             prev = end;
         }
         segments[FRAME_SEGMENTS - 1] = (prev - input.remaining()) as u32;
+        let mut snapshot_meta = decoded_meta.body;
+        snapshot_meta.world_objects = world_decoder.apply(decoded_meta.world_update);
+        let world_objects_wire = decoded_meta.world_wire;
         let frame = Self {
             tick,
             state_hash,

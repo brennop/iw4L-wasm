@@ -281,7 +281,8 @@ fn queue_match_clips(
         .chain(MATCH_CLOCK)
     {
         aliases += 1;
-        request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
+        let (ns, alias) = crate::aliases::match_ui_alias(namespace.namespace, alias);
+        request_named(clips, &bank.0, ns, alias, &mut set);
     }
     let mut breath_policies = HashSet::new();
     for weapon in 1..=weapons.registry().len() as u32 {

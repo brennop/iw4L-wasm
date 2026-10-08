@@ -107,6 +107,25 @@ impl MaterialCatalog {
             .collect();
         let textures: Vec<&T6Texture> = textures.iter().chain(&defaults).collect();
         let mut constants = constants;
+        for index in 0..10 {
+            let name_hash = weapon_parameter_hash(index);
+            if !constants
+                .iter()
+                .any(|constant| constant.name_hash == name_hash)
+            {
+                let literal = match index {
+                    0 => [0.0, 0.0, 0.0, 1.0],
+                    2 => [0.0, 0.0, 1.0, 0.0],
+                    6 => [1.0, 1.0, 0.0, 0.0],
+                    _ => [0.0; 4],
+                };
+                constants.push(crate::MaterialConstant {
+                    name_hash,
+                    name: *b"weaponParam\0",
+                    literal,
+                });
+            }
+        }
         for constant in &mut constants {
             if constant.name_hash == OCCLUSION_AMOUNT_HASH {
                 constant.literal[0] *= T6_SPECULAR_SCALE;

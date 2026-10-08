@@ -109,6 +109,7 @@ struct PortBuild {
 
 #[derive(Resource, Default)]
 pub(super) struct ExactPipelineRegistry {
+    world: frame::WorldGeneration,
     slots: Vec<SlotState>,
     by_key: HashMap<super::colour_submit::ExactColourPipelineKey, ExactPipelineSlot>,
     modules: HashMap<ModuleKey, Arc<ShaderModule>>,
@@ -129,6 +130,17 @@ pub(super) struct ExactPipelineRegistry {
 }
 
 impl ExactPipelineRegistry {
+    pub(super) fn set_world(&mut self, world: frame::WorldGeneration) -> bool {
+        if self.world == world {
+            return false;
+        }
+        *self = Self {
+            world,
+            ..Self::default()
+        };
+        true
+    }
+
     pub(super) fn bind_group_layout(
         &self,
         device: &RenderDevice,

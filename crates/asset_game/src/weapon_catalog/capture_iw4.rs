@@ -40,6 +40,7 @@ impl WeaponCatalog {
         let camo_models = WeaponCamoModels {
             view: camo(&geometry.gun_xmodel_names),
             world: camo(&geometry.world_model_names),
+            choices: Vec::new(),
         };
         let projectile_model = geometry
             .projectile_model_name

@@ -36,16 +36,16 @@ const REPO_TOOLS: &[&str] = &[
     "mem-census [--map MAP] [--gpu] [--secs N] [--out DIR] [--no-build] | --compare DIR_A DIR_B (--help)",
 ];
 
-/// Everything that leaves this machine. These read `.env` for the host, the
-/// root and the CA; none of them touch an engine crate.
 const SHIP_TOOLS: &[&str] = &[
     "windows [build|setup]",
-    "certs <host>",
-    "release <prod|dev|bundles>",
-    "publish <prod|dev>",
-    "provision",
-    "logs <prod|dev> [--since 2h]",
-    "master <install|update|status|logs|uninstall> user@host [--channel prod] [--since 10min]",
+    "certs <name> <host>",
+    "release [bundles]",
+    "publish [NAME...]",
+    "deploy [NAME...]",
+    "github-release <tag> --notes FILE",
+    "logs NAME [--since 2h]",
+    "master install user@host --name NAME --port PORT [--ca DIR]",
+    "master <update|status|logs|uninstall> NAME [--since 10min]",
     "loc",
 ];
 
@@ -135,7 +135,15 @@ fn ship(cmd: &str, rest: &[String]) -> Option<Res<()>> {
     }
     if !matches!(
         cmd,
-        "windows" | "certs" | "release" | "publish" | "provision" | "logs" | "master" | "loc"
+        "windows"
+            | "certs"
+            | "release"
+            | "publish"
+            | "deploy"
+            | "github-release"
+            | "logs"
+            | "master"
+            | "loc"
     ) {
         return None;
     }
@@ -144,8 +152,9 @@ fn ship(cmd: &str, rest: &[String]) -> Option<Res<()>> {
         "windows" => xtask::windows::run_cli(&env, rest),
         "certs" => xtask::certs::run_cli(&env, rest),
         "release" => xtask::release::run_cli(&root, &env, rest),
-        "publish" => xtask::publish::run_cli(&root, &env, rest),
-        "provision" => xtask::provision::run_cli(&root, &env, rest),
+        "publish" => xtask::publish::run_cli(&root, rest),
+        "deploy" => xtask::publish::deploy(&root, &env, rest),
+        "github-release" => xtask::github::run_cli(&root, rest),
         "logs" => xtask::publish::logs(&env, rest),
         "master" => xtask::master::run_cli(&root, &env, rest),
         "loc" => xtask::loc::run_cli(&root),

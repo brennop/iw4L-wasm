@@ -40,12 +40,21 @@ impl CommonFamilyCompiler for T6CommonCompiler {
             &mut common_fx,
             &mut refusals,
         ));
+        let camouflages = std::mem::take(&mut content.camouflages);
         report.push(bind_t6_content(
             content,
             &mut material_seed,
             &mut fpv_meshes,
             &mut world_weapons,
             &mut refusals,
+        ));
+        let dressed = weapons.set_material_camouflages(
+            asset_core::AssetNamespace::T6,
+            camouflages,
+            &material_seed,
+        );
+        report.push(format!(
+            "T6 camouflage: {dressed} weapon configurations prepared"
         ));
         refusals.extend(
             weapons

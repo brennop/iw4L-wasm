@@ -95,8 +95,8 @@ never a quit.
 ## Two clients through the dev master
 
 ```sh
-cargo xtask master install user@vps --channel dev --ca ~/.iw4l/dev-vpn-ca
-cp ~/.iw4l/dev-vpn-ca/community-dev.iw4l-server context/simulated-iw4l-folder/
+cargo xtask master install root@vps --name dev --port 4434 --ca ~/.iw4l/dev-vpn-ca
+cp "$IW4L_GAMES/dev.iw4l-server" context/simulated-iw4l-folder/community-dev.iw4l-server
 make approved SCENARIO=master_duo_chaos
 ```
 

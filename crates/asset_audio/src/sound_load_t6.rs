@@ -45,6 +45,68 @@ pub fn t6_sound_banks(zone: &Path) -> (Vec<SoundAssetBank>, Vec<String>) {
     }
 }
 
+#[derive(Default)]
+struct SoundGlobals {
+    curves: Vec<crate::CapturedSndCurve>,
+    pans: Vec<(String, [f32; 6])>,
+    groups: Vec<crate::MixerGroup>,
+}
+
+fn capture_globals(loads: &[&ZoneLoad]) -> SoundGlobals {
+    let mut globals = SoundGlobals::default();
+    for load in loads {
+        for asset in load
+            .assets
+            .iter()
+            .filter(|a| a.ty == AssetType::SndDriverGlobals)
+        {
+            if asset.header.len() < 28 {
+                continue;
+            }
+            let rows = |count_at, pointer_at, size: u32| -> Vec<&[u8]> {
+                let Some(base) = decode_ptr(le32(&asset.header, pointer_at)) else {
+                    return Vec::new();
+                };
+                (0..le32(&asset.header, count_at))
+                    .map_while(|i| load.blocks.bytes(base.at(i * size), size as usize).ok())
+                    .collect()
+            };
+            let name = |b: &[u8]| {
+                String::from_utf8_lossy(&b[..b[..32].iter().position(|&b| b == 0).unwrap_or(32)])
+                    .into_owned()
+            };
+            let float = |b: &[u8], at| f32::from_bits(le32(b, at));
+            if globals.groups.is_empty() {
+                globals.groups = rows(4, 8, 80)
+                    .iter()
+                    .map(|b| crate::MixerGroup {
+                        parent: le32(b, 68) as i32,
+                        attenuation: f32::from(le16(b, 78)) / 65535.0,
+                    })
+                    .collect();
+            }
+            if globals.curves.is_empty() {
+                globals.curves = rows(12, 16, 100)
+                    .iter()
+                    .map(|b| crate::CapturedSndCurve {
+                        name: name(b),
+                        knots: (0..8)
+                            .map(|i| (float(b, 36 + i * 8), float(b, 40 + i * 8)))
+                            .collect(),
+                    })
+                    .collect();
+            }
+            if globals.pans.is_empty() {
+                globals.pans = rows(20, 24, 60)
+                    .iter()
+                    .map(|b| (name(b), std::array::from_fn(|i| float(b, 36 + i * 4))))
+                    .collect();
+            }
+        }
+    }
+    globals
+}
+
 pub fn capture_t6_sounds<'n>(
     zone: &Path,
     loads: &[&ZoneLoad],
@@ -52,6 +114,7 @@ pub fn capture_t6_sounds<'n>(
     names: impl IntoIterator<Item = &'n str>,
 ) -> (SoundCatalog, Vec<String>, Vec<String>) {
     let game = ZoneGame::T6;
+    let globals = capture_globals(loads);
     let mut report = Vec::new();
     let mut lists: HashMap<u32, (&ZoneLoad, Ptr, u32)> = HashMap::new();
     for &load in loads {
@@ -83,6 +146,9 @@ pub fn capture_t6_sounds<'n>(
     let mut catalog = SoundCatalog::default();
     catalog.set_capture_zone(ZoneOwner::from_zone_path(zone));
     catalog.set_capture_game(game);
+    if !globals.groups.is_empty() {
+        catalog.ingest_mixer_groups(crate::AssetNamespace::T6, globals.groups.clone());
+    }
     let mut loaded: BTreeMap<u32, Option<String>> = BTreeMap::new();
     let mut filled = Vec::new();
     let mut queue: Vec<String> = names.into_iter().map(str::to_owned).collect();
@@ -117,6 +183,9 @@ pub fn capture_t6_sounds<'n>(
             {
                 queue.push(secondary.clone());
             }
+            let flags = le32(row, SND_ALIAS_FLAGS0);
+            let curves = le32(row, SND_ALIAS_FLAGS0 + 4);
+            let pan = globals.pans.get(usize::from(row[92]));
             aliases.push(CapturedAlias {
                 alias_name: name.to_owned(),
                 secondary,
@@ -131,7 +200,24 @@ pub fn capture_t6_sounds<'n>(
                 dist_min: f32::from(le16(row, 68)),
                 dist_max: f32::from(le16(row, 70)),
                 start_delay: i32::from(le16(row, 54)),
-                looping: Some(le32(row, SND_ALIAS_FLAGS0) & 1 != 0),
+                flags: Some(flags),
+                looping: Some(flags & 1 != 0),
+                volume_falloff: globals.curves.get(((curves >> 2) & 0x3f) as usize).cloned(),
+                near_falloff: globals
+                    .curves
+                    .get(((curves >> 14) & 0x3f) as usize)
+                    .cloned(),
+                speaker_map: Some(
+                    pan.map_or_else(|| format!("t6/pan/{}", row[92]), |(name, _)| name.clone()),
+                ),
+                t6_speaker_pan: pan.map(|(_, gains)| *gains),
+                limit_count: Some(row[93]),
+                entity_limit_count: Some(row[94]),
+                voice_priority: Some(crate::VoicePriority {
+                    thresholds: [row[86], row[87]],
+                    values: [row[90], row[91]],
+                    distance_max: f32::from(le16(row, 70)),
+                }),
                 probability: f32::from(row[88]) / 255.0,
                 ..Default::default()
             });

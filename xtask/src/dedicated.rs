@@ -14,7 +14,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use master_protocol::Channel;
 
 use crate::certs::{Ca, San};
 use crate::dotenv::Env;
@@ -306,7 +305,10 @@ fn certs_complete(ca: &Ca) -> bool {
     ca.ca_cert().is_file() && ca.server_cert().is_file() && ca.server_key().is_file()
 }
 
-fn resolve_certs(base: &Path, explicit: Option<&Path>) -> Res<Ca> {
+/// The name the local master's certificate answers to when IW4L_MASTER_SERVER_NAME is unset.
+const DEFAULT_SERVER_NAME: &str = "iw4l-prod";
+
+fn resolve_certs(base: &Path, explicit: Option<&Path>, server_name: &str) -> Res<Ca> {
     if let Some(dir) = explicit {
         let ca = Ca::new(dir.to_path_buf());
         if certs_complete(&ca) {
@@ -323,9 +325,13 @@ fn resolve_certs(base: &Path, explicit: Option<&Path>) -> Res<Ca> {
             return Ok(ca);
         }
     }
-    // Nothing to reuse: mint a CA and a label-only server cert (needs openssl).
+    // Nothing to reuse: mint a CA and a server cert for the name (needs openssl). The host
+    // entry only has to be valid; clients verify the name.
     let ca = Ca::new(base.join("certs"));
-    ca.ensure(&San::Labels)?;
+    ca.ensure(&San {
+        label: server_name.to_owned(),
+        host: "127.0.0.1".to_owned(),
+    })?;
     Ok(ca)
 }
 
@@ -449,7 +455,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     let games = env.require("IW4L_GAMES")?;
     let server_name = env
         .get("IW4L_MASTER_SERVER_NAME")
-        .unwrap_or_else(|| Channel::Prod.server_name().to_string());
+        .unwrap_or_else(|| DEFAULT_SERVER_NAME.to_string());
     if args.build {
         build(root, &args)?;
     }
@@ -474,7 +480,7 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
     }
     let base = base_dir(root);
     let pack = resolve_pack(args.pack.clone())?;
-    let ca = resolve_certs(&base, args.certs.as_deref())?;
+    let ca = resolve_certs(&base, args.certs.as_deref(), &server_name)?;
 
     let run_dir = args
         .run_dir

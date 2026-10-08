@@ -42,19 +42,7 @@ fn read_community(path: &Path) -> Result<Community> {
         File::open(path).map_err(|e| format!("{}: {e}", path.display()))?,
         MAX_MANIFEST,
     )?;
-    let community: Community =
-        toml::from_str(std::str::from_utf8(&bytes).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-    if community.schema != 1
-        || community.name.trim().is_empty()
-        || community.master.server_name.trim().is_empty()
-        || community.master.address.trim().is_empty()
-    {
-        return Err("unsupported or incomplete community descriptor".into());
-    }
-    trust_roots(&community.updates.ca_pem)?;
-    update_url(&community)?;
-    Ok(community)
+    Community::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn discover_communities(root: &Path, explicit: Option<PathBuf>) -> Result<CommunityFiles> {
@@ -177,6 +165,24 @@ pub struct Master {
 pub struct Updates {
     pub url: String,
     pub ca_pem: String,
+}
+
+impl Community {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let community: Community =
+            toml::from_str(std::str::from_utf8(bytes).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        if community.schema != 1
+            || community.name.trim().is_empty()
+            || community.master.server_name.trim().is_empty()
+            || community.master.address.trim().is_empty()
+        {
+            return Err("unsupported or incomplete community descriptor".into());
+        }
+        trust_roots(&community.updates.ca_pem)?;
+        update_url(&community)?;
+        Ok(community)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

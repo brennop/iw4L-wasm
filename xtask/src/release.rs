@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use master_protocol::{Channel, PROTOCOL_VERSION};
+use master_protocol::PROTOCOL_VERSION;
 use serde_json::{Value, json};
 
 use crate::dotenv::Env;
+use crate::server::{Descriptor, root_dir};
 use crate::shell::{Res, Step, capture, require_tools, run};
 use crate::windows;
 
@@ -38,12 +39,6 @@ pub fn git_identity(root: &Path) -> Res<Git> {
     })
 }
 
-pub fn public_host(env: &Env) -> Res<String> {
-    let target = env.require("IW4L_DEPLOY_HOST")?;
-    let host = crate::shell::Ssh::new(&target)?.host().to_string();
-    Ok(host)
-}
-
 pub fn file_sha256(path: &Path) -> Res<String> {
     use sha2::{Digest as _, Sha256};
     let mut file =
@@ -64,7 +59,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
     hex(&Sha256::digest(bytes))
 }
@@ -205,21 +200,6 @@ fn write_toml(path: &Path, value: &impl serde::Serialize) -> Res<()> {
     std::fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-fn community(channel: Channel, host: &str, ca_path: &Path) -> Res<updater::Community> {
-    Ok(updater::Community {
-        schema: 1,
-        name: format!("IW4L {channel}"),
-        master: updater::Master {
-            address: format!("{host}:{}", channel.port()),
-            server_name: channel.server_name().into(),
-        },
-        updates: updater::Updates {
-            url: format!("https://{host}:{}/updates/manifest.toml", channel.port()),
-            ca_pem: std::fs::read_to_string(ca_path).map_err(|e| e.to_string())?,
-        },
-    })
-}
-
 fn entry(role: &str, local: &str, remote: String, stage: &Path, immutable: bool) -> Res<Value> {
     let path = stage.join(local);
     Ok(json!({
@@ -234,20 +214,18 @@ fn entry(role: &str, local: &str, remote: String, stage: &Path, immutable: bool)
 
 struct Meta<'a> {
     release_id: &'a str,
-    channel: Channel,
+    servers: &'a [Descriptor],
     profile: &'a str,
     git: &'a Git,
-    update_url: &'a str,
     master_sha: &'a str,
 }
 
 fn release_descriptor(stage: &Path, meta: &Meta<'_>, blob: &GameBlob) -> Res<Value> {
     let Meta {
         release_id,
-        channel,
+        servers,
         profile,
         git,
-        update_url,
         master_sha,
     } = *meta;
     let mut manifest = entry(
@@ -260,14 +238,12 @@ fn release_descriptor(stage: &Path, meta: &Meta<'_>, blob: &GameBlob) -> Res<Val
     manifest["live"] = json!("manifest.toml");
     Ok(json!({
         "id": release_id,
-        "channel": channel.as_str(),
+        "servers": servers.iter().map(Descriptor::file_name).collect::<Vec<_>>(),
         "profile": profile,
         "target": windows::TARGET,
         "git": git.rev,
         "dirty": git.dirty,
         "protocol": PROTOCOL_VERSION,
-        "master_port": channel.port(),
-        "update_url": update_url,
         "files": [
             entry(
                 "game-blob",
@@ -288,20 +264,28 @@ fn release_descriptor(stage: &Path, meta: &Meta<'_>, blob: &GameBlob) -> Res<Val
     }))
 }
 
-pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<PathBuf> {
-    windows::require_profile(profile)?;
-    let host = public_host(env)?;
+pub struct Bins {
+    game: PathBuf,
+    master: PathBuf,
+}
+
+pub fn build_all(root: &Path, profile: &str) -> Res<Bins> {
+    Ok(Bins {
+        game: windows::build(profile)?.game,
+        master: build_master(root, profile)?,
+    })
+}
+
+pub fn prepare(root: &Path, servers: &[Descriptor], profile: &str, bins: &Bins) -> Res<PathBuf> {
     let git = git_identity(root)?;
-    let ca_cert = windows::public_ca(env)?;
-    let update_url = format!("https://{host}:{}/updates/manifest.toml", channel.port());
+    for server in servers {
+        println!("release.server: {}", server.summary());
+    }
 
-    let bins = windows::build(profile, &ca_cert)?;
-    let master_bin = build_master(root, profile)?;
-
-    let releases = root.join("dist/releases").join(channel.as_str());
+    let releases = root.join("dist/releases");
     std::fs::create_dir_all(&releases)
         .map_err(|error| format!("creating {}: {error}", releases.display()))?;
-    let mut scratch = Scratch::new(&releases, channel.as_str())?;
+    let mut scratch = Scratch::new(&releases, "release")?;
     let stage = scratch.path.clone();
     let client_dir = stage.join("client");
     std::fs::create_dir_all(&client_dir)
@@ -312,16 +296,14 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
 
     let blob = package_game(root, &bins.game, &updates_dir)?;
     copy(&bins.game, &client_dir.join("iw4l.exe"))?;
-    write_toml(
-        &client_dir.join("community.iw4l-server"),
-        &community(channel, &host, &ca_cert)?,
-    )?;
+    for server in servers {
+        write(&client_dir.join(server.file_name()), &server.bytes)?;
+    }
     for (from, to) in LEGAL_FILES {
         copy(&root.join(from), &stage.join("server").join(to))?;
     }
-    copy(&ca_cert, &client_dir.join("iw4l-ca.pem"))?;
     let staged_master = stage.join("server/iw4l-master");
-    copy(&master_bin, &staged_master)?;
+    copy(&bins.master, &staged_master)?;
     set_mode(&staged_master, 0o755)?;
     let master_sha = file_sha256(&staged_master)?;
 
@@ -329,9 +311,13 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
         .iter()
         .map(|(from, name)| Ok(json!({ "name": name, "sha256": file_sha256(&root.join(from))? })))
         .collect::<Res<Vec<_>>>()?;
+    let descriptors = servers
+        .iter()
+        .map(|server| json!({ "name": server.file_name(), "sha256": sha256_hex(&server.bytes) }))
+        .collect::<Vec<_>>();
     let identity = json!({
         "licenses": licenses,
-        "channel": channel.as_str(),
+        "servers": descriptors,
         "dirty": git.dirty,
         "git": git.rev,
         "master_sha256": master_sha,
@@ -339,8 +325,6 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
         "protocol": PROTOCOL_VERSION,
         "target": windows::TARGET,
         "files": {
-            "ca": file_sha256(&client_dir.join("iw4l-ca.pem"))?,
-            "community": file_sha256(&client_dir.join("community.iw4l-server"))?,
             "game_blob": blob.blob_sha,
             "game_exe": blob.exe_sha,
         },
@@ -369,19 +353,18 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
     if dest.join("deployment.json").is_file() {
         println!("release: reused {}", dest.display());
     } else {
-        let descriptor = release_descriptor(
+        let deployment = release_descriptor(
             &stage,
             &Meta {
                 release_id: &release_id,
-                channel,
+                servers,
                 profile,
                 git: &git,
-                update_url: &update_url,
                 master_sha: &master_sha,
             },
             &blob,
         )?;
-        write_json(&stage.join("deployment.json"), &descriptor)?;
+        write_json(&stage.join("deployment.json"), &deployment)?;
         let _ = std::fs::remove_dir_all(&dest);
         std::fs::rename(&stage, &dest)
             .map_err(|error| format!("renaming into {}: {error}", dest.display()))?;
@@ -395,15 +378,29 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
         &dest.join("server"),
         &dest.join(format!("iw4l-server-release-{release_id}.zip")),
     )?;
+    let names = servers
+        .iter()
+        .map(Descriptor::file_name)
+        .collect::<Vec<_>>();
     player_archive(
         &dest.join("client"),
-        &dest.join(format!("iw4l-windows-{channel}.zip")),
-        true,
+        &dest.join("iw4l-windows-community.zip"),
+        &names,
     )?;
-    // The GitHub download: the descriptor names the master, which stays private.
-    player_archive(&dest.join("client"), &dest.join("iw4l-windows.zip"), false)?;
-    println!("release.done path=dist/releases/{channel}/{release_id}");
+    player_archive(&dest.join("client"), &dest.join("iw4l-windows.zip"), &[])?;
+    println!("release.done path=dist/releases/{release_id}");
     Ok(dest)
+}
+
+pub fn release_dir(root: &Path) -> Res<PathBuf> {
+    if let Some(explicit) = std::env::var("RELEASE").ok().filter(|v| !v.is_empty()) {
+        return Ok(root.join(explicit));
+    }
+    let releases = root.join("dist/releases");
+    let id = std::fs::read_to_string(releases.join("LATEST")).map_err(|_| {
+        "no RELEASE= and no dist/releases/LATEST; run make release first".to_string()
+    })?;
+    Ok(releases.join(id.trim()))
 }
 
 const LEGAL_FILES: &[(&str, &str)] = &[
@@ -414,41 +411,32 @@ const LEGAL_FILES: &[(&str, &str)] = &[
 ];
 
 pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
-    windows::require_profile(profile)?;
-    let host = public_host(env)?;
-    let ca_cert = windows::public_ca(env)?;
-    let bins = windows::build(profile, &ca_cert)?;
+    let servers = Descriptor::all_in(&root_dir(env)?)?;
+    let bins = windows::build(profile)?;
 
     let out = root.join("dist/windows");
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)
         .map_err(|error| format!("creating {}: {error}", out.display()))?;
     let scratch = Scratch::new(&out, "bundles")?;
-
-    for channel in Channel::ALL {
-        let stage = scratch.path.join(channel.as_str());
-        std::fs::create_dir_all(&stage)
-            .map_err(|error| format!("creating {}: {error}", stage.display()))?;
-        copy(&bins.game, &stage.join("iw4l.exe"))?;
-        write_toml(
-            &stage.join("community.iw4l-server"),
-            &community(channel, &host, &ca_cert)?,
-        )?;
-        let archive = out.join(format!("iw4l-windows-{channel}.zip"));
-        player_archive(&stage, &archive, true)?;
-        println!("[windows] {channel} archive: {}", archive.display());
+    copy(&bins.game, &scratch.path.join("iw4l.exe"))?;
+    for server in &servers {
+        write(&scratch.path.join(server.file_name()), &server.bytes)?;
     }
+    let archive = out.join("iw4l-windows-community.zip");
+    let names = servers
+        .iter()
+        .map(Descriptor::file_name)
+        .collect::<Vec<_>>();
+    player_archive(&scratch.path, &archive, &names)?;
+    println!("[windows] archive: {}", archive.display());
     Ok(())
 }
 
-fn player_archive(stage: &Path, archive: &Path, descriptor: bool) -> Res<()> {
-    let mut names = vec!["iw4l.exe"];
-    if descriptor {
-        names.push("community.iw4l-server");
-    }
-    let files = names
-        .into_iter()
-        .map(|n| stage.join(n).display().to_string())
+fn player_archive(stage: &Path, archive: &Path, descriptors: &[&str]) -> Res<()> {
+    let files = std::iter::once("iw4l.exe")
+        .chain(descriptors.iter().copied())
+        .map(|name| stage.join(name).display().to_string())
         .collect::<Vec<_>>();
     crate::bundle_zip::write_archive(archive, &files, ARCHIVE_PASSWORD)
 }
@@ -480,6 +468,10 @@ fn server_archive(stage: &Path, archive: &Path) -> Res<()> {
     }
     writer.finish().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn write(path: &Path, bytes: &[u8]) -> Res<()> {
+    std::fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 fn copy(from: &Path, to: &Path) -> Res<()> {
@@ -530,18 +522,23 @@ fn world_readable(_path: &Path) -> Res<()> {
     Ok(())
 }
 
-pub fn run_cli(root: &Path, env: &Env, args: &[String]) -> Res<()> {
-    let what = args
-        .first()
-        .map(String::as_str)
-        .ok_or("usage: cargo xtask release <prod|dev|bundles>")?;
+pub fn release(root: &Path, env: &Env) -> Res<(Vec<Descriptor>, PathBuf)> {
     let profile = windows::profile(env)?;
+    windows::require_profile(&profile)?;
     crate::licenses::check(root)?;
-    if what == "bundles" {
-        return bundles(root, env, &profile);
+    let servers = Descriptor::all_in(&root_dir(env)?)?;
+    let bins = build_all(root, &profile)?;
+    let dir = prepare(root, &servers, &profile, &bins)?;
+    Ok((servers, dir))
+}
+
+pub fn run_cli(root: &Path, env: &Env, args: &[String]) -> Res<()> {
+    match args {
+        [] => release(root, env).map(|_| ()),
+        [arg] if arg == "bundles" => {
+            crate::licenses::check(root)?;
+            bundles(root, env, &windows::profile(env)?)
+        }
+        _ => Err("usage: cargo xtask release [bundles]".to_string()),
     }
-    let channel: Channel = what
-        .parse()
-        .map_err(|_| format!("usage: cargo xtask release <prod|dev|bundles> (got {what:?})"))?;
-    prepare(root, env, channel, &profile).map(|_| ())
 }

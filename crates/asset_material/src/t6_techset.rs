@@ -358,6 +358,7 @@ fn engine_value(name: &str) -> EngineValue {
         "heroLightingG" => Literal([0.0, 1.0, 0.0, 0.0]),
         "heroLightingB" => Literal([0.0, 0.0, 1.0, 0.0]),
         "weaponParam0" => Literal([0.0, 0.0, 0.0, 1.0]),
+        "windDirection" => Literal([1.0, 0.0, 0.0, 0.0]),
         "gridLightingCoordsAndVis" => Code("BASE_LIGHTING_COORDS"),
         "lightingLookupScale" => Code("LIGHTING_LOOKUP_SCALE"),
         "reflectionLightingSH0" => Code("T6_REFLECTION_SH0"),
@@ -435,9 +436,10 @@ fn material_arguments_in_row(
         .collect()
 }
 
+const FNV_OFFSET: u32 = 0x811c_9dc5;
+const FNV_PRIME: u32 = 0x0100_0193;
+
 fn packed_row_hash(arguments: &[&T6Argument]) -> Option<u32> {
-    const FNV_OFFSET: u32 = 0x811c_9dc5;
-    const FNV_PRIME: u32 = 0x0100_0193;
     let packed = arguments.len() > 1 || arguments.iter().any(|a| a.offset % 16 != 0 || a.size < 16);
     packed.then(|| {
         arguments.iter().fold(FNV_OFFSET, |hash, a| {
@@ -449,6 +451,16 @@ fn packed_row_hash(arguments: &[&T6Argument]) -> Option<u32> {
                 })
         })
     })
+}
+
+pub fn weapon_parameter_hash(index: u8) -> u32 {
+    b"$t6_weapon_param"
+        .iter()
+        .copied()
+        .chain([index])
+        .fold(FNV_OFFSET, |hash, byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(FNV_PRIME)
+        })
 }
 
 fn constant_argument(
@@ -509,6 +521,26 @@ fn constant_argument(
             literal_argument(stage, destination, Some([0; 4])),
         );
     };
+    if let Some(index) = name
+        .strip_prefix("weaponParam")
+        .and_then(|index| index.parse::<u8>().ok())
+        .filter(|index| *index < 10)
+    {
+        let name_hash = weapon_parameter_hash(index);
+        return (
+            Tier::Stable,
+            match stage {
+                Stage::Vertex => OwnedShaderArgument::MaterialVertexConstant {
+                    destination,
+                    name_hash,
+                },
+                Stage::Pixel => OwnedShaderArgument::MaterialPixelConstant {
+                    destination,
+                    name_hash,
+                },
+            },
+        );
+    }
     match engine_value(name) {
         EngineValue::Code(code) => {
             let index = match code {

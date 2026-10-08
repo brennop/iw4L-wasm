@@ -233,9 +233,9 @@ impl PreparedFpvComposition {
         assembly: Arc<FpvAssembly>,
         mut model_of: impl FnMut(usize, Option<[u32; 6]>) -> Result<Arc<PreparedFpvModel>, String>,
     ) -> Result<Self, String> {
-        let mut parts = Vec::with_capacity(assembly.parts.len());
+        let mut parts = Vec::with_capacity(assembly.parts().len());
         let mut refusal = None;
-        for part in &assembly.parts {
+        for part in assembly.parts() {
             let model = model_of(part.model.order(), part.hide)?;
             if model.mesh_identity != assembly.mesh_identity()
                 || model.catalog_entry != part.model.order()
@@ -371,7 +371,7 @@ impl PreparedFpvRig {
 
         // Every hand's view hands first, then every hand's gun and whatever
         // hangs off it.
-        let hand_n = if dual && !composition.assembly.combined_hands {
+        let hand_n = if dual && !composition.assembly.combined_hands() {
             2
         } else {
             1
@@ -470,18 +470,18 @@ impl PreparedFpvRig {
 
         let assembly = &composition.assembly;
         let tags = FpvBoltTags {
-            flash: assembly.tags.flash,
-            flash_silenced: assembly.tags.flash_silenced,
-            brass: assembly.tags.brass,
-            knife: assembly.tags.knife,
-            laser: assembly.tags.laser,
-            tracker_screen: assembly.tags.tracker_screen,
-            tracker_light: assembly.tags.tracker_light,
+            flash: assembly.tags().flash,
+            flash_silenced: assembly.tags().flash_silenced,
+            brass: assembly.tags().brass,
+            knife: assembly.tags().knife,
+            laser: assembly.tags().laser,
+            tracker_screen: assembly.tags().tracker_screen,
+            tracker_light: assembly.tags().tracker_light,
         };
-        let secondary_tags = assembly.combined_hands.then(|| {
+        let secondary_tags = assembly.combined_hands().then(|| {
             let tag = |name: &str| {
                 assembly
-                    .dobj
+                    .dobj()
                     .find(name)
                     .and_then(|index| u16::try_from(index).ok())
             };
@@ -492,12 +492,12 @@ impl PreparedFpvRig {
                 ..FpvBoltTags::default()
             }
         });
-        let parts = assembly.dobj.all_parts();
+        let parts = assembly.dobj().all_parts();
 
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let hand_parts = composition.assembly.combined_hands.then(|| {
+        let hand_parts = composition.assembly.combined_hands().then(|| {
             let mut masks = [PartBits::default(); 2];
-            let bones = &composition.assembly.dobj.bones;
+            let bones = &composition.assembly.dobj().bones;
             for (index, bone) in bones.iter().enumerate() {
                 let mut ancestor = Some(index);
                 let mut left = bone.model == 2;
@@ -540,7 +540,7 @@ impl PreparedFpvRig {
     }
 
     pub fn combines_hands(&self) -> bool {
-        self.composition.assembly.combined_hands
+        self.composition.assembly.combined_hands()
     }
 
     pub fn secondary_bolt(&self, pose: &FpvHandPose) -> Option<FpvBoltFrame> {
@@ -631,9 +631,11 @@ impl PreparedFpvRig {
             })
             .collect();
         let assembly = &self.composition.assembly;
-        let world = assembly.dobj.pose(&instances, &self.parts, Mat4::IDENTITY);
-        let mut skin = assembly.dobj.skin_matrices(&world);
-        for &bone in &assembly.collapsed_bones {
+        let world = assembly
+            .dobj()
+            .pose(&instances, &self.parts, Mat4::IDENTITY);
+        let mut skin = assembly.dobj().skin_matrices(&world);
+        for &bone in assembly.collapsed_bones() {
             if let (Some(skin), Some(world)) = (skin.get_mut(bone), world.get(bone)) {
                 *skin = Mat4::from_cols(
                     bevy::math::Vec4::ZERO,
@@ -643,15 +645,15 @@ impl PreparedFpvRig {
                 );
             }
         }
-        let eye_from_world = tag_view_to_bevy_camera() * world[assembly.view_bone].inverse();
+        let eye_from_world = tag_view_to_bevy_camera() * world[assembly.view_bone()].inverse();
         let lens = assembly
-            .camera_bone
-            .map(|camera| tag_camera_lens_local(world[assembly.view_bone], world[camera]))
+            .camera_bone()
+            .map(|camera| tag_camera_lens_local(world[assembly.view_bone()], world[camera]))
             .unwrap_or(Mat4::IDENTITY);
         let published = if hand == 0 {
             world.len()
         } else {
-            assembly.paired_bones.min(world.len())
+            assembly.paired_bones().min(world.len())
         };
         let shift = (offset != Vec3::ZERO).then(|| Mat4::from_translation(offset));
         let bones = world[..published]

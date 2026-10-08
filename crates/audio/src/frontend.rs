@@ -188,6 +188,7 @@ fn play_ui_sound_messages(
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
     epoch: Res<crate::backend::MatchEpoch>,
+    namespace: Option<Res<crate::ambient::SoundBankNamespace>>,
 ) {
     let Some(bank) = bank else {
         for event in events.read().filter(|_| !crate::AudioSilent::active()) {
@@ -203,10 +204,16 @@ fn play_ui_sound_messages(
         if event.alias.is_empty() {
             continue;
         }
+        let (ns, alias) = crate::aliases::match_ui_alias(
+            namespace
+                .as_deref()
+                .map_or(asset_core::AssetNamespace::Iw4, |ns| ns.namespace),
+            &event.alias,
+        );
         let outcome = play_alias_oneshot(
             &bank.0,
-            asset_core::AssetNamespace::Iw4,
-            &event.alias,
+            ns,
+            alias,
             None,
             &runtime,
             &mut pending,

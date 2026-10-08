@@ -124,7 +124,7 @@ impl CueCompositionPolicy {
                 failure: LayerFailure::Independent,
             });
         let mut unsupported = Vec::new();
-        if row.start_delay != 0 {
+        if row.start_delay < 0 {
             unsupported.push(UnsupportedCueFeature::StartDelay(row.start_delay));
         }
         if let Some(name) = row.chain.as_ref().filter(|name| !name.is_empty()) {
@@ -144,6 +144,7 @@ impl CueCompositionPolicy {
             unsupported.push(UnsupportedCueFeature::SpeakerGains);
         }
         Self {
+            start_delay_ms: row.start_delay.max(0) as u32,
             secondary,
             unsupported: unsupported.into(),
         }

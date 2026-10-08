@@ -31,6 +31,7 @@ fn retire_match_catalogs(world: &mut World) {
             .resource::<MatchType10SoundHints>()
             .resource::<PreparedFpvMeshes>()
             .resource::<PreparedBodies>()
+            .resource::<asset_game::SoldierPresentations>()
             .resource::<PreparedWorldWeapons>()
             .resource::<PreparedProjectileMeshes>()
             .resource::<PreparedXModelWalkCensus>()

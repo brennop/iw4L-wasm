@@ -81,6 +81,12 @@ received plus its own presented state; `demo LATEST` plays it back.
   IW4, IW5, T5 and T6, with IW4 equipment. Players and bots select only
   presets supported by the loaded weapons, attachments and equipment.
 
+In the class editor, choose Camouflage for the primary or secondary weapon.
+MW3 weapons use their installed camo names and previews, including Gold, Marine
+and Winter where models are available. The selection is saved with the class and
+applies to first-person and world weapons. Console equip also accepts
+`give weapon/iw5:acr reflex camo=gold`.
+
 Callsign on the main menu selects a title and emblem. Killstreaks selects three
 rewards with different kill requirements; Apply saves the selection for the next
 loadout. Both persist in `iw4l-artifacts/profile/barracks.txt`. Titles, emblems and
