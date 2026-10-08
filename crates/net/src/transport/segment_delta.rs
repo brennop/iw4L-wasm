@@ -152,10 +152,10 @@ pub fn decode(delta: &[u8], base: &[u8], base_lens: &FrameSegments) -> Option<Ve
     input.is_empty().then_some(out)
 }
 
-// zstd is native-only (online); the browser decodes the outer frame with ruzstd.
-// A segment packed against the baseline as a zstd prefix (PREFIXED) is not
-// decodable there yet: ruzstd has no prefix reference, so the snapshot is dropped
-// and the baseline protocol resends. Follow-up: a peer capability or ruzstd prefix.
+// zstd is native-only (online); the browser decodes with ruzstd, which has no
+// prefix reference. A PREFIXED segment is decoded there by rewriting it as one
+// plain frame whose first blocks are the baseline segment (see
+// `prefixed_as_plain_frame`).
 #[cfg(all(online, not(target_arch = "wasm32")))]
 fn prefixed_decompress(old: &[u8], packed: &[u8], out: &mut [u8]) -> Option<usize> {
     let mut dctx = zstd::zstd_safe::DCtx::create();
@@ -167,9 +167,117 @@ fn prefixed_decompress(old: &[u8], packed: &[u8], out: &mut [u8]) -> Option<usiz
     dctx.decompress(out, packed).ok()
 }
 
-#[cfg(not(all(online, not(target_arch = "wasm32"))))]
+#[cfg(all(online, target_arch = "wasm32"))]
+fn prefixed_decompress(old: &[u8], packed: &[u8], out: &mut [u8]) -> Option<usize> {
+    ruzstd_prefixed_decompress(old, packed, out)
+}
+
+#[cfg(not(online))]
 fn prefixed_decompress(_old: &[u8], _packed: &[u8], _out: &mut [u8]) -> Option<usize> {
     None
+}
+
+#[cfg(all(online, any(target_arch = "wasm32", test)))]
+const PREFIXED_WINDOW_LOG_MAX: u32 = 20;
+
+/// Decodes a PREFIXED segment without prefix support: decode the rewritten
+/// frame, which yields `old` followed by the new segment, and keep the tail.
+#[cfg(all(online, any(target_arch = "wasm32", test)))]
+fn ruzstd_prefixed_decompress(old: &[u8], packed: &[u8], out: &mut [u8]) -> Option<usize> {
+    let frame = prefixed_as_plain_frame(old, packed, old.len().checked_add(out.len())?)?;
+    let mut decoder = ruzstd::decoding::FrameDecoder::new();
+    decoder.set_max_window_size(1 << PREFIXED_WINDOW_LOG_MAX);
+    let mut all = Vec::new();
+    all.try_reserve_exact(old.len() + out.len()).ok()?;
+    decoder.decode_all_to_vec(&frame, &mut all).ok()?;
+    let new = all.get(old.len()..)?;
+    if all[..old.len()] != *old || new.len() != out.len() {
+        return None;
+    }
+    out.copy_from_slice(new);
+    Some(new.len())
+}
+
+/// Rewrites `packed`, one zstd frame compressed with `old` as its prefix
+/// (`ref_prefix`), into one frame without a prefix: a header whose window
+/// covers `total` bytes, `old` as raw blocks, then `packed`'s blocks.
+///
+/// This decodes the same as the prefixed frame (RFC 8878): a prefix is raw
+/// content before the frame, both start with repeat offsets 1, 4, 8 and no
+/// entropy tables, and raw blocks change neither. The checksum is dropped,
+/// since it would cover only the new bytes.
+#[cfg(all(online, any(target_arch = "wasm32", test)))]
+fn prefixed_as_plain_frame(old: &[u8], packed: &[u8], total: usize) -> Option<Vec<u8>> {
+    const MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
+    const MAX_BLOCK: usize = 128 * 1024;
+    const LAST_BLOCK: u32 = 1;
+    const RESERVED_BLOCK: u32 = 3;
+
+    // Frame header: magic, descriptor, optional window, dictionary id, size.
+    let mut input = packed;
+    if take(&mut input, 4)? != MAGIC {
+        return None;
+    }
+    let descriptor = *take(&mut input, 1)?.first()?;
+    if descriptor & 0x08 != 0 {
+        return None;
+    }
+    let single_segment = descriptor & 0x20 != 0;
+    let checksum = descriptor & 0x04 != 0;
+    let dict_id_bytes = [0, 1, 2, 4][usize::from(descriptor & 0x03)];
+    let content_size_bytes = match descriptor >> 6 {
+        0 => usize::from(single_segment),
+        1 => 2,
+        2 => 4,
+        _ => 8,
+    };
+    let skip = usize::from(!single_segment) + dict_id_bytes + content_size_bytes;
+    take(&mut input, skip)?;
+
+    // Blocks up to the last one; then only the optional checksum may remain.
+    let blocks_start = packed.len() - input.len();
+    loop {
+        let header = take(&mut input, 3)?;
+        let header = u32::from(header[0]) | u32::from(header[1]) << 8 | u32::from(header[2]) << 16;
+        let kind = (header >> 1) & 3;
+        let size = (header >> 3) as usize;
+        let body = match kind {
+            1 => 1, // RLE: one byte repeated `size` times
+            RESERVED_BLOCK => return None,
+            _ => size,
+        };
+        take(&mut input, body)?;
+        if header & LAST_BLOCK != 0 {
+            break;
+        }
+    }
+    let blocks_end = packed.len() - input.len();
+    if input.len() != if checksum { 4 } else { 0 } {
+        return None;
+    }
+
+    let window_log = usize::BITS - total.max(1).saturating_sub(1).leading_zeros();
+    let window_log = window_log.max(10);
+    if window_log > PREFIXED_WINDOW_LOG_MAX {
+        return None;
+    }
+    let raw_headers = old.len().div_ceil(MAX_BLOCK) * 3;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(6 + raw_headers + old.len() + blocks_end - blocks_start)
+        .ok()?;
+    frame.extend_from_slice(&MAGIC);
+    // No content size, not single segment, no checksum, no dictionary.
+    frame.push(0);
+    frame.push(((window_log - 10) << 3) as u8);
+    for chunk in old.chunks(MAX_BLOCK) {
+        // Raw block (type 0), never last.
+        let header = (chunk.len() as u32) << 3;
+        frame.extend_from_slice(&header.to_le_bytes()[..3]);
+        frame.extend_from_slice(chunk);
+    }
+    frame.extend_from_slice(&packed[blocks_start..blocks_end]);
+    Some(frame)
 }
 
 #[cfg(all(online, not(target_arch = "wasm32")))]
@@ -337,4 +445,89 @@ fn take<'a>(input: &mut &'a [u8], len: usize) -> Option<&'a [u8]> {
     let (head, rest) = input.split_at(len);
     *input = rest;
     Some(head)
+}
+
+#[cfg(all(test, online, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    /// Snapshot-like bytes: mostly repeated records with a few counters.
+    fn segment(len: usize, seed: u32) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(2_654_435_761).max(1);
+        (0..len)
+            .map(|i| {
+                if i % 64 < 8 {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    state as u8
+                } else {
+                    (i % 64) as u8
+                }
+            })
+            .collect()
+    }
+
+    fn edited(old: &[u8], new_len: usize, seed: u32) -> Vec<u8> {
+        let mut new = segment(new_len, seed);
+        let keep = old.len().min(new_len);
+        for at in (0..keep).filter(|at| at % 512 >= 16) {
+            new[at] = old[at];
+        }
+        new
+    }
+
+    fn check(old_len: usize, new_len: usize) {
+        let old = segment(old_len, 1);
+        let new = edited(&old, new_len, 2);
+        let packed = compress_against(&new, &old).expect("zstd prefix compress");
+        assert!(
+            packed.len() < new.len() / 2,
+            "prefix not used: {}",
+            packed.len()
+        );
+        let mut native = vec![0u8; new.len()];
+        assert_eq!(
+            prefixed_decompress(&old, &packed, &mut native),
+            Some(new.len())
+        );
+        assert_eq!(native, new);
+        let mut browser = vec![0u8; new.len()];
+        assert_eq!(
+            ruzstd_prefixed_decompress(&old, &packed, &mut browser),
+            Some(new.len())
+        );
+        assert_eq!(browser, new);
+    }
+
+    #[test]
+    fn ruzstd_decodes_prefixed_same_length() {
+        check(20_000, 20_000);
+    }
+
+    #[test]
+    fn ruzstd_decodes_prefixed_grown_and_shrunk() {
+        check(9_000, 13_000);
+        check(13_000, 4_096);
+    }
+
+    #[test]
+    fn ruzstd_decodes_prefixed_over_one_raw_block() {
+        check(200_000, 190_000);
+    }
+
+    #[test]
+    fn ruzstd_rejects_bad_frames() {
+        let old = segment(30_000, 3);
+        let new = edited(&old, 30_000, 4);
+        let packed = compress_against(&new, &old).expect("zstd prefix compress");
+        let mut out = vec![0u8; new.len()];
+        let mut bad_magic = packed.clone();
+        bad_magic[0] ^= 1;
+        assert_eq!(ruzstd_prefixed_decompress(&old, &bad_magic, &mut out), None);
+        let truncated = &packed[..packed.len() - 1];
+        assert_eq!(ruzstd_prefixed_decompress(&old, truncated, &mut out), None);
+        let mut short = vec![0u8; new.len() - 1];
+        assert_eq!(ruzstd_prefixed_decompress(&old, &packed, &mut short), None);
+    }
 }

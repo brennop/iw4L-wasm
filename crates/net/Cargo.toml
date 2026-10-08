@@ -69,6 +69,10 @@ web-sys = { version = "0.3", optional = true, features = [
     "WritableStreamDefaultWriter",
 ] }
 
+# Native tests check the browser's ruzstd decode against zstd's output.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+
 [features]
 default = ["online"]
 online = [
