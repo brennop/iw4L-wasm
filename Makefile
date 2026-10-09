@@ -10,7 +10,7 @@ endif
 GOAL := $(firstword $(MAKECMDGOALS))
 ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
-.PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc clean help
+.PHONY: map export-gltf play bench bench-load-session bench-live bench-overhead bench-perf menu menu-shots scenario chaos lifecycle-all lifecycle-swap lifecycle-replace lifecycle-play-in lifecycle-demo-out lifecycle-demo-map launcher deploy logs loc wasm-lint clean help
 .PHONY: build-windows setup-windows release publish github-release
 .PHONY: mr publish-check approved web web-serve dedicated mem-census
 .PHONY: $(ARGS)
@@ -331,6 +331,11 @@ mem-census:
 # and the heaviest source files. Counts only crates/ + xtask.
 loc:
 	@$(XTASK) loc
+
+# Count of call sites that panic in the browser (std Instant/SystemTime::now, threads,
+# processes); 0 is the bar. Rules: xtask/wasm-lint/clippy.toml.
+wasm-lint:
+	@$(XTASK) wasm-lint
 
 # Reclaim disk: wipe target/debug only. Keeps target/play (live recipes)
 # and target/release (`PROFILE=release`) so neither has to relink. No rebuild.

@@ -8,6 +8,7 @@ use cpal::{FromSample, SampleFormat, SizedSample};
 
 use crate::render_core::{QUANTUM, RenderShared, SAMPLE_RATE};
 
+#[allow(clippy::disallowed_methods, reason = "audio-device thread never starts on wasm; web_output.rs drives the browser output")]
 pub(crate) fn supervise(shared: Arc<RenderShared>, shutdown: Arc<AtomicBool>) {
     assets::session_load::use_process_cpus();
     crate::diagnostics::thread("audio-device");

@@ -23,6 +23,7 @@ pub fn enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("IW4L_AUDIO_DIAG").is_ok_and(|value| value == "1"))
 }
 
+#[allow(clippy::disallowed_methods, reason = "only runs with IW4L_AUDIO_DIAG=1; no env on wasm")]
 pub fn emit(message: String) {
     if !enabled() {
         return;
@@ -84,6 +85,7 @@ pub fn emit(message: String) {
     }
 }
 
+#[allow(clippy::disallowed_methods, reason = "only runs with IW4L_AUDIO_DIAG=1; no env on wasm")]
 fn flush() {
     if let Some(Some(sink)) = SINK.get() {
         let (tx, rx) = sync_channel(1);

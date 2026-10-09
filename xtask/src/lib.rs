@@ -21,6 +21,7 @@ pub mod release;
 pub mod scenario;
 pub mod server;
 pub mod shell;
+pub mod wasm_lint;
 pub mod web;
 pub mod web_pack;
 pub mod web_pack_cap;

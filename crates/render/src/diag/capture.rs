@@ -448,10 +448,14 @@ pub(crate) fn report_unwritten_captures(
         return;
     }
     let budget = exit_drain_budget();
-    let until = web_time::Instant::now() + budget;
-    while queue.writing > 0 && web_time::Instant::now() < until {
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        queue.collect_writes();
+    // A page cannot sleep, and a write only lands between frames: no wait there.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let until = web_time::Instant::now() + budget;
+        while queue.writing > 0 && web_time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            queue.collect_writes();
+        }
     }
     if queue.writing > 0 {
         diag::error!(

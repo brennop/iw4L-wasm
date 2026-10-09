@@ -383,6 +383,7 @@ impl ClipStore {
 }
 
 impl MediaService {
+    #[allow(clippy::disallowed_methods, reason = "wasm: Builder::spawn returns Err (handled below) and decode runs inline (inline_decode)")]
     fn start_with_common(
         bank: Arc<SoundCatalog>,
         iwd: Option<Arc<NamespaceSoundIwd>>,

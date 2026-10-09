@@ -432,6 +432,7 @@ mod control_state;
 pub(crate) use control_state::ControlState;
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[allow(clippy::disallowed_methods, reason = "control thread never starts on wasm (see the cfg above); web_output drives control_pass")]
 fn control(mut state: ControlState, shutdown: Arc<AtomicBool>, device_enabled: bool) {
     assets::session_load::use_process_cpus();
     crate::diagnostics::thread("audio-control");

@@ -44,6 +44,7 @@ fn startup_commands_from(args: impl Iterator<Item = String>, env: Option<String>
 #[derive(bevy::prelude::Resource)]
 pub(crate) struct StdinCommands(std::sync::Mutex<std::sync::mpsc::Receiver<String>>);
 
+#[allow(clippy::disallowed_methods, reason = "returns unless IW4L_CONSOLE_STDIN=1; no env on wasm")]
 pub(crate) fn install_stdin(app: &mut bevy::prelude::App) {
     if std::env::var("IW4L_CONSOLE_STDIN").as_deref() != Ok("1") {
         return;

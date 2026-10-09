@@ -129,6 +129,7 @@ pub fn cache_put_with(
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods, reason = "cache_put_with returns before this on wasm (!gamefs::is_native)")]
 fn unique_temp(parent: &Path, key: &str) -> Result<PathBuf, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let n = SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -194,6 +195,7 @@ fn key_ok(key: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+#[allow(clippy::disallowed_methods, reason = "cache_put_with returns before this on wasm (!gamefs::is_native)")]
 fn request_sweep() {
     static SWEPT: std::sync::Once = std::sync::Once::new();
     SWEPT.call_once(|| {
@@ -207,6 +209,7 @@ fn request_sweep() {
     });
 }
 
+#[allow(clippy::disallowed_methods, reason = "cache_put_with returns before this on wasm (!gamefs::is_native)")]
 fn sweep(cache: &Path, budget: u64) {
     let mut entries = Vec::new();
     let mut total = 0u64;

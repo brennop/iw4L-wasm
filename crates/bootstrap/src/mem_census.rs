@@ -11,6 +11,8 @@
 //! Byte figures are `capacity * size_of` of the inner Vecs, marked exact (the
 //! allocation itself) or approx (a model of a type we cannot walk).
 
+#![allow(clippy::disallowed_methods, reason = "plugin only installs with IW4L_MEM_CENSUS=1; no env on wasm")]
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;

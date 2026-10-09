@@ -33,6 +33,7 @@ fn slot() -> &'static std::sync::Mutex<Digests> {
 }
 
 /// Start digesting the binary, the demo and the lock file. Returns at once.
+#[allow(clippy::disallowed_methods, reason = "bench is armed by env (perf::stats); no env on wasm")]
 pub(crate) fn spawn(demo: Option<&Path>, root: &Path) {
     let binary = std::env::current_exe().ok();
     let demo = demo.map(Path::to_path_buf);

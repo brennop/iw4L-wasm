@@ -3,6 +3,7 @@ use std::io::Write;
 use bevy::prelude::*;
 use net::{MasterBridge, MasterBridgeState};
 
+#[cfg(not(target_arch = "wasm32"))]
 const LEAVE_BUDGET: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Resource)]
@@ -63,6 +64,14 @@ fn leave_master(bridge: &MasterBridge) {
         return;
     }
     bridge.leave();
+    #[cfg(not(target_arch = "wasm32"))]
+    wait_for_leave(bridge);
+}
+
+/// A page cannot sleep, and its transport only advances between frames, so
+/// there is nothing to wait for there: the leave goes out with the bridge.
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_leave(bridge: &MasterBridge) {
     let until = web_time::Instant::now() + LEAVE_BUDGET;
     while web_time::Instant::now() < until {
         if bridge.state().is_terminal() {

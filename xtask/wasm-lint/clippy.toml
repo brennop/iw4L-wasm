@@ -1,0 +1,14 @@
+# Wasm-only hazard list: calls that panic or are unsupported on wasm32-unknown-unknown.
+# Used via CLIPPY_CONF_DIR by `cargo xtask wasm-lint`. Not the root clippy.toml:
+# natively web_time re-exports these std types, so the lint would fire everywhere.
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "panics on wasm; use web_time::Instant" },
+  { path = "std::time::SystemTime::now", reason = "panics on wasm; use web_time::SystemTime" },
+  { path = "std::thread::spawn", reason = "no threads on wasm" },
+  { path = "std::thread::sleep", reason = "panics on wasm" },
+  { path = "std::thread::Builder::spawn", reason = "no threads on wasm" },
+  { path = "std::thread::Builder::spawn_scoped", reason = "no threads on wasm" },
+  { path = "std::thread::scope", reason = "no threads on wasm" },
+  { path = "std::process::Command::new", reason = "no processes on wasm" },
+  { path = "std::process::id", reason = "unsupported on wasm" },
+]

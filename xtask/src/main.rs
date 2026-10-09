@@ -32,6 +32,7 @@ const REPO_TOOLS: &[&str] = &[
     "licenses",
     "web-pack [--root GAMES_ROOT] [--cache-record FILE] RECORD OUT.pack",
     "web [--profile NAME] [--no-opt]",
+    "wasm-lint",
     "dedicated [--hosts N] [--name NAME] [--map MAP] [--bind IP] [--pack PATH] [--certs DIR] [--run-dir DIR] [--public-url URL] [--wt-host HOST] [--no-build] (--help)",
     "mem-census [--map MAP] [--gpu] [--secs N] [--out DIR] [--no-build] | --compare DIR_A DIR_B (--help)",
 ];
@@ -124,6 +125,7 @@ fn repo(cmd: &str, rest: &[String]) -> Option<Res<()>> {
         "publish-check" => Some(xtask::publish_check::run_cli(&root)),
         "web-pack" => Some(Env::load(&root).and_then(|env| xtask::web_pack::run(&env, rest))),
         "web" => Some(xtask::web::run(&root, rest)),
+        "wasm-lint" => Some(xtask::wasm_lint::run_cli(&root)),
         _ => None,
     }
 }
