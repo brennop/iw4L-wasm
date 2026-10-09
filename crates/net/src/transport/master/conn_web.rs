@@ -30,6 +30,8 @@ use super::conn_ws::{WsConn, WsRecv, WsSend};
 use super::{MasterTarget, Result, conn_ws, rt, web_config};
 
 const CONNECT_DEADLINE: Duration = Duration::from_secs(8);
+/// How long `pagehide` holds the page for a session's close to leave.
+const PAGEHIDE_GRACE: Duration = Duration::from_millis(100);
 
 #[wasm_bindgen]
 extern "C" {
@@ -208,8 +210,8 @@ impl WtParams {
 }
 
 /// Opens the WebTransport session. The certificate hash comes from the page
-/// URL for now (`web_config.rs`, O5 moves it into `MasterTarget`). The first
-/// value stands in for native's `quinn::Endpoint`.
+/// URL or `/master.json` (`web_config.rs`). The first value stands in for
+/// native's `quinn::Endpoint`.
 async fn connect_wt(target: &MasterTarget, cancel: &CancellationToken) -> Result<((), WtConn)> {
     if !target.ca_pem.is_empty() {
         diag::warn!(
@@ -654,12 +656,81 @@ pub(super) enum WebRecv {
     Ws(WsRecv),
 }
 
-/// Opens the session on the transport the page URL names. The first value
-/// stands in for native's `quinn::Endpoint`.
+/// A `WebConn` that does not keep the session alive.
+enum WebWeak {
+    Wt(std::rc::Weak<Inner>),
+    Ws(conn_ws::WsWeak),
+}
+
+impl WebWeak {
+    fn upgrade(&self) -> Option<WebConn> {
+        match self {
+            Self::Wt(inner) => inner.upgrade().map(|inner| WebConn::Wt(WtConn(inner))),
+            Self::Ws(weak) => weak.upgrade().map(WebConn::Ws),
+        }
+    }
+}
+
+thread_local! {
+    static OPEN_SESSIONS: RefCell<Vec<WebWeak>> = const { RefCell::new(Vec::new()) };
+    static PAGEHIDE_ARMED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Closes every open session when the page goes away, so the master sees a
+/// leave at once instead of waiting out `SESSION_IDLE`. Sessions are held
+/// weakly (the menu's room list opens and drops one per refresh); `pagehide`
+/// also fires when the page enters the back/forward cache, which ends the
+/// session too.
+fn close_on_pagehide(conn: &WebConn) {
+    OPEN_SESSIONS.with(|open| {
+        let mut open = open.borrow_mut();
+        open.retain(|weak| weak.upgrade().is_some());
+        open.push(match conn {
+            WebConn::Wt(c) => WebWeak::Wt(Rc::downgrade(&c.0)),
+            WebConn::Ws(c) => WebWeak::Ws(c.downgrade()),
+        });
+    });
+    if PAGEHIDE_ARMED.replace(true) {
+        return;
+    }
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let handler = Closure::<dyn FnMut()>::new(|| {
+        let open = OPEN_SESSIONS.with(|open| std::mem::take(&mut *open.borrow_mut()));
+        let mut closed = false;
+        for conn in open.iter().filter_map(WebWeak::upgrade) {
+            conn.close(0, b"page closed");
+            closed = true;
+        }
+        // A worker session closes on the worker's thread, and the browser
+        // terminates the worker as soon as this handler returns: hold the page
+        // briefly so the close reaches the network (a spin: the main thread
+        // cannot wait on the worker).
+        if closed {
+            let until = web_time::Instant::now() + PAGEHIDE_GRACE;
+            while web_time::Instant::now() < until {
+                std::hint::spin_loop();
+            }
+        }
+    });
+    let _ = window.add_event_listener_with_callback("pagehide", handler.as_ref().unchecked_ref());
+    handler.forget();
+}
+
+/// Opens the session on the transport the page URL names, and arranges for it
+/// to close on `pagehide`. The first value stands in for native's
+/// `quinn::Endpoint`.
 pub(super) async fn connect(
     target: &MasterTarget,
     cancel: &CancellationToken,
 ) -> Result<((), WebConn)> {
+    let (endpoint, conn) = open(target, cancel).await?;
+    close_on_pagehide(&conn);
+    Ok((endpoint, conn))
+}
+
+async fn open(target: &MasterTarget, cancel: &CancellationToken) -> Result<((), WebConn)> {
     match web_config::transport() {
         web_config::Transport::Ws => {
             diag::info!(Net, "master transport=ws");

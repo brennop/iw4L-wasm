@@ -201,6 +201,9 @@ pub(crate) fn route(
                     menus.write(UiMenuRequest::Close("game_lobby".into()));
                 }
                 "ui_lobby_privacy" => {
+                    if cfg!(target_arch = "wasm32") {
+                        return Err("A browser cannot host a public lobby".into());
+                    }
                     if !party.in_lobby || !party.is_host {
                         return Err("Only the host can change lobby privacy".into());
                     }
@@ -595,6 +598,12 @@ pub(crate) fn route(
     }
     dvars.set("ui_lobby_host", if party.is_host { "1" } else { "0" });
     dvars.set("ui_lobby_public", if state.public { "1" } else { "0" });
+    // A browser page cannot host a public room: the Host-on-master button is
+    // hidden there (a lobby can still be created and played offline).
+    dvars.set(
+        "ui_lobby_can_publish",
+        if cfg!(target_arch = "wasm32") { "0" } else { "1" },
+    );
     dvars.set(
         "ui_lobby_privacy",
         localize
@@ -682,6 +691,8 @@ pub(crate) fn route(
         let connection = match snapshot.ping_ms {
             Some(ping) => format!("{ping} ms"),
             None if snapshot.error.is_some() => "Unavailable".to_owned(),
+            // A browser connection reports no RTT: loaded without error is up.
+            None if !snapshot.loading => "Connected".to_owned(),
             None => "Connecting...".to_owned(),
         };
         dvars.set(

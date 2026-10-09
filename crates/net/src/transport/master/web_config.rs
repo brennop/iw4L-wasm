@@ -1,8 +1,6 @@
-//! TEMPORARY (O4) browser master settings, read straight from the page URL so
-//! the WebTransport backend can be tried before O5. O5 replaces this file:
-//! the launcher turns URL parameters into a `MasterLaunchIntent` (join and
-//! server browser, with the menu list), and the certificate hash moves into
-//! `MasterTarget`.
+//! Browser master settings, read from the page URL and the page's own
+//! `/master.json`: the join intent, the menu room list's target, the
+//! transport and the dev knobs (`ws_buf_max`, `wt_cc`, `up_*`).
 //!
 //! `?map=mp_rust&master=127.0.0.1:4435&master_hash=<hash_hex>&join=<room id>`
 //! (WebTransport in a worker, O19; add `transport=ws&master_ws=ws://host:port/`
@@ -173,6 +171,25 @@ fn webtransport_url(master: &str) -> String {
     }
 }
 
+/// Where the master is, from the URL or the page's own `/master.json`.
+fn master_address(query: &web_sys::UrlSearchParams) -> Option<String> {
+    let ws = transport() == Transport::Ws;
+    param(query, "master")
+        .or_else(|| ws.then(|| param(query, "master_ws")).flatten())
+        .or_else(|| ws.then(origin_ws_url).flatten())
+        .or_else(|| (!ws).then(master_json_wt_url).flatten())
+}
+
+/// The master the menu's room list asks (`None`: an offline page, no list).
+pub(super) fn browser_target() -> Option<MasterTarget> {
+    let url = webtransport_url(&master_address(&query()?)?);
+    Some(MasterTarget {
+        address: url.clone(),
+        server_name: url,
+        ca_pem: String::new(),
+    })
+}
+
 /// A join intent when the URL has `master` and `join`; `None` when it has
 /// neither (offline launch).
 pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<MasterLaunchIntent>> {
@@ -186,11 +203,7 @@ pub(super) fn join_from_query(map: &str, have: ContentFlags) -> Result<Option<Ma
     // WebTransport listener `/master.json` publishes (see `transport`), and
     // `join` to the first open room of that file.
     let ws = transport() == Transport::Ws;
-    let master = param(&query, "master")
-        .or_else(|| ws.then(|| param(&query, "master_ws")).flatten())
-        .or_else(|| ws.then(origin_ws_url).flatten())
-        .or_else(|| (!ws).then(master_json_wt_url).flatten());
-    let Some(master) = master else {
+    let Some(master) = master_address(&query) else {
         return Ok(None);
     };
     let join = match param(&query, "join") {

@@ -219,6 +219,21 @@ fn post_to_worker(
 #[derive(Clone)]
 pub(super) struct WsConn(Rc<Inner>);
 
+/// A `WsConn` that does not keep the pipe (and its worker) alive.
+pub(super) struct WsWeak(std::rc::Weak<Inner>);
+
+impl WsConn {
+    pub(super) fn downgrade(&self) -> WsWeak {
+        WsWeak(Rc::downgrade(&self.0))
+    }
+}
+
+impl WsWeak {
+    pub(super) fn upgrade(&self) -> Option<WsConn> {
+        self.0.upgrade().map(WsConn)
+    }
+}
+
 pub(super) struct WsSend {
     inner: Rc<Inner>,
     id: u32,

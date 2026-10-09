@@ -258,7 +258,11 @@ impl MasterLaunchIntent {
 
     #[cfg(online)]
     pub fn browser_from_env(have: ContentFlags) -> Result<Self> {
-        let Some(target) = master_target()? else {
+        #[cfg(target_arch = "wasm32")]
+        let target = web_config::browser_target();
+        #[cfg(not(target_arch = "wasm32"))]
+        let target = master_target()?;
+        let Some(target) = target else {
             return Ok(Self::disabled());
         };
         Ok(Self(MasterLaunchMode::Browser(BrowserConfig {
