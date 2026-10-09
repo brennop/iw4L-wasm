@@ -6423,6 +6423,7 @@ dependencies = [
  "structured_data_iw4",
  "trace_iw4",
  "weapon_iw4",
+ "web-time",
  "xmodel_runtime",
 ]
 

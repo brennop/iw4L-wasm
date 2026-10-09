@@ -18,7 +18,7 @@ pub(crate) struct FrontendState {
     browser_page: usize,
     adverts: Vec<net::MasterAdvert>,
     browser_order: Vec<master_protocol::AdvertId>,
-    browser_notice: Option<(String, std::time::Instant)>,
+    browser_notice: Option<(String, web_time::Instant)>,
     password_advert: Option<net::MasterAdvert>,
     password_joining: bool,
     lobby_password: String,
@@ -482,7 +482,7 @@ pub(crate) fn route(
                 "ui_frontend_status"
             };
             if status == "ui_browser_status" {
-                state.browser_notice = Some((error.clone(), std::time::Instant::now()));
+                state.browser_notice = Some((error.clone(), web_time::Instant::now()));
             }
             dvars.set(status, &error);
             echo.write(format!("menu: {error}"));

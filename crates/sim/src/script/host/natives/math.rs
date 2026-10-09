@@ -315,8 +315,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::Int(row.map_or(-1, |r| r as i32)))
     });
     registry.register(Function, "getsystemtime", |_, _, _| {
-        let seconds = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let seconds = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map_err(|_| "system time precedes the Unix epoch")?
             .as_secs();
         let seconds =

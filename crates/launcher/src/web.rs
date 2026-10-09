@@ -218,10 +218,9 @@ impl UrlQuery {
 
 /// The argv a native launch would get for the same run.
 fn launch_args(query: &UrlQuery) -> Vec<String> {
-    let map = Some(query.get("map").unwrap_or_else(|| DEFAULT_MAP.into()));
-    let mode = query
-        .get("mode")
-        .unwrap_or_else(|| if map.is_some() { "map" } else { "menu" }.into());
+    let mode = query.get("mode").unwrap_or_else(|| "map".into());
+    // `?mode=menu` boots the frontend; every other mode takes a map.
+    let map = (mode != "menu").then(|| query.get("map").unwrap_or_else(|| DEFAULT_MAP.into()));
     let mut args = vec![mode];
     args.extend(map);
     if let Some(cmds) = query.get("cmds") {
