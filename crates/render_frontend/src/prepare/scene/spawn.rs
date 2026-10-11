@@ -223,10 +223,11 @@ pub(crate) fn spawn_world(
             finish_world_spawn(&mut scene, &mut job, &mut commands);
             diag::info!(
                 World,
-                "world spawn: GPU ready quiet={} images={} pipelines={} elapsed={:.1}ms; overlay waits for admission",
+                "world spawn: GPU ready quiet={} images={} warm={}/{} elapsed={:.1}ms; overlay waits for admission",
                 quiet,
                 gpu_ready.map(|g| i32::from(g.images)).unwrap_or(-1),
-                gpu_ready.map(|g| i32::from(g.pipelines)).unwrap_or(-1),
+                gpu_ready.map(|g| g.warmup.ready as i32).unwrap_or(-1),
+                gpu_ready.map(|g| g.warmup.total as i32).unwrap_or(-1),
                 elapsed_ms,
             );
             log_load_ledger(&job, gpu_ready, &fpv, elapsed_ms);

@@ -18,7 +18,6 @@ pub struct WorldGpuWait {
     pipelines_at_arm: Option<u32>,
     stage: Option<asset_transport::StageHandle>,
     images_stage: Option<asset_transport::StageHandle>,
-    pipelines_stage: Option<asset_transport::StageHandle>,
 }
 
 impl WorldGpuWait {
@@ -28,19 +27,14 @@ impl WorldGpuWait {
         self.pipelines_at_arm = None;
         // A wait that never reached its gate before the world changed under it
         // was interrupted; it did not quietly succeed.
-        for stage in [
-            self.images_stage.take(),
-            self.pipelines_stage.take(),
-            self.stage.take(),
-        ]
-        .into_iter()
-        .flatten()
+        for stage in [self.images_stage.take(), self.stage.take()]
+            .into_iter()
+            .flatten()
         {
             stage.cancel();
         }
         if let Some(progress) = progress {
             self.images_stage = Some(progress.begin(asset_transport::StageId::GpuTextures, None));
-            self.pipelines_stage = Some(progress.begin(asset_transport::StageId::Pipelines, None));
             self.stage = Some(progress.begin(
                 asset_transport::StageId::RenderFrames,
                 Some(u64::from(GPU_QUIET_FRAMES)),
@@ -75,7 +69,6 @@ pub struct OverlayWarmup {
 pub struct WorldGpuReady {
     pub spawn: WorldGeneration,
     pub images: bool,
-    pub pipelines: bool,
     pub waiting_n: u32,
     pub pipeline_n: u32,
     pub warmup: OverlayWarmup,
@@ -88,7 +81,9 @@ pub struct WorldGpuReady {
 
 impl WorldGpuReady {
     fn live_for(&self, spawn: WorldGeneration) -> bool {
-        self.spawn.0.is_some() && self.spawn == spawn && self.images && self.pipelines
+        // Pipelines are not part of the gate: a draw whose pipeline is still
+        // compiling is skipped, and the compile continues after admission.
+        self.spawn.0.is_some() && self.spawn == spawn && self.images
     }
 }
 
@@ -224,24 +219,15 @@ pub(crate) fn poll(
         if wait.pipelines_at_arm.is_none() {
             wait.pipelines_at_arm = Some(gpu.pipeline_n);
         }
-        // Residency and warmth are gauges: what is on the GPU right now. They
-        // may fall between frames, and it is the existing gate — `gpu.images`,
-        // `gpu.pipelines` — that says the wait is over, never count equality.
+        // Residency is a gauge: what is on the GPU right now. It may fall
+        // between frames, and it is the existing gate — `gpu.images` — that
+        // says the wait is over, never count equality.
         if let Some(stage) = &wait.images_stage {
             stage.set_total(u64::from(gpu.image_need_n));
             stage.set_completed(u64::from(gpu.image_ready_n));
         }
         if gpu.images
             && let Some(stage) = wait.images_stage.take()
-        {
-            stage.done();
-        }
-        if let Some(stage) = &wait.pipelines_stage {
-            stage.set_total(u64::from(gpu.warmup.total));
-            stage.set_completed(u64::from(gpu.warmup.ready));
-        }
-        if gpu.pipelines
-            && let Some(stage) = wait.pipelines_stage.take()
         {
             stage.done();
         }
@@ -257,10 +243,9 @@ pub(crate) fn poll(
     }
     diag::info!(
         World,
-        "world spawn slice: phase=gpu quiet={}/{GPU_QUIET_FRAMES} images={} pipelines={} hits={} not_ready={} waiting={} total={} warm={}/{} img={}/{} gap={gap_ms:.1}ms",
+        "world spawn slice: phase=gpu quiet={}/{GPU_QUIET_FRAMES} images={} hits={} not_ready={} waiting={} total={} warm={}/{} img={}/{} gap={gap_ms:.1}ms",
         wait.quiet,
         gpu.map(|g| i32::from(g.images)).unwrap_or(-1),
-        gpu.map(|g| i32::from(g.pipelines)).unwrap_or(-1),
         gpu.map(|g| g.working_hits as i32).unwrap_or(-1),
         gpu.map(|g| g.working_not_ready as i32).unwrap_or(-1),
         gpu.map(|g| g.waiting_n as i32).unwrap_or(-1),
@@ -277,9 +262,6 @@ pub(crate) fn poll(
         stage.done();
     }
     if let Some(stage) = wait.images_stage.take() {
-        stage.done();
-    }
-    if let Some(stage) = wait.pipelines_stage.take() {
         stage.done();
     }
     true
@@ -335,7 +317,6 @@ pub(crate) fn extract_images_ready(
 pub(crate) fn consume_gpu_load_progress(
     progress: Res<GpuLoadProgress>,
     generation: Option<Res<WorldGeneration>>,
-    demand: Res<GpuSubmitDemand>,
     mut job: Option<ResMut<WorldSpawnJob>>,
     mut ready: ResMut<WorldGpuReady>,
 ) {
@@ -360,17 +341,4 @@ pub(crate) fn consume_gpu_load_progress(
         }
         None => ready.images = false,
     }
-    let job_phase_live = spawn_gpu_extract_live(
-        ready.spawn,
-        job.as_ref().map(|job| job.spawn),
-        demand.overlay_gpu_wait,
-        world_gen,
-    );
-    ready.pipelines = job_phase_live
-        && progress.warmup.initialized
-        && progress.generation == world_gen
-        && progress.warmup.ready == progress.warmup.total
-        && progress.waiting_n == 0
-        && progress.working_hits > 0
-        && progress.working_not_ready == 0;
 }
