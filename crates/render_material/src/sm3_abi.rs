@@ -18,7 +18,7 @@ const DCL_TEXTURE_TYPE_2D: u32 = 2;
 const DCL_TEXTURE_TYPE_CUBE: u32 = 3;
 const DCL_TEXTURE_TYPE_VOLUME: u32 = 4;
 
-use d3d9_sm3::FLAT_VARYING_LOCATION_BASE;
+use d3d9_sm3::{FLAT_VARYING_LOCATION_BASE, SM3_VARYING_LOCATION_COUNT};
 pub use d3d9_sm3::{SamplerTextureDimension, Semantic};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -398,6 +398,8 @@ pub const VARYING_COLOR_BASE: u32 = VARYING_TEXCOORD_COUNT;
 pub const VARYING_COLOR_COUNT: u32 = 2;
 
 const _: () = assert!(VARYING_COLOR_BASE + VARYING_COLOR_COUNT <= FLAT_VARYING_LOCATION_BASE);
+// The struct declares locations 0..SM3_VARYING_LOCATION_COUNT; the table must fill it.
+const _: () = assert!(VARYING_COLOR_BASE + VARYING_COLOR_COUNT == SM3_VARYING_LOCATION_COUNT);
 
 pub fn varying_location(semantic: Semantic) -> Option<u32> {
     let index = u32::from(semantic.usage_index);

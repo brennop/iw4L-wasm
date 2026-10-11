@@ -32,6 +32,12 @@ pub fn missing_vertex_element(semantic: Semantic) -> [f32; 4] {
 /// interpolated varyings sit below it.
 pub const FLAT_VARYING_LOCATION_BASE: u32 = 14;
 
+/// Number of interpolated varying locations (`varying_0..varying_{N-1}`) that
+/// every `Sm3Varyings` struct declares, whether or not a pass writes them.
+pub const SM3_VARYING_LOCATION_COUNT: u32 = 10;
+
+const _: () = assert!(SM3_VARYING_LOCATION_COUNT <= FLAT_VARYING_LOCATION_BASE);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VaryingLink {
     pub semantic: Semantic,

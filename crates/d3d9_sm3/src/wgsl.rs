@@ -7,7 +7,7 @@ use core::fmt::Write;
 
 use crate::abi::{
     ALPHA_REF_SCALE, AlphaTest, CompareFunc, DeclType, FLAT_VARYING_LOCATION_BASE, PassLoweringAbi,
-    SamplerTextureDimension, TextureBinding, missing_vertex_element,
+    SM3_VARYING_LOCATION_COUNT, SamplerTextureDimension, TextureBinding, missing_vertex_element,
 };
 use crate::bytecode::ShaderStage;
 use crate::ir::{
@@ -591,11 +591,12 @@ pub fn lower_pass_to_wgsl(
     source.push_str(
         "\nstruct Sm3Varyings {\n    @builtin(position) @invariant position: vec4<f32>,\n",
     );
-    for varying in &abi.varyings {
+    // Every pass declares the same locations so Dawn sees one fragment input
+    // set per stage compile.
+    for location in 0..SM3_VARYING_LOCATION_COUNT {
         writeln!(
             source,
-            "    @location({}) varying_{}: vec4<f32>,",
-            varying.location, varying.location
+            "    @location({location}) varying_{location}: vec4<f32>,"
         )
         .unwrap();
     }
@@ -685,13 +686,16 @@ pub fn lower_pass_to_wgsl(
         register_name(abi.position.vertex_register)
     )
     .unwrap();
-    for varying in &abi.varyings {
-        writeln!(
-            source,
-            "        {},",
-            register_name(varying.vertex_register)
-        )
-        .unwrap();
+    for location in 0..SM3_VARYING_LOCATION_COUNT {
+        match abi.varyings.iter().find(|v| v.location == location) {
+            Some(varying) => writeln!(
+                source,
+                "        {},",
+                register_name(varying.vertex_register)
+            )
+            .unwrap(),
+            None => source.push_str("        vec4<f32>(0.0),\n"),
+        }
     }
     source.push_str("        sm3_constant_base,\n");
     writeln!(
@@ -2131,5 +2135,102 @@ mod tests {
         assert!(!small_pixel.contains("sm3_constant_base + 0u]"));
         assert!(small.source.contains("sm3_constant_base + 1u,"));
         assert!(large.source.contains("sm3_constant_base + 8u,"));
+    }
+
+    /// Lowers a fixed-slot pass whose vertex program writes one vertex output
+    /// register `o{register}` per `(location, register)` pair.
+    fn lower_with_varyings(written: &[(u32, u16)]) -> PassWgsl {
+        let position = register(Sm3RegisterFile::RasterOutput, 0);
+        let mut abi = PassLoweringAbi {
+            texture_binding: TextureBinding::FixedSlots,
+            vertex_inputs: Vec::new(),
+            position: VaryingLink {
+                semantic: Semantic::new(0, 0),
+                vertex_register: position,
+                pixel_register: None,
+                location: 0,
+            },
+            varyings: Vec::new(),
+            vertex_constants: vec![ConstantSlot {
+                register: 0,
+                program_defined: false,
+            }],
+            pixel_constants: vec![ConstantSlot {
+                register: 0,
+                program_defined: false,
+            }],
+            samplers: Vec::new(),
+            alpha_tests: vec![AlphaTest {
+                func: CompareFunc::Greater,
+                reference: 0x80,
+            }],
+        };
+        let mut vertex = program(ShaderStage::Vertex, position, 0);
+        for &(location, index) in written {
+            let output = register(Sm3RegisterFile::Output, index);
+            abi.varyings.push(VaryingLink {
+                semantic: Semantic::new(5, location as u8),
+                vertex_register: output,
+                pixel_register: None,
+                location,
+            });
+            vertex
+                .instructions
+                .push(mov(output, register(Sm3RegisterFile::FloatConstant, 0)));
+        }
+        let pixel = program(
+            ShaderStage::Pixel,
+            register(Sm3RegisterFile::ColourOutput, 0),
+            0,
+        );
+        lower_pass_to_wgsl(&abi, &vertex, &pixel).expect("pass lowers")
+    }
+
+    fn varyings_struct(pass: &PassWgsl) -> &str {
+        let start = pass.source.find("struct Sm3Varyings {").expect("struct");
+        let end = start + pass.source[start..].find("\n}\n").expect("struct end");
+        &pass.source[start..end]
+    }
+
+    #[test]
+    fn varyings_struct_text_is_identical_for_every_pass() {
+        let first = lower_with_varyings(&[(0, 1)]);
+        let second = lower_with_varyings(&[(3, 4), (8, 2)]);
+        let none = lower_with_varyings(&[]);
+        assert_eq!(varyings_struct(&first), varyings_struct(&second));
+        assert_eq!(varyings_struct(&first), varyings_struct(&none));
+        let text = varyings_struct(&first);
+        for location in 0..SM3_VARYING_LOCATION_COUNT {
+            assert!(text.contains(&format!(
+                "@location({location}) varying_{location}: vec4<f32>,"
+            )));
+        }
+        assert!(!text.contains("varying_10"));
+        assert!(text.contains("@interpolate(flat) @location(14) sm3_constant_base: u32,"));
+        assert!(text.contains("@interpolate(flat) @location(15) sm3_pixel_constant_base: u32,"));
+    }
+
+    #[test]
+    fn vertex_constructor_zero_fills_unwritten_locations() {
+        let pass = lower_with_varyings(&[(3, 4), (8, 2)]);
+        let start = pass.source.find("return Sm3Varyings(").expect("return");
+        let end = start + pass.source[start..].find(");").expect("end");
+        let args: Vec<&str> = pass.source[start..end]
+            .lines()
+            .skip(1)
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        let mut expected = vec![String::from("or0,")];
+        for location in 0..SM3_VARYING_LOCATION_COUNT {
+            expected.push(match location {
+                3 => String::from("o4,"),
+                8 => String::from("o2,"),
+                _ => String::from("vec4<f32>(0.0),"),
+            });
+        }
+        expected.push(String::from("sm3_constant_base,"));
+        expected.push(String::from("sm3_constant_base + 1u,"));
+        assert_eq!(args, expected);
     }
 }
