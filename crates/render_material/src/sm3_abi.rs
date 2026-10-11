@@ -391,7 +391,8 @@ fn declarations(program: &Sm3ProgramIr) -> Vec<(Sm3Register, Semantic)> {
 /// Inter-stage location of a varying, a function of its semantic alone so the
 /// vertex and pixel halves of a pass agree without seeing each other.
 /// TEXCOORD0..7 take 0..7, COLOR0 and COLOR1 take 8 and 9, 10..13 are spare, and
-/// `FLAT_VARYING_LOCATION_BASE` (14) and up stay free for flat varyings.
+/// `FLAT_VARYING_LOCATION_BASE` (14) and up are the flat varyings: 14 is the
+/// constant base and 15 the pixel constant base.
 pub const VARYING_TEXCOORD_COUNT: u32 = 8;
 pub const VARYING_COLOR_BASE: u32 = VARYING_TEXCOORD_COUNT;
 pub const VARYING_COLOR_COUNT: u32 = 2;

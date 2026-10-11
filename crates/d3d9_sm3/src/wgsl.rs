@@ -605,6 +605,14 @@ pub fn lower_pass_to_wgsl(
         FLAT_VARYING_LOCATION_BASE
     )
     .unwrap();
+    // The pixel half reads its constants from this base, so its text does not
+    // depend on the vertex program's constant count.
+    writeln!(
+        source,
+        "    @interpolate(flat) @location({}) sm3_pixel_constant_base: u32,",
+        FLAT_VARYING_LOCATION_BASE + 1
+    )
+    .unwrap();
     source.push_str("}\n\n@vertex\nfn ");
     source.push_str(PASS_VERTEX_ENTRY);
     source.push_str("(\n");
@@ -686,6 +694,12 @@ pub fn lower_pass_to_wgsl(
         .unwrap();
     }
     source.push_str("        sm3_constant_base,\n");
+    writeln!(
+        source,
+        "        sm3_constant_base + {}u,",
+        vertex_constant_len
+    )
+    .unwrap();
     source.push_str("    );\n}\n");
 
     let front_facing = pixel_plan
@@ -749,7 +763,7 @@ pub fn lower_pass_to_wgsl(
         abi,
         &pixel_plan,
         Stage::Pixel,
-        &format!("varyings.sm3_constant_base + {}u", vertex_constant_len),
+        "varyings.sm3_pixel_constant_base",
     )?;
     if !fixed {
         emit_texture_slot_prologue(
@@ -2010,4 +2024,112 @@ fn register_name(register: Sm3Register) -> String {
 
 fn component_name(component: u8) -> char {
     ['x', 'y', 'z', 'w'][usize::from(component)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::{ConstantSlot, Semantic, VaryingLink};
+
+    fn register(file: Sm3RegisterFile, index: u16) -> Sm3Register {
+        Sm3Register { file, index }
+    }
+
+    fn mov(destination: Sm3Register, source: Sm3Register) -> Sm3Instruction {
+        Sm3Instruction {
+            at_word: 0,
+            opcode: Sm3Opcode::Mov,
+            controls: 0,
+            predicated: false,
+            coissue: false,
+            body: Sm3InstructionBody::Operation {
+                destination: Some(crate::ir::Sm3Destination {
+                    register: destination,
+                    write_mask: 0x0f,
+                    saturate: false,
+                    partial_precision: false,
+                    centroid: false,
+                    unknown_modifier_bits: 0,
+                    relative: None,
+                }),
+                sources: vec![Sm3Source {
+                    register: source,
+                    swizzle: [0, 1, 2, 3],
+                    modifier: Sm3SourceModifier::None,
+                    relative: None,
+                }],
+            },
+        }
+    }
+
+    fn program(stage: ShaderStage, output: Sm3Register, constant: u16) -> Sm3ProgramIr {
+        Sm3ProgramIr {
+            stage,
+            instructions: vec![mov(
+                output,
+                register(Sm3RegisterFile::FloatConstant, constant),
+            )],
+        }
+    }
+
+    /// Lowers a fixed-slot pass whose vertex program reads `vertex_constant`
+    /// and whose pixel program always reads c0.
+    fn lower_fixed(vertex_constant: u16) -> PassWgsl {
+        let position = register(Sm3RegisterFile::RasterOutput, 0);
+        let slots = |count: u16| {
+            (0..count)
+                .map(|register| ConstantSlot {
+                    register,
+                    program_defined: false,
+                })
+                .collect::<Vec<_>>()
+        };
+        let abi = PassLoweringAbi {
+            texture_binding: TextureBinding::FixedSlots,
+            vertex_inputs: Vec::new(),
+            position: VaryingLink {
+                semantic: Semantic::new(0, 0),
+                vertex_register: position,
+                pixel_register: None,
+                location: 0,
+            },
+            varyings: Vec::new(),
+            vertex_constants: slots(vertex_constant + 1),
+            pixel_constants: slots(1),
+            samplers: Vec::new(),
+            alpha_tests: vec![AlphaTest {
+                func: CompareFunc::Greater,
+                reference: 0x80,
+            }],
+        };
+        let vertex = program(ShaderStage::Vertex, position, vertex_constant);
+        let pixel = program(
+            ShaderStage::Pixel,
+            register(Sm3RegisterFile::ColourOutput, 0),
+            0,
+        );
+        lower_pass_to_wgsl(&abi, &vertex, &pixel).expect("pass lowers")
+    }
+
+    #[test]
+    fn fixed_slot_pixel_text_ignores_vertex_constant_count() {
+        let small = lower_fixed(0);
+        let large = lower_fixed(7);
+        assert_ne!(small.vertex_constant_len, large.vertex_constant_len);
+        assert_ne!(small.source, large.source);
+
+        let pixel_part = |pass: &PassWgsl| {
+            let start = pass
+                .source
+                .find("fn sm3_fragment_body")
+                .expect("fragment body helper");
+            String::from(&pass.source[start..])
+        };
+        let small_pixel = pixel_part(&small);
+        assert_eq!(small_pixel, pixel_part(&large));
+        assert!(small_pixel.contains("varyings.sm3_pixel_constant_base + 0u"));
+        assert!(!small_pixel.contains("sm3_constant_base + 0u]"));
+        assert!(small.source.contains("sm3_constant_base + 1u,"));
+        assert!(large.source.contains("sm3_constant_base + 8u,"));
+    }
 }
