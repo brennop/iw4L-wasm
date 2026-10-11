@@ -37,6 +37,14 @@ options:
   --bind IP          master listen address (default 0.0.0.0, the LAN; 127.0.0.1 = local only)
   --pack PATH        game pack, linked or copied to <web>/game.pack
                      (default on Windows: E:\\iw4l\\packs\\mp_rust_cap512_1007.pack)
+                     (also $IW4L_WEB_PACK when --pack is not given)
+  --build-pack       first (re)build the pack: record the native cache entries
+                     (`make map mp_rust`, webgpu profile), run web-pack and write the
+                     result to $IW4L_WEB_PACK (--pack if unset), then use it. Needs IW4L_GAMES.
+  --record FILE      read record for --build-pack (default: $IW4L_WEB_RECORD, else the
+                     newest *_full*.rec beside the pack;
+                     if none exists, the cache run records one as <pack>_full.rec)
+  --image-cap PX     image cap for --build-pack (default 512)
   --certs DIR        dir holding iw4l-ca.pem, server-cert.pem, server-key.pem
                      (default: E:\\iw4l\\o1-duo\\certs if complete, else minted with openssl
                      under the run base dir)
@@ -65,6 +73,9 @@ struct Args {
     map: String,
     bind: Ipv4Addr,
     pack: Option<PathBuf>,
+    build_pack: bool,
+    record: Option<PathBuf>,
+    image_cap: u32,
     certs: Option<PathBuf>,
     run_dir: Option<PathBuf>,
     public_url: Option<String>,
@@ -84,6 +95,9 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
         map: "mp_rust".into(),
         bind: Ipv4Addr::UNSPECIFIED,
         pack: None,
+        build_pack: false,
+        record: env.get("IW4L_WEB_RECORD").map(PathBuf::from),
+        image_cap: 512,
         certs: None,
         run_dir: None,
         public_url: env.get("IW4L_PUBLIC_URL"),
@@ -117,6 +131,13 @@ fn parse(env: &Env, args: &[String]) -> Res<Option<Args>> {
                     .map_err(|_| "--bind needs an IPv4 address".to_string())?;
             }
             "--pack" => out.pack = Some(PathBuf::from(value("a path")?)),
+            "--build-pack" => out.build_pack = true,
+            "--record" => out.record = Some(PathBuf::from(value("a path")?)),
+            "--image-cap" => {
+                out.image_cap = value("pixels")?
+                    .parse()
+                    .map_err(|_| "--image-cap needs a number".to_string())?;
+            }
             "--certs" => out.certs = Some(PathBuf::from(value("a directory")?)),
             "--run-dir" => out.run_dir = Some(PathBuf::from(value("a directory")?)),
             "--public-url" => out.public_url = Some(value("an https URL")?),
@@ -335,14 +356,89 @@ fn resolve_certs(base: &Path, explicit: Option<&Path>, server_name: &str) -> Res
     Ok(ca)
 }
 
-fn resolve_pack(explicit: Option<PathBuf>) -> Res<PathBuf> {
-    let pack = match explicit {
-        Some(path) => path,
-        None if is_windows() => PathBuf::from(r"E:\iw4l\packs\mp_rust_cap512_1007.pack"),
-        None => {
-            return Err("pass --pack PATH (a game.pack built by `cargo xtask web-pack`)".into());
-        }
+fn pack_path(env: &Env, explicit: Option<PathBuf>) -> Res<PathBuf> {
+    match explicit.or_else(|| env.get("IW4L_WEB_PACK").map(PathBuf::from)) {
+        Some(path) => Ok(path),
+        None if is_windows() => Ok(PathBuf::from(r"E:\iw4l\packs\mp_rust_cap512_1007.pack")),
+        None => Err("pass --pack PATH (a game.pack built by `cargo xtask web-pack`)".into()),
+    }
+}
+
+/// Re-record the native cache entries and run web-pack, replacing `pack`.
+/// The same steps as `scripts/web_run.py --rebuild-pack`.
+fn build_pack(root: &Path, env: &Env, args: &Args, pack: &Path) -> Res<()> {
+    let games = env.require("IW4L_GAMES")?;
+    shell::require_tools(&["cargo", "make"])?;
+    let dir = pack.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let stem = pack.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    // An explicit or existing read record is reused; otherwise the same native run that
+    // records the cache also records the file reads (IW4L_FS_RECORD) into <stem>_full.rec.
+    let existing = match &args.record {
+        Some(record) if record.is_file() => Some(record.clone()),
+        Some(record) => return Err(format!("record not found: {}", record.display())),
+        None => fs::read_dir(dir)
+            .map_err(|e| format!("read {}: {e}", dir.display()))?
+            .filter_map(Result::ok)
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.contains("_full") && name.ends_with(".rec")
+            })
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .max()
+            .map(|(_, path)| path),
     };
+    let fresh_record = pack.with_file_name(format!("{stem}_full.rec"));
+    let record = existing.clone().unwrap_or_else(|| fresh_record.clone());
+    let cache_rec = pack.with_file_name(format!("{stem}_cache.rec"));
+    let new = pack.with_file_name(format!(
+        "{}.new",
+        pack.file_name().map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+    ));
+    let _ = fs::remove_file(&cache_rec);
+    let profile = env.get("PROFILE").unwrap_or_else(|| "play".to_string());
+    let artifacts = root
+        .join("target")
+        .join(if profile == "dev" { "debug" } else { &profile })
+        .join("iw4l-artifacts");
+
+    let step = Step::start("dedicated.pack", "make map mp_rust (recording the cache)");
+    let mut make = Command::new("make");
+    make.current_dir(root)
+        .args(["map", "mp_rust"])
+        .env("IW4L_GPU_PROFILE", "webgpu")
+        .env("IW4L_CACHE_RECORD", &cache_rec)
+        .env("CMDS", "wait world; wait 5s; quit");
+    if existing.is_none() {
+        println!("dedicated.pack: no read record found; recording {}", record.display());
+        make.env("IW4L_FS_RECORD", &record);
+    }
+    shell::run(&mut make)?;
+    step.done("");
+
+    let step = Step::start("dedicated.pack", &format!("web-pack -> {}", pack.display()));
+    let path = |p: &Path| p.to_string_lossy().into_owned();
+    crate::web_pack::run(
+        env,
+        &[
+            "--root".to_string(),
+            games,
+            "--cache-record".to_string(),
+            path(&cache_rec),
+            "--artifacts".to_string(),
+            path(&artifacts),
+            "--image-cap".to_string(),
+            args.image_cap.to_string(),
+            path(&record),
+            path(&new),
+        ],
+    )?;
+    fs::rename(&new, pack).map_err(|e| format!("replace {}: {e}", pack.display()))?;
+    step.done("");
+    Ok(())
+}
+
+fn resolve_pack(pack: PathBuf) -> Res<PathBuf> {
     if pack.is_file() {
         Ok(pack)
     } else {
@@ -479,7 +575,20 @@ pub fn run(root: &Path, env: &Env, args: &[String]) -> Res<()> {
         }
     }
     let base = base_dir(root);
-    let pack = resolve_pack(args.pack.clone())?;
+    // --build-pack writes to $IW4L_WEB_PACK (--pack only when it is unset), and that pack is served.
+    let pack = if args.build_pack {
+        let out = env
+            .get("IW4L_WEB_PACK")
+            .map(PathBuf::from)
+            .or_else(|| args.pack.clone());
+        pack_path(env, out)?
+    } else {
+        pack_path(env, args.pack.clone())?
+    };
+    if args.build_pack {
+        build_pack(root, env, &args, &pack)?;
+    }
+    let pack = resolve_pack(pack)?;
     let ca = resolve_certs(&base, args.certs.as_deref(), &server_name)?;
 
     let run_dir = args
