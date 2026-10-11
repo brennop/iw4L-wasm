@@ -18,6 +18,7 @@ const DCL_TEXTURE_TYPE_2D: u32 = 2;
 const DCL_TEXTURE_TYPE_CUBE: u32 = 3;
 const DCL_TEXTURE_TYPE_VOLUME: u32 = 4;
 
+use d3d9_sm3::FLAT_VARYING_LOCATION_BASE;
 pub use d3d9_sm3::{SamplerTextureDimension, Semantic};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,6 +181,14 @@ pub enum PassAbiRefusal {
     DuplicatePositionOutput,
 
     VaryingUnbound {
+        semantic: Semantic,
+    },
+
+    VaryingSemanticUnsupported {
+        semantic: Semantic,
+    },
+
+    DuplicateVaryingSemantic {
         semantic: Semantic,
     },
 
@@ -379,6 +388,25 @@ fn declarations(program: &Sm3ProgramIr) -> Vec<(Sm3Register, Semantic)> {
     declarations
 }
 
+/// Inter-stage location of a varying, a function of its semantic alone so the
+/// vertex and pixel halves of a pass agree without seeing each other.
+/// TEXCOORD0..7 take 0..7, COLOR0 and COLOR1 take 8 and 9, 10..13 are spare, and
+/// `FLAT_VARYING_LOCATION_BASE` (14) and up stay free for flat varyings.
+pub const VARYING_TEXCOORD_COUNT: u32 = 8;
+pub const VARYING_COLOR_BASE: u32 = VARYING_TEXCOORD_COUNT;
+pub const VARYING_COLOR_COUNT: u32 = 2;
+
+const _: () = assert!(VARYING_COLOR_BASE + VARYING_COLOR_COUNT <= FLAT_VARYING_LOCATION_BASE);
+
+pub fn varying_location(semantic: Semantic) -> Option<u32> {
+    let index = u32::from(semantic.usage_index);
+    match semantic.usage {
+        vd::D3DDECLUSAGE_TEXCOORD if index < VARYING_TEXCOORD_COUNT => Some(index),
+        vd::D3DDECLUSAGE_COLOR if index < VARYING_COLOR_COUNT => Some(VARYING_COLOR_BASE + index),
+        _ => None,
+    }
+}
+
 fn link_varyings(
     vertex_declarations: &[(Sm3Register, Semantic)],
     pixel_declarations: &[(Sm3Register, Semantic)],
@@ -435,9 +463,21 @@ fn link_varyings(
             location: 0,
         });
     }
-    varyings.sort_by_key(|varying| (varying.semantic, varying.vertex_register));
-    for (location, varying) in varyings.iter_mut().enumerate() {
-        varying.location = location as u32;
+    for varying in &mut varyings {
+        varying.location = varying_location(varying.semantic).ok_or(
+            PassAbiRefusal::VaryingSemanticUnsupported {
+                semantic: varying.semantic,
+            },
+        )?;
+    }
+    varyings.sort_by_key(|varying| (varying.location, varying.vertex_register));
+    if let Some(pair) = varyings
+        .windows(2)
+        .find(|pair| pair[0].location == pair[1].location)
+    {
+        return Err(PassAbiRefusal::DuplicateVaryingSemantic {
+            semantic: pair[0].semantic,
+        });
     }
 
     for (_, semantic) in &pixel_inputs {
@@ -729,4 +769,104 @@ fn used_samplers(program: &Sm3ProgramIr) -> BTreeSet<u16> {
         }
     }
     samplers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn output(index: u16) -> Sm3Register {
+        Sm3Register {
+            file: Sm3RegisterFile::Output,
+            index,
+        }
+    }
+
+    fn position() -> (Sm3Register, Semantic) {
+        (
+            Sm3Register {
+                file: Sm3RegisterFile::RasterOutput,
+                index: 0,
+            },
+            Semantic::position(0),
+        )
+    }
+
+    fn link(outputs: &[Semantic]) -> Result<Vec<VaryingBinding>, PassAbiRefusal> {
+        let mut declarations = vec![position()];
+        for (index, semantic) in outputs.iter().enumerate() {
+            declarations.push((output(index as u16), *semantic));
+        }
+        let pixel = Sm3ProgramIr {
+            stage: d3d9_sm3::ShaderStage::Pixel,
+            instructions: Vec::new(),
+        };
+        link_varyings(&declarations, &[], &pixel).map(|(_, varyings)| varyings)
+    }
+
+    fn color(index: u8) -> Semantic {
+        Semantic::new(vd::D3DDECLUSAGE_COLOR, index)
+    }
+
+    #[test]
+    fn location_depends_on_semantic_only() {
+        let wide = link(&[
+            Semantic::texcoord(0),
+            Semantic::texcoord(3),
+            Semantic::texcoord(7),
+            color(0),
+        ])
+        .unwrap();
+        let narrow = link(&[color(0), Semantic::texcoord(3)]).unwrap();
+        let location = |varyings: &[VaryingBinding], semantic| {
+            varyings
+                .iter()
+                .find(|varying| varying.semantic == semantic)
+                .map(|varying| varying.location)
+        };
+        assert_eq!(location(&wide, Semantic::texcoord(3)), Some(3));
+        assert_eq!(location(&narrow, Semantic::texcoord(3)), Some(3));
+        assert_eq!(location(&wide, color(0)), Some(8));
+        assert_eq!(location(&narrow, color(0)), Some(8));
+        assert_eq!(location(&wide, Semantic::texcoord(7)), Some(7));
+    }
+
+    #[test]
+    fn table_stays_below_flat_locations() {
+        for usage_index in 0..=u8::MAX {
+            for usage in 0..=u8::MAX {
+                let semantic = Semantic::new(usage, usage_index);
+                if let Some(location) = varying_location(semantic) {
+                    assert!(location < FLAT_VARYING_LOCATION_BASE);
+                }
+            }
+        }
+        assert_eq!(varying_location(color(1)), Some(9));
+        assert_eq!(varying_location(Semantic::texcoord(8)), None);
+    }
+
+    #[test]
+    fn unsupported_semantic_is_refused() {
+        let normal = Semantic::new(vd::D3DDECLUSAGE_NORMAL, 0);
+        assert_eq!(
+            link(&[Semantic::texcoord(0), normal]),
+            Err(PassAbiRefusal::VaryingSemanticUnsupported { semantic: normal })
+        );
+        assert_eq!(
+            link(&[Semantic::texcoord(8)]),
+            Err(PassAbiRefusal::VaryingSemanticUnsupported {
+                semantic: Semantic::texcoord(8)
+            })
+        );
+    }
+
+    #[test]
+    fn duplicate_semantic_is_refused() {
+        assert_eq!(
+            link(&[Semantic::texcoord(2), Semantic::texcoord(2)]),
+            Err(PassAbiRefusal::DuplicateVaryingSemantic {
+                semantic: Semantic::texcoord(2)
+            })
+        );
+    }
 }

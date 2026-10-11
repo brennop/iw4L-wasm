@@ -27,6 +27,10 @@ pub fn missing_vertex_element(semantic: Semantic) -> [f32; 4] {
     }
 }
 
+/// Inter-stage locations from here up are reserved for flat varyings
+/// (`sm3_constant_base` today); interpolated varyings sit below it.
+pub const FLAT_VARYING_LOCATION_BASE: u32 = 14;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VaryingLink {
     pub semantic: Semantic,

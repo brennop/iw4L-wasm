@@ -9,8 +9,8 @@ pub mod ir;
 pub mod wgsl;
 
 pub use abi::{
-    AlphaTest, CompareFunc, ConstantSlot, DeclType, PassLoweringAbi, SamplerSlot,
-    SamplerTextureDimension, Semantic, TextureBinding, VaryingLink, VertexInput,
+    AlphaTest, CompareFunc, ConstantSlot, DeclType, FLAT_VARYING_LOCATION_BASE, PassLoweringAbi,
+    SamplerSlot, SamplerTextureDimension, Semantic, TextureBinding, VaryingLink, VertexInput,
     missing_vertex_element,
 };
 pub use bytecode::{Opcode, ShaderStage, TokenError, TokenStream};

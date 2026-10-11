@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use crate::abi::{
-    ALPHA_REF_SCALE, AlphaTest, CompareFunc, DeclType, PassLoweringAbi, SamplerTextureDimension,
-    TextureBinding, missing_vertex_element,
+    ALPHA_REF_SCALE, AlphaTest, CompareFunc, DeclType, FLAT_VARYING_LOCATION_BASE, PassLoweringAbi,
+    SamplerTextureDimension, TextureBinding, missing_vertex_element,
 };
 use crate::bytecode::ShaderStage;
 use crate::ir::{
@@ -602,7 +602,7 @@ pub fn lower_pass_to_wgsl(
     writeln!(
         source,
         "    @interpolate(flat) @location({}) sm3_constant_base: u32,",
-        abi.varyings.len()
+        FLAT_VARYING_LOCATION_BASE
     )
     .unwrap();
     source.push_str("}\n\n@vertex\nfn ");
