@@ -15,7 +15,7 @@ pub fn cached_lighting_port_variant(
     };
     let buffers = cached_lighting_vertex_buffers(packed_buffers, location);
     let source = lighting_texcoord_register(port.abi()).and_then(|register| {
-        inject_cached_lighting_attribute(&port.module().source, location, Some(&register))
+        inject_cached_lighting_attribute(port.module().modules.vertex(), location, Some(&register))
     });
     (source, buffers)
 }
@@ -26,9 +26,13 @@ fn adapt_admitted_port(port: &crate::AdmittedExactPort) -> ExactColourPortGpu {
     let (cached_source, cached_vertex_buffers) =
         cached_lighting_port_variant(port, &vertex_buffers);
 
-    let cached_source = cached_source
+    let modules = ExactModuleSource::new(
+        port.module().modules.vertex_arc(),
+        port.module().modules.fragment_arc(),
+    );
+    let cached_modules = cached_source
         .filter(|_| !cached_vertex_buffers.is_empty())
-        .map(Arc::<str>::from);
+        .map(|source| modules.with_vertex(Arc::<str>::from(source)));
     ExactColourPortGpu {
         constants_layout: crate::bind_group_layout_from_entries(
             "iw4_exact_colour_constants",
@@ -41,7 +45,8 @@ fn adapt_admitted_port(port: &crate::AdmittedExactPort) -> ExactColourPortGpu {
             true,
         ),
         vertex_buffers,
-        cached_source,
+        modules,
+        cached_modules,
         cached_vertex_buffers,
         port: port.clone(),
     }
@@ -200,6 +205,9 @@ pub(super) fn kick_admitted_pipelines(
             .filter(|slot| registry.is_ready(**slot))
             .count() as u32,
     };
+    if warmup.total > 0 && warmup.ready == warmup.total {
+        registry.log_stage_counts_once();
+    }
 }
 
 fn schedule_admitted_pipelines(

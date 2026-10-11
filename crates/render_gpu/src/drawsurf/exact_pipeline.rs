@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bevy::mesh::VertexBufferLayout;
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::Resource;
 use bevy::render::render_resource::{
     BindGroupLayout, BindGroupLayoutDescriptor, ColorTargetState, DepthStencilState,
@@ -12,17 +13,17 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::RenderDevice;
 use bevy::tasks::{Task, futures_lite::future};
 
-use super::sm3_wgsl::{PASS_VERTEX_ENTRY, ValidatedPassWgsl};
-use render_material::PortId;
+use super::sm3_wgsl::PASS_VERTEX_ENTRY;
 
 /// How much pipeline creation one `flush` may start.
 ///
 /// The browser default keeps each frame's share of module creation and
 /// descriptor conversion small so frames still present during the load; the
 /// pipelines themselves compile asynchronously there. Native is unbounded. `IW4L_EXACT_MODULES_PER_FRAME` and
-/// `IW4L_EXACT_PIPELINES_PER_FRAME` override either (0 = unbounded). A call
-/// always takes at least one module, and stops once either bound is reached,
-/// so a single module's plans may exceed the pipeline bound.
+/// `IW4L_EXACT_PIPELINES_PER_FRAME` override either (0 = unbounded). "Modules" counts
+/// shader modules created for the first time. A call always starts at least one
+/// pipeline, and stops once either bound is reached, so a single pipeline that
+/// needs two new modules may exceed the module bound.
 #[derive(Clone, Copy)]
 struct FlushBudget {
     modules: usize,
@@ -60,23 +61,65 @@ impl FlushBudget {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-struct ModuleKey {
-    port: PortId,
-    cached_lighting: bool,
+/// The WGSL text of one shader module. It is the module's identity: equal text is one
+/// module, whichever port, stage or variant asked for it. The hash is taken once, so a
+/// key lookup does not rehash the text.
+#[derive(Clone)]
+pub(super) struct ModuleText {
+    text: Arc<str>,
+    hash: u64,
 }
 
+impl ModuleText {
+    pub(super) fn new(text: Arc<str>) -> Self {
+        let hash = std::hash::BuildHasher::hash_one(&bevy::platform::hash::FixedHasher, &*text);
+        Self { text, hash }
+    }
+}
+
+impl PartialEq for ModuleText {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.text, &other.text) || (self.hash == other.hash && self.text == other.text)
+    }
+}
+
+impl Eq for ModuleText {}
+
+impl Hash for ModuleText {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
+
+/// The two module texts of one pipeline. A texture-table port has one combined module, so
+/// both stages hold the same text.
 #[derive(Clone)]
-pub(super) enum ExactModuleSource {
-    Port(Arc<ValidatedPassWgsl>),
-    CachedLighting(Arc<str>),
+pub(super) struct ExactModuleSource {
+    pub(super) vertex: ModuleText,
+    pub(super) fragment: ModuleText,
 }
 
 impl ExactModuleSource {
-    fn wgsl(&self) -> &str {
-        match self {
-            Self::Port(module) => &module.source,
-            Self::CachedLighting(source) => source,
+    pub(super) fn new(vertex: Arc<str>, fragment: Arc<str>) -> Self {
+        let vertex = ModuleText::new(vertex);
+        let fragment = if Arc::ptr_eq(&vertex.text, &fragment) {
+            vertex.clone()
+        } else {
+            ModuleText::new(fragment)
+        };
+        Self { vertex, fragment }
+    }
+
+    /// The same program with its vertex entry replaced. A combined module serves both
+    /// stages, so the replacement serves both too; a split fragment module stays shared.
+    pub(super) fn with_vertex(&self, vertex: Arc<str>) -> Self {
+        if self.vertex == self.fragment {
+            Self::new(vertex.clone(), vertex)
+        } else {
+            Self {
+                vertex: ModuleText::new(vertex),
+                fragment: self.fragment.clone(),
+            }
         }
     }
 }
@@ -101,27 +144,64 @@ enum SlotState {
     Ready(RenderPipeline),
 }
 
-struct PortBuild {
-    module: ModuleKey,
-    created: Option<Arc<ShaderModule>>,
-    pipelines: Vec<(ExactPipelineSlot, RenderPipeline)>,
+type LayoutKey = (BindGroupLayout, BindGroupLayout);
+
+/// What a browser caches for a vertex stage: the module and the pipeline layout (which
+/// sets the binding remap). Entry point and fragment inputs are fixed.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct VertexStageKey {
+    module: ModuleText,
+    layout: LayoutKey,
 }
 
+/// What a browser caches for a fragment stage.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct FragmentStageKey {
+    module: ModuleText,
+    entry: String,
+    layout: LayoutKey,
+}
+
+type ModuleCell = Arc<OnceLock<Arc<ShaderModule>>>;
+
+struct QueuedPipeline {
+    slot: ExactPipelineSlot,
+    plan: ExactPipelinePlan,
+    modules: ExactModuleSource,
+    vertex_key: VertexStageKey,
+    fragment_key: FragmentStageKey,
+}
+
+struct PipelineBuild {
+    slot: ExactPipelineSlot,
+    pipeline: RenderPipeline,
+    vertex_key: VertexStageKey,
+    fragment_key: FragmentStageKey,
+}
+
+/// Pipeline creation, scheduled by stage.
+///
+/// A browser compiles each stage of an async pipeline independently and caches the
+/// result, but only for pipelines started after it resolved. Pipelines that share a stage
+/// therefore must not start together. A pipeline starts only when each of its stages is
+/// warm (a pipeline using it has resolved) or is introduced by this pipeline alone; one
+/// that needs a stage another in-flight pipeline is introducing stays queued, and starts
+/// on the first `flush` after that pipeline resolves. This holds across ports, since
+/// ports share stage modules, and keeps the users of one module close together in time.
 #[derive(Resource, Default)]
 pub(super) struct ExactPipelineRegistry {
     world: frame::WorldGeneration,
     slots: Vec<SlotState>,
     by_key: HashMap<super::colour_submit::ExactColourPipelineKey, ExactPipelineSlot>,
-    modules: HashMap<ModuleKey, Arc<ShaderModule>>,
+    modules: HashMap<ModuleText, ModuleCell>,
 
-    queued: HashMap<
-        ModuleKey,
-        (
-            ExactModuleSource,
-            Vec<(ExactPipelineSlot, ExactPipelinePlan)>,
-        ),
-    >,
-    jobs: Vec<Task<PortBuild>>,
+    queued: Vec<QueuedPipeline>,
+    jobs: Vec<Task<PipelineBuild>>,
+    warm_vertex: HashSet<VertexStageKey>,
+    warm_fragment: HashSet<FragmentStageKey>,
+    introducing_vertex: HashSet<VertexStageKey>,
+    introducing_fragment: HashSet<FragmentStageKey>,
+    stage_counts_logged: bool,
 
     layouts: Mutex<HashMap<BindGroupLayoutDescriptor, BindGroupLayout>>,
     pipeline_layouts: HashMap<(BindGroupLayout, BindGroupLayout), PipelineLayout>,
@@ -193,7 +273,7 @@ impl ExactPipelineRegistry {
     pub(super) fn request(
         &mut self,
         key: super::colour_submit::ExactColourPipelineKey,
-        source: ExactModuleSource,
+        modules: ExactModuleSource,
         plan: ExactPipelinePlan,
     ) -> ExactPipelineSlot {
         if let Some(slot) = self.by_key.get(&key).copied() {
@@ -205,23 +285,30 @@ impl ExactPipelineRegistry {
         self.slots.push(SlotState::Building);
         self.by_key.insert(key, slot);
 
-        let module = ModuleKey {
-            port: key.port,
-            cached_lighting: matches!(source, ExactModuleSource::CachedLighting(_)),
+        let layout = (plan.constants_layout.clone(), plan.textures_layout.clone());
+        let vertex_key = VertexStageKey {
+            module: modules.vertex.clone(),
+            layout: layout.clone(),
         };
-        self.queued
-            .entry(module)
-            .or_insert_with(|| (source, Vec::new()))
-            .1
-            .push((slot, plan));
+        let fragment_key = FragmentStageKey {
+            module: modules.fragment.clone(),
+            entry: plan.fragment_entry.clone(),
+            layout,
+        };
+        self.queued.push(QueuedPipeline {
+            slot,
+            plan,
+            modules,
+            vertex_key,
+            fragment_key,
+        });
         slot
     }
 
-    /// Starts a bounded slice of the queued work; the rest stays in `queued`
-    /// (its slots stay `Building`, so warm-up counts it as not ready) and the
-    /// caller flushes again next frame. Wasm runs spawned futures as
-    /// microtasks, so an unbounded drain is one multi-second burst with no
-    /// frame presented.
+    /// Starts a bounded slice of the queued pipelines that no in-flight pipeline blocks;
+    /// the rest stays in `queued` (its slots stay `Building`, so warm-up counts it as not
+    /// ready) and the caller flushes again next frame. Wasm runs spawned futures as
+    /// microtasks, so an unbounded drain is one multi-second burst with no frame presented.
     pub(super) fn flush(&mut self, device: &RenderDevice) {
         if self.queued.is_empty() {
             return;
@@ -229,34 +316,46 @@ impl ExactPipelineRegistry {
 
         let budget = FlushBudget::get();
         let pool = assets::load_pool();
-        let mut modules = 0usize;
-        let mut pipelines = 0usize;
-        while modules < budget.modules && pipelines < budget.pipelines {
-            let Some(module) = self.queued.keys().next().copied() else {
-                break;
-            };
-            let (source, plans) = self
-                .queued
-                .remove(&module)
-                .expect("key was just read from the queue");
-            modules += 1;
-            pipelines += plans.len();
+        let mut new_modules = 0usize;
+        let mut started = 0usize;
+        let queued = std::mem::take(&mut self.queued);
+        let mut waiting = Vec::with_capacity(queued.len());
+        for item in queued {
+            if new_modules >= budget.modules
+                || started >= budget.pipelines
+                || self.introducing_vertex.contains(&item.vertex_key)
+                || self.introducing_fragment.contains(&item.fragment_key)
+            {
+                waiting.push(item);
+                continue;
+            }
+            if !self.warm_vertex.contains(&item.vertex_key) {
+                self.introducing_vertex.insert(item.vertex_key.clone());
+            }
+            if !self.warm_fragment.contains(&item.fragment_key) {
+                self.introducing_fragment.insert(item.fragment_key.clone());
+            }
+            started += 1;
 
-            let plans: Vec<_> = plans
-                .into_iter()
-                .map(|(slot, plan)| {
-                    let layout = self.pipeline_layout(device, &plan);
-                    (slot, plan, layout)
-                })
-                .collect();
+            let vertex_module = self.module_cell(&item.modules.vertex, &mut new_modules);
+            let fragment_module = self.module_cell(&item.modules.fragment, &mut new_modules);
+            let layout = self.pipeline_layout(device, &item.plan);
             let device = device.clone();
-            let existing = self.modules.get(&module).cloned();
-            self.jobs.push(
-                pool.spawn(
-                    async move { build_port(&device, module, source, existing, plans).await },
-                ),
-            );
+            self.jobs.push(pool.spawn(async move {
+                build_pipeline(&device, item, vertex_module, fragment_module, layout).await
+            }));
         }
+        self.queued = waiting;
+    }
+
+    fn module_cell(&mut self, text: &ModuleText, new_modules: &mut usize) -> ModuleCell {
+        self.modules
+            .entry(text.clone())
+            .or_insert_with(|| {
+                *new_modules += 1;
+                ModuleCell::default()
+            })
+            .clone()
     }
 
     fn pipeline_layout(
@@ -279,9 +378,9 @@ impl ExactPipelineRegistry {
             .clone()
     }
 
-    /// Modules or plans still waiting for a later `flush`.
+    /// Pipelines still waiting for a later `flush`.
     pub(super) fn queued_n(&self) -> usize {
-        self.queued.values().map(|(_, plans)| plans.len()).sum()
+        self.queued.len()
     }
 
     pub(super) fn poll(&mut self) {
@@ -293,120 +392,103 @@ impl ExactPipelineRegistry {
             };
 
             drop(self.jobs.swap_remove(index));
-            if let Some(created) = build.created {
-                self.modules.insert(build.module, created);
-            }
-            for (slot, pipeline) in build.pipelines {
-                self.slots[slot.0 as usize] = SlotState::Ready(pipeline);
-            }
+            self.slots[build.slot.0 as usize] = SlotState::Ready(build.pipeline);
+            self.introducing_vertex.remove(&build.vertex_key);
+            self.warm_vertex.insert(build.vertex_key);
+            self.introducing_fragment.remove(&build.fragment_key);
+            self.warm_fragment.insert(build.fragment_key);
         }
     }
 
+    /// Shader modules created (or being created) so far.
     pub(super) fn module_n(&self) -> usize {
-        self.modules.len()
+        self.modules
+            .values()
+            .filter(|cell| cell.get().is_some())
+            .count()
     }
 
+    /// Pipelines being built.
     pub(super) fn building_n(&self) -> usize {
         self.jobs.len()
     }
+
+    /// Logs how many distinct modules and stage keys the resolved pipelines used, the
+    /// first time it is called. Call it when warm-up first reaches ready == total.
+    pub(super) fn log_stage_counts_once(&mut self) {
+        if std::mem::replace(&mut self.stage_counts_logged, true) {
+            return;
+        }
+        let vertex_modules: HashSet<&ModuleText> =
+            self.warm_vertex.iter().map(|key| &key.module).collect();
+        let fragment_modules: HashSet<&ModuleText> =
+            self.warm_fragment.iter().map(|key| &key.module).collect();
+        diag::info!(
+            World,
+            "exact pipelines: stage counts vertex modules={} fragment modules={} vertex stage keys={} fragment stage keys={} pipelines={}",
+            vertex_modules.len(),
+            fragment_modules.len(),
+            self.warm_vertex.len(),
+            self.warm_fragment.len(),
+            self.slots.len()
+        );
+    }
 }
 
-async fn build_port(
-    device: &RenderDevice,
-    module: ModuleKey,
-    source: ExactModuleSource,
-    existing: Option<Arc<ShaderModule>>,
-    plans: Vec<(ExactPipelineSlot, ExactPipelinePlan, PipelineLayout)>,
-) -> PortBuild {
-    let label = format!(
-        "iw4_exact_colour/{:016x}/{}{}",
-        module.port.vertex_program_hash,
-        module.port.vertex_type,
-        if module.cached_lighting {
-            "/cached"
-        } else {
-            ""
-        }
-    );
+fn shader_module(device: &RenderDevice, cell: &ModuleCell, text: &ModuleText) -> Arc<ShaderModule> {
+    cell.get_or_init(|| {
+        Arc::new(unsafe {
+            device.create_shader_module(ShaderModuleDescriptor {
+                label: Some(&format!("iw4_exact_colour/module/{:016x}", text.hash)),
+                source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&text.text)),
+            })
+        })
+    })
+    .clone()
+}
 
-    let (shader, created) = match existing {
-        Some(shader) => (shader, None),
-        None => {
-            let shader = Arc::new(unsafe {
-                device.create_shader_module(ShaderModuleDescriptor {
-                    label: Some(&label),
-                    source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source.wgsl())),
-                })
-            });
-            (shader.clone(), Some(shader))
+async fn build_pipeline(
+    device: &RenderDevice,
+    item: QueuedPipeline,
+    vertex_module: ModuleCell,
+    fragment_module: ModuleCell,
+    layout: PipelineLayout,
+) -> PipelineBuild {
+    let vertex = shader_module(device, &vertex_module, &item.modules.vertex);
+    let fragment = shader_module(device, &fragment_module, &item.modules.fragment);
+    // Each wave of the old per-port scheduler awaited its pipeline here; now the registry
+    // holds back pipelines that share an unresolved stage. The browser creates the
+    // pipeline off its GPU main thread (`createRenderPipelineAsync`); native creates it
+    // synchronously.
+    let pipeline =
+        with_pipeline_descriptor(&vertex, &fragment, &item.plan, &layout, |descriptor| {
+            device
+                .wgpu_device()
+                .create_render_pipeline_async(descriptor)
+        })
+        .await;
+    let pipeline = match pipeline {
+        Ok(pipeline) => RenderPipeline::from(pipeline),
+        Err(error) => {
+            // The sync call reports the same error through the
+            // device's error handling, as before async creation.
+            bevy::log::error!("exact pipeline {}: {error}", item.plan.label);
+            with_pipeline_descriptor(&vertex, &fragment, &item.plan, &layout, |descriptor| {
+                device.create_render_pipeline(descriptor)
+            })
         }
     };
-    // A browser compiles each stage of an async pipeline independently and
-    // caches the result, but only for pipelines started after it resolved.
-    // Starting a whole port at once therefore compiles the shared vertex and
-    // fragment stages once per pipeline. So the port goes in three waves, each
-    // awaited before the next: one pipeline per layout (vertex stage plus one
-    // fragment stage), then one per remaining (layout, fragment entry), then
-    // the rest, which differ only in render state and hit the cache for both
-    // stages. Each wave still runs concurrently off the browser's GPU main
-    // thread (`createRenderPipelineAsync`). Native creates synchronously here.
-    let mut seen_layouts = Vec::new();
-    let mut seen_entries = Vec::new();
-    let mut waves: [Vec<_>; 3] = Default::default();
-    for item in plans {
-        let layout = (
-            item.1.constants_layout.clone(),
-            item.1.textures_layout.clone(),
-        );
-        let entry = (layout.clone(), item.1.fragment_entry.clone());
-        let wave = if !seen_layouts.contains(&layout) {
-            seen_layouts.push(layout);
-            seen_entries.push(entry);
-            0
-        } else if !seen_entries.contains(&entry) {
-            seen_entries.push(entry);
-            1
-        } else {
-            2
-        };
-        waves[wave].push(item);
-    }
-    let mut pipelines = Vec::new();
-    for wave in waves {
-        let started: Vec<_> = wave
-            .iter()
-            .map(|(_, plan, layout)| {
-                with_pipeline_descriptor(&shader, plan, layout, |descriptor| {
-                    device
-                        .wgpu_device()
-                        .create_render_pipeline_async(descriptor)
-                })
-            })
-            .collect();
-        for ((slot, plan, layout), pipeline) in wave.into_iter().zip(started) {
-            let pipeline = match pipeline.await {
-                Ok(pipeline) => RenderPipeline::from(pipeline),
-                Err(error) => {
-                    // The sync call reports the same error through the
-                    // device's error handling, as before async creation.
-                    bevy::log::error!("exact pipeline {}: {error}", plan.label);
-                    with_pipeline_descriptor(&shader, &plan, &layout, |descriptor| {
-                        device.create_render_pipeline(descriptor)
-                    })
-                }
-            };
-            pipelines.push((slot, pipeline));
-        }
-    }
-    PortBuild {
-        module,
-        created,
-        pipelines,
+    PipelineBuild {
+        slot: item.slot,
+        pipeline,
+        vertex_key: item.vertex_key,
+        fragment_key: item.fragment_key,
     }
 }
 
 fn with_pipeline_descriptor<R>(
-    shader: &ShaderModule,
+    vertex: &ShaderModule,
+    fragment: &ShaderModule,
     plan: &ExactPipelinePlan,
     layout: &PipelineLayout,
     create: impl FnOnce(&RawRenderPipelineDescriptor) -> R,
@@ -428,13 +510,13 @@ fn with_pipeline_descriptor<R>(
         label: Some(&plan.label),
         layout: Some(layout),
         vertex: RawVertexState {
-            module: shader,
+            module: vertex,
             entry_point: Some(PASS_VERTEX_ENTRY),
             buffers: &buffers,
             compilation_options: compilation_options.clone(),
         },
         fragment: Some(RawFragmentState {
-            module: shader,
+            module: fragment,
             entry_point: Some(&plan.fragment_entry),
             targets: &plan.targets,
             compilation_options,

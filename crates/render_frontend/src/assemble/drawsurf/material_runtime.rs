@@ -79,7 +79,7 @@ impl RuntimeProgramPort {
                     })?;
                 super::sm3_wgsl::validate_wgsl(&source).map_err(ProgramRegistryError::Wgsl)?;
                 super::sm3_wgsl::ValidatedPassWgsl {
-                    source,
+                    modules: d3d9_sm3::PassModules::Combined(source.into()),
                     attribute_count: abi.attributes.len(),
                     varying_count: 0,
                     vertex_constant_len: abi.vertex_constants.len(),
@@ -88,7 +88,23 @@ impl RuntimeProgramPort {
                 }
             }
         };
-        diag::wgsl_dump::dump_pass_wgsl(vertex_name, pixel_name, &module.source);
+        match &module.modules {
+            d3d9_sm3::PassModules::Combined(source) => {
+                diag::wgsl_dump::dump_pass_wgsl(vertex_name, pixel_name, source);
+            }
+            d3d9_sm3::PassModules::Split { vertex, fragment } => {
+                diag::wgsl_dump::dump_pass_wgsl(
+                    vertex_name,
+                    &format!("{pixel_name}.vertex"),
+                    vertex,
+                );
+                diag::wgsl_dump::dump_pass_wgsl(
+                    vertex_name,
+                    &format!("{pixel_name}.fragment"),
+                    fragment,
+                );
+            }
+        }
         let wgpu_layout = super::gpu_contract::derive_wgpu_pass_layout(&abi, render_frame::texture_binding())
             .map_err(ProgramRegistryError::WgpuLayout)?;
         Ok(Self {
@@ -124,7 +140,7 @@ impl RuntimeProgramPort {
     pub fn same_admission_identity(&self, other: &Self) -> bool {
         same_shader_pair_content(self.pair, other.pair)
             && self.abi == other.abi
-            && self.module.source == other.module.source
+            && self.module.modules == other.module.modules
             && self.custom_sampler_flags == other.custom_sampler_flags
             && self.t5_custom_sampler_flags == other.t5_custom_sampler_flags
             && self.arguments == other.arguments

@@ -110,7 +110,10 @@ pub fn lower_pass_to_validated_wgsl(
     pixel: &Sm3ProgramIr,
 ) -> Result<ValidatedPassWgsl, Sm3WgslError> {
     let lowered = lower_pass_to_wgsl(lowering, vertex, pixel)?;
-    validate_wgsl(&lowered.source)?;
+    validate_wgsl(lowered.modules.vertex())?;
+    if lowered.modules.fragment() != lowered.modules.vertex() {
+        validate_wgsl(lowered.modules.fragment())?;
+    }
     Ok(lowered)
 }
 

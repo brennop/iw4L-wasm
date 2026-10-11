@@ -1,13 +1,18 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use d3d9_sm3::{PassLoweringAbi, PassWgsl};
+use d3d9_sm3::{PassLoweringAbi, PassModules, PassWgsl};
 
 use super::material_runtime::RuntimeShaderPair;
 
 // Bump when emitted WGSL changes as well as when the binary format changes.
-pub const WGSL_CACHE_FORMAT: u32 = 9;
+pub const WGSL_CACHE_FORMAT: u32 = 10;
 
 const MAGIC: &[u8; 8] = b"IWLWGSL\n";
+
+/// Magic, format, five counts and the module kind, before the first module text.
+const HEADER_LEN: usize = 8 + 4 + 5 * 4 + 4;
+const KIND_COMBINED: u32 = 0;
+const KIND_SPLIT: u32 = 1;
 
 static HIT: AtomicU64 = AtomicU64::new(0);
 static MISS: AtomicU64 = AtomicU64::new(0);
@@ -51,8 +56,13 @@ fn cache_key(pair: RuntimeShaderPair, abi: &PassLoweringAbi) -> String {
 }
 
 fn encode(module: &PassWgsl) -> Vec<u8> {
-    let source = module.source.as_bytes();
-    let mut out = Vec::with_capacity(8 + 24 + source.len());
+    let (kind, first, second) = match &module.modules {
+        PassModules::Combined(source) => (KIND_COMBINED, source.as_bytes(), &[][..]),
+        PassModules::Split { vertex, fragment } => {
+            (KIND_SPLIT, vertex.as_bytes(), fragment.as_bytes())
+        }
+    };
+    let mut out = Vec::with_capacity(HEADER_LEN + 12 + first.len() + second.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&WGSL_CACHE_FORMAT.to_le_bytes());
     out.extend_from_slice(&(module.attribute_count as u32).to_le_bytes());
@@ -60,32 +70,54 @@ fn encode(module: &PassWgsl) -> Vec<u8> {
     out.extend_from_slice(&(module.vertex_constant_len as u32).to_le_bytes());
     out.extend_from_slice(&(module.pixel_constant_len as u32).to_le_bytes());
     out.extend_from_slice(&(module.sampler_count as u32).to_le_bytes());
-    out.extend_from_slice(&(source.len() as u32).to_le_bytes());
-    out.extend_from_slice(source);
+    out.extend_from_slice(&kind.to_le_bytes());
+    out.extend_from_slice(&(first.len() as u32).to_le_bytes());
+    out.extend_from_slice(first);
+    if kind == KIND_SPLIT {
+        out.extend_from_slice(&(second.len() as u32).to_le_bytes());
+        out.extend_from_slice(second);
+    }
     out
 }
 
+fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn read_text(bytes: &[u8], at: usize) -> Option<(String, usize)> {
+    let len = read_u32(bytes, at)? as usize;
+    let start = at + 4;
+    let text = std::str::from_utf8(bytes.get(start..start + len)?).ok()?;
+    Some((text.to_owned(), start + len))
+}
+
 fn decode(bytes: &[u8]) -> Option<PassWgsl> {
-    if bytes.len() < 8 + 24 {
+    if bytes.len() < HEADER_LEN {
         return None;
     }
     if &bytes[..8] != MAGIC {
         return None;
     }
-    let format = u32::from_le_bytes(bytes[8..12].try_into().ok()?);
-    if format != WGSL_CACHE_FORMAT {
+    if read_u32(bytes, 8)? != WGSL_CACHE_FORMAT {
         return None;
     }
-    let attribute_count = u32::from_le_bytes(bytes[12..16].try_into().ok()?) as usize;
-    let varying_count = u32::from_le_bytes(bytes[16..20].try_into().ok()?) as usize;
-    let vertex_constant_len = u32::from_le_bytes(bytes[20..24].try_into().ok()?) as usize;
-    let pixel_constant_len = u32::from_le_bytes(bytes[24..28].try_into().ok()?) as usize;
-    let sampler_count = u32::from_le_bytes(bytes[28..32].try_into().ok()?) as usize;
-    let source_len = u32::from_le_bytes(bytes[32..36].try_into().ok()?) as usize;
-    let source = bytes.get(36..36 + source_len)?;
-    let source = std::str::from_utf8(source).ok()?.to_owned();
+    let attribute_count = read_u32(bytes, 12)? as usize;
+    let varying_count = read_u32(bytes, 16)? as usize;
+    let vertex_constant_len = read_u32(bytes, 20)? as usize;
+    let pixel_constant_len = read_u32(bytes, 24)? as usize;
+    let sampler_count = read_u32(bytes, 28)? as usize;
+    let kind = read_u32(bytes, 32)?;
+    let (first, next) = read_text(bytes, 36)?;
+    let modules = match kind {
+        KIND_COMBINED => PassModules::Combined(first.into()),
+        KIND_SPLIT => PassModules::Split {
+            vertex: first.into(),
+            fragment: read_text(bytes, next)?.0.into(),
+        },
+        _ => return None,
+    };
     Some(PassWgsl {
-        source,
+        modules,
         attribute_count,
         varying_count,
         vertex_constant_len,

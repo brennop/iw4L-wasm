@@ -36,7 +36,7 @@ pub use gpu_contract::*;
 pub use image_handles::*;
 pub use list::*;
 pub use lit_draw_method::*;
-pub use material_admit::MaterialProgramAdmit;
+pub use material_admit::{MaterialProgramAdmit, PortShaders};
 pub use material_compile::MaterialProgramCompile;
 pub use material_exec::*;
 pub use material_runtime::*;

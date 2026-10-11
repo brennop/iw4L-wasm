@@ -250,7 +250,7 @@ pub struct MaterialGeneration {
 
     pub prepared: Arc<PreparedMaterialTable>,
 
-    pub exact_shaders: Vec<Handle<bevy::shader::Shader>>,
+    pub exact_shaders: Vec<super::material_admit::PortShaders>,
 
     pub postfx: super::RuntimePostFxResources,
 
@@ -286,7 +286,7 @@ pub struct MaterialFrameInputs {
 pub(crate) fn admit_material_generation(
     catalog: Arc<RuntimeMaterialCatalog>,
     programs: RuntimeProgramRegistry,
-    exact_shaders: Vec<Handle<bevy::shader::Shader>>,
+    exact_shaders: Vec<super::material_admit::PortShaders>,
 ) -> MaterialGeneration {
     let prepared = PreparedMaterialTable::from_catalog(&catalog, |pass, vertex_type| {
         programs

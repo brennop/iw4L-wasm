@@ -751,7 +751,8 @@ pub fn extract_postfx(
                         module: film.port.shared_module(),
                         layout: film.port.wgpu_layout().clone(),
                     },
-                    shader: film.shader.clone(),
+                    vertex_shader: film.shaders.vertex.clone(),
+                    fragment_shader: film.shaders.fragment.clone(),
                     shell: film.shell.clone(),
                 })
                 .collect();
@@ -772,7 +773,8 @@ pub fn extract_postfx(
                     module: blood.film.port.shared_module(),
                     layout: blood.film.port.wgpu_layout().clone(),
                 },
-                shader: blood.film.shader.clone(),
+                vertex_shader: blood.film.shaders.vertex.clone(),
+                fragment_shader: blood.film.shaders.fragment.clone(),
                 shell: blood.film.shell.clone(),
             },
             texture_slots: blood.texture_slots.clone(),

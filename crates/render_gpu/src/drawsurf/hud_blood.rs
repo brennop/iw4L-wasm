@@ -100,13 +100,13 @@ impl BloodPortGpu {
             layout: vec![constants_layout, textures_layout.clone()],
             immediate_size: 0,
             vertex: VertexState {
-                shader: blood.film.shader.clone(),
+                shader: blood.film.vertex_shader.clone(),
                 shader_defs: Vec::new(),
                 entry_point: Some(PASS_VERTEX_ENTRY.into()),
                 buffers: vertex_layouts,
             },
             fragment: Some(FragmentState {
-                shader: blood.film.shader.clone(),
+                shader: blood.film.fragment_shader.clone(),
                 shader_defs: Vec::new(),
                 entry_point: Some(PASS_FRAGMENT_ENTRY.into()),
                 targets: vec![Some(ColorTargetState {

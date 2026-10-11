@@ -167,7 +167,8 @@ struct ExactColourPortGpu {
     constants_layout: BindGroupLayoutDescriptor,
     textures_layout: BindGroupLayoutDescriptor,
     vertex_buffers: Vec<VertexBufferLayout>,
-    cached_source: Option<Arc<str>>,
+    modules: ExactModuleSource,
+    cached_modules: Option<ExactModuleSource>,
     cached_vertex_buffers: Vec<VertexBufferLayout>,
     port: super::AdmittedExactPort,
 }
@@ -298,10 +299,10 @@ fn exact_pipeline_plan(
     } else {
         Some(CompareFunction::Always)
     };
-    let cached_lighting = key.cached_lighting && port.cached_source.is_some();
-    let source = match (cached_lighting, port.cached_source.as_ref()) {
-        (true, Some(cached)) => ExactModuleSource::CachedLighting(cached.clone()),
-        _ => ExactModuleSource::Port(port.port.shared_module()),
+    let cached_lighting = key.cached_lighting && port.cached_modules.is_some();
+    let source = match (cached_lighting, port.cached_modules.as_ref()) {
+        (true, Some(cached)) => cached.clone(),
+        _ => port.modules.clone(),
     };
     let plan = ExactPipelinePlan {
         label: format!(

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use super::PortShaders;
 use super::sm3_abi::{SamplerSource, SamplerTextureDimension};
 use super::{
     MaterialGenerationId, MaterialRefusal, PortId, PreparedMaterialTable, RemapResolution,
@@ -74,7 +75,7 @@ pub struct RuntimePostFx {
     pub name: &'static str,
     pub generation: MaterialGenerationId,
     pub port: RuntimeProgramPort,
-    pub shader: Handle<bevy::shader::Shader>,
+    pub shaders: PortShaders,
     pub shell: StableMaterialShell,
 }
 
@@ -259,7 +260,7 @@ fn build_postfx_material(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
     programs: &RuntimeProgramRegistry,
-    shaders: &[Handle<bevy::shader::Shader>],
+    shaders: &[PortShaders],
     material_name: &'static str,
     require_film_state: bool,
 ) -> RuntimePostFxResources {
@@ -293,7 +294,7 @@ pub(crate) fn build_runtime_blood(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
     programs: &RuntimeProgramRegistry,
-    shaders: &[Handle<bevy::shader::Shader>],
+    shaders: &[PortShaders],
 ) -> Result<RuntimeBloodMaterial, PostFxAdmissionRefusal> {
     let film = admit_unlit_2d(catalog, prepared, programs, shaders, BLOOD_MATERIAL, false)?;
     let (material, _, _) = postfx_material_location(catalog, BLOOD_MATERIAL)?;
@@ -326,7 +327,7 @@ fn admit_unlit_2d(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
     programs: &RuntimeProgramRegistry,
-    shaders: &[Handle<bevy::shader::Shader>],
+    shaders: &[PortShaders],
     material_name: &'static str,
     require_film_state: bool,
 ) -> Result<RuntimePostFx, PostFxAdmissionRefusal> {
@@ -401,7 +402,7 @@ fn admit_unlit_2d(
         name: material_name,
         generation: catalog.generation_id(),
         port,
-        shader: shader.clone(),
+        shaders: shader.clone(),
         shell,
     })
 }
@@ -427,7 +428,7 @@ pub(crate) fn build_runtime_postfx(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
     programs: &RuntimeProgramRegistry,
-    shaders: &[Handle<bevy::shader::Shader>],
+    shaders: &[PortShaders],
 ) -> RuntimePostFxResources {
     let mut passes = Vec::new();
     for &name in POSTFX_MATERIALS {

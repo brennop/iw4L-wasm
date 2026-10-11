@@ -1,6 +1,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write;
@@ -64,9 +65,53 @@ pub struct Sm3Wgsl {
     pub output_masks: BTreeMap<Sm3Register, u8>,
 }
 
+/// The WGSL text of one pass. Fixed-slot lowering gives each stage its own module, so a
+/// stage's text depends on its own program only and equal programs share one compile.
+/// Texture-table lowering keeps one combined module that serves both stages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PassModules {
+    Combined(Arc<str>),
+    Split {
+        vertex: Arc<str>,
+        fragment: Arc<str>,
+    },
+}
+
+impl PassModules {
+    pub fn vertex(&self) -> &str {
+        match self {
+            Self::Combined(source) => source,
+            Self::Split { vertex, .. } => vertex,
+        }
+    }
+
+    pub fn fragment(&self) -> &str {
+        match self {
+            Self::Combined(source) => source,
+            Self::Split { fragment, .. } => fragment,
+        }
+    }
+
+    /// The shared text of the vertex stage's module.
+    pub fn vertex_arc(&self) -> Arc<str> {
+        match self {
+            Self::Combined(source) => source.clone(),
+            Self::Split { vertex, .. } => vertex.clone(),
+        }
+    }
+
+    /// The shared text of the fragment stage's module.
+    pub fn fragment_arc(&self) -> Arc<str> {
+        match self {
+            Self::Combined(source) => source.clone(),
+            Self::Split { fragment, .. } => fragment.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassWgsl {
-    pub source: String,
+    pub modules: PassModules,
 
     pub attribute_count: usize,
 
@@ -572,36 +617,43 @@ pub fn lower_pass_to_wgsl(
         return Err(Sm3WgslError::MissingColourOutput);
     }
 
-    let mut source = String::new();
-    source.push_str("struct Sm3ConstantArena { c: array<vec4<f32>> }\n");
-    source.push_str("@group(0) @binding(0) var<storage, read> sm3_constants: Sm3ConstantArena;\n");
+    let mut arena = String::new();
+    arena.push_str("struct Sm3ConstantArena { c: array<vec4<f32>> }\n");
+    arena.push_str("@group(0) @binding(0) var<storage, read> sm3_constants: Sm3ConstantArena;\n");
+    let mut relative_loader = String::new();
     if vertex_plan.uses_relative_float {
-        emit_vs_relative_const_loader(&mut source, vertex_constant_len);
+        emit_vs_relative_const_loader(&mut relative_loader, vertex_constant_len);
     }
     let fixed = abi.texture_binding == TextureBinding::FixedSlots;
+    // Fixed slots: each stage declares only the bindings its own program samples.
+    // Texture table: one binding set, shared by the combined module.
+    let mut vertex_bindings = String::new();
+    let mut fragment_bindings = String::new();
     if fixed {
-        write_fixed_slot_bindings(&mut source, abi, &[&vertex_plan, &pixel_plan])?;
+        write_fixed_slot_bindings(&mut vertex_bindings, abi, &vertex_plan, &BTreeSet::new())?;
+        write_fixed_slot_bindings(&mut fragment_bindings, abi, &pixel_plan, &compare)?;
     } else {
-        write_texture_table_bindings(&mut source, abi);
+        write_texture_table_bindings(&mut vertex_bindings, abi);
     }
     let slot_row_base = vertex_constant_len + pixel_constant_len;
 
     // Depth-equal passes need identical position evaluation across pipelines,
     // including the passes that originally write the depth buffer.
-    source.push_str(
+    let mut varyings_decl = String::new();
+    varyings_decl.push_str(
         "\nstruct Sm3Varyings {\n    @builtin(position) @invariant position: vec4<f32>,\n",
     );
     // Every pass declares the same locations so Dawn sees one fragment input
     // set per stage compile.
     for location in 0..SM3_VARYING_LOCATION_COUNT {
         writeln!(
-            source,
+            varyings_decl,
             "    @location({location}) varying_{location}: vec4<f32>,"
         )
         .unwrap();
     }
     writeln!(
-        source,
+        varyings_decl,
         "    @interpolate(flat) @location({}) sm3_constant_base: u32,",
         FLAT_VARYING_LOCATION_BASE
     )
@@ -609,12 +661,15 @@ pub fn lower_pass_to_wgsl(
     // The pixel half reads its constants from this base, so its text does not
     // depend on the vertex program's constant count.
     writeln!(
-        source,
+        varyings_decl,
         "    @interpolate(flat) @location({}) sm3_pixel_constant_base: u32,",
         FLAT_VARYING_LOCATION_BASE + 1
     )
     .unwrap();
-    source.push_str("}\n\n@vertex\nfn ");
+    varyings_decl.push_str("}\n");
+
+    let mut source = String::new();
+    source.push_str("\n@vertex\nfn ");
     source.push_str(PASS_VERTEX_ENTRY);
     source.push_str("(\n");
     for input in &abi.vertex_inputs {
@@ -705,6 +760,8 @@ pub fn lower_pass_to_wgsl(
     )
     .unwrap();
     source.push_str("    );\n}\n");
+    let vertex_entry = source;
+    let mut source = String::new();
 
     let front_facing = pixel_plan
         .external
@@ -823,8 +880,37 @@ pub fn lower_pass_to_wgsl(
         source.push_str("}\n");
     }
 
+    let fragment_entries = source;
+
+    let join = |parts: &[&str]| Arc::<str>::from(parts.concat());
+    let modules = if fixed {
+        PassModules::Split {
+            vertex: join(&[
+                &arena,
+                &relative_loader,
+                &vertex_bindings,
+                &varyings_decl,
+                &vertex_entry,
+            ]),
+            fragment: join(&[
+                &arena,
+                &fragment_bindings,
+                &varyings_decl,
+                &fragment_entries,
+            ]),
+        }
+    } else {
+        PassModules::Combined(join(&[
+            &arena,
+            &relative_loader,
+            &vertex_bindings,
+            &varyings_decl,
+            &vertex_entry,
+            &fragment_entries,
+        ]))
+    };
     Ok(PassWgsl {
-        source,
+        modules,
         attribute_count: abi
             .vertex_inputs
             .iter()
@@ -1026,23 +1112,24 @@ fn write_texture_table_bindings(wgsl: &mut String, abi: &PassLoweringAbi) {
     }
 }
 
+/// Declares the fixed-slot bindings one stage's program samples; `compare` lists the
+/// registers that stage reads as depth-compare shadow maps.
 fn write_fixed_slot_bindings(
     wgsl: &mut String,
     abi: &PassLoweringAbi,
-    plans: &[&LoweringPlan],
+    plan: &LoweringPlan,
+    compare: &BTreeSet<u16>,
 ) -> Result<(), Sm3WgslError> {
     let mut used = BTreeMap::new();
-    for plan in plans {
-        for register in plan.samplers.keys() {
-            let slot = abi
-                .samplers
-                .iter()
-                .find(|bound| bound.register == *register)
-                .ok_or(Sm3WgslError::UnboundSamplerRegister {
-                    register: *register,
-                })?;
-            used.insert(*register, slot.dimension);
-        }
+    for register in plan.samplers.keys() {
+        let slot = abi
+            .samplers
+            .iter()
+            .find(|bound| bound.register == *register)
+            .ok_or(Sm3WgslError::UnboundSamplerRegister {
+                register: *register,
+            })?;
+        used.insert(*register, slot.dimension);
     }
     for (register, dimension) in used {
         let texture_type = match dimension {
@@ -1061,11 +1148,7 @@ fn write_fixed_slot_bindings(
             FIXED_SAMPLER_BINDING_BASE + u32::from(register)
         )
         .unwrap();
-        let compare = abi
-            .samplers
-            .iter()
-            .any(|bound| bound.register == register && bound.depth_compare);
-        if compare && dimension == SamplerTextureDimension::D2 {
+        if compare.contains(&register) && dimension == SamplerTextureDimension::D2 {
             // Same bilinear `z <= stored` test as `SHADOW_COMPARE_FN`, on the fixed bindings.
             writeln!(
                 wgsl,
@@ -2076,9 +2159,46 @@ mod tests {
         }
     }
 
-    /// Lowers a fixed-slot pass whose vertex program reads `vertex_constant`
-    /// and whose pixel program always reads c0.
-    fn lower_fixed(vertex_constant: u16) -> PassWgsl {
+    fn sampler_declaration(index: u16) -> Sm3Instruction {
+        Sm3Instruction {
+            at_word: 0,
+            opcode: Sm3Opcode::Dcl,
+            controls: 0,
+            predicated: false,
+            coissue: false,
+            body: Sm3InstructionBody::Declaration {
+                usage_token: Some(2 << 27),
+                destination: crate::ir::Sm3Destination {
+                    register: register(Sm3RegisterFile::Sampler, index),
+                    write_mask: 0x0f,
+                    saturate: false,
+                    partial_precision: false,
+                    centroid: false,
+                    unknown_modifier_bits: 0,
+                    relative: None,
+                },
+            },
+        }
+    }
+
+    /// What differs between the test passes: the constant each stage reads and the
+    /// sampler register each stage declares.
+    #[derive(Clone, Copy)]
+    struct Stages {
+        vertex_constant: u16,
+        vertex_sampler: Option<u16>,
+        pixel_constant: u16,
+        pixel_sampler: Option<u16>,
+    }
+
+    const BASE_STAGES: Stages = Stages {
+        vertex_constant: 0,
+        vertex_sampler: None,
+        pixel_constant: 0,
+        pixel_sampler: None,
+    };
+
+    fn lower_stages(binding: TextureBinding, stages: Stages) -> PassWgsl {
         let position = register(Sm3RegisterFile::RasterOutput, 0);
         let slots = |count: u16| {
             (0..count)
@@ -2089,7 +2209,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let abi = PassLoweringAbi {
-            texture_binding: TextureBinding::FixedSlots,
+            texture_binding: binding,
             vertex_inputs: Vec::new(),
             position: VaryingLink {
                 semantic: Semantic::new(0, 0),
@@ -2098,21 +2218,54 @@ mod tests {
                 location: 0,
             },
             varyings: Vec::new(),
-            vertex_constants: slots(vertex_constant + 1),
-            pixel_constants: slots(1),
-            samplers: Vec::new(),
+            vertex_constants: slots(stages.vertex_constant + 1),
+            pixel_constants: slots(stages.pixel_constant + 1),
+            samplers: [stages.vertex_sampler, stages.pixel_sampler]
+                .into_iter()
+                .flatten()
+                .map(|register| crate::abi::SamplerSlot {
+                    register,
+                    dimension: SamplerTextureDimension::D2,
+                    depth_compare: false,
+                })
+                .collect(),
             alpha_tests: vec![AlphaTest {
                 func: CompareFunc::Greater,
                 reference: 0x80,
             }],
         };
-        let vertex = program(ShaderStage::Vertex, position, vertex_constant);
-        let pixel = program(
+        let mut vertex = program(ShaderStage::Vertex, position, stages.vertex_constant);
+        if let Some(sampler) = stages.vertex_sampler {
+            vertex.instructions.insert(0, sampler_declaration(sampler));
+        }
+        let mut pixel = program(
             ShaderStage::Pixel,
             register(Sm3RegisterFile::ColourOutput, 0),
-            0,
+            stages.pixel_constant,
         );
+        if let Some(sampler) = stages.pixel_sampler {
+            pixel.instructions.insert(0, sampler_declaration(sampler));
+        }
         lower_pass_to_wgsl(&abi, &vertex, &pixel).expect("pass lowers")
+    }
+
+    /// Lowers a fixed-slot pass whose vertex program reads `vertex_constant`
+    /// and whose pixel program always reads c0.
+    fn lower_fixed(vertex_constant: u16) -> PassWgsl {
+        lower_stages(
+            TextureBinding::FixedSlots,
+            Stages {
+                vertex_constant,
+                ..BASE_STAGES
+            },
+        )
+    }
+
+    fn split(pass: &PassWgsl) -> (&str, &str) {
+        match &pass.modules {
+            PassModules::Split { vertex, fragment } => (vertex.as_ref(), fragment.as_ref()),
+            PassModules::Combined(_) => panic!("fixed-slot pass should be split"),
+        }
     }
 
     #[test]
@@ -2120,23 +2273,80 @@ mod tests {
         let small = lower_fixed(0);
         let large = lower_fixed(7);
         assert_ne!(small.vertex_constant_len, large.vertex_constant_len);
-        assert_ne!(small.source, large.source);
-
-        let pixel_part = |pass: &PassWgsl| {
-            let start = pass
-                .source
-                .find("fn sm3_fragment_body")
-                .expect("fragment body helper");
-            String::from(&pass.source[start..])
-        };
-        let small_pixel = pixel_part(&small);
-        assert_eq!(small_pixel, pixel_part(&large));
+        let (small_vertex, small_pixel) = split(&small);
+        let (large_vertex, large_pixel) = split(&large);
+        assert_ne!(small_vertex, large_vertex);
+        assert_eq!(small_pixel, large_pixel);
         assert!(small_pixel.contains("varyings.sm3_pixel_constant_base + 0u"));
         assert!(!small_pixel.contains("sm3_constant_base + 0u]"));
-        assert!(small.source.contains("sm3_constant_base + 1u,"));
-        assert!(large.source.contains("sm3_constant_base + 8u,"));
+        assert!(small_vertex.contains("sm3_constant_base + 1u,"));
+        assert!(large_vertex.contains("sm3_constant_base + 8u,"));
     }
 
+    #[test]
+    fn shared_pixel_program_gives_a_byte_identical_fragment_module() {
+        let first = lower_stages(TextureBinding::FixedSlots, BASE_STAGES);
+        let second = lower_stages(
+            TextureBinding::FixedSlots,
+            Stages {
+                vertex_constant: 5,
+                vertex_sampler: Some(3),
+                ..BASE_STAGES
+            },
+        );
+        let (first_vertex, first_fragment) = split(&first);
+        let (second_vertex, second_fragment) = split(&second);
+        assert_ne!(first_vertex, second_vertex);
+        assert_eq!(first_fragment, second_fragment);
+        assert!(second_vertex.contains("var sm3_tex_s3: texture_2d<f32>;"));
+        assert!(!second_fragment.contains("sm3_tex_s3"));
+    }
+
+    #[test]
+    fn shared_vertex_program_gives_a_byte_identical_vertex_module() {
+        let first = lower_stages(TextureBinding::FixedSlots, BASE_STAGES);
+        let second = lower_stages(
+            TextureBinding::FixedSlots,
+            Stages {
+                pixel_constant: 4,
+                pixel_sampler: Some(2),
+                ..BASE_STAGES
+            },
+        );
+        let (first_vertex, first_fragment) = split(&first);
+        let (second_vertex, second_fragment) = split(&second);
+        assert_eq!(first_vertex, second_vertex);
+        assert_ne!(first_fragment, second_fragment);
+        assert!(second_fragment.contains("var sm3_tex_s2: texture_2d<f32>;"));
+        assert!(!second_vertex.contains("sm3_tex_s2"));
+    }
+
+    #[test]
+    fn fixed_slot_stages_declare_only_their_own_entries() {
+        let pass = lower_fixed(0);
+        let (vertex, fragment) = split(&pass);
+        assert!(vertex.contains(PASS_VERTEX_ENTRY));
+        assert!(!vertex.contains("@fragment"));
+        assert!(!vertex.contains("sm3_fragment_body"));
+        assert!(fragment.contains("sm3_fragment_body"));
+        assert!(fragment.contains(&pass_fragment_alpha_test_entry(0)));
+        assert!(!fragment.contains("@vertex"));
+        for module in [vertex, fragment] {
+            assert!(module.contains("struct Sm3Varyings"));
+            assert!(module.contains("sm3_constants: Sm3ConstantArena"));
+        }
+    }
+
+    #[test]
+    fn texture_table_pass_is_one_combined_module() {
+        let pass = lower_stages(TextureBinding::Bindless, BASE_STAGES);
+        let PassModules::Combined(source) = &pass.modules else {
+            panic!("texture-table pass should stay one module");
+        };
+        assert!(source.contains("@vertex"));
+        assert!(source.contains("@fragment"));
+        assert_eq!(pass.modules.vertex(), pass.modules.fragment());
+    }
     /// Lowers a fixed-slot pass whose vertex program writes one vertex output
     /// register `o{register}` per `(location, register)` pair.
     fn lower_with_varyings(written: &[(u32, u16)]) -> PassWgsl {
@@ -2187,9 +2397,10 @@ mod tests {
     }
 
     fn varyings_struct(pass: &PassWgsl) -> &str {
-        let start = pass.source.find("struct Sm3Varyings {").expect("struct");
-        let end = start + pass.source[start..].find("\n}\n").expect("struct end");
-        &pass.source[start..end]
+        let source = pass.modules.vertex();
+        let start = source.find("struct Sm3Varyings {").expect("struct");
+        let end = start + source[start..].find("\n}\n").expect("struct end");
+        &source[start..end]
     }
 
     #[test]
@@ -2213,9 +2424,10 @@ mod tests {
     #[test]
     fn vertex_constructor_zero_fills_unwritten_locations() {
         let pass = lower_with_varyings(&[(3, 4), (8, 2)]);
-        let start = pass.source.find("return Sm3Varyings(").expect("return");
-        let end = start + pass.source[start..].find(");").expect("end");
-        let args: Vec<&str> = pass.source[start..end]
+        let source = pass.modules.vertex();
+        let start = source.find("return Sm3Varyings(").expect("return");
+        let end = start + source[start..].find(");").expect("end");
+        let args: Vec<&str> = source[start..end]
             .lines()
             .skip(1)
             .map(str::trim)

@@ -25,7 +25,8 @@ pub struct ExtractedFilm {
     pub generation: MaterialGenerationId,
     pub catalog: std::sync::Arc<render_material::RuntimeMaterialCatalog>,
     pub port: AdmittedExactPort,
-    pub shader: Handle<bevy::shader::Shader>,
+    pub vertex_shader: Handle<bevy::shader::Shader>,
+    pub fragment_shader: Handle<bevy::shader::Shader>,
     pub shell: StableMaterialShell,
 }
 
@@ -498,13 +499,13 @@ fn queue_postfx_pipeline(
         layout: vec![constants_layout, textures_layout],
         immediate_size: 0,
         vertex: VertexState {
-            shader: film.shader.clone(),
+            shader: film.vertex_shader.clone(),
             shader_defs: Vec::new(),
             entry_point: Some(PASS_VERTEX_ENTRY.into()),
             buffers: vertex_layouts,
         },
         fragment: Some(FragmentState {
-            shader: film.shader.clone(),
+            shader: film.fragment_shader.clone(),
             shader_defs: Vec::new(),
             entry_point: Some(PASS_FRAGMENT_ENTRY.into()),
             targets: vec![Some(ColorTargetState {

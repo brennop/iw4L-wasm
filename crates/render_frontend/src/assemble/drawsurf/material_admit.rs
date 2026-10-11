@@ -3,8 +3,15 @@ use std::sync::Arc;
 use bevy::asset::{AssetId, Assets, Handle};
 use bevy::shader::Shader;
 
-use super::sm3_wgsl::ValidatedPassWgsl;
 use super::{MaterialProgramCompile, RuntimeProgramRegistry};
+
+/// The shader assets of one port, one per stage module. A texture-table port has a single
+/// combined module, so both handles are the same asset.
+#[derive(Clone, Debug)]
+pub struct PortShaders {
+    pub vertex: Handle<Shader>,
+    pub fragment: Handle<Shader>,
+}
 
 fn shader_from_generated_wgsl(source: String, path: String) -> Shader {
     if source.contains('#') {
@@ -23,16 +30,13 @@ fn shader_from_generated_wgsl(source: String, path: String) -> Shader {
 }
 
 enum PendingShader {
-    Generated {
-        module: Arc<ValidatedPassWgsl>,
-        path: String,
-    },
+    Generated { source: Arc<str>, path: String },
 }
 
 impl PendingShader {
     fn build(self) -> Shader {
-        let Self::Generated { module, path } = self;
-        shader_from_generated_wgsl(module.source.clone(), path)
+        let Self::Generated { source, path } = self;
+        shader_from_generated_wgsl(source.to_string(), path)
     }
 }
 
@@ -40,7 +44,7 @@ impl PendingShader {
 pub struct MaterialProgramAdmit {
     armed: bool,
     registry: RuntimeProgramRegistry,
-    exact_shaders: Vec<Handle<Shader>>,
+    exact_shaders: Vec<PortShaders>,
     pending: std::collections::HashMap<AssetId<Shader>, PendingShader>,
     requests: Vec<AssetId<Shader>>,
     stage: Option<asset_transport::StageHandle>,
@@ -59,7 +63,7 @@ impl MaterialProgramAdmit {
         !self.pending.is_empty()
     }
 
-    pub fn take_generation(&mut self) -> (RuntimeProgramRegistry, Vec<Handle<Shader>>) {
+    pub fn take_generation(&mut self) -> (RuntimeProgramRegistry, Vec<PortShaders>) {
         (
             std::mem::take(&mut self.registry),
             std::mem::take(&mut self.exact_shaders),
@@ -166,22 +170,30 @@ impl MaterialProgramAdmit {
     }
 
     pub fn reserve_shaders(&mut self, shaders: &Assets<Shader>) {
-        let mut by_source = std::collections::HashMap::new();
+        let mut by_source: std::collections::HashMap<Arc<str>, Handle<Shader>> =
+            std::collections::HashMap::new();
         for port in self.registry.ports() {
-            let handle = by_source
-                .entry(port.module().source.as_str())
-                .or_insert_with(|| {
-                    let handle = shaders.reserve_handle();
-                    self.pending.insert(
-                        handle.id(),
-                        PendingShader::Generated {
-                            module: port.shared_module(),
-                            path: format!("iw4_exact_colour/{:?}.wgsl", handle.id()),
-                        },
-                    );
-                    handle
-                });
-            self.exact_shaders.push(handle.clone());
+            let mut handle_for = |source: Arc<str>| {
+                by_source
+                    .entry(source.clone())
+                    .or_insert_with(|| {
+                        let handle = shaders.reserve_handle();
+                        self.pending.insert(
+                            handle.id(),
+                            PendingShader::Generated {
+                                source,
+                                path: format!("iw4_exact_colour/{:?}.wgsl", handle.id()),
+                            },
+                        );
+                        handle
+                    })
+                    .clone()
+            };
+            let modules = &port.module().modules;
+            self.exact_shaders.push(PortShaders {
+                vertex: handle_for(modules.vertex_arc()),
+                fragment: handle_for(modules.fragment_arc()),
+            });
         }
         if let Some(stage) = &self.stage {
             stage.set_completed(self.exact_shaders.len() as u64);
