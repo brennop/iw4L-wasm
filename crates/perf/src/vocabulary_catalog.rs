@@ -274,6 +274,13 @@ macro_rules! spans {
                 category: "iw4l.sim",
                 coverage_root: false,
             },
+            RenderSkinPrepareMs {
+                ordinal: 39,
+                name: "SkinPrepare",
+                track: "span.SkinPrepare",
+                category: "iw4l.render",
+                coverage_root: false,
+            },
         }
     };
 }
@@ -905,6 +912,36 @@ macro_rules! counters {
         CounterPostFxExecutedSteps {
             ordinal: 59,
             name: "postfx_executed_steps",
+            unit: Count,
+            unit_class: default,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        CounterSkinJobs {
+            ordinal: 60,
+            name: "skin_jobs",
+            unit: Count,
+            unit_class: default,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        CounterSkinVertices {
+            ordinal: 61,
+            name: "skin_vertices",
+            unit: Count,
+            unit_class: default,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        CounterSkinResidentBytes {
+            ordinal: 62,
+            name: "skin_resident_bytes",
             unit: Count,
             unit_class: default,
             origin: Cpu,

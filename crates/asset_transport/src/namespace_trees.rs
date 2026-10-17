@@ -45,6 +45,19 @@ impl NamespaceTrees {
         trees
     }
 
+    pub fn retain(&mut self, mut keep: impl FnMut(AssetNamespace) -> bool) {
+        for ns in [
+            AssetNamespace::Iw4,
+            AssetNamespace::Iw5,
+            AssetNamespace::T5,
+            AssetNamespace::T6,
+        ] {
+            if !keep(ns) {
+                *self.slot_mut(ns) = None;
+            }
+        }
+    }
+
     pub fn adopt_zone(&mut self, zone_ff: &Path) {
         let Some(game) = zone_game_for_path(zone_ff) else {
             return;

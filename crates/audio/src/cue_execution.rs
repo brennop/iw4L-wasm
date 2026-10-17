@@ -366,6 +366,7 @@ impl CueWork {
             }
             _ => (None, volume),
         };
+        media.bus = self.request.namespace;
         let start = CueStart {
             looping: self.source.is_some()
                 || (matches!(intent.class, SoundClass::Music | SoundClass::Ambience)

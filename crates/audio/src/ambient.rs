@@ -37,6 +37,7 @@ const SOUND_BANK_COMPOSE_STALL: std::time::Duration = std::time::Duration::from_
 pub(crate) struct SoundBankCompose {
     load_key: frame::LocalLoadKey,
     zone: String,
+    families: frame::AssetFamilies,
     iwd: IwdOpen,
     bank: Option<Task<ComposedBank>>,
     common_profile_id: u64,
@@ -131,6 +132,7 @@ pub(crate) struct ResidentSoundBank(Option<ResidentBank>);
 
 struct ResidentBank {
     zone: String,
+    families: frame::AssetFamilies,
     iwd: Arc<NamespaceSoundIwd>,
     bank: Option<ResidentComposed>,
 }
@@ -184,8 +186,13 @@ pub(crate) fn start_sound_bank_compose(
     let games = GamesRoot(identity.games_root.clone());
     let zone = accepted.zone.clone();
     let opened_zone = zone.clone();
+    let families = accepted.families;
 
-    let iwd = match resident.0.as_ref().filter(|resident| resident.zone == zone) {
+    let iwd = match resident
+        .0
+        .as_ref()
+        .filter(|resident| resident.zone == zone && resident.families == families)
+    {
         Some(resident) => {
             diag::info!(Audio, "audio: sound archives for `{zone}` reused");
             IwdOpen::Open(Arc::clone(&resident.iwd))
@@ -197,6 +204,7 @@ pub(crate) fn start_sound_bank_compose(
                 if let Ok(zone) = asset_transport::find_zone_file(&games, &opened_zone) {
                     trees.adopt_zone(&zone.path);
                 }
+                trees.retain(|ns| families.enabled(ns.as_str()));
                 NamespaceSoundIwd::open(&trees)
             }))
         }
@@ -208,6 +216,7 @@ pub(crate) fn start_sound_bank_compose(
             SoundBankCompose {
                 load_key,
                 zone,
+                families,
                 iwd,
                 bank: None,
                 common_profile_id: 0,
@@ -356,6 +365,7 @@ pub(crate) fn install_sound_bank(
 
             resident.0 = Some(ResidentBank {
                 zone: compose.zone.clone(),
+                families: compose.families,
                 iwd: Arc::clone(&iwd),
                 bank: Some(ResidentComposed {
                     products_id: compose.products_id,

@@ -349,6 +349,7 @@ impl WeaponBuild {
             rows.push(WeaponRow {
                 preparation: WeaponPreparationRecipe::for_capture(entry.namespace, &name),
                 name,
+                native_script_name: entry.name,
                 alternate_weapon: entry.alternate_weapon,
                 impact_payload: entry.impact_payload,
                 alternate_index: 0,

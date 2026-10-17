@@ -170,6 +170,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 angles,
                 ..Default::default()
             });
+            crate::remote_missile::mark_remote(frame.ecs(), id);
         }
         Ok(Value::Undefined)
     });

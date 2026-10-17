@@ -86,6 +86,7 @@ impl std::ops::Deref for PublishedRenderFrame {
 
 #[derive(Clone, Debug, Default)]
 pub struct RenderFrameData {
+    pub skin_jobs: Vec<render_frame::skinning::PackedSkinJob>,
     pub frame_products: ExtractedRenderFrameProducts,
     pub generation: MaterialGenerationId,
     pub world_generation: frame::WorldStamp,
@@ -108,7 +109,6 @@ pub struct RenderFrameData {
     pub fx_revision: u64,
     pub xmodel_revision: u64,
     pub xmodel_topology_revision: u64,
-    pub xmodel_packed_segments: render_frame::PackedSegments,
     pub particle_cloud_vertices: Arc<Vec<[u8; fx_iw4::GFX_POS_TEX_VERTEX_STRIDE]>>,
     pub particle_cloud_indices: Arc<Vec<u32>>,
     pub particle_cloud_surface_ranges: Arc<Vec<(u32, u32)>>,

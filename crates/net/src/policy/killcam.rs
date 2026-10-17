@@ -86,7 +86,7 @@ pub(crate) fn play_script_seats(
             focus_life,
             focus,
             ends_at_ms: i32::MAX,
-            final_kill: false,
+            final_kill: seat.final_kill && seat.archive_ms > 0,
             started_at_ms,
             killcamoffset_ms: seat.archive_ms,
             predelay_ms: 0,

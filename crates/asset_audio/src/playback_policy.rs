@@ -95,7 +95,7 @@ pub enum SecondaryActivation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecondaryPolicySource {
-    T5IndependentCompatibility,
+    IndependentLayers,
     PrimaryPreparedCompatibility,
 }
 

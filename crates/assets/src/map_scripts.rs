@@ -1,3 +1,5 @@
+pub(crate) const BARRELS: &str = include_str!("barrels.gsc.txt");
+
 pub(crate) const T6_EQUIPMENT: &str = include_str!("t6_equipment.gsc.txt");
 
 pub(crate) const RADIATION: &str = r#"main()
@@ -94,6 +96,10 @@ broken(event, attacker)
         self thread ignite(attacker);
     else if (event == "destructible_car_explosion" || event == "destructible_barrel_explosion" || event == "explode")
         self explode(attacker);
+    else if (event == "explode_sm")
+        self explode(attacker, 150);
+    else if (event == "explode_lg")
+        self explode(attacker, 450);
 }
 
 ignite(attacker)
@@ -103,14 +109,16 @@ ignite(attacker)
     self thread explode(attacker);
 }
 
-explode(attacker)
+explode(attacker, radius)
 {
+    if (!isdefined(radius))
+        radius = 256;
     if (isdefined(self.wrecked) && self.wrecked)
         return;
     self.wrecked = true;
     self notify("wrecked");
     self damagepiece(20000, -1, attacker);
-    self radiusdamage(self.origin, 256, 300, 75, attacker, "MOD_EXPLOSIVE");
+    self radiusdamage(self.origin, radius, 300, 75, attacker, "MOD_EXPLOSIVE");
     earthquake(.5, .5, self.origin, 800);
     level.globalCarsDestroyed++;
 }

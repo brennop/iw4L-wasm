@@ -46,7 +46,6 @@ fn enqueue_cell_frustum_cmds_after_vis(
         return;
     };
     let frustum_n = u8::try_from(stats.frustum_planes.len()).unwrap_or(u8::MAX);
-    let cells = admitted_cell_indices(&stats.cell_vis, stats.cell_vis_count);
     let mut enqueue =
         |cmd: CellFrustumWorkerCmd| match enqueue_cell_frustum_cmds(&mut worker_cmds.queues, cmd) {
             Ok(adds) if adds.contains(&AddWorkerCmd::OverflowInline) => false,
@@ -56,7 +55,13 @@ fn enqueue_cell_frustum_cmds_after_vis(
     let visits = &stats.cell_clip_visits;
     if !visits.is_empty() && visits.len() <= CELL_VISIT_BUDGET {
         for (index, (cell, clip)) in visits.iter().enumerate() {
-            if !cells.contains(cell) || clip.plane_count == 0 {
+            let cell_index = *cell as usize;
+            let visible = cell_index < stats.cell_vis_count
+                && stats
+                    .cell_vis
+                    .get(cell_index / 32)
+                    .is_some_and(|word| word & (1 << (cell_index % 32)) != 0);
+            if !visible || clip.plane_count == 0 {
                 continue;
             }
             let cmd = CellFrustumWorkerCmd {
@@ -72,7 +77,7 @@ fn enqueue_cell_frustum_cmds_after_vis(
         }
         return;
     }
-    for cell in cells {
+    for cell in admitted_cell_indices(&stats.cell_vis, stats.cell_vis_count) {
         let first = stats
             .cell_clips
             .get(cell as usize)

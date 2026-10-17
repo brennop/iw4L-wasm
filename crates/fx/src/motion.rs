@@ -1,10 +1,11 @@
 use fx_iw4::{
-    FX_ELEM_AT_REST_NONE, collide_marks_at_rest, collide_substep_schedule,
-    collision_reflect_base_vel_delta, elem_dies_on_touch, elem_gravity_accel_z,
-    elem_update_has_velocity_graph, elem_uses_collision, elem_uses_vel_local, elem_uses_vel_world,
-    get_at_rest_fraction, get_velocity_at_time_sampled, impact_child_speed_allows,
-    integrate_velocity_graph_sampled, orientation_pos_from_world, orientation_pos_to_world,
-    sample_reflection_factor, trace_mask, vec3_length_sq,
+    FX_ELEM_AT_REST_NONE, FX_PHYS_PIECE_HALF, collide_marks_at_rest, collide_on_ground,
+    collide_substep_schedule, collision_reflect_base_vel_delta, elem_dies_on_touch,
+    elem_gravity_accel_z, elem_launch_velocity, elem_update_has_velocity_graph,
+    elem_uses_collision, elem_uses_vel_local, elem_uses_vel_world, get_at_rest_fraction,
+    get_velocity_at_time_sampled, impact_child_speed_allows, integrate_velocity_graph_sampled,
+    orientation_pos_from_world, orientation_pos_to_world, sample_reflection_factor, trace_mask,
+    vec3_length_sq,
 };
 
 use crate::update::{FxElemMotionQuery, FxElemMotionResult, FxElemTraceHit, FxImpactSpawn};
@@ -41,6 +42,7 @@ pub fn evaluate_elem_collide_motion(
     coll_maxs: [f32; 3],
     use_item_clip: bool,
     has_effect_on_impact: bool,
+    leaves_start_solid: bool,
     vel_graph_local: &[fx_iw4::FxElemVec3Range],
     vel_graph_world: &[fx_iw4::FxElemVec3Range],
     q: FxElemMotionQuery<'_>,
@@ -125,7 +127,7 @@ pub fn evaluate_elem_collide_motion(
                 orientation_pos_to_world(q.orient.origin, q.orient.axis, end_local),
             );
             let hit = trace(start, end, coll_mins, coll_maxs, mask);
-            if hit.startsolid || hit.allsolid {
+            if hit.allsolid || (hit.startsolid && !leaves_start_solid) {
                 base_vel = [0.0; 3];
                 break;
             }
@@ -222,6 +224,142 @@ pub fn evaluate_elem_collide_motion(
         at_rest_fraction,
         spawn_impact,
     })
+}
+
+const FX_PHYS_GRAVITY: f32 = 800.0;
+const FX_PHYS_BOUNCE: f32 = 0.2;
+const FX_PHYS_FRICTION: f32 = 0.5;
+const FX_PHYS_REST_SPEED: f32 = 20.0;
+const FX_PHYS_UNSTICK_MAX_LIFT: f32 = 16.0;
+const FX_PHYS_CONTACT_SLOP: f32 = 0.125;
+
+pub fn evaluate_elem_physics_motion(
+    flags: i32,
+    use_item_clip: bool,
+    vel_graph_local: &[fx_iw4::FxElemVec3Range],
+    vel_graph_world: &[fx_iw4::FxElemVec3Range],
+    q: FxElemMotionQuery<'_>,
+    mut trace: impl FnMut([f32; 3], [f32; 3], [f32; 3], [f32; 3], u32) -> FxElemTraceHit,
+) -> FxElemMotionResult {
+    let mut landed = (q.at_rest_fraction != FX_ELEM_AT_REST_NONE).then_some(q.at_rest_fraction);
+    let mut result = FxElemMotionResult {
+        origin_delta: [0.0; 3],
+        base_vel: q.base_vel,
+        remove: false,
+        at_rest_fraction: landed,
+        spawn_impact: None,
+    };
+    if landed.is_some() && q.base_vel == [0.0; 3] {
+        return result;
+    }
+    let from = q.prev_msec.max(q.msec_begin);
+    if q.msec_now <= from {
+        return result;
+    }
+    let mut vel = if q.prev_msec <= q.msec_begin {
+        elem_launch_velocity(
+            flags,
+            vel_graph_local,
+            vel_graph_world,
+            q.orient.axis,
+            q.motion_random.velocity,
+        )
+    } else {
+        q.base_vel
+    };
+    let mask = trace_mask(use_item_clip);
+    let (mins, maxs) = ([-FX_PHYS_PIECE_HALF; 3], [FX_PHYS_PIECE_HALF; 3]);
+    let mut pos = orientation_pos_to_world(q.orient.origin, q.orient.axis, q.origin);
+    for step in collide_substep_schedule(from, q.msec_now) {
+        let dt = (step.msec_end.saturating_sub(step.msec_start)).max(0) as f32 * 0.001;
+        vel[2] -= FX_PHYS_GRAVITY * dt;
+        let end = [
+            pos[0] + vel[0] * dt,
+            pos[1] + vel[1] * dt,
+            pos[2] + vel[2] * dt,
+        ];
+        let hit = trace(pos, end, mins, maxs, mask);
+        if hit.allsolid {
+            vel = [0.0; 3];
+            match lift_out_of_solid(pos, mins, maxs, mask, &mut trace) {
+                Some(lifted) => {
+                    pos = lifted;
+                    continue;
+                }
+                None => {
+                    landed.get_or_insert(at_rest_byte(step.msec_start, q.msec_begin, q.life_ms));
+                    break;
+                }
+            }
+        }
+        if hit.fraction >= 1.0 {
+            pos = end;
+            continue;
+        }
+        pos = [
+            pos[0] + (end[0] - pos[0]) * hit.fraction,
+            pos[1] + (end[1] - pos[1]) * hit.fraction,
+            pos[2] + (end[2] - pos[2]) * hit.fraction,
+        ];
+        let n = hit.normal;
+        let into = dot(vel, n);
+        if into < 0.0 {
+            let push = (1.0 + FX_PHYS_BOUNCE) * into;
+            for (v, n) in vel.iter_mut().zip(n) {
+                *v -= push * n;
+            }
+            let along = dot(vel, n);
+            for (v, n) in vel.iter_mut().zip(n) {
+                let normal_part = along * n;
+                *v = normal_part + (*v - normal_part) * (1.0 - FX_PHYS_FRICTION);
+            }
+        }
+        if collide_on_ground(n[2]) {
+            landed.get_or_insert(at_rest_byte(step.msec_end, q.msec_begin, q.life_ms));
+            if vec3_length_sq(vel) < FX_PHYS_REST_SPEED * FX_PHYS_REST_SPEED {
+                vel = [0.0; 3];
+                break;
+            }
+        }
+    }
+    let stored = orientation_pos_from_world(q.orient.origin, q.orient.axis, pos);
+    result.origin_delta = [
+        stored[0] - q.origin[0],
+        stored[1] - q.origin[1],
+        stored[2] - q.origin[2],
+    ];
+    result.base_vel = vel;
+    result.at_rest_fraction = landed;
+    result
+}
+
+fn lift_out_of_solid(
+    pos: [f32; 3],
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    mask: u32,
+    trace: &mut impl FnMut([f32; 3], [f32; 3], [f32; 3], [f32; 3], u32) -> FxElemTraceHit,
+) -> Option<[f32; 3]> {
+    let mut dz = -mins[2] + FX_PHYS_CONTACT_SLOP;
+    let cap = dz.max(FX_PHYS_UNSTICK_MAX_LIFT);
+    while dz <= cap {
+        let lifted = [pos[0], pos[1], pos[2] + dz];
+        let probe = trace(lifted, lifted, mins, maxs, mask);
+        if !probe.startsolid && !probe.allsolid {
+            return Some(lifted);
+        }
+        dz *= 2.0;
+    }
+    None
+}
+
+fn at_rest_byte(msec: i32, msec_begin: i32, life_ms: f32) -> u8 {
+    let frac = get_at_rest_fraction(msec as f32, msec_begin as f32, 1.0 / life_ms.max(1.0));
+    frac.clamp(0.0, 254.0) as u8
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
 fn integrate_free_flight(

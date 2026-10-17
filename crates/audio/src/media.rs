@@ -204,6 +204,7 @@ pub(crate) struct RenderMedia {
     pub gain: Option<LiveGain>,
     pub channel_gain: Option<LiveGain>,
     pub release: Option<Arc<CueRelease>>,
+    pub bus: asset_core::AssetNamespace,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -410,6 +411,7 @@ impl RenderMedia {
             gain: None,
             channel_gain: None,
             release: None,
+            bus: asset_core::AssetNamespace::Iw4,
         }
     }
 

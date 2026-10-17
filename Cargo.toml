@@ -66,6 +66,7 @@ members = [
     "crates/render_material",
     "crates/render_scene",
     "crates/replay",
+    "crates/theater",
     "crates/session",
     "crates/sim",
     "crates/structured_data_iw4",
@@ -176,6 +177,7 @@ render_material = { path = "crates/render_material" }
 render_scene = { path = "crates/render_scene" }
 session = { path = "crates/session" }
 replay = { path = "crates/replay" }
+theater = { path = "crates/theater" }
 sim = { path = "crates/sim" }
 trace_iw4 = { path = "crates/trace_iw4" }
 ui = { path = "crates/ui" }

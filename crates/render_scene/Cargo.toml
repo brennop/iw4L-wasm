@@ -21,6 +21,7 @@ hud_iw4.workspace = true
 lighting_iw4.workspace = true
 math_iw4.workspace = true
 render_material.workspace = true
+render_frame.workspace = true
 sim.workspace = true
 
 [lints]

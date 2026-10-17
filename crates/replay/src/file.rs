@@ -227,7 +227,15 @@ pub struct RecordReader {
     file: BufReader<File>,
     path: PathBuf,
     frames: u64,
+    offset: u64,
     identity: MatchRecordIdentity,
+    world_decoder: WorldObjectSyncDecoder,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReaderCheckpoint {
+    frames: u64,
+    offset: u64,
     world_decoder: WorldObjectSyncDecoder,
 }
 
@@ -266,10 +274,12 @@ impl RecordReader {
             content_digest: u64::from_le_bytes(content_digest),
             zone,
         };
+        let offset = file.stream_position()?;
         Ok(Self {
             file,
             path: path.to_path_buf(),
             frames: 0,
+            offset,
             identity,
             world_decoder: WorldObjectSyncDecoder::default(),
         })
@@ -281,9 +291,13 @@ impl RecordReader {
 
     pub fn read_frame(&mut self) -> Result<Option<Frame>, ReplayError> {
         let mut length = [0u8; 4];
-        match self.file.read_exact(&mut length) {
+        let mut first = [0u8; 1];
+        if self.file.read(&mut first)? == 0 {
+            return Ok(None);
+        }
+        length[0] = first[0];
+        match self.file.read_exact(&mut length[1..]) {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(e.into()),
         }
         let length = u32::from_le_bytes(length);
@@ -295,13 +309,29 @@ impl RecordReader {
         let mut bytes = vec![0u8; length as usize];
         match self.file.read_exact(&mut bytes) {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(e.into()),
         }
         let mut reader = WireReader::new(&bytes);
         let frame = Frame::decode(&mut reader, &mut self.world_decoder)?;
         self.frames += 1;
+        self.offset += 4 + u64::from(length);
         Ok(Some(frame))
+    }
+
+    pub fn checkpoint(&self) -> ReaderCheckpoint {
+        ReaderCheckpoint {
+            frames: self.frames,
+            offset: self.offset,
+            world_decoder: self.world_decoder.clone(),
+        }
+    }
+
+    pub fn restore(&mut self, checkpoint: &ReaderCheckpoint) -> Result<(), ReplayError> {
+        self.file.seek(SeekFrom::Start(checkpoint.offset))?;
+        self.frames = checkpoint.frames;
+        self.offset = checkpoint.offset;
+        self.world_decoder = checkpoint.world_decoder.clone();
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {
@@ -339,6 +369,17 @@ impl FileTransport {
 
     pub fn identity(&self) -> Option<MatchRecordIdentity> {
         self.reader.as_ref().map(RecordReader::identity)
+    }
+
+    pub fn checkpoint(&self) -> Option<ReaderCheckpoint> {
+        self.reader.as_ref().map(RecordReader::checkpoint)
+    }
+
+    pub fn restore(&mut self, checkpoint: &ReaderCheckpoint) -> Result<(), ReplayError> {
+        self.reader
+            .as_mut()
+            .expect("restore needs a playback FileTransport")
+            .restore(checkpoint)
     }
 
     pub fn finish(&mut self) -> Result<Option<(u64, PathBuf)>, ReplayError> {

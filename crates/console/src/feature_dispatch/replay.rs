@@ -8,8 +8,7 @@ use ::replay::{
 };
 use bevy::prelude::*;
 use frame::{LaunchIdentity, RuntimeRole};
-use net::{AuthorityClock, AuthorityInputGate, AuthorityWorld, PresentedSnapshot};
-use render_frontend::prepare::scene::camera::SimCamera;
+use net::{AuthorityClock, AuthorityWorld, PresentedSnapshot};
 
 use crate::{ConsoleCommand, ConsoleDispatch, ConsoleLine, ConsoleSettings, ConsoleState};
 
@@ -31,11 +30,7 @@ pub(crate) fn route_replay_commands(
         Option<Res<audio::ClipStore>>,
         Option<Res<audio::AudioRuntime>>,
     ),
-    replay_inputs: (
-        Option<Res<AuthorityWorld>>,
-        Res<SimCamera>,
-        Res<AuthorityInputGate>,
-    ),
+    authority: Option<Res<AuthorityWorld>>,
     mut lifecycle: (
         ResMut<::replay::PendingReplayArm>,
         ResMut<::session::SessionSwapRequest>,
@@ -56,7 +51,6 @@ pub(crate) fn route_replay_commands(
         line.0 = msg.clone();
         console.echo(msg, capacity);
     };
-    let (authority, sim_cam, input_gate) = replay_inputs;
     let (theater, map_transition, dispatch) = &mut lifecycle;
     let (ring, role, prediction, clip_clock, clip_presented) = clip;
 
@@ -104,12 +98,17 @@ pub(crate) fn route_replay_commands(
                             };
                             theater.playback = Some(playback);
                             theater.quit_on_end = false;
+                            theater.in_place = false;
                             match map_transition.request_demo(name.clone(), zone.clone(), false) {
-                                Ok(id) => echo(
-                                    format!("demo: `{name}` zone `{zone}` (swap #{id})"),
-                                    console,
-                                    line,
-                                ),
+                                Ok(id) => {
+                                    theater.request_id = Some(id);
+                                    theater.control = None;
+                                    echo(
+                                        format!("demo: `{name}` zone `{zone}` (swap #{id})"),
+                                        console,
+                                        line,
+                                    );
+                                }
                                 Err(error) => {
                                     theater.playback = None;
                                     dispatch.release();
@@ -146,12 +145,10 @@ pub(crate) fn route_replay_commands(
                     );
                     continue;
                 }
-                if !sim_cam.enabled || !input_gate.local_cmds_enabled {
+                if *role == RuntimeRole::Replay || ring.as_ref().is_none_or(|ring| ring.is_empty())
+                {
                     echo(
-                        "record: the simulation does not own the camera yet \
-                         (no clip brushes, or the authored intermission view is active); \
-                         there are no ticks to record"
-                            .into(),
+                        "record: no live match ticks to record".into(),
                         console,
                         line,
                     );
@@ -165,9 +162,13 @@ pub(crate) fn route_replay_commands(
                     );
                     continue;
                 };
-                let Some(authority) = authority.as_ref() else {
+                let Some(world) = authority
+                    .as_ref()
+                    .map(|authority| &authority.0)
+                    .or_else(|| prediction.as_ref().map(|prediction| prediction.0.world()))
+                else {
                     echo(
-                        "record: authority world missing (match identity unavailable)".into(),
+                        "record: match world missing (match identity unavailable)".into(),
                         console,
                         line,
                     );
@@ -175,7 +176,7 @@ pub(crate) fn route_replay_commands(
                 };
                 let requested = cmd.args.first().map(String::as_str).unwrap_or("");
                 let record_identity =
-                    MatchRecordIdentity::from_world_on_zone(&authority.0, &identity.zone);
+                    MatchRecordIdentity::from_world_on_zone(world, &identity.zone);
                 match Recording::start_with_identity(
                     &identity.artifacts,
                     requested,
@@ -237,6 +238,7 @@ pub(crate) fn route_replay_commands(
                 );
                 match save_clip_package(
                     identity,
+                    *role,
                     authority.as_deref().filter(|_| role.runs_authority()),
                     prediction.0.world(),
                     ring.as_ref(),
@@ -307,6 +309,7 @@ fn allocate_clip_dir(artifacts: &Path) -> Result<(String, PathBuf), String> {
 
 fn save_clip_package(
     identity: &LaunchIdentity,
+    role: RuntimeRole,
     world: Option<&AuthorityWorld>,
     prediction: &sim::SimWorld,
     ring: &ClipRing,
@@ -348,7 +351,7 @@ fn save_clip_package(
             &identity.zone,
             captured_unix_ns,
         );
-        let source = if world.is_some() {
+        let source = if role == RuntimeRole::Dedicated {
             "authority"
         } else {
             "received"

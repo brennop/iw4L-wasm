@@ -47,6 +47,11 @@ pub(crate) fn generate(
     models: &asset_world::MapXModelSceneCatalog,
 ) {
     let mut state = marks.lock();
+    state.attached.retain(|a| {
+        host.marks
+            .constructed(a.handle)
+            .is_some_and(|m| m.context as u8 == 3 && (m.context >> 16) as u16 == a.entity)
+    });
     let pending = std::mem::take(&mut state.pending);
     let before = state.unsupported_triangles;
     let before_receivers = state.unsupported_receivers;
@@ -260,9 +265,9 @@ fn stage(
             }
             let global = bone_base + bone;
             if !ids.iter().all(|&i| {
-                skel.vert_skin.get(i).is_some_and(|w| {
-                    w.bones[0] as usize == bone && w.weights == [1.0, 0.0, 0.0, 0.0]
-                })
+                skel.vert_skin
+                    .get(i)
+                    .is_some_and(|w| w.bones[0] as usize == bone && w.has_only_primary_weight())
             }) {
                 state.unsupported_triangles += 1;
                 continue;
@@ -300,7 +305,7 @@ fn stage(
             if n < 3 {
                 continue;
             }
-            let [Some(n0), Some(n1), Some(n2)] = ids.map(|i| skel.normals.get(i).copied()) else {
+            let [Some(n0), Some(n1), Some(n2)] = ids.map(|i| skel.normal(i)) else {
                 continue;
             };
             let inverse = matrix.inverse();
@@ -378,6 +383,7 @@ fn stage(
             host.marks
                 .set_material_name(handle, Some(&request.material));
             host.note_models_go_fire();
+            state.attached.retain(|a| a.handle != handle);
             state.attached.push(EntityMarkAttachment {
                 entity: request.entity,
                 model: model.to_string(),

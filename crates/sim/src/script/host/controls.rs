@@ -419,7 +419,7 @@ pub(crate) fn select_location(
 pub(crate) fn command_buttons(command: &str) -> u32 {
     match command {
         "+attack" | "mouse1" => buttons::ATTACK,
-        "+activate" | "+usereload" => buttons::USE,
+        "+activate" | "+usereload" => buttons::USE | buttons::USE_RELOAD,
         "+melee" => buttons::MELEE_CHARGE,
         "+frag" => buttons::FRAG,
         "+smoke" => buttons::SMOKE,

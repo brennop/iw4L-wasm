@@ -119,3 +119,59 @@ pub fn collision_reflect_base_vel_delta(
         reflected[2] - pre_impact_vel[2],
     ]
 }
+
+pub const FX_PHYS_PIECE_HALF: f32 = 1.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FxPhysPiece {
+    flat_axis: usize,
+    flat_mid: f32,
+    flat_half: f32,
+}
+
+impl FxPhysPiece {
+    pub fn from_bounds(mid: [f32; 3], half: [f32; 3]) -> Option<Self> {
+        if !mid.iter().chain(&half).all(|v| v.is_finite()) || half.iter().any(|v| *v <= 0.0) {
+            return None;
+        }
+        let flat_axis = (0..3).min_by(|&a, &b| half[a].total_cmp(&half[b]))?;
+        Some(Self {
+            flat_axis,
+            flat_mid: mid[flat_axis],
+            flat_half: half[flat_axis],
+        })
+    }
+
+    pub fn rest_pose(&self, axis: [[f32; 3]; 3], scale: f32) -> ([[f32; 3]; 3], f32) {
+        let a = axis[self.flat_axis];
+        let up = if a[2] >= 0.0 { 1.0 } else { -1.0 };
+        let v = [a[1] * up, -a[0] * up, 0.0];
+        let k = 1.0 / (1.0 + a[2] * up);
+        let turn = |p: [f32; 3]| {
+            let vxp = cross(v, p);
+            let vxvxp = cross(v, vxp);
+            [
+                p[0] + vxp[0] + vxvxp[0] * k,
+                p[1] + vxp[1] + vxvxp[1] * k,
+                p[2] + vxp[2] + vxvxp[2] * k,
+            ]
+        };
+        let lowest = if up > 0.0 {
+            self.flat_mid - self.flat_half
+        } else {
+            -(self.flat_mid + self.flat_half)
+        };
+        (
+            [turn(axis[0]), turn(axis[1]), turn(axis[2])],
+            -FX_PHYS_PIECE_HALF - lowest * scale,
+        )
+    }
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}

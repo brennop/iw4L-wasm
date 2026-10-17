@@ -366,7 +366,8 @@ pub(super) fn expand_smodel_destination(
                 .lit_material_key
                 .get(&(authored, placement.reflection_probe_index))
                 .copied()
-                .or_else(|| smodel_plan.unlit_material_key.get(&authored).copied()),
+                .or_else(|| smodel_plan.unlit_material_key.get(&authored).copied())
+                .or_else(|| smodel_plan.shadow_material_key.get(&authored).copied()),
         };
         let Some(material) = material else {
             continue;
@@ -472,7 +473,8 @@ fn push_smodel_destination(
             .lit_material_key
             .get(&(authored, placement.reflection_probe_index))
             .copied()
-            .or_else(|| smodel_plan.unlit_material_key.get(&authored).copied()),
+            .or_else(|| smodel_plan.unlit_material_key.get(&authored).copied())
+            .or_else(|| smodel_plan.shadow_material_key.get(&authored).copied()),
     };
     let Some(material) = material else {
         return stats;

@@ -45,6 +45,7 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         .add_plugins((BotsPlugin, HudPlugin))
         .add_plugins(AudioPlugin)
         .add_plugins(ReplayPlugin)
+        .add_plugins(theater::TheaterPlugin)
         .add_plugins(RenderPlugin)
         .add_plugins(SessionPlugin);
 

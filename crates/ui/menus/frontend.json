@@ -15,10 +15,26 @@
       {"name": "callsign", "item_type": 1, "style": 1, "text_key": "CALLSIGN", "rect": {"x": -64, "y": 104, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open callsign_setup;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
       {"name": "killstreaks", "item_type": 1, "style": 1, "text_key": "KILLSTREAKS", "rect": {"x": -64, "y": 124, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open killstreak_setup;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
       {"name": "options", "item_type": 1, "style": 1, "text_key": "OPTIONS", "rect": {"x": -64, "y": 144, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open pc_options_video;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
-      {"name": "quit", "item_type": 1, "style": 1, "text_key": "QUIT", "rect": {"x": -64, "y": 180, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open quit_popmenu;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "theater", "item_type": 1, "style": 1, "text_key": "THEATER", "rect": {"x": -64, "y": 164, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; close self; exec ui_theater;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "quit", "item_type": 1, "style": 1, "text_key": "QUIT", "rect": {"x": -64, "y": 200, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "background": "menu_button_selection_bar", "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "text_align_y": 0, "handlers": {"action": [{"Script": "play mouse_click; open quit_popmenu;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
       {"name": "play_separator", "background": "white", "rect": {"x": 4, "y": 75, "w": 248, "h": 0.5, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.25], "static_flags": 1048576},
-      {"name": "exit_separator", "background": "white", "rect": {"x": 4, "y": 171, "w": 248, "h": 0.5, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.25], "static_flags": 1048576},
-      {"name": "master_status", "text_key": "", "rect": {"x": 8, "y": -24, "w": 624, "h": 20, "horz_align": 1, "vert_align": 3}, "fore_color": [1, 1, 1, 0.8], "font_enum": 3, "text_scale": 0.3, "text_align_mode": 8, "text_align_x": 0, "static_flags": 1048576, "text_literal": true, "text_exp": "op 38 s:75695f6d61737465725f737461747573 op 1"}
+      {"name": "exit_separator", "background": "white", "rect": {"x": 4, "y": 191, "w": 248, "h": 0.5, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.25], "static_flags": 1048576},
+      {"name": "master_status", "text_key": "", "rect": {"x": 8, "y": -44, "w": 624, "h": 20, "horz_align": 1, "vert_align": 3}, "fore_color": [1, 1, 1, 0.8], "font_enum": 3, "text_scale": 0.3, "text_align_mode": 8, "text_align_x": 0, "static_flags": 1048576, "text_literal": true, "text_exp": "op 38 s:75695f6d61737465725f737461747573 op 1"},
+      {"name": "players_online", "text_key": "", "rect": {"x": 8, "y": -24, "w": 624, "h": 20, "horz_align": 1, "vert_align": 3}, "fore_color": [1, 1, 1, 0.8], "font_enum": 3, "text_scale": 0.3, "text_align_mode": 8, "text_align_x": 0, "static_flags": 1048576, "text_literal": true, "text_exp": "op 38 s:75695f706c61796572735f6f6e6c696e65 op 1"}
+    ]
+  },
+  {
+    "name": "class_loading",
+    "fullscreen": 1,
+    "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4},
+    "handlers": {"esc": [{"Script": "close self;"}]},
+    "items": [
+      {"name": "background", "background": "mw2_main_background", "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4}, "fore_color": [1, 1, 1, 1], "static_flags": 1048576},
+      {"name": "clouds", "background": "mw2_main_cloud_overlay", "rect": {"x": -107, "y": 0, "w": 1708, "h": 480, "horz_align": 0, "vert_align": 0}, "fore_color": [1, 1, 1, 0.45], "static_flags": 1048576, "float_exp": [[0, "-107 op 6 op 34 op 1 op 4 60000 op 3 60000 op 2 854"]]},
+      {"name": "soldier", "background": "mw2_main_mp_image", "rect": {"x": -427, "y": -240, "w": 854, "h": 480, "horz_align": 2, "vert_align": 2}, "fore_color": [1, 1, 1, 1], "static_flags": 1048576, "cover": true},
+      {"name": "glow", "background": "mockup_bg_glow", "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4}, "fore_color": [1, 1, 1, 0.5], "static_flags": 1048576},
+      {"name": "title", "text_key": "LOADING CLASSES...", "rect": {"x": -64, "y": 28, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1}, "fore_color": [1, 1, 1, 0.8], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 68, "static_flags": 1048576},
+      {"name": "back", "text_key": "@PLATFORM_BACK_CAPS", "rect": {"x": 8, "y": -24, "w": 624, "h": 20, "horz_align": 1, "vert_align": 3}, "fore_color": [1, 1, 1, 0.8], "font_enum": 3, "text_scale": 0.3, "text_align_mode": 8, "static_flags": 1048576}
     ]
   },
   {
@@ -477,23 +493,42 @@
       {"index": 27,"fields": {"name": "lobby_member_15","vis_exp": "op 35 s:75695f6c6f6262795f6d656d6265725f31355f76697369626c65 op 1","rect": {"x": -272,"y": 328,"w": 272,"h": 20},"background": "white","style": 1,"back_color": [0,0,0,0.25],"text_key": "","text_exp": "op 38 s:75695f6c6f6262795f6d656d6265725f3135 op 1","text_literal": true,"font_enum": 3,"text_scale": 0.375,"text_align_mode": 8,"text_align_x": 8,"fore_color": [1,1,1,1]}},
       {"index": 27,"fields": {"name": "lobby_member_16","vis_exp": "op 35 s:75695f6c6f6262795f6d656d6265725f31365f76697369626c65 op 1","rect": {"x": -272,"y": 348,"w": 272,"h": 20},"background": "white","style": 1,"back_color": [0,0,0,0.25],"text_key": "","text_exp": "op 38 s:75695f6c6f6262795f6d656d6265725f3136 op 1","text_literal": true,"font_enum": 3,"text_scale": 0.375,"text_align_mode": 8,"text_align_x": 8,"fore_color": [1,1,1,1]}},
       {"index": 27,"fields": {"name": "lobby_member_17","vis_exp": "op 35 s:75695f6c6f6262795f6d656d6265725f31375f76697369626c65 op 1","rect": {"x": -272,"y": 368,"w": 272,"h": 20},"background": "white","style": 1,"back_color": [0,0,0,0.25],"text_key": "","text_exp": "op 38 s:75695f6c6f6262795f6d656d6265725f3137 op 1","text_literal": true,"font_enum": 3,"text_scale": 0.375,"text_align_mode": 8,"text_align_x": 8,"fore_color": [1,1,1,1]}},
-      {
-        "index": 27,
-        "fields": {
-          "name": "lobby_prestige", "vis_exp": "1", "rect": {"x": -46, "y": 30, "w": 16, "h": 16},
-          "background": "cardicon_prestige_1", "style": 3,
-          "text_key": "", "text_exp": "", "fore_color": [1, 1, 1, 1]
-        }
-      },
-      {
-        "index": 27,
-        "fields": {
-          "name": "lobby_rank", "vis_exp": "1", "rect": {"x": -28, "y": 28, "w": 20, "h": 20},
-          "background": "", "style": 0, "text_key": "70", "text_exp": "",
-          "text_literal": true, "font_enum": 3, "text_scale": 0.375,
-          "fore_color": [1, 1, 1, 1], "text_align_mode": 10, "text_align_x": 0
-        }
-      },
+      {"index":27,"fields":{"name":"lobby_rank_icon_0","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f305f6c6f63616c op 1","rect":{"x":-46,"y":30,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_0","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f305f6c6f63616c op 1","rect":{"x":-28,"y":28,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_1","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f315f6c6f63616c op 1","rect":{"x":-46,"y":50,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_1","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f315f6c6f63616c op 1","rect":{"x":-28,"y":48,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_2","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f325f6c6f63616c op 1","rect":{"x":-46,"y":70,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_2","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f325f6c6f63616c op 1","rect":{"x":-28,"y":68,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_3","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f335f6c6f63616c op 1","rect":{"x":-46,"y":90,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_3","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f335f6c6f63616c op 1","rect":{"x":-28,"y":88,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_4","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f345f6c6f63616c op 1","rect":{"x":-46,"y":110,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_4","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f345f6c6f63616c op 1","rect":{"x":-28,"y":108,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_5","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f355f6c6f63616c op 1","rect":{"x":-46,"y":130,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_5","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f355f6c6f63616c op 1","rect":{"x":-28,"y":128,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_6","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f365f6c6f63616c op 1","rect":{"x":-46,"y":150,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_6","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f365f6c6f63616c op 1","rect":{"x":-28,"y":148,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_7","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f375f6c6f63616c op 1","rect":{"x":-46,"y":170,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_7","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f375f6c6f63616c op 1","rect":{"x":-28,"y":168,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_8","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f385f6c6f63616c op 1","rect":{"x":-46,"y":190,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_8","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f385f6c6f63616c op 1","rect":{"x":-28,"y":188,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_9","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f395f6c6f63616c op 1","rect":{"x":-46,"y":210,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_9","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f395f6c6f63616c op 1","rect":{"x":-28,"y":208,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_10","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31305f6c6f63616c op 1","rect":{"x":-46,"y":230,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_10","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31305f6c6f63616c op 1","rect":{"x":-28,"y":228,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_11","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31315f6c6f63616c op 1","rect":{"x":-46,"y":250,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_11","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31315f6c6f63616c op 1","rect":{"x":-28,"y":248,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_12","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31325f6c6f63616c op 1","rect":{"x":-46,"y":270,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_12","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31325f6c6f63616c op 1","rect":{"x":-28,"y":268,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_13","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31335f6c6f63616c op 1","rect":{"x":-46,"y":290,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_13","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31335f6c6f63616c op 1","rect":{"x":-28,"y":288,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_14","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31345f6c6f63616c op 1","rect":{"x":-46,"y":310,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_14","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31345f6c6f63616c op 1","rect":{"x":-28,"y":308,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_15","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31355f6c6f63616c op 1","rect":{"x":-46,"y":330,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_15","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31355f6c6f63616c op 1","rect":{"x":-28,"y":328,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_16","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31365f6c6f63616c op 1","rect":{"x":-46,"y":350,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_16","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31365f6c6f63616c op 1","rect":{"x":-28,"y":348,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
+      {"index":27,"fields":{"name":"lobby_rank_icon_17","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31375f6c6f63616c op 1","rect":{"x":-46,"y":370,"w":16,"h":16},"background":"","material_exp":"op 38 s:75695f70726f66696c655f72616e6b5f69636f6e op 1","style":3,"text_key":"","text_exp":"","fore_color":[1,1,1,1]}},
+      {"index":27,"fields":{"name":"lobby_rank_17","vis_exp":"op 35 s:75695f6c6f6262795f6d656d6265725f31375f6c6f63616c op 1","rect":{"x":-28,"y":368,"w":20,"h":20},"background":"","style":0,"text_key":"","text_exp":"op 38 s:75695f70726f66696c655f6c6576656c op 1","text_literal":true,"font_enum":3,"text_scale":0.375,"fore_color":[1,1,1,1],"text_align_mode":10,"text_align_x":0}},
       {
         "index": 12,
         "fields": {
@@ -529,7 +564,7 @@
         ],
         [
           3,
-          "176"
+          "196"
         ]
       ],
       "handlers": {
@@ -548,15 +583,15 @@
       }
     },
     "item_overrides": [
-      {"index": 2, "fields": {"rect": {"h": 176}, "float_exp": []}},
-      {"index": 5, "fields": {"rect": {"h": 176}, "float_exp": []}},
-      {"index": 8, "fields": {"rect": {"h": 176}, "float_exp": []}},
-      {"index": 12, "fields": {"rect": {"h": 176}, "float_exp": []}},
-      {"index": 13, "fields": {"rect": {"y": 176}, "float_exp": []}},
-      {"index": 14, "fields": {"rect": {"y": 176}, "float_exp": []}},
-      {"index": 15, "fields": {"rect": {"y": 176}, "float_exp": []}},
-      {"index": 16, "fields": {"rect": {"h": 176}, "float_exp": []}},
-      {"index": 17, "fields": {"rect": {"h": 176}, "float_exp": []}},
+      {"index": 2, "fields": {"rect": {"h": 196}, "float_exp": []}},
+      {"index": 5, "fields": {"rect": {"h": 196}, "float_exp": []}},
+      {"index": 8, "fields": {"rect": {"h": 196}, "float_exp": []}},
+      {"index": 12, "fields": {"rect": {"h": 196}, "float_exp": []}},
+      {"index": 13, "fields": {"rect": {"y": 196}, "float_exp": []}},
+      {"index": 14, "fields": {"rect": {"y": 196}, "float_exp": []}},
+      {"index": 15, "fields": {"rect": {"y": 196}, "float_exp": []}},
+      {"index": 16, "fields": {"rect": {"h": 196}, "float_exp": []}},
+      {"index": 17, "fields": {"rect": {"h": 196}, "float_exp": []}},
       {
         "index": 19,
         "fields": {
@@ -609,7 +644,7 @@
         "index": 23,
         "fields": {
           "rect": {
-            "y": 148
+            "y": 168
           },
           "text_key": "@PLATFORM_BACK_CAPS",
           "vis_exp": "1",
@@ -671,6 +706,175 @@
           "dvar_flags": 0,
           "dvar_test": "",
           "enable_dvar": ""
+        }
+      },
+      {
+        "index": 22,
+        "fields": {
+          "name": "game_assets",
+          "text_key": "GAME ASSETS",
+          "text_literal": true,
+          "text_exp": "",
+          "rect": {
+            "y": 144
+          },
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; close self; open lobby_game_assets;"
+              }
+            ]
+          },
+          "vis_exp": "1",
+          "disabled_exp": "0",
+          "float_exp": [],
+          "dvar_flags": 0,
+          "dvar_test": "",
+          "enable_dvar": ""
+        }
+      }
+    ]
+  },
+  {
+    "name": "lobby_game_assets",
+    "base": "popup_gamesetup",
+    "fields": {
+      "float_exp": [
+        [
+          1,
+          "24"
+        ],
+        [
+          3,
+          "116"
+        ]
+      ],
+      "handlers": {
+        "open": [
+          {
+            "Script": "focusFirst;"
+          }
+        ],
+        "close": [],
+        "close_request": [],
+        "esc": [
+          {
+            "Script": "close self; open lobby_game_setup;"
+          }
+        ]
+      }
+    },
+    "item_overrides": [
+      {"index": 2, "fields": {"rect": {"h": 116}, "float_exp": []}},
+      {"index": 5, "fields": {"rect": {"h": 116}, "float_exp": []}},
+      {"index": 8, "fields": {"rect": {"h": 116}, "float_exp": []}},
+      {"index": 12, "fields": {"rect": {"h": 116}, "float_exp": []}},
+      {"index": 13, "fields": {"rect": {"y": 116}, "float_exp": []}},
+      {"index": 14, "fields": {"rect": {"y": 116}, "float_exp": []}},
+      {"index": 15, "fields": {"rect": {"y": 116}, "float_exp": []}},
+      {"index": 16, "fields": {"rect": {"h": 116}, "float_exp": []}},
+      {"index": 17, "fields": {"rect": {"h": 116}, "float_exp": []}},
+      {
+        "index": 18,
+        "fields": {
+          "text_key": "GAME ASSETS",
+          "text_literal": true
+        }
+      },
+      {
+        "index": 19,
+        "fields": {
+          "name": "assets_iw5",
+          "text_key": "",
+          "text_exp": "op 38 s:75695f6173736574735f697735 op 1",
+          "rect": {
+            "y": 24
+          },
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; exec \"ui_asset_family iw5\";"
+              }
+            ]
+          },
+          "vis_exp": "1",
+          "disabled_exp": "op 38 s:75695f6173736574735f6977355f626c6f636b6564 op 1 op 12 s:31",
+          "float_exp": [],
+          "dvar_flags": 0,
+          "dvar_test": "",
+          "enable_dvar": ""
+        }
+      },
+      {
+        "index": 20,
+        "fields": {
+          "name": "assets_t5",
+          "text_key": "",
+          "text_exp": "op 38 s:75695f6173736574735f7435 op 1",
+          "rect": {
+            "y": 44
+          },
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; exec \"ui_asset_family t5\";"
+              }
+            ]
+          },
+          "vis_exp": "1",
+          "disabled_exp": "op 38 s:75695f6173736574735f74355f626c6f636b6564 op 1 op 12 s:31",
+          "float_exp": [],
+          "dvar_flags": 0,
+          "dvar_test": "",
+          "enable_dvar": ""
+        }
+      },
+      {
+        "index": 21,
+        "fields": {
+          "name": "assets_t6",
+          "text_key": "",
+          "text_exp": "op 38 s:75695f6173736574735f7436 op 1",
+          "rect": {
+            "y": 64
+          },
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; exec \"ui_asset_family t6\";"
+              }
+            ]
+          },
+          "vis_exp": "1",
+          "disabled_exp": "op 38 s:75695f6173736574735f74365f626c6f636b6564 op 1 op 12 s:31",
+          "float_exp": [],
+          "dvar_flags": 0,
+          "dvar_test": "",
+          "enable_dvar": ""
+        }
+      },
+      {
+        "index": 22,
+        "fields": {
+          "vis_exp": "0"
+        }
+      },
+      {
+        "index": 23,
+        "fields": {
+          "rect": {
+            "y": 88
+          },
+          "text_key": "@PLATFORM_BACK_CAPS",
+          "vis_exp": "1",
+          "disabled_exp": "0",
+          "handlers": {
+            "action": [
+              {
+                "Script": "play mouse_click; close self; open lobby_game_setup;"
+              }
+            ]
+          }
         }
       }
     ]

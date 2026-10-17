@@ -11,6 +11,7 @@ use bevy_ecs::prelude::World;
 use glam::Vec3;
 
 const TURN_RATE_DEG_PER_S: f32 = 360.0;
+const SCAN_RATE_DEG_PER_S: f32 = 30.0;
 const ON_TARGET_DEGREES: f32 = 2.0;
 const DEFAULT_RANGE: f32 = 4096.0;
 const MUZZLE_HEIGHT: f32 = 40.0;
@@ -29,6 +30,8 @@ pub(crate) struct Turret {
     firing: bool,
     on_target: bool,
     aim: [f32; 3],
+    aim_initialized: bool,
+    scan_direction: f32,
     arcs: [f32; 4],
     drop_pitch: f32,
     convergence: [f32; 2],
@@ -36,6 +39,21 @@ pub(crate) struct Turret {
     solid: bool,
     minigun: bool,
     mode_change_wait: f32,
+}
+
+impl Turret {
+    pub(super) fn model_rotations(&self, base: [f32; 3]) -> Vec<xmodel_runtime::TagRotation> {
+        if !self.aim_initialized || self.carried || &*self.mode == "sentry_offline" {
+            return Vec::new();
+        }
+        let axis = math_iw4::angles_to_axis(base);
+        let aim = Vec3::from_array(self.aim);
+        let local = axis.map(|axis| aim.dot(Vec3::from_array(axis)));
+        vec![xmodel_runtime::TagRotation {
+            tag: "tag_aim".into(),
+            angles: math_iw4::vect_to_angles(local),
+        }]
+    }
 }
 
 fn turret_of(world: &World, receiver: &Value) -> Result<u64, String> {
@@ -137,6 +155,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 firing: false,
                 on_target: false,
                 aim: [1.0, 0.0, 0.0],
+                aim_initialized: false,
+                scan_direction: 1.0,
                 arcs: [180.0, 180.0, 90.0, 90.0],
                 drop_pitch: 0.0,
                 convergence: [0.0; 2],
@@ -409,6 +429,11 @@ pub(crate) fn advance(world: &mut World) {
             continue;
         }
         let mut turret = world.resource::<RoundScript>().engine.turrets[&object].clone();
+        let base = field_vector(world, object, "angles");
+        if !turret.aim_initialized || turret.carried || &*turret.mode == "sentry_offline" {
+            turret.aim = math_iw4::angles_to_axis(base)[0];
+            turret.aim_initialized = true;
+        }
         let from = muzzle(world, object);
         let active = !turret.carried && &*turret.mode != "sentry_offline";
         let found = if active {
@@ -436,6 +461,33 @@ pub(crate) fn advance(world: &mut World) {
             None => {
                 turret.target = None;
                 turret.on_target = false;
+                if active && &*turret.mode == "sentry" {
+                    let angles = math_iw4::vect_to_angles(turret.aim);
+                    let yaw = math_iw4::angle_subtract(angles[1], base[1]);
+                    let left = turret.arcs[0].min(90.0);
+                    let right = turret.arcs[1].min(90.0);
+                    let next = yaw
+                        + turret.scan_direction
+                            * SCAN_RATE_DEG_PER_S
+                            * crate::MATCH_TICK_MS as f32
+                            * 0.001;
+                    if next >= left {
+                        turret.scan_direction = -1.0;
+                    } else if next <= -right {
+                        turret.scan_direction = 1.0;
+                    }
+                    let wanted = math_iw4::angles_to_axis([
+                        base[0],
+                        base[1] + next.clamp(-right, left),
+                        base[2],
+                    ])[0];
+                    turret.aim = super::guidance::turn_toward(
+                        Vec3::from_array(turret.aim),
+                        Vec3::from_array(wanted),
+                        SCAN_RATE_DEG_PER_S.to_radians() * crate::MATCH_TICK_MS as f32 * 0.001,
+                    )
+                    .to_array();
+                }
             }
         }
         turret.firing = turret.on_target && turret.fire_enabled;

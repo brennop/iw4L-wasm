@@ -328,6 +328,18 @@ fn run(root: &Path, args: &Args) -> Result<bool, String> {
         });
     }
 
+    let (width, height) = hgl::RESOLUTION;
+    std::fs::write(
+        run_dir.join("settings.cfg"),
+        format!("resolution={width}x{height}\nfullscreen=false\nvsync=false\n"),
+    )
+    .map_err(|error| format!("write scenario settings: {error}"))?;
+    manifest["requested_render"] = json!({
+        "width": width,
+        "height": height,
+        "fullscreen": false,
+        "present_mode": "AutoNoVsync",
+    });
     let cache = prepare_cache(root, &run_dir, args.cache)?;
     manifest["cache"] = cache;
     let bin = stage_binary(&args.bin, &run_dir)?;
@@ -353,6 +365,7 @@ fn run(root: &Path, args: &Args) -> Result<bool, String> {
         args: child_args,
         env: vec![
             ("IW4L_PERF", "1".into()),
+            ("IW4L_PRESENT_MODE", "AutoNoVsync".into()),
             ("IW4L_GAMETYPE", SCENARIO.gametype.into()),
             (
                 "IW4L_SETTINGS_PATH",

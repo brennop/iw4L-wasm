@@ -5,6 +5,8 @@ use crate::transport::wire::{WireError, WireReader, WireWriter};
 
 pub const SVC_DISCONNECT_NOTIFY: u8 = 0x65;
 
+pub const SVC_CHAT: u8 = 0x68;
+
 pub const SVC_PRINT: u8 = 0x66;
 
 pub const SVC_PRINT_BOLD: u8 = 0x67;
@@ -49,7 +51,9 @@ impl PendingGameNotify {
 
     pub fn adopt_prints(&mut self, effects: &[sim::PendingPrint]) {
         for print in effects.iter().cloned() {
-            let tag = if print.bold {
+            let tag = if print.chat {
+                SVC_CHAT
+            } else if print.bold {
                 SVC_PRINT_BOLD
             } else {
                 SVC_PRINT
@@ -116,10 +120,11 @@ pub fn decode_svc_game_notifies(
     for _ in 0..count {
         let id = input.get_u32()?;
         let tag = input.get_u8()?;
-        if !matches!(tag, SVC_DISCONNECT_NOTIFY | SVC_PRINT | SVC_PRINT_BOLD) {
-            return Err(WireError::Malformed(
-                "gamenotify tag is not 'e', 'f' or 'g'",
-            ));
+        if !matches!(
+            tag,
+            SVC_DISCONNECT_NOTIFY | SVC_PRINT | SVC_PRINT_BOLD | SVC_CHAT
+        ) {
+            return Err(WireError::Malformed("unknown game notification tag"));
         }
         let mut name = vec![0; input.get_u8()? as usize];
         input.get_bytes(&mut name)?;

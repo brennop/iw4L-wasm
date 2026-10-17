@@ -75,3 +75,36 @@ pub fn get_velocity_at_time_sampled(
     }
     out
 }
+
+#[inline]
+pub fn elem_launch_velocity(
+    flags: i32,
+    local_samples: &[crate::FxElemVec3Range],
+    world_samples: &[crate::FxElemVec3Range],
+    orient_axis: [[f32; 3]; 3],
+    random: [f32; 3],
+) -> [f32; 3] {
+    let mut out = [0.0f32; 3];
+    if elem_uses_vel_world(flags) && world_samples.len() >= 2 {
+        let s = sample_vel_graph_at_age_sampled(world_samples, 0.0, random);
+        let scale = graph_speed_scale(world_samples.len());
+        for (out, s) in out.iter_mut().zip(s) {
+            *out += s * scale;
+        }
+    }
+    if elem_uses_vel_local(flags) && local_samples.len() >= 2 {
+        let s = sample_vel_graph_at_age_sampled(local_samples, 0.0, random);
+        let scale = graph_speed_scale(local_samples.len());
+        for (axis, out) in out.iter_mut().enumerate() {
+            let w = s[0] * orient_axis[0][axis]
+                + s[1] * orient_axis[1][axis]
+                + s[2] * orient_axis[2][axis];
+            *out += w * scale;
+        }
+    }
+    out
+}
+
+fn graph_speed_scale(fenceposts: usize) -> f32 {
+    (fenceposts - 1) as f32 * FX_VEL_AT_TIME_SCALE as f32
+}

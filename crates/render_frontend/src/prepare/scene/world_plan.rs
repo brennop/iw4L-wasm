@@ -236,23 +236,18 @@ pub(crate) fn world_color_images(
     }
 }
 
-pub(crate) fn empty_fx_model_geometry(scene: &WorldScene) -> render_fx::PreparedFxModelGeometry {
-    let mut plan = render_fx::FxModelDrawPlan::default();
-    plan.generation = scene.runtime_material_catalog.generation_id().get();
-    render_fx::PreparedFxModelGeometry(plan)
-}
-
 pub(crate) fn prepare_fx_model_geometry(
     scene: &WorldScene,
     models: Option<&render_fx::PreparedFxModels>,
 ) -> render_fx::PreparedFxModelGeometry {
-    let render_fx::PreparedFxModelGeometry(mut plan) = empty_fx_model_geometry(scene);
+    let mut plan = render_fx::FxModelDrawPlan::default();
+    plan.generation = scene.runtime_material_catalog.generation_id().get();
     let Some(models) = models else {
         diag::info!(
             World,
             "FX model geometry: no effect model catalog, nothing prepared"
         );
-        return render_fx::PreparedFxModelGeometry(plan);
+        return plan.into();
     };
     let models = &models.0;
     let Some((image, dims)) = scene
@@ -265,7 +260,7 @@ pub(crate) fn prepare_fx_model_geometry(
             "FX model geometry refused: no model lighting atlas ({} models; the map has no light grid, or this ran before world occupancy); effect model pieces will not draw",
             models.len()
         );
-        return render_fx::PreparedFxModelGeometry(plan);
+        return plan.into();
     };
     let atlas = super::model_lighting_atlas::WorldModelLightingAtlas { image, dims };
     let (mut prepared, mut refused, mut lods_prepared, mut lods_refused) = (0u32, 0u32, 0u32, 0u32);
@@ -366,7 +361,7 @@ pub(crate) fn prepare_fx_model_geometry(
         plan.vertices().len(),
         plan.packed_exact()
     );
-    render_fx::PreparedFxModelGeometry(plan)
+    plan.into()
 }
 
 pub fn install(

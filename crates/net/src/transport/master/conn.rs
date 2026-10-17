@@ -53,6 +53,10 @@ pub(super) trait MasterConn: Clone {
     fn path_stats(&self) -> Option<PathStats> {
         None
     }
+    /// Free bytes in the datagram send buffer, where the transport exposes it.
+    fn datagram_send_buffer_space(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// One sample of a connection's path: round trip, window, losses and the bytes
@@ -154,8 +158,13 @@ impl MasterConn for QuicConn {
             cwnd: stats.path.cwnd,
             lost_packets: stats.path.lost_packets,
             congestion_events: stats.path.congestion_events,
-            queued: (super::online::DATAGRAM_SEND_BUFFER - self.0.datagram_send_buffer_space()) as u64,
+            queued: super::online::DATAGRAM_SEND_BUFFER
+                .saturating_sub(self.0.datagram_send_buffer_space()) as u64,
         })
+    }
+
+    fn datagram_send_buffer_space(&self) -> Option<usize> {
+        Some(self.0.datagram_send_buffer_space())
     }
 
     async fn open_bi(&self) -> Result<(QuicSend, QuicRecv), ConnError> {

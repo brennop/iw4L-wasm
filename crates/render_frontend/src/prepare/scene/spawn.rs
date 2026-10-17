@@ -757,19 +757,6 @@ pub(crate) fn spawn_world(
             tracers.as_deref(),
             fx_catalog.as_deref(),
         );
-        let fx_geometry = super::world_plan::empty_fx_model_geometry(&scene);
-        {
-            let value = fx_geometry.0.clone();
-            commands.queue(move |world: &mut World| {
-                frame::scope::insert(world, value, frame::MatchScope::Live);
-            });
-        };
-        {
-            let value = fx_geometry;
-            commands.queue(move |world: &mut World| {
-                frame::scope::insert(world, value, frame::MatchScope::Live);
-            });
-        };
         tess.material_images = std::sync::Arc::new(job.images.exact_handles().to_vec());
         if let Some(host) = fx_host.as_mut() {
             match scene.fx_glass.as_ref() {
@@ -818,12 +805,6 @@ pub(crate) fn spawn_world_finish(
         job.images.lightmap_handles().to_vec(),
     );
     let fx_geometry = super::world_plan::prepare_fx_model_geometry(&scene, fx_models.as_deref());
-    {
-        let value = fx_geometry.0.clone();
-        commands.queue(move |world: &mut World| {
-            frame::scope::insert(world, value, frame::MatchScope::Live);
-        });
-    };
     {
         let value = fx_geometry;
         commands.queue(move |world: &mut World| {

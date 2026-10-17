@@ -608,6 +608,8 @@ impl FrameWorld<'_> {
     pub fn shutdown_game(&mut self) {
         *self.deref_mut() = SimState::new();
         clear_payload_rows(self.ecs);
+        self.ecs
+            .remove_resource::<crate::remote_missile::RemoteMissiles>();
     }
 }
 

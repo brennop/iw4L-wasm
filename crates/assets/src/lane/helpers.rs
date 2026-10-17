@@ -214,10 +214,14 @@ impl MapXModelCatalog {
                         break_health: stream.f32_at(st, 4).ok()?,
                         max_time: stream.f32_at(st, 8).ok()?,
                         flags: stream.u32_at(st, 12).ok()?,
+                        break_effect_looping: break_effect
+                            .as_deref()
+                            .and_then(|name| fx.get_in(asset_core::FamilyId::T5, name))
+                            .is_some_and(|effect| effect.view.msec_looping_life == i32::MAX),
                         break_effect,
-                        break_sound: read_string(st, 20)?,
+                        break_sound: read_string(st, 20)?.map(|name| format!("t5:{name}")),
                         break_notify: read_string(st, 24)?,
-                        loop_sound: read_string(st, 28)?,
+                        loop_sound: read_string(st, 28)?.map(|name| format!("t5:{name}")),
                         has_phys_preset: stream.ptr_at(st, 44).ok()? != ZonePtr::Null,
                         spawn_models,
                     });

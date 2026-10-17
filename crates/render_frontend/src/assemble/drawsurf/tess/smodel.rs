@@ -95,6 +95,8 @@ pub struct SmodelGpuPlan {
     pub lit_material_key: std::collections::HashMap<(Option<assets::MaterialIndex>, u8), u32>,
 
     pub unlit_material_key: std::collections::HashMap<Option<assets::MaterialIndex>, u32>,
+
+    pub shadow_material_key: std::collections::HashMap<Option<assets::MaterialIndex>, u32>,
     pub upload_pending: bool,
     pub packed_share: Option<Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>>,
     pub index_share: Option<Arc<Vec<u32>>>,
@@ -490,6 +492,42 @@ pub fn expand_smodel_cached_vertices(
     plan.cached_skip_n = 0;
 }
 
+fn register_shadow_only_material(
+    plan: &mut SmodelGpuPlan,
+    authored: Option<assets::MaterialIndex>,
+    catalog: &render_material::RuntimeMaterialCatalog,
+    exact: &[Option<Handle<Image>>],
+    material_sorted_index: Option<u32>,
+) -> bool {
+    let Some(derived) = authored.and_then(|id| catalog.derived(id)) else {
+        return false;
+    };
+    if !derived.shadow_only {
+        return false;
+    }
+    if !plan.shadow_material_key.contains_key(&authored) {
+        let maps = runtime_maps(authored, catalog, exact);
+        let mat_idx = plan.materials.len() as u32;
+        plan.materials.push(SmodelPassMaterial {
+            model_lighting_required: false,
+            color: maps.color,
+            specular: None,
+            probe: None,
+            atlas: None,
+            alpha_mode: maps.alpha_mode,
+            draw_mode: maps.draw_mode,
+            cull_mode: maps.cull_mode,
+            env_map_parms: maps.env_map_parms,
+            lighting_lookup_scale: [0.0; 4],
+            atlas_lookup: [0.0; 4],
+            sort_key: derived.sort_key,
+            material_sorted_index,
+        });
+        plan.shadow_material_key.insert(authored, mat_idx);
+    }
+    true
+}
+
 pub(crate) fn build_smodel_gpu_plan(
     mut scene: Option<ResMut<crate::prepare::scene::world::WorldScene>>,
     job: Res<crate::prepare::scene::spawn::WorldSpawnJob>,
@@ -635,10 +673,13 @@ pub(crate) fn build_smodel_gpu_plan(
                 if plan.lit_material_key.contains_key(&key) {
                     continue;
                 }
-                if authored
-                    .and_then(|id| scene.runtime_material_catalog.derived(id))
-                    .is_some_and(|m| m.shadow_only)
-                {
+                if register_shadow_only_material(
+                    &mut plan,
+                    authored,
+                    &scene.runtime_material_catalog,
+                    exact,
+                    sorted_ordinal(authored),
+                ) {
                     continue;
                 }
                 let maps = runtime_maps(authored, &scene.runtime_material_catalog, exact);
@@ -694,10 +735,13 @@ pub(crate) fn build_smodel_gpu_plan(
                 if plan.unlit_material_key.contains_key(&authored) {
                     continue;
                 }
-                if authored
-                    .and_then(|id| scene.runtime_material_catalog.derived(id))
-                    .is_some_and(|m| m.shadow_only)
-                {
+                if register_shadow_only_material(
+                    &mut plan,
+                    authored,
+                    &scene.runtime_material_catalog,
+                    exact,
+                    sorted_ordinal(authored),
+                ) {
                     continue;
                 }
                 let maps = runtime_maps(authored, &scene.runtime_material_catalog, exact);

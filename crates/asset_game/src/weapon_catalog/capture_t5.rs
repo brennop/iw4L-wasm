@@ -115,11 +115,12 @@ impl WeaponCatalog {
             dpad_icon_image: None,
             dpad_icon_atlas: None,
             dpad_icon_ratio: 0,
-            kill_icon: leftover_t5_material_name_opt(
-                stream,
-                geometry.weap_def,
-                fastfile_t5::size::WEAPON_DEF_KILL_ICON_OFF,
-            ),
+            kill_icon: geometry
+                .kill_icon_name
+                .and_then(|ptr| stream.cstr(ptr).ok())
+                .map(asset_core::AssetRef::bare_name)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned),
             kill_icon_slot: leftover_t5_asset_slot(
                 stream,
                 geometry.weap_def,

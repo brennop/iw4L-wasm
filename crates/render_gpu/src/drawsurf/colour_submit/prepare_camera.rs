@@ -28,7 +28,7 @@ use super::{
     publish_this_frame_sun_shadow_view, record_pipeline_not_ready, smodel_skinned,
     spot_rt_for_light, spot_shadow_view_missing, submit_refusal_class, submit_refusal_family,
     sun_shadow_view_missing, upload_constant_arena, viewmodel_colour_submits_when_pipelines_ready,
-    world_material_sorted, world_packed_row_meta, world_pretess_dest_ib, world_pretess_key,
+    world_packed_row_meta, world_pretess_dest_ib, world_pretess_key,
 };
 
 fn run_colour_lanes(camera: CameraLane<'_>, shadow: ShadowLane<'_>) {
@@ -1414,11 +1414,11 @@ fn prepare_camera_rows(
                     && matches!(item.kind, RetainedDrawKind::Smodel { .. })
                     && matches!(cause, GpuSubmitRefusal::TextureBind(_))
                 {
-                    let ordinal = world_material_sorted(item.key);
+                    let ordinal = item.material_rank;
                     let name = extracted
                         .world
                         .sorted_material_names
-                        .get(usize::from(ordinal))
+                        .get(ordinal as usize)
                         .cloned()
                         .unwrap_or_else(|| format!("ord{ordinal}"));
                     *bind_smodel_mats.entry(name).or_default() += 1;

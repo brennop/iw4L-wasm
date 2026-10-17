@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use net::{Frame, SnapshotDecoder, SnapshotEncoder, Transport, frame_from_tick};
 use sim::Snapshot;
 
-use crate::file::{FileTransport, MatchRecordIdentity, ReplayError, demo_path, sanitize_demo_name};
+use crate::file::{
+    FileTransport, MatchRecordIdentity, ReaderCheckpoint, ReplayError, demo_path,
+    sanitize_demo_name,
+};
 
 pub fn auto_demo_name(index: u32) -> String {
     format!("demo{index:04}")
@@ -164,8 +167,96 @@ impl Playback {
         &self.path
     }
 
+    pub fn position_before(&mut self, frame_index: u64) -> Result<(), ReplayError> {
+        self.seek(frame_index, &SeekIndex::default())
+    }
+
+    pub fn keyframe(&self) -> Keyframe {
+        Keyframe {
+            ticks: self.ticks,
+            reader: self
+                .transport
+                .checkpoint()
+                .expect("playback FileTransport always has a reader"),
+            decoder: self.decoder.clone(),
+        }
+    }
+
+    pub fn seek(&mut self, frame_index: u64, index: &SeekIndex) -> Result<(), ReplayError> {
+        let keyframe = index.at_or_before(frame_index);
+        let resume_here = self.ticks <= frame_index
+            && keyframe.is_none_or(|keyframe| keyframe.ticks <= self.ticks);
+        if !resume_here {
+            match keyframe {
+                Some(keyframe) => {
+                    self.transport.restore(&keyframe.reader)?;
+                    self.decoder = keyframe.decoder.clone();
+                    self.ticks = keyframe.ticks;
+                }
+                None => *self = Self::open_path(&self.path)?,
+            }
+        }
+        while self.ticks < frame_index {
+            if self.next_tick()?.is_none() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "seek is beyond the recording",
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn identity(&self) -> MatchRecordIdentity {
         self.identity
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Keyframe {
+    ticks: u64,
+    reader: ReaderCheckpoint,
+    decoder: SnapshotDecoder,
+}
+
+impl Keyframe {
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SeekIndex {
+    keyframes: Vec<Keyframe>,
+}
+
+pub const SEEK_KEYFRAME_TICKS: u64 = 100;
+
+impl SeekIndex {
+    pub fn note(&mut self, playback: &Playback) {
+        let ticks = playback.ticks();
+        if ticks > 0
+            && ticks.is_multiple_of(SEEK_KEYFRAME_TICKS)
+            && self.keyframes.last().is_none_or(|last| last.ticks < ticks)
+        {
+            self.keyframes.push(playback.keyframe());
+        }
+    }
+
+    pub fn at_or_before(&self, frame_index: u64) -> Option<&Keyframe> {
+        let after = self
+            .keyframes
+            .partition_point(|keyframe| keyframe.ticks <= frame_index);
+        after.checked_sub(1).map(|at| &self.keyframes[at])
+    }
+
+    pub fn len(&self) -> usize {
+        self.keyframes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.keyframes.is_empty()
     }
 }
 

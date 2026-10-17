@@ -45,6 +45,21 @@ impl Default for UiDraw {
     }
 }
 
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct UiPointerFree(pub bool);
+
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct UiOverlayInput(pub bool);
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct HudDraw(pub bool);
+
+impl Default for HudDraw {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct LaunchIdentity {
     pub role_label: String,

@@ -291,7 +291,6 @@ pub(crate) fn extract_images_ready(
     mut main_world: ResMut<bevy::render::MainWorld>,
     gpu_images: Res<bevy::render::render_asset::RenderAssets<bevy::render::texture::GpuImage>>,
 ) {
-    use bevy::asset::RenderAssetUsages;
     let wants_residency = main_world
         .get_resource::<GpuSubmitDemand>()
         .is_some_and(|demand| demand.wants_residency);
@@ -302,18 +301,41 @@ pub(crate) fn extract_images_ready(
         return;
     }
     let residency = {
-        let images = main_world.resource::<Assets<Image>>();
-        let mut counts = GpuImageResidency::default();
-        for (id, image) in images.iter() {
-            if !image.asset_usage.contains(RenderAssetUsages::RENDER_WORLD) {
-                continue;
-            }
-            counts.need = counts.need.saturating_add(1);
-            if gpu_images.get(id).is_some() {
-                counts.ready = counts.ready.saturating_add(1);
+        let mut ids = HashSet::new();
+        if let Some(handles) =
+            main_world.get_resource::<crate::assemble::drawsurf::RuntimeImageHandles>()
+        {
+            ids.extend(
+                handles
+                    .material_images
+                    .iter()
+                    .chain(&handles.reflection_probes)
+                    .flatten()
+                    .map(Handle::id),
+            );
+            ids.extend(handles.model_lighting.iter().map(Handle::id));
+            for page in handles.lightmaps.iter().flatten() {
+                ids.extend(
+                    page.primary
+                        .iter()
+                        .chain(&page.secondary)
+                        .chain(&page.secondary_b)
+                        .map(Handle::id),
+                );
+                ids.extend([
+                    page.ambient_diagnostic.id(),
+                    page.directional_diagnostic.id(),
+                    page.sun_mask_diagnostic.id(),
+                ]);
             }
         }
-        counts
+        GpuImageResidency {
+            need: ids.len() as u32,
+            ready: ids
+                .iter()
+                .filter(|id| gpu_images.get(**id).is_some())
+                .count() as u32,
+        }
     };
     if let Some(mut progress) = main_world.get_resource_mut::<GpuLoadProgress>() {
         progress.residency = Some(residency);

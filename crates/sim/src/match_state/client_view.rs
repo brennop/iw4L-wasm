@@ -6,6 +6,7 @@ pub struct ScriptSeat {
     pub archive_ms: i32,
     pub ps_offset_ms: i32,
     pub length_ms: i32,
+    pub final_kill: bool,
 }
 
 impl Default for ScriptSeat {
@@ -17,6 +18,7 @@ impl Default for ScriptSeat {
             archive_ms: 0,
             ps_offset_ms: 0,
             length_ms: 0,
+            final_kill: false,
         }
     }
 }

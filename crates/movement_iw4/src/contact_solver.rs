@@ -304,9 +304,11 @@ fn land(
     if n[2] <= 0. || !(hit.walkable || n[2] >= threshold) {
         return None;
     }
+    let mut velocity = m.velocity;
+    project_ground(&mut velocity, &hit.normal);
     Some(Motion {
         origin: p,
-        velocity: project(m.velocity, &[hit.normal]),
+        velocity: project(velocity, &[hit.normal]),
     })
 }
 pub(crate) fn traverse(

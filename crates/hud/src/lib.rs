@@ -3,6 +3,9 @@ mod blood;
 mod breath_hint;
 mod chrome;
 mod compass;
+mod connection_notice;
+mod controller_icons;
+mod damage_direction;
 mod draw2d;
 mod emp_static;
 mod expr_cache;
@@ -55,3 +58,5 @@ pub use splash::PendingSplash;
 pub use surface::Hud2dSurface;
 
 mod use_hint;
+
+pub use killfeed::team_name_color;

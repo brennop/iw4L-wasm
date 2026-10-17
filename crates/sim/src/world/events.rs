@@ -30,6 +30,7 @@ pub struct PendingPlayerCardEvent {
 pub struct PendingPrint {
     pub recipient: Option<ClientId>,
     pub bold: bool,
+    pub chat: bool,
     pub template: String,
     pub arg: String,
 }

@@ -480,17 +480,25 @@ fn run_exit_level(
     }
 }
 
-fn retire_handed_over(mut retiring: ResMut<Retiring>) {
+fn retire_handed_over(mut retiring: ResMut<Retiring>, scope: Res<State<frame::MatchScope>>) {
     let (batch, teardown) = retiring.take_batch();
     if batch.is_empty() {
         return;
     }
     let values = batch.len();
     let guard = retiring.ship(teardown);
+    let reclaim_heap = *scope.get() == frame::MatchScope::Absent;
     AsyncComputeTaskPool::get_or_init(TaskPool::default)
         .spawn(async move {
             drop(batch);
             if guard.settle() == Some(0) {
+                if reclaim_heap {
+                    let trim_ms = diag::release_freed_heap().as_secs_f32() * 1000.0;
+                    diag::info!(
+                        Sim,
+                        "session: released freed teardown heap in {trim_ms:.1} ms"
+                    );
+                }
                 diag::lifecycle_boundary("retirement_settled", &format!(" values={values}"));
             }
         })
@@ -733,6 +741,7 @@ fn follow_master_match(
         RuntimeRole::Client
     };
     commands.insert_resource(mode);
+    commands.insert_resource(offer.families);
     match swap.request_zone(offer.map.clone()) {
         Ok(id) => {
             diag::info!(

@@ -4,7 +4,6 @@ use bevy::prelude::*;
 use bevy::state::{app::StatesPlugin, state::StateTransitionSystems};
 use std::any::{TypeId, type_name};
 use std::marker::PhantomData;
-use std::sync::{Arc, RwLock};
 
 #[derive(States, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum MatchScope {
@@ -20,6 +19,13 @@ pub enum RoundPhase {
     #[default]
     Between,
     Playing,
+}
+
+#[derive(SubStates, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[source(MatchScope = MatchScope::Live)]
+pub enum Timeline {
+    #[default]
+    Running,
 }
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -71,37 +77,10 @@ impl<R: Resource> Staging<R> {
     }
 }
 
-#[derive(Resource)]
-pub struct Published<T: Send + Sync + 'static>(Arc<RwLock<Option<(u64, T)>>>);
-
-impl<T: Send + Sync + 'static> Clone for Published<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T: Send + Sync + 'static> Default for Published<T> {
-    fn default() -> Self {
-        Self(Arc::new(RwLock::new(None)))
-    }
-}
-
-impl<T: Send + Sync + 'static> Published<T> {
-    pub fn read<R>(&self, read: impl FnOnce(Option<(u64, &T)>) -> R) -> R {
-        let guard = self.0.read().expect("published slot poisoned");
-        read(guard.as_ref().map(|(epoch, value)| (*epoch, value)))
-    }
-
-    pub fn publish(&self, epoch: u64, value: T) {
-        *self.0.write().expect("published slot poisoned") = Some((epoch, value));
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScopeKind {
     Resource,
     Staged,
-    Published,
     Message,
 }
 
@@ -151,13 +130,19 @@ impl Plugin for ScopePlugin {
         }
         app.init_state::<MatchScope>()
             .add_sub_state::<RoundPhase>()
+            .add_sub_state::<Timeline>()
             .init_resource::<ScopeRegistry>()
             .init_resource::<crate::Retiring>()
             .init_resource::<ScopeEpoch<MatchScope>>()
             .init_resource::<ScopeEpoch<RoundPhase>>()
+            .init_resource::<ScopeEpoch<Timeline>>()
             .add_systems(
                 StateTransition,
-                (retire_state::<RoundPhase>, retire_state::<MatchScope>)
+                (
+                    retire_state::<Timeline>,
+                    retire_state::<RoundPhase>,
+                    retire_state::<MatchScope>,
+                )
                     .chain()
                     .in_set(ScopeRetired)
                     .in_set(StateTransitionSystems::TransitionSchedules),
@@ -197,6 +182,7 @@ impl Plugin for ScopePlugin {
         configure_scope(app, MatchScope::Loading);
         configure_scope(app, MatchScope::Live);
         configure_scope(app, RoundPhase::Playing);
+        configure_scope(app, Timeline::Running);
         if cfg!(debug_assertions) {
             app.add_systems(Last, verify_registry.after(ScopeCommit));
         }
@@ -254,6 +240,12 @@ fn retire_state<S: States>(
         }
         world.resource_mut::<ScopeEpoch<S>>().0 =
             world.resource::<ScopeEpoch<S>>().0.wrapping_add(1);
+        // Match-epoch consumers (audio voices) must also drop what a restarted
+        // timeline played.
+        if TypeId::of::<S>() == TypeId::of::<Timeline>() {
+            world.resource_mut::<ScopeEpoch<MatchScope>>().0 =
+                world.resource::<ScopeEpoch<MatchScope>>().0.wrapping_add(1);
+        }
         if !actions.is_empty() {
             world.resource_mut::<crate::Retiring>().mark_teardown();
             let mut registry = world.resource_mut::<ScopeRegistry>();
@@ -309,7 +301,6 @@ pub trait ScopeApp {
     fn init_app<R: Resource + FromWorld>(&mut self) -> &mut Self;
     fn scoped<R: Resource + FromWorld>(&mut self, scope: impl States) -> &mut Self;
     fn staged<R: Resource>(&mut self, scope: impl States) -> &mut Self;
-    fn published<T: Send + Sync + 'static>(&mut self, scope: impl States) -> &mut Self;
     fn scoped_message<M: Message>(&mut self, scope: impl States) -> &mut Self;
 }
 
@@ -363,22 +354,6 @@ fn staging_empty<R: Resource>(world: &World) -> bool {
         .get_resource::<Staging<R>>()
         .is_none_or(Staging::is_empty)
 }
-fn published_present<T: Send + Sync + 'static>(world: &World) -> bool {
-    world
-        .get_resource::<Published<T>>()
-        .is_some_and(|slot| slot.read(|value| value.is_some()))
-}
-fn clear_published<T: Send + Sync + 'static>(world: &mut World) {
-    let value = world
-        .resource::<Published<T>>()
-        .0
-        .write()
-        .expect("published slot poisoned")
-        .take();
-    if let Some(value) = value {
-        world.resource_mut::<crate::Retiring>().hand_over(value);
-    }
-}
 fn messages_present<M: Message>(world: &World) -> bool {
     world
         .get_resource::<Messages<M>>()
@@ -406,7 +381,8 @@ fn register<R: 'static, S: States>(
     assert!(
         (TypeId::of::<S>() == TypeId::of::<MatchScope>()
             && matches!(label.as_str(), "Loading" | "Live"))
-            || (TypeId::of::<S>() == TypeId::of::<RoundPhase>() && label == "Playing"),
+            || (TypeId::of::<S>() == TypeId::of::<RoundPhase>() && label == "Playing")
+            || (TypeId::of::<S>() == TypeId::of::<Timeline>() && label == "Running"),
         "unsupported resource scope {label}"
     );
     if !app.is_plugin_added::<ScopePlugin>() {
@@ -473,19 +449,6 @@ impl ScopeApp for App {
             retire_staging::<R>,
         );
         self.init_resource::<Staging<R>>()
-    }
-    fn published<T: Send + Sync + 'static>(&mut self, scope: impl States) -> &mut Self {
-        register::<Published<T>, _>(
-            self,
-            scope,
-            ScopeKind::Published,
-            noop,
-            clear_published::<T>,
-            published_present::<T>,
-            empty,
-            noop,
-        );
-        self.init_resource::<Published<T>>()
     }
     fn scoped_message<M: Message>(&mut self, scope: impl States) -> &mut Self {
         register::<Messages<M>, _>(

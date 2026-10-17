@@ -639,7 +639,7 @@ fn commit_fx_transaction(
     clear_fx_owned_plans(&mut plan, &mut spark_plan, &mut mark_plan);
     env.staged_models.0.clear();
     if let Some(prepared) = &env.model_geometry {
-        env.staged_models.0.use_prepared(&prepared.0);
+        env.staged_models.0.use_prepared(prepared);
     } else {
         env.staged_models.0 = FxModelDrawPlan::default();
     }
@@ -707,7 +707,7 @@ fn commit_fx_transaction(
                 light.origin,
                 light.axis[0],
                 light.radius,
-                light.color_bgr,
+                light.color_rgb,
                 spot_cone,
             )),
             Err(lighting_iw4::AddOmniLightRefuse::Cap) => {
@@ -725,7 +725,7 @@ fn commit_fx_transaction(
             Ok(()) => env.dlights.scene.push(lighting_iw4::omni_light_pack(
                 light.origin,
                 light.radius,
-                light.color_bgr,
+                light.color_rgb,
             )),
             Err(lighting_iw4::AddOmniLightRefuse::Cap) => {
                 env.dlights.cap_full = env.dlights.cap_full.saturating_add(1);
@@ -3261,12 +3261,13 @@ fn drain_pellet_fx(
     tracers: Option<Res<PreparedTracers>>,
     mut tracer_world: ResMut<TracerWorld>,
     mut gate: ResMut<TracerDrawGate>,
-    (local, generation, timeline, mut occurrences, verdicts): (
+    (local, generation, timeline, mut occurrences, verdicts, mut dyn_ent_hits): (
         Res<LocalPresentClient>,
         Res<frame::WorldGeneration>,
         Res<net::EntityEventCursor>,
         ResMut<PresentedFireFx>,
         Res<net::FireVerdictState>,
+        MessageWriter<crate::adapters::anim::dyn_ent_wake::DynEntPelletHit>,
     ),
     mut host: ResMut<HostFxSystem>,
     mut cursor: ResMut<FxJournalCursor>,
@@ -3279,6 +3280,14 @@ fn drain_pellet_fx(
     for (world, domain, record) in pending.take() {
         if world != generation.stamp() {
             continue;
+        }
+        if domain != net::EntityEventDomain::Predicted && record.normal != [0.0; 3] {
+            dyn_ent_hits.write(crate::adapters::anim::dyn_ent_wake::DynEntPelletHit {
+                world,
+                weapon: record.weapon,
+                start: Vec3::from_array(record.start),
+                end: Vec3::from_array(record.end),
+            });
         }
         let now = host.0.msec_now;
         let request = FireFxRequest {

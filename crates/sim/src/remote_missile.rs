@@ -1,6 +1,9 @@
+use crate::ProjectileId;
+use crate::bullet_collision::{CONTENTS_SKY, ColliderId, MASK_BULLET_WORLD, TraceOutcome};
 use crate::frame::FrameWorld;
 use crate::match_state::ClientLifecycle;
 use crate::world::{ClientId, Tick};
+use bevy_ecs::prelude::{Resource, World};
 
 const PITCH_RANGE: [f32; 2] = [1.0, 87.0];
 const PITCH_RATE: f32 = 15.0;
@@ -8,6 +11,87 @@ const YAW_RATE: f32 = 20.0;
 const SPEED_RANGE: [f32; 2] = [3_000.0, 6_000.0];
 const SPEED_UP: f32 = 2_000.0;
 const SPEED_DOWN: f32 = 500.0;
+
+const SKY_CEILING_MIN_NORMAL_Z: f32 = 0.7;
+
+// The mark is kept for the missile's whole flight. The pilot's control link is
+// dropped when the pilot dies, and the missile must still pass the sky ceiling then.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct RemoteMissiles(Vec<ProjectileId>);
+
+pub(crate) fn mark_remote(world: &mut World, id: ProjectileId) {
+    let mut marked = world.get_resource_or_insert_with(RemoteMissiles::default);
+    if !marked.0.contains(&id) {
+        marked.0.push(id);
+    }
+}
+
+pub(crate) fn is_remote(world: &mut FrameWorld, id: ProjectileId) -> bool {
+    world
+        .ecs()
+        .get_resource::<RemoteMissiles>()
+        .is_some_and(|marked| marked.0.contains(&id))
+}
+
+fn forget_gone_missiles(world: &mut FrameWorld) {
+    let marked = match world.ecs().get_resource::<RemoteMissiles>() {
+        Some(marked) if !marked.0.is_empty() => marked.0.clone(),
+        _ => return,
+    };
+    let mut flying = Vec::with_capacity(marked.len());
+    world.visit_projectiles(|p| {
+        if marked.contains(&p.id) {
+            flying.push(p.id);
+        }
+    });
+    if flying.len() != marked.len() {
+        world.ecs().resource_mut::<RemoteMissiles>().0 = flying;
+    }
+}
+
+pub(crate) fn projectile_mask(remote: bool) -> u32 {
+    if remote {
+        MASK_BULLET_WORLD & !CONTENTS_SKY
+    } else {
+        MASK_BULLET_WORLD
+    }
+}
+
+pub(crate) fn sky_wall_outcome(
+    outcome: TraceOutcome,
+    start: [f32; 3],
+    sky: &trace_iw4::Trace,
+) -> TraceOutcome {
+    if sky.fraction >= 1.0
+        || sky.startsolid != 0
+        || sky.allsolid != 0
+        || sky.normal[2] > SKY_CEILING_MIN_NORMAL_Z
+    {
+        return outcome;
+    }
+    let reach = match outcome {
+        TraceOutcome::Hit { end, .. } | TraceOutcome::Miss { end } => distance(start, end),
+        TraceOutcome::StartSolid { .. } | TraceOutcome::Invalid { .. } => return outcome,
+    };
+    if distance(start, sky.endpos) >= reach {
+        return outcome;
+    }
+    TraceOutcome::Hit {
+        fraction: sky.fraction,
+        end: sky.endpos,
+        normal: sky.normal,
+        collider: ColliderId::World {
+            surface_flags: sky.surface_flags,
+            contents: sky.contents,
+            glass_encoded: 0,
+        },
+    }
+}
+
+fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
 
 pub(crate) fn steer(
     world: &mut FrameWorld,
@@ -49,6 +133,7 @@ pub(crate) fn advance(world: &mut FrameWorld, tick: Tick) {
     if !world.publishes_snapshot() {
         return;
     }
+    forget_gone_missiles(world);
     let now = crate::level_time_ms(tick);
     for id in world.client_ids_sorted() {
         let Some(mut link) = world.client_meta(id).and_then(|m| m.remote_missile) else {

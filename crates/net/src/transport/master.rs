@@ -48,6 +48,9 @@ pub fn register_master_bridge(app: &mut App) {
     );
 }
 
+mod population;
+pub use population::CommunityPlayerCounts;
+
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -488,6 +491,7 @@ pub enum MasterBridgeState {
         max_players: u8,
         skip_votes: u8,
         in_match: bool,
+        families: frame::AssetFamilies,
     },
     Joining {
         identity: SessionIdentity,
@@ -502,6 +506,7 @@ pub enum MasterBridgeState {
         max_players: u8,
         skip_votes: u8,
         in_match: bool,
+        families: frame::AssetFamilies,
     },
     Closed {
         identity: SessionIdentity,
@@ -539,6 +544,13 @@ impl MasterBridgeState {
     pub fn mode(&self) -> Option<&str> {
         match self {
             Self::Hosting { mode, .. } | Self::Joined { mode, .. } => Some(mode),
+            _ => None,
+        }
+    }
+
+    pub fn families(&self) -> Option<frame::AssetFamilies> {
+        match self {
+            Self::Hosting { families, .. } | Self::Joined { families, .. } => Some(*families),
             _ => None,
         }
     }
@@ -704,6 +716,7 @@ pub struct MasterMatchOffer {
     pub map: String,
     pub mode: String,
     pub match_key: frame::MatchKey,
+    pub families: frame::AssetFamilies,
 }
 
 impl MasterMatchStart {

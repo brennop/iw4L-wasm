@@ -43,6 +43,7 @@ pub const XMODEL_OBJECT_ID_DYNENT_BASE: u16 = 0x600;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct RemoteBodyDrawPlan {
+    pub skin_jobs: Vec<render_frame::skinning::PackedSkinJob>,
     pub(crate) vertices: Vec<SmodelVertex>,
 
     pub(crate) decoded_n: usize,
@@ -69,6 +70,7 @@ impl RemoteBodyDrawPlan {
     /// bodies this plan no longer has.
     pub fn clear_geometry(&mut self) {
         let had_rows = !self.draws.is_empty() || self.decoded_n != 0;
+        self.skin_jobs.clear();
         self.vertices.clear();
         self.decoded_n = 0;
         self.indices.clear();
@@ -224,6 +226,7 @@ impl DynEntDrawPlan {
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct FpvDrawPlan {
+    pub skin_jobs: Vec<render_frame::skinning::PackedSkinJob>,
     /// How many vertices the packed rows below carry.
     pub(crate) decoded_n: usize,
     pub(crate) indices: Vec<u32>,
@@ -291,16 +294,6 @@ impl FpvDrawPlan {
 
     pub fn decoded_n(&self) -> usize {
         self.decoded_n
-    }
-
-    /// The rows this frame skinned into. `None` once the plan has nothing
-    /// packed to write — an empty plan, or a composition whose models never
-    /// carried packed vertices.
-    pub fn packed_rows_mut(&mut self) -> Option<&mut [[u8; asset_iw4::size::GFX_PACKED_VERTEX]]> {
-        match &mut self.packed_vertices {
-            asset_world::PackedVertexPayload::Iw4(rows) => Some(rows.as_mut_slice()),
-            asset_world::PackedVertexPayload::Unavailable { .. } => None,
-        }
     }
 
     /// Both halves have to hold: a plan with rows nobody can place is no more

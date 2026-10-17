@@ -19,7 +19,7 @@ fn selected_alias<'a>(
     event: EntityEventKind,
     player_view: bool,
     knife: bool,
-) -> Option<(asset_core::AssetNamespace, &'a str)> {
+) -> Result<Option<(asset_core::AssetNamespace, &'a str)>, String> {
     let weapon = if matches!(
         event,
         EntityEventKind::MELEE_SWIPE | EntityEventKind::MELEE_HIT | EntityEventKind::MELEE_MISS
@@ -74,25 +74,30 @@ fn selected_alias<'a>(
             WeaponSoundSlot::MeleeSwipePlayer,
         ),
         EntityEventKind::MELEE_HIT => {
-            return weapons.melee_impact_sound_key(
-                weapon,
-                knife,
-                asset_game::MeleeImpact::Hit,
-                bank,
-            );
+            return weapons
+                .melee_impact_sound_key(weapon, knife, asset_game::MeleeImpact::Hit, bank)
+                .map(Some)
+                .ok_or_else(|| "melee hit sound is not in the sound bank".to_owned());
         }
         EntityEventKind::MELEE_MISS => {
-            return weapons.melee_impact_sound_key(
-                weapon,
-                knife,
-                asset_game::MeleeImpact::Miss,
-                bank,
-            );
+            return weapons
+                .melee_impact_sound_key(weapon, knife, asset_game::MeleeImpact::Miss, bank)
+                .map(Some)
+                .ok_or_else(|| "melee miss sound is not in the sound bank".to_owned());
         }
-        _ => return None,
+        _ => return Ok(None),
     };
 
-    weapons.weapon_sound_key(weapon, if player_view { player } else { world }, bank)
+    let slot = if player_view { player } else { world };
+    // Weapon sound slots are optional. An empty slot is authored silence;
+    // sounds can also come from animation notetracks rather than this event.
+    let Some(alias) = weapons.authored_weapon_sound(weapon, slot) else {
+        return Ok(None);
+    };
+    weapons
+        .weapon_sound_key(weapon, slot, bank)
+        .map(Some)
+        .ok_or_else(|| format!("{slot:?} alias `{alias}` is not in the sound bank"))
 }
 
 fn entity_event_sound(
@@ -190,39 +195,31 @@ fn entity_event_sound(
         );
         return;
     }
-    // Offhand view sounds may be authored entirely as animation notetracks.
-    // A missing player alias must not fall back to the world throw sound.
-    if event == EntityEventKind::USE_OFFHAND
-        && weapons
-            .registry()
-            .authored_weapon_sound(
+    let selected = bank
+        .as_deref()
+        .ok_or_else(|| "sound bank is unavailable".to_owned())
+        .and_then(|bank| {
+            selected_alias(
+                &weapons.registry(),
+                &bank.0,
                 weapon,
-                if player_view {
-                    WeaponSoundSlot::FirePlayer
-                } else {
-                    WeaponSoundSlot::Fire
-                },
+                event,
+                player_view,
+                sound.event.payload.event_parm == 1,
             )
-            .is_none()
-    {
-        return;
-    }
-    let Some((namespace, alias)) = bank.as_deref().and_then(|bank| {
-        selected_alias(
-            &weapons.registry(),
-            &bank.0,
-            weapon,
-            event,
-            player_view,
-            sound.event.payload.event_parm == 1,
-        )
-    }) else {
-        diag::warn!(
-            Audio,
-            "audio: entity sound event {} has no authored alias",
-            event.0
-        );
-        return;
+        });
+    let (namespace, alias) = match selected {
+        Ok(Some(selected)) => selected,
+        Ok(None) => return,
+        Err(error) => {
+            diag::warn!(
+                Audio,
+                "audio: entity sound event {} refused: weapon={} player_view={player_view}: {error}",
+                event.0,
+                weapons.registry().name_of(weapon)
+            );
+            return;
+        }
     };
     output.write(WeaponSound {
         event: Some(crate::AudioEvent::from_entity(

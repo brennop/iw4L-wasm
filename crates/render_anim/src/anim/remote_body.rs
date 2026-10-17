@@ -254,6 +254,7 @@ pub struct RemoteSkinPoseHashes {
 
 #[derive(Clone, Default)]
 pub struct CpuBodyGeom {
+    pub skin_jobs: Vec<render_frame::skinning::PackedSkinJob>,
     pub packed: Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
     pub indices: Vec<u32>,
     pub decoded_n: usize,
@@ -354,7 +355,10 @@ pub fn take_unique_geom(pose_hashes: &mut RemoteSkinPoseHashes, persist_key: u32
                 geom.decoded_n = 0;
                 geom
             }
-            Err(_) => CpuBodyGeom::default(),
+            Err(geom) => CpuBodyGeom {
+                skin_jobs: geom.skin_jobs.clone(),
+                ..Default::default()
+            },
         },
         None => CpuBodyGeom::default(),
     }
@@ -491,6 +495,7 @@ pub fn flatten_cpu_geom(surfaces: Vec<CpuNamedSurface>) -> CpuBodyGeom {
         packed.clear();
     }
     CpuBodyGeom {
+        skin_jobs: Vec::new(),
         packed,
         indices,
         decoded_n,

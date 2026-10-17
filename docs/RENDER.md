@@ -28,6 +28,9 @@ casters. Sun model draws reuse colour geometry's index buffers.
 Retained lanes in `retained_list/` key static reuse on world, material,
 visibility and eye/LOD. FX also keys on distortion; glass re-sorts for each eye.
 
+GPU skinning computes FPV and remote body packed vertices before native colour/shadows.
+Shapes use stable IDs and retire with live jobs; invalid jobs refuse geometry.
+
 GPU modules live in `render_gpu/src/drawsurf/colour_submit/`:
 
 * `publication.rs` seals a frame against its installed world; both generations must match.

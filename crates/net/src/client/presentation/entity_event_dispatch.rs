@@ -732,7 +732,7 @@ fn set_ads_from_reset(
 }
 
 pub fn register_entity_event_dispatch(app: &mut App) {
-    app.scoped::<EntityEventCursor>(frame::MatchScope::Live)
+    app.scoped::<EntityEventCursor>(frame::Timeline::Running)
         .init_resource::<AppliedEntityEventWalk>()
         .init_resource::<UnsupportedEntityEvents>()
         .init_resource::<NetIdentityGaps>()

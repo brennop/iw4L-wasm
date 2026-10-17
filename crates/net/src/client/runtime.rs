@@ -150,9 +150,15 @@ pub struct LastAdoptedSnapshot {
     pub next_snap: Option<Arc<Snapshot>>,
 
     pub applied_this_frame: bool,
+
+    pub adopted_at: Option<web_time::Instant>,
 }
 
 impl LastAdoptedSnapshot {
+    pub fn since_adopted(&self) -> Option<std::time::Duration> {
+        self.adopted_at.map(|at| at.elapsed())
+    }
+
     pub fn next(&self) -> Option<&Snapshot> {
         self.next_snap.as_deref()
     }
@@ -408,6 +414,7 @@ pub fn advance_cls_realtime(mut cls: ResMut<ClientRealtime>, time: Res<Time<Real
 
 pub fn advance_cg_frame_clock(
     mut clock: ResMut<FrameClock>,
+    client_clock: Res<ClientClock>,
     mut prediction: ResMut<ClientPredictionState>,
     mut join: ResMut<GameJoinCensus>,
     time: Res<Time>,
@@ -427,6 +434,17 @@ pub fn advance_cg_frame_clock(
     if *role == RuntimeRole::Listen && cgame_active.0 && was_started {
         let server = authority.as_ref().expect("listen authority clock").time_ms;
         clock.assign_server_time(server.wrapping_add(fixed.overstep().as_millis() as i32));
+    } else if *role == RuntimeRole::Replay {
+        if cgame_active.0
+            && let Some(server) = server_time
+        {
+            clock.assign_server_time(
+                server
+                    .ms()
+                    .wrapping_add(AUTHORITY_MS)
+                    .wrapping_add(client_clock.accumulator_ms as i32),
+            );
+        }
     } else if *role == RuntimeRole::Client {
         clock.advance_remote(time.delta_secs(), cgame_active.0, server_time);
     } else {
@@ -456,6 +474,7 @@ pub fn receive_ticks(
     mut link: Option<ResMut<crate::transport::udp_session::UdpClientLink>>,
     loopback: Option<ResMut<ListenLoopback>>,
     mut received: ResMut<ReceivedTicks>,
+    adopted: Res<LastAdoptedSnapshot>,
     mut local: ResMut<LocalPresentClient>,
     mut prediction: ResMut<ClientPredictionState>,
     trace: Option<ResMut<ClientPhaseTrace>>,
@@ -490,7 +509,9 @@ pub fn receive_ticks(
             reliable.fail(&error);
         }
         for payload in link.take_controls() {
-            reliable.apply(link.assigned_client.unwrap_or(local.0), &payload);
+            reliable.apply(link.assigned_client.unwrap_or(local.0), &payload, |index| {
+                adopted.sound_alias_name(index).is_some()
+            });
         }
         note_join_link(&mut watch, link);
 
@@ -573,12 +594,15 @@ pub fn reconcile_prediction(
                     )
                 }));
         }
-        reliable.apply(local.0, &tick.frame.reliable);
+        reliable.apply(local.0, &tick.frame.reliable, |index| {
+            sim::name_in_occupied(&tick.snapshot.meta.sound_aliases, index).is_some()
+        });
         let ack = tick.ack_for(local.0);
         if let Some(acked) = ack {
             pending.clear_acknowledged(acked);
         }
         last_adopted.applied_this_frame = true;
+        last_adopted.adopted_at = Some(web_time::Instant::now());
         if let Some(old_next) = last_adopted.next_snap.take() {
             last_adopted.snap = Some(old_next);
         }
@@ -675,7 +699,12 @@ impl ReliableInbound<'_> {
         ));
     }
 
-    fn apply(&mut self, local: sim::ClientId, payload: &crate::ReliablePayload) {
+    fn apply(
+        &mut self,
+        local: sim::ClientId,
+        payload: &crate::ReliablePayload,
+        sound_ready: impl Fn(u8) -> bool,
+    ) {
         if payload.dropped_oldest != 0 {
             self.fail("ReliableControlOverflow: outcome unknown");
             return;
@@ -717,6 +746,12 @@ impl ReliableInbound<'_> {
                     self.svc.audio.write(crate::SvcScriptAudio(cmd.clone()));
                 }
                 crate::ReliableRow::Sound(cmd) => {
+                    // Reliable controls can overtake the snapshot that publishes
+                    // this configuration string. Keep the row unacknowledged so
+                    // retransmission preserves it until its dependency is ready.
+                    if !sound_ready(cmd.index) {
+                        break;
+                    }
                     self.svc.sound.write(crate::SvcLocalSound {
                         stop: cmd.stop,
                         index: cmd.index,
@@ -1783,7 +1818,7 @@ pub fn publish_presented(
         .map(|(_, ps)| ps);
     let predicted_ps = prediction.0.predicted_local().copied();
     let previous = presented.player(local.0).copied();
-    let armed = prediction.0.is_armed();
+    let armed = *role != RuntimeRole::Replay && prediction.0.is_armed();
     let frame_interpolation = clock.accumulator_ms / AUTHORITY_MS as f32;
     let interpolation_previous = if *role == RuntimeRole::Replay {
         last_adopted
@@ -1938,6 +1973,14 @@ pub fn publish_presented(
     );
 }
 
+fn release_timeline(
+    mut presented: ResMut<PresentedSnapshot>,
+    mut events: ResMut<Messages<ReliableControlEvent>>,
+) {
+    presented.clear();
+    events.clear();
+}
+
 fn release_client(
     mut actions: ResMut<ClientActionInbox>,
     mut presented: ResMut<PresentedSnapshot>,
@@ -1965,6 +2008,10 @@ pub fn register_client_runtime(app: &mut App) {
             .after(crate::signon::release_match_protocol),
     );
     app.add_systems(
+        OnExit(frame::Timeline::Running),
+        release_timeline.in_set(frame::ScopeSet::Release),
+    );
+    app.add_systems(
         Update,
         enforce_client_work_limits
             .in_set(frame::InMatch)
@@ -1975,15 +2022,15 @@ pub fn register_client_runtime(app: &mut App) {
         .init_resource::<crate::ClientAdmission>()
         .scoped::<ClientPredictionState>(frame::MatchScope::Live)
         .scoped::<ClientClock>(frame::MatchScope::Live)
-        .scoped::<FrameClock>(frame::MatchScope::Live)
-        .scoped::<GameActive>(frame::MatchScope::Live)
-        .scoped::<GameJoinCensus>(frame::MatchScope::Live)
+        .scoped::<FrameClock>(frame::Timeline::Running)
+        .scoped::<GameActive>(frame::Timeline::Running)
+        .scoped::<GameJoinCensus>(frame::Timeline::Running)
         .init_resource::<ClientRealtime>()
-        .scoped::<ReceivedTicks>(frame::MatchScope::Live)
-        .scoped::<LastAdoptedSnapshot>(frame::MatchScope::Live)
-        .scoped::<PresentLocalCensus>(frame::MatchScope::Live)
-        .scoped::<PendingPresentedEntityEvents>(frame::MatchScope::Live)
-        .scoped::<PendingPelletFx>(frame::MatchScope::Live)
+        .scoped::<ReceivedTicks>(frame::Timeline::Running)
+        .scoped::<LastAdoptedSnapshot>(frame::Timeline::Running)
+        .scoped::<PresentLocalCensus>(frame::Timeline::Running)
+        .scoped::<PendingPresentedEntityEvents>(frame::Timeline::Running)
+        .scoped::<PendingPelletFx>(frame::Timeline::Running)
         .scoped::<PendingClientSends>(frame::MatchScope::Live)
         .init_resource::<ClientCmdTemplate>()
         .scoped::<WeaponSelect>(frame::MatchScope::Live)
@@ -1993,15 +2040,15 @@ pub fn register_client_runtime(app: &mut App) {
         .add_message::<ReliableControlEvent>()
         .scoped_message::<FireCommandVerdicts>(frame::MatchScope::Live)
         .init_resource::<crate::FireVerdictState>()
-        .scoped::<RemoteProxyState>(frame::MatchScope::Live)
+        .scoped::<RemoteProxyState>(frame::Timeline::Running)
         .scoped::<ClientShotSamples>(frame::MatchScope::Live)
-        .scoped::<crate::Scoreboard>(frame::MatchScope::Live)
-        .scoped_message::<crate::SvcLocalSound>(frame::MatchScope::Live)
-        .scoped_message::<crate::SvcScriptAudio>(frame::MatchScope::Live)
-        .scoped_message::<crate::SvcCardSlotCmd>(frame::MatchScope::Live)
-        .scoped_message::<crate::SvcOpenMenuCmd>(frame::MatchScope::Live)
-        .scoped_message::<crate::SvcHudSplash>(frame::MatchScope::Live)
-        .scoped_message::<crate::SvcGameNotify>(frame::MatchScope::Live);
+        .scoped::<crate::Scoreboard>(frame::Timeline::Running)
+        .scoped_message::<crate::SvcLocalSound>(frame::Timeline::Running)
+        .scoped_message::<crate::SvcScriptAudio>(frame::Timeline::Running)
+        .scoped_message::<crate::SvcCardSlotCmd>(frame::Timeline::Running)
+        .scoped_message::<crate::SvcOpenMenuCmd>(frame::Timeline::Running)
+        .scoped_message::<crate::SvcHudSplash>(frame::Timeline::Running)
+        .scoped_message::<crate::SvcGameNotify>(frame::Timeline::Running);
     crate::client::frame_census::register_update_phase_census(app);
     crate::client::pred_log::register(app);
     app.configure_sets(

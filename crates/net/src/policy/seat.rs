@@ -273,6 +273,13 @@ fn seat_snapshot(
         return (live.clone(), None);
     }
     let archived = lookup.tick.and_then(|tick| archive.frame(tick));
+    overlay_archived_cameras(
+        &mut out,
+        live,
+        archived.map(|f| &f.snapshot),
+        viewer,
+        session.focus_client,
+    );
     overlay_killcam_hud(
         &mut out,
         live,
@@ -341,6 +348,31 @@ fn overlay_archived_world(
     out
 }
 
+fn overlay_archived_cameras(
+    out: &mut Snapshot,
+    live: &Snapshot,
+    archived: Option<&Snapshot>,
+    viewer: ClientId,
+    focus: ClientId,
+) {
+    let focus_row = archived.and_then(|snap| snap.meta.for_client(focus));
+    let delta_ms = archived.map_or(0, |snap| {
+        sim::level_time_ms(live.tick).wrapping_sub(sim::level_time_ms(snap.tick))
+    });
+    let linked_weapon_view = focus_row.and_then(|meta| meta.linked_weapon_view);
+    let remote_missile =
+        focus_row
+            .and_then(|meta| meta.remote_missile)
+            .map(|link| sim::RemoteMissile {
+                unlink_at_ms: link.unlink_at_ms.map(|ms| ms.wrapping_add(delta_ms)),
+                ..link
+            });
+    if let Some((_, meta)) = out.meta.clients.iter_mut().find(|(id, _)| *id == viewer) {
+        meta.linked_weapon_view = linked_weapon_view;
+        meta.remote_missile = remote_missile;
+    }
+}
+
 fn rebase_entity_state(es: &mut entity_iw4::EntityState, delta_ms: i32) {
     if es.tr_time != 0 {
         es.tr_time = es.tr_time.wrapping_add(delta_ms);
@@ -376,6 +408,15 @@ fn rebase_archived_world(out: &mut Snapshot, viewer: ClientId, delta_ms: i32) {
         p.spawn_time_ms = p.spawn_time_ms.wrapping_add(delta_ms);
         p.detonate_at_ms = p.detonate_at_ms.map(|t| t.wrapping_add(delta_ms));
         p.cleanup_at_ms = p.cleanup_at_ms.wrapping_add(delta_ms);
+    }
+    let bodies = out.meta.corpses.slots.iter_mut();
+    for body in bodies.filter(|body| body.occupied) {
+        if body.tr_time != 0 {
+            body.tr_time = body.tr_time.wrapping_add(delta_ms);
+        }
+        if body.spawn_time_ms != 0 {
+            body.spawn_time_ms = body.spawn_time_ms.wrapping_add(delta_ms);
+        }
     }
     for (id, ps) in &mut out.players {
         if *id != viewer {

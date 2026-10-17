@@ -931,12 +931,18 @@ fn skin_fpv_geometry(
                 fpv_plan.rig_generation = rig.generation();
                 fpv_plan.camo = product.camo;
             }
-            if let Some(rows) = fpv_plan.packed_rows_mut() {
-                if !rig.skin_into(&frame.poses, rows) {
-                    crate::clear_fpv_draw_plan(&mut fpv_plan, handle);
-                    return;
-                }
-            }
+            let Some(jobs) = rig.gpu_skin_jobs(&frame.poses) else {
+                let cause = RenderGapCause::FpvDependencyUnresolved {
+                    weapon_id: session.map_or(0, |session| session.weapon_id),
+                    role: "skinning",
+                    name: "packed geometry or bone range unavailable".into(),
+                };
+                crate::clear_fpv_draw_plan(&mut fpv_plan, handle);
+                gaps.raise(cause.clone());
+                status.0 = Some(FpvState::Blocked(cause));
+                return;
+            };
+            fpv_plan.skin_jobs = jobs;
             fpv_plan.revisions.bump_vertices();
             fpv_plan.geometry_ok = !fpv_plan.draws().is_empty();
             fpv_plan.settle_visible();
@@ -1273,10 +1279,10 @@ pub fn register_fpv_present_systems(app: &mut App) {
         .scoped::<SessionViewmodel>(frame::MatchScope::Live)
         .scoped::<PreparedFpv>(frame::MatchScope::Live)
         .scoped::<crate::anim::model_materials::PreparedModelMaterials>(frame::MatchScope::Live)
-        .scoped::<SessionViewKick>(frame::MatchScope::Live)
+        .scoped::<SessionViewKick>(frame::Timeline::Running)
         .scoped::<GunOffset>(frame::MatchScope::Live)
         .scoped::<ViewweaponAim>(frame::MatchScope::Live)
-        .scoped::<PendingViewHurt>(frame::MatchScope::Live)
+        .scoped::<PendingViewHurt>(frame::Timeline::Running)
         .scoped::<FpvStatusGap>(frame::MatchScope::Live)
         .init_app::<RenderPresentationGaps>()
         .add_systems(

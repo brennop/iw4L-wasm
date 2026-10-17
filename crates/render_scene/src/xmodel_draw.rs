@@ -56,6 +56,21 @@ impl XModelCasterBound {
     }
 }
 
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct PreparedSunShadowFrame(pub Option<render_frame::SunShadowForcedFrame>);
+
+impl PreparedSunShadowFrame {
+    #[must_use]
+    pub fn admits(&self, bound: XModelCasterBound) -> bool {
+        self.0.as_ref().is_some_and(|frame| {
+            frame
+                .partitions
+                .iter()
+                .any(|partition| !bound.outside(partition.clip_planes.as_slice()))
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum XModelColourRefusal {
     CameraFrustum,

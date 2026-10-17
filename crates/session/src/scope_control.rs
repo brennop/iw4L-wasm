@@ -113,7 +113,7 @@ pub(crate) fn register(app: &mut App) {
         .staged::<render_frontend::prepare::scene::world::WorldScene>(MatchScope::Live)
         .staged::<crate::SessionContentManifest>(MatchScope::Live)
         .staged::<MatchUiImages>(MatchScope::Live)
-        .scoped::<RoundClock>(MatchScope::Live)
+        .scoped::<RoundClock>(frame::Timeline::Running)
         .init_resource::<ScopeControl>()
         .init_resource::<InstallAnnouncement>()
         .add_systems(

@@ -69,9 +69,15 @@ pub async fn probe(games_root: &str, zone: &str) -> Result<Report, String> {
     let found = asset_transport::find_zone_file(&root, zone)?;
     let common_mp = asset_transport::find_runtime_common_mp(&root, &found.path).map(|zone| zone.path);
     let started = web_time::Instant::now();
-    let outcome =
-        assets::load_prepared_match(Ok(found.path), common_mp, asset_transport::LoadProgress::default())
-            .await;
+    // The probe measures whatever zone it is given: every asset family is enabled.
+    let families = frame::AssetFamilies(0b1111);
+    let outcome = assets::load_prepared_match(
+        Ok(found.path),
+        common_mp,
+        asset_transport::LoadProgress::default(),
+        families,
+    )
+    .await;
     let load_ms = started.elapsed().as_secs_f64() * 1000.0;
     let live_at_ready = diag::process_live_heap_bytes();
     let assets::MatchLoadOutcome::Ready(prepared) = outcome else {

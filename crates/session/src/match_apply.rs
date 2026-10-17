@@ -326,11 +326,21 @@ pub fn apply_prepared_match(
                 .expect("installed progression")
                 .rank
         );
+        let rank_tables = [
+            weapons.registry().shared_rank_table(),
+            weapons.registry().shared_rank_icons(),
+        ]
+        .map(|table| table.expect("validated rank presentation").clone());
         install.push(move |world: &mut World| {
             world
                 .resource_mut::<crate::scope_control::InstallAnnouncement>()
                 .0
                 .push(move |world: &mut World| {
+                    if let Some(mut catalog) = world.get_resource_mut::<asset_game::MenuCatalog>() {
+                        for table in rank_tables {
+                            catalog.insert_string_table(table);
+                        }
+                    }
                     world.insert_resource(local_player_data);
                 });
         });

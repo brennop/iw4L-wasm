@@ -74,7 +74,7 @@ pub fn beam_segment_count(length: f32, screw_dist: f32) -> u8 {
     if screw_dist < 1e-5 {
         return 1;
     }
-    let n = libm::roundf(length / screw_dist) as i32;
+    let n = (length / screw_dist * 8.0) as i32;
     n.clamp(1, i32::from(FX_BEAM_MAX_SEGMENTS)) as u8
 }
 
@@ -332,7 +332,7 @@ pub fn beam_generate_verts(
     let begin_c = beam_sample_color(&beam.colors, 0.0);
     verts[0] = FxBeamVert {
         xyz: sub(beam.begin, scale(flat, beam.begin_radius)),
-        uv: [0.0, 0.5],
+        uv: [0.0, 0.0],
         color: begin_c,
     };
     let mut w = 1usize;
@@ -349,12 +349,12 @@ pub fn beam_generate_verts(
         let c = beam_sample_color(&beam.colors, alpha);
         verts[w] = FxBeamVert {
             xyz: sub(base, scale(perp, radius)),
-            uv: [alpha, 0.0],
+            uv: [0.0, 1.0],
             color: c,
         };
         verts[w + 1] = FxBeamVert {
             xyz: add(base, scale(perp, radius)),
-            uv: [alpha, 1.0],
+            uv: [1.0, 0.0],
             color: c,
         };
         w += 2;
@@ -362,7 +362,7 @@ pub fn beam_generate_verts(
     let end_c = beam_sample_color(&beam.colors, 1.0);
     verts[w] = FxBeamVert {
         xyz: add(beam.end, scale(flat, beam.end_radius)),
-        uv: [1.0, 0.5],
+        uv: [1.0, 1.0],
         color: end_c,
     };
     let wrote_idx = write_beam_indices(seg_count, indices);

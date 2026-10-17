@@ -6,9 +6,6 @@ pub struct RenderAnimPlugin;
 impl Plugin for RenderAnimPlugin {
     fn build(&self, app: &mut App) {
         app.scoped::<crate::anim::scene_submission::AnimDObjSceneSkels>(frame::MatchScope::Live)
-            .scoped::<crate::anim::remote_body::RemoteBodyTrees>(frame::MatchScope::Live)
-            .scoped::<crate::anim::remote_body::RemoteSkinPoseHashes>(frame::MatchScope::Live)
-            .scoped::<crate::anim::remote_body::RemoteBodySkinnedQueue>(frame::MatchScope::Live)
             .scoped::<crate::anim::fpv_host::FpvPresentCursor>(frame::MatchScope::Live)
             .scoped::<crate::anim::fpv_host::PendingFpvSpawn>(frame::MatchScope::Live)
             .scoped::<crate::anim::fpv_host::PendingFpvNotetracks>(frame::MatchScope::Live)
@@ -17,7 +14,6 @@ impl Plugin for RenderAnimPlugin {
             .scoped::<crate::anim::fpv_host::FpvBoltTargets>(frame::MatchScope::Live)
             .scoped::<crate::anim::fpv_host::FpvPoseProduct>(frame::MatchScope::Live)
             .scoped::<crate::draw::FpvDrawPlan>(frame::MatchScope::Live)
-            .scoped::<crate::draw::RemoteBodyDrawPlan>(frame::MatchScope::Live)
             .scoped::<crate::draw::ScriptModelDrawPlan>(frame::MatchScope::Live)
             .scoped::<crate::draw::MissileDrawPlan>(frame::MatchScope::Live)
             .scoped::<crate::draw::ItemDrawPlan>(frame::MatchScope::Live)

@@ -1,5 +1,6 @@
 mod barracks_menu;
 pub mod binds;
+mod chat;
 mod class_dispatch;
 mod class_menu;
 mod command;

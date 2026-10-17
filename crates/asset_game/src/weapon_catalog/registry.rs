@@ -172,7 +172,12 @@ impl WeaponRegistry {
                         && table.name.eq_ignore_ascii_case("mp/perkTable.csv")
                         && table.lookup_row_in_col(1, name).is_some()
                 });
-            return if native_perk {
+            let native_weapon = infinity
+                && self
+                    .families
+                    .find(&crate::FamilyKey::new(namespace, name))
+                    .is_some();
+            return if native_perk || native_weapon {
                 Ok(Default::default())
             } else {
                 Err("unlock.missing_item")
@@ -918,6 +923,18 @@ impl WeaponRegistry {
 
     pub fn script_name_of(&self, index: u32) -> String {
         gsc_weapon_script_name(self.name_of(index))
+    }
+
+    pub fn native_script_aliases(&self) -> impl Iterator<Item = (String, u32)> + '_ {
+        self.rows
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter_map(|(id, row)| {
+                (normalize_weapon_name(&row.native_script_name) == row.name
+                    && row.native_script_name != gsc_weapon_script_name(&row.name))
+                .then(|| (row.native_script_name.clone(), id as u32))
+            })
     }
 
     pub fn configuration_supported(&self, id: u32) -> bool {

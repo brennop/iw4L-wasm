@@ -17,7 +17,6 @@ use bevy::{
     window::{CursorEntered, CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused},
 };
 use frame::AppScreen;
-use frame::ScopeApp;
 use input_iw4::{SCRIPT_KEYNUM, command_names, input_cmd, key_event, key_up_command_id};
 use net::{ClientActionInput, ClientSet, PresentedSnapshot, frame_time_msec, key_frame_msec};
 use render_frontend::prepare::scene::world::WorldScene;
@@ -84,6 +83,7 @@ pub struct ConsolePlugin;
 impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
         crate::startup::install_stdin(app);
+        crate::chat::install(app);
         app.init_resource::<ConsoleSettings>()
             .init_resource::<ConsoleState>()
             .init_resource::<frame::HudInputView>()
@@ -94,7 +94,11 @@ impl Plugin for ConsolePlugin {
             .init_resource::<ConsoleRegistry>()
             .init_resource::<crate::ConsoleQueue>()
             .init_resource::<crate::ConsoleLine>()
-            .published::<crate::weapon_dispatch::WeaponArgCompletions>(frame::MatchScope::Live)
+            .init_resource::<crate::weapon_dispatch::CompletionSlot>()
+            .add_systems(
+                OnExit(frame::MatchScope::Live),
+                crate::weapon_dispatch::clear_weapon_arg_completions,
+            )
             .init_resource::<crate::user_settings::PendingMenuBinding>()
             .init_resource::<crate::user_settings::UserSettingsPersistence>()
             .init_resource::<crate::game_folders::FolderPicks>()
@@ -118,6 +122,8 @@ impl Plugin for ConsolePlugin {
             .add_systems(PreUpdate, feed_console_keyboard.before(InputSystems))
             .init_resource::<frame::ActivePad>()
             .init_resource::<frame::InputDevices>()
+            .init_resource::<frame::UiPointerFree>()
+            .init_resource::<frame::UiOverlayInput>()
             .add_systems(
                 PreUpdate,
                 (
@@ -138,10 +144,12 @@ impl Plugin for ConsolePlugin {
                 PreUpdate,
                 (
                     handle_console_input,
+                    crate::chat::keyboard,
                     handle_scrollback_pointer,
                     copy_console_selection_on_release,
                     isolate_gameplay_input,
                     expire_pressed_inputs,
+                    publish_ui_input_capture,
                     publish_client_action_input.in_set(frame::InMatch),
                     sync_cursor_grab,
                 )
@@ -298,10 +306,11 @@ fn dispatch_menu_commands(
 
 fn isolate_gameplay_input(
     console: Res<ConsoleState>,
+    chat: Option<Res<crate::chat::ChatState>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: MessageReader<MouseMotion>,
 ) {
-    if !console.open {
+    if !console.open && !chat.as_ref().is_some_and(|chat| chat.captures_input()) {
         return;
     }
     keys.reset_all();
@@ -316,7 +325,16 @@ struct PhysicalInputState {
     look_ready: bool,
     mouse_activity: f32,
     mouse_activity_start: f32,
-    prompts: Option<(bool, frame::PromptStyle)>,
+    prompts: Option<bool>,
+}
+
+fn publish_ui_input_capture(
+    console: Res<ConsoleState>,
+    chat: Option<Res<crate::chat::ChatState>>,
+    mut hud_input: ResMut<frame::HudInputView>,
+) {
+    hud_input.console_open =
+        console.open || chat.as_ref().is_some_and(|chat| chat.captures_input());
 }
 
 fn publish_client_action_input(
@@ -331,7 +349,9 @@ fn publish_client_action_input(
     binds: Res<KeyBinds>,
     mut scripted: ResMut<ConsoleInputState>,
     console: Res<ConsoleState>,
+    chat: Option<Res<crate::chat::ChatState>>,
     script_menus: hud::MenuState<'_>,
+    overlay: Res<frame::UiOverlayInput>,
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
@@ -384,12 +404,12 @@ fn publish_client_action_input(
     if binds.is_changed() {
         *wheel_carry = 0.0;
     }
-    let modal_captured = console.open
+    let modal_captured = chat.as_ref().is_some_and(|chat| chat.captures_input())
+        || console.open
         || script_menus.is_some_and(|menus| menus.captures_input())
         || keys.just_pressed(KeyCode::Escape)
         || pad.is_some_and(|pad| pad.just_pressed(bevy::input::gamepad::GamepadButton::Start));
-    let captured = !devices.focused || modal_captured;
-    hud_input.console_open = console.open;
+    let captured = !devices.focused || modal_captured || overlay.0;
     physical.blocked.retain(|button| inputs.pressed(*button));
 
     let akimbo = prediction
@@ -555,7 +575,7 @@ fn publish_client_action_input(
         devices.pad_prompts = false;
         physical.mouse_activity = 0.0;
     }
-    let prompts = (devices.pad_prompts, devices.style);
+    let prompts = devices.pad_prompts;
     if physical.prompts == Some(prompts) && !binds.is_changed() {
         return;
     }
@@ -570,7 +590,7 @@ fn publish_client_action_input(
     hud_input.action_slot_keys = [None, None, None, None];
     for (button, id) in labels {
         let label = match button {
-            BindButton::Pad(button) => button.prompt(devices.style).to_owned(),
+            BindButton::Pad(button) => button.icon_prompt().to_owned(),
             _ => crate::binds::display_button(button).to_uppercase(),
         };
         if let Some(command) = binds.binding_name(button) {
@@ -604,7 +624,9 @@ fn publish_client_action_input(
 /// only reports relative motion to a held pointer the view stops turning while
 /// every key, and the console, still work.
 fn sync_cursor_grab(
+    free_pointer: Res<frame::UiPointerFree>,
     console: Res<ConsoleState>,
+    chat: Option<Res<crate::chat::ChatState>>,
     script_menus: hud::MenuState<'_>,
     screen: Option<Res<AppScreen>>,
     mut focused: MessageReader<WindowFocused>,
@@ -621,7 +643,11 @@ fn sync_cursor_grab(
     let in_game = screen
         .as_ref()
         .is_some_and(|s| matches!(**s, AppScreen::InGame));
-    let grab = in_game && !console.open && !menu_open;
+    let grab = in_game
+        && !console.open
+        && !chat.as_ref().is_some_and(|chat| chat.open)
+        && !menu_open
+        && !free_pointer.0;
     let Ok(mut cursor) = windows.single_mut() else {
         return;
     };
@@ -650,7 +676,7 @@ fn setup_console(
     settings: Res<ConsoleSettings>,
     mut registry: ResMut<ConsoleRegistry>,
     mut binds: ResMut<KeyBinds>,
-    weapon_completions: Res<frame::Published<crate::weapon_dispatch::WeaponArgCompletions>>,
+    weapon_completions: Res<crate::weapon_dispatch::CompletionSlot>,
 ) {
     binds.apply_defaults();
     if registry.resolve("hold").is_none() {

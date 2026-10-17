@@ -356,26 +356,41 @@ pub(crate) fn update_splash(
         return;
     };
 
-    // Promotion uses this match's authoritative rank. The authored expressions
-    // read a stored profile's experience/prestige, which is not the match state.
     let mut promotion;
     let menu = if menu_name.eq_ignore_ascii_case("promotion") {
         promotion = menu.clone();
-        if let Some(meta) = presented
+        let rank = presented
             .snapshot()
-            .and_then(|snap| snap.meta.for_client(local.0))
-        {
-            let key = meta.rank.to_string();
-            let icon = catalog
-                .as_ref()
-                .and_then(|c| c.string_table("mp/rankIconTable.csv"))
-                .map(|t| t.lookup_col(&key, meta.prestige.saturating_add(1)))
-                .unwrap_or("");
-            for item in &mut promotion.items {
-                if item.name.starts_with("promotion_rank_icon") {
-                    item.material_exp.clear();
-                    item.background = icon.to_owned();
-                }
+            .and_then(|snap| snap.meta.for_client(local.0));
+        let icon = rank
+            .and_then(|meta| {
+                let column = meta.prestige.checked_add(1).filter(|column| *column > 0)?;
+                catalog
+                    .as_ref()?
+                    .string_table("mp/rankIconTable.csv")
+                    .map(|table| table.lookup_col(&meta.rank.to_string(), column))
+            })
+            .unwrap_or_default();
+        let title = rank
+            .and_then(|meta| {
+                catalog
+                    .as_ref()?
+                    .string_table("mp/rankTable.csv")
+                    .map(|table| table.lookup_col(&meta.rank.to_string(), 5))
+            })
+            .unwrap_or_default();
+        for item in &mut promotion.items {
+            if item.name.starts_with("promotion_rank_icon") {
+                item.material_exp.clear();
+                item.background = icon.to_owned();
+            } else if item.name.starts_with("promotion_rank_text") {
+                item.text_exp.clear();
+                item.text_key = if title.is_empty() {
+                    String::new()
+                } else {
+                    format!("@{}", title.trim_start_matches('@'))
+                };
+                item.text_literal = false;
             }
         }
         &promotion

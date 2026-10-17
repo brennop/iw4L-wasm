@@ -1,4 +1,4 @@
-use frame::Published;
+use std::sync::{Arc, RwLock};
 
 use asset_game::{LoadoutRules, WeaponSelection};
 use assets::PreparedWeapons;
@@ -20,14 +20,29 @@ pub struct WeaponArgCompletions {
     pub bots: Vec<String>,
 }
 
-type CompletionSlot = Published<WeaponArgCompletions>;
+#[derive(Resource, Clone, Default)]
+pub(crate) struct CompletionSlot(Arc<RwLock<Option<WeaponArgCompletions>>>);
+
+impl CompletionSlot {
+    fn read<R>(&self, read: impl FnOnce(Option<&WeaponArgCompletions>) -> R) -> R {
+        read(self.0.read().expect("completion slot poisoned").as_ref())
+    }
+
+    fn publish(&self, value: Option<WeaponArgCompletions>) {
+        *self.0.write().expect("completion slot poisoned") = value;
+    }
+}
+
+pub(crate) fn clear_weapon_arg_completions(completions: Res<CompletionSlot>) {
+    completions.publish(None);
+}
 
 struct LiveListCompleter(CompletionSlot, fn(&WeaponArgCompletions) -> &[String]);
 
 impl ArgCompleter for LiveListCompleter {
     fn complete(&self, prefix: &str) -> Vec<String> {
         self.0.read(|value| {
-            value.map_or_else(Vec::new, |(_, value)| {
+            value.map_or_else(Vec::new, |value| {
                 StaticCompleter::new((self.1)(value).iter().cloned()).complete(prefix)
             })
         })
@@ -110,20 +125,17 @@ pub(crate) fn refresh_weapon_arg_completions(
             )
             .collect()
     };
-    completions.publish(
-        generation.0.expect("live match generation"),
-        WeaponArgCompletions {
-            give: weapon_completions(&weapons),
-            attach: if held == 0 {
-                Vec::new()
-            } else {
-                attach_completions(&weapons, held)
-            },
-            camos,
-            killstreaks: killstreaks.map_or_else(Vec::new, |value| value.0.clone()),
-            bots,
+    completions.publish(Some(WeaponArgCompletions {
+        give: weapon_completions(&weapons),
+        attach: if held == 0 {
+            Vec::new()
+        } else {
+            attach_completions(&weapons, held)
         },
-    );
+        camos,
+        killstreaks: killstreaks.map_or_else(Vec::new, |value| value.0.clone()),
+        bots,
+    }));
 }
 
 pub(crate) fn route_weapon_commands(
@@ -448,8 +460,8 @@ fn grant_killstreak(
     seq: &mut net::ActionRequestIds,
     mut echo: impl FnMut(String),
 ) {
-    let names = completions
-        .read(|value| value.map_or_else(Vec::new, |(_, value)| value.killstreaks.clone()));
+    let names =
+        completions.read(|value| value.map_or_else(Vec::new, |value| value.killstreaks.clone()));
     let requested = name.to_ascii_lowercase().replace(['-', ' '], "_");
     let requested = KILLSTREAK_ALIASES
         .iter()
@@ -518,7 +530,7 @@ impl ArgCompleter for KillstreakCompleter {
     fn complete(&self, prefix: &str) -> Vec<String> {
         let names = self
             .0
-            .read(|value| value.map_or_else(Vec::new, |(_, value)| value.killstreaks.clone()));
+            .read(|value| value.map_or_else(Vec::new, |value| value.killstreaks.clone()));
         let aliases = KILLSTREAK_ALIASES
             .iter()
             .filter(|(_, name)| names.iter().any(|value| value == name))
@@ -533,7 +545,7 @@ impl ArgCompleter for GiveCompleter {
     fn complete(&self, prefix: &str) -> Vec<String> {
         let mut items = vec!["ammo".to_owned(), "camo".to_owned()];
         self.0.read(|value| {
-            if let Some((_, value)) = value {
+            if let Some(value) = value {
                 items.extend(value.give.iter().map(|name| format!("weapon/{name}")));
             }
         });
@@ -573,7 +585,7 @@ impl ArgCompleter for BotCompleter {
             ("give" | "fire" | "tp", 1) => {
                 let mut ids = self
                     .0
-                    .read(|value| value.map_or_else(Vec::new, |(_, value)| value.bots.clone()));
+                    .read(|value| value.map_or_else(Vec::new, |value| value.bots.clone()));
                 if *verb != "give" {
                     ids.insert(0, "all".into());
                 }
@@ -582,7 +594,7 @@ impl ArgCompleter for BotCompleter {
             ("give", 2) => {
                 let names = self
                     .0
-                    .read(|value| value.map_or_else(Vec::new, |(_, value)| value.give.clone()));
+                    .read(|value| value.map_or_else(Vec::new, |value| value.give.clone()));
                 StaticCompleter::new(names).complete(prefix)
             }
             ("tp", 2) => StaticCompleter::new(["above"]).complete(prefix),

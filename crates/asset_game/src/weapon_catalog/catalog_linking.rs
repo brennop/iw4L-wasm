@@ -497,3 +497,50 @@ pub(super) fn stamp_combat_fx(
     };
     combat.last_shot_eject_pair_authored = slots.last_shot_pair_authored();
 }
+
+fn mw2_tracer_name(
+    facts: &WeaponBodyFacts,
+    category: Option<crate::CacAuthoredCategory>,
+) -> Option<&'static str> {
+    use crate::CacAuthoredCategory as C;
+    if facts.weap_type != weapon_iw4::WEAPTYPE_BULLET
+        || facts.weap_class == weapon_iw4::WEAPCLASS_TURRET
+    {
+        return None;
+    }
+    Some(match category {
+        Some(C::Assault) => "assaultrifle",
+        Some(C::Smg | C::MachinePistol) => "smg",
+        Some(C::Lmg) => "lmg",
+        Some(C::Sniper) => "sniper",
+        Some(C::Shotgun) => "shotgun",
+        Some(C::Pistol) => "pistol",
+        _ => match facts.weap_class {
+            0 => "assaultrifle",
+            1 => "sniper",
+            2 => "lmg",
+            3 => "smg",
+            weapon_iw4::WEAPCLASS_SPREAD => "shotgun",
+            weapon_iw4::WEAPCLASS_PISTOL => "pistol",
+            _ => return None,
+        },
+    })
+}
+
+pub(super) fn stamp_mw2_tracer(
+    combat: &mut WeaponCombatFx,
+    facts: &WeaponBodyFacts,
+    category: Option<crate::CacAuthoredCategory>,
+    tracers: &crate::TracerCatalog,
+) {
+    let Some(name) = mw2_tracer_name(facts, category) else {
+        combat.tracer_hint = None;
+        combat.tracer = AssetEdge::Absent;
+        return;
+    };
+    combat.tracer_hint = Some(name.to_owned());
+    combat.tracer = match tracers.index_named(crate::AssetNamespace::Iw4, name) {
+        Some(index) => AssetEdge::bind_order(index, tracers.zone_of(index)),
+        None => AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss),
+    };
+}

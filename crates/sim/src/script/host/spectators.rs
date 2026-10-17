@@ -97,6 +97,32 @@ pub(crate) fn advance(world: &mut World) {
     update(world, true);
 }
 
+pub(crate) fn hold_killcam_viewer(
+    world: &mut World,
+    client: ClientId,
+    cmd: &mut playerstate_iw4::UserCmd,
+) {
+    let seated = world
+        .get_resource::<RoundScript>()
+        .and_then(|runtime| runtime.players.get(&client.0))
+        .is_some_and(|slot| {
+            &*slot.sessionstate == "spectator"
+                && slot.seat.archive_ms > 0
+                && slot.spectator.target.is_some()
+        });
+    if !seated {
+        return;
+    }
+    use playerstate_iw4::buttons;
+    let held = FrameWorld::from_world(world)
+        .player(client)
+        .map_or(0, |ps| ps.weapon);
+    cmd.forwardmove = 0;
+    cmd.rightmove = 0;
+    cmd.buttons &= buttons::PRONE | buttons::CROUCH | buttons::STANCE_HELD;
+    cmd.weapon = held as u16;
+}
+
 fn update(world: &mut World, input: bool) {
     let replacement = RoundScript::new(world.resource::<crate::script::MatchScript>());
     let mut runtime = std::mem::replace(&mut *world.resource_mut::<RoundScript>(), replacement);
@@ -148,7 +174,9 @@ fn update(world: &mut World, input: bool) {
             && !archived
             && pressed & (playerstate_iw4::buttons::ATTACK | playerstate_iw4::buttons::ADS) != 0;
         if let Some(forced) = forced {
-            slot.spectator.target = allowed.contains(&forced).then_some(forced);
+            let own_replay =
+                archived && forced == client && targets.iter().any(|(id, ..)| *id == client);
+            slot.spectator.target = (own_replay || allowed.contains(&forced)).then_some(forced);
             slot.spectator.free = false;
         } else if input
             && pressed & playerstate_iw4::buttons::USE != 0

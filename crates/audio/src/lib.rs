@@ -67,6 +67,7 @@ pub use render_core::InstanceStatus;
 pub use runtime::{AudioDiagnostics, AudioRuntime};
 
 mod media;
+mod mix_bus;
 
 mod offline;
 pub use decode_budget::{DecodeMemory, decode_memory};

@@ -15,6 +15,9 @@ pub struct ScreenEffectsView {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScreenEffectsPublished;
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScreenBlurRequest(pub f32);
+
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScreenEffectsDvars {
     pub draw_shellshock: bool,

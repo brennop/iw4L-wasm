@@ -499,9 +499,7 @@ impl FpvPreparationJob {
                             || camo.skel.surface_vertex_ranges != base.skel.surface_vertex_ranges
                             || camo.skel.surface_index_ranges != base.skel.surface_index_ranges
                             || camo.skel.positions != base.skel.positions
-                            || camo.skel.normals != base.skel.normals
-                            || camo.skel.uvs != base.skel.uvs
-                            || camo.skel.colors != base.skel.colors
+                            || !camo.skel.has_same_vertex_attributes(&base.skel)
                             || camo.skel.indices != base.skel.indices
                         {
                             return Err("appearance topology mismatch".to_owned());

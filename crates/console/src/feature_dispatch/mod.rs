@@ -214,6 +214,10 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
     for (name, usage) in [
         ("help", "help — list registered commands"),
+        ("say", "say <message> — public chat"),
+        ("say_team", "say_team <message> — team chat"),
+        ("chatmodepublic", "chatmodepublic — open public chat"),
+        ("chatmodeteam", "chatmodeteam — open team chat"),
         ("clear", "clear — clear console scrollback"),
         ("screenshot", "screenshot [name] — capture the backbuffer"),
         (

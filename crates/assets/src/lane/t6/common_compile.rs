@@ -1,6 +1,6 @@
 mod effects;
 mod models;
-use effects::bind_t6_fx;
+pub(super) use effects::bind_t6_fx;
 use models::bind_t6_content;
 
 use crate::lane::{

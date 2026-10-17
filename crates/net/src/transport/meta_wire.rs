@@ -178,6 +178,16 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u32(request_id);
             out.put_bytes(&name);
         }
+        ClientAction::Chat {
+            request_id,
+            team_only,
+            text,
+        } => {
+            out.put_u8(24);
+            out.put_u32(request_id);
+            out.put_u8(u8::from(team_only));
+            out.put_bytes(&text);
+        }
         ClientAction::UseCopycat { request_id } => {
             out.put_u8(13);
             out.put_u32(request_id);
@@ -293,6 +303,21 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
                 killstreaks: [input.get_u32()?, input.get_u32()?, input.get_u32()?],
             },
         }),
+        24 => {
+            let request_id = input.get_u32()?;
+            let team_only = match input.get_u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(WireError::Malformed("invalid chat audience")),
+            };
+            let mut text = [0; sim::chat::CHAT_BYTES];
+            input.get_bytes(&mut text)?;
+            Ok(ClientAction::Chat {
+                request_id,
+                team_only,
+                text,
+            })
+        }
         13 => Ok(ClientAction::UseCopycat {
             request_id: input.get_u32()?,
         }),
@@ -2185,6 +2210,9 @@ fn encode_corpse_pool(out: &mut WireWriter, pool: &PlayerCorpsePool) {
         }
         out.put_u8(u8::from(slot.falling));
         out.put_i32(slot.ground_entity_num);
+        out.put_i32(slot.spawn_time_ms);
+        out.put_u32(slot.shield.map_or(0, |shield| shield.weapon));
+        out.put_u8(u8::from(slot.shield.is_some_and(|shield| shield.on_back)));
     }
 }
 
@@ -2218,12 +2246,26 @@ fn decode_corpse_pool(input: &mut WireReader<'_>) -> Result<PlayerCorpsePool, Wi
                     tr_base: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
                     falling: input.get_u8()? != 0,
                     ground_entity_num: input.get_i32()?,
+                    spawn_time_ms: input.get_i32()?,
+                    shield: decode_corpse_shield(input)?,
                 };
             }
             _ => return Err(WireError::Malformed("bad corpse slot tag")),
         }
     }
     Ok(pool)
+}
+
+fn decode_corpse_shield(
+    input: &mut WireReader<'_>,
+) -> Result<Option<sim::ShieldAttachment>, WireError> {
+    let weapon = input.get_u32()?;
+    let on_back = match input.get_u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(WireError::Malformed("bad corpse shield tag")),
+    };
+    Ok((weapon != 0).then_some(sim::ShieldAttachment { weapon, on_back }))
 }
 
 fn encode_entity_states(out: &mut WireWriter, rows: &[entity_iw4::EntityState]) {
@@ -2623,6 +2665,14 @@ fn encode_entity_dobjs(
             out.put_u8(u8::from(model.ignore_collision));
         }
         out.put_u32(state.pose_revision);
+        debug_assert!(state.tag_rotations.len() <= u16::MAX as usize);
+        out.put_u16(state.tag_rotations.len() as u16);
+        for rotation in &state.tag_rotations {
+            put_text(out, &rotation.tag);
+            for angle in rotation.angles {
+                out.put_f32(angle);
+            }
+        }
         put_optional_part_bits(out, state.requested_parts);
         for word in state.hide_part_bits.words() {
             out.put_u32(*word);
@@ -2685,6 +2735,19 @@ fn decode_entity_dobjs(
             });
         }
         let pose_revision = input.get_u32()?;
+        let rotation_count = input.get_u16()? as usize;
+        if rotation_count > anim_iw4::PartBits::CAPACITY {
+            return Err(WireError::Malformed("too many tag rotations"));
+        }
+        let mut tag_rotations = Vec::with_capacity(rotation_count);
+        for _ in 0..rotation_count {
+            let tag = get_text(input)?;
+            let angles = [input.get_f32()?, input.get_f32()?, input.get_f32()?];
+            if tag.is_empty() || !angles.iter().all(|angle| angle.is_finite()) {
+                return Err(WireError::Malformed("invalid tag rotation"));
+            }
+            tag_rotations.push(xmodel_runtime::TagRotation { tag, angles });
+        }
         let requested_parts = get_optional_part_bits(input)?;
         let mut hide_words = [0u32; anim_iw4::PartBits::WORDS];
         for word in &mut hide_words {
@@ -2746,6 +2809,7 @@ fn decode_entity_dobjs(
                     models,
                 },
                 pose_revision,
+                tag_rotations,
                 tree,
                 requested_parts,
                 hide_part_bits: xmodel_runtime::HidePartBits::from_words(hide_words),

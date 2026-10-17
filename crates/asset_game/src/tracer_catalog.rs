@@ -255,6 +255,10 @@ impl TracerDefinitions {
         }
     }
 
+    pub fn index_named(&self, namespace: crate::AssetNamespace, name: &str) -> Option<usize> {
+        self.by_key.get(&(namespace, name.to_owned())).copied()
+    }
+
     pub fn def_at(&self, index: usize) -> Option<&OwnedTracerDef> {
         self.defs.get(index)
     }

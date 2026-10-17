@@ -648,6 +648,43 @@ fn text_run_quads(
             hud_iw4::rand_with_seed(&mut temp)
         });
 
+        if let Some(icon) = frame::ControllerIcon::from_char(c) {
+            let size = font.pixel_height as f32;
+            let (xy, st) = hud_iw4::draw_stretch_pic_corners(
+                cursor_x,
+                y - size * y_scale * 0.8,
+                size * x_scale,
+                size * y_scale,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+            );
+            let alpha = if decaying || (draw_rand_char_at_end && max_length_remaining == 1) {
+                f32::from(hud_iw4::modulate_byte_colors(
+                    (color[3] * 255.0) as u8,
+                    fade_alpha,
+                )) / 255.0
+            } else {
+                color[3]
+            };
+            if !skip_drawing {
+                out.push(Draw2dQuad {
+                    xy,
+                    st,
+                    color: [1.0, 1.0, 1.0, alpha],
+                    material: icon.material().to_owned(),
+                    material_namespace,
+                    provenance: provenance.clone(),
+                    layer,
+                    clip,
+                });
+            }
+            cursor_x += size * x_scale;
+            max_length_remaining = max_length_remaining.saturating_sub(1);
+            continue;
+        }
+
         let Some(glyph) = font.glyph(letter) else {
             continue;
         };

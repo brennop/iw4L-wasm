@@ -10,7 +10,7 @@ use render_scene::SmodelPassMaterial;
 use crate::anim::fpv_pose::{
     FpvBoltFrame, FpvBoltTags, PosedClip, tag_camera_lens_local, tag_view_to_bevy_camera,
 };
-use crate::anim::xmodel_pose::{FpvSurfOwner, SkinLayout, build_skin_layout, skin_packed_into};
+use crate::anim::xmodel_pose::{FpvSurfOwner, SkinLayout, build_skin_layout};
 use crate::draw::FpvSurfaceDraw;
 use anim_iw4::PartBits;
 use anim_iw4::surface_hidden;
@@ -368,6 +368,7 @@ pub struct PreparedFpvRig {
     tags: FpvBoltTags,
     secondary_tags: Option<FpvBoltTags>,
     slots: Vec<PlanSlot>,
+    skin_shapes: Vec<std::sync::OnceLock<Arc<render_frame::skinning::PackedSkinShape>>>,
     tracks: [Vec<Option<Arc<[u16]>>>; 2],
     hand_parts: Option<[PartBits; 2]>,
     pub geometry: PreparedFpvGeometry,
@@ -550,6 +551,9 @@ impl PreparedFpvRig {
             parts,
             tags,
             secondary_tags,
+            skin_shapes: (0..slots.len())
+                .map(|_| std::sync::OnceLock::new())
+                .collect(),
             slots,
             tracks,
             geometry,
@@ -706,69 +710,53 @@ impl PreparedFpvRig {
         })
     }
 
+    pub fn gpu_skin_jobs(
+        &self,
+        poses: &[Option<FpvHandPose>; 2],
+    ) -> Option<Vec<render_frame::skinning::PackedSkinJob>> {
+        use render_frame::skinning::PackedSkinJob;
+        let mut jobs = Vec::with_capacity(self.slots.len());
+        for (index, slot) in self.slots.iter().enumerate() {
+            let pose = poses[slot.hand].as_ref()?;
+            if pose.generation != self.generation {
+                return None;
+            }
+            let part = &self.composition.parts[slot.part];
+            let model = &part.model;
+            if model.layout.dest_vertex_n == 0 {
+                continue;
+            }
+            let skel = &self.meshes.get_at(model.catalog_entry)?.skel;
+            let bone_count = skel.bone_names.len();
+            if bone_count == 0 {
+                return None;
+            }
+            let bone_end = part.bone_base.checked_add(bone_count)?;
+            let matrices = pose.skin.get(part.bone_base..bone_end)?;
+            let shape = self.skin_shapes[index].get_or_init(|| {
+                crate::anim::xmodel_pose::packed_skin_shape(skel, 0, &model.layout, |_| false)
+            });
+            if shape.required_bones() > bone_count {
+                return None;
+            }
+            jobs.push(PackedSkinJob {
+                shape: Arc::clone(shape),
+                bones: matrices
+                    .iter()
+                    .map(|matrix| (pose.eye_from_world * *matrix).to_cols_array_2d())
+                    .collect(),
+                destination: u32::try_from(slot.dest_base).ok()?,
+                offset: pose.offset.to_array(),
+            });
+        }
+        Some(jobs)
+    }
+
     fn owns_clip(&self, hand: usize, anim: &PosedClip<'_>) -> bool {
         self.clips
             .get(hand)
             .and_then(|clips| clips.get(anim.node))
             .and_then(Option::as_ref)
             .is_some_and(|clip| std::ptr::eq(clip.as_ref(), anim.clip))
-    }
-
-    /// Skin every slot into the destination buffer the plan published. A vertex
-    /// update only: indices, surface ranges and materials are untouched.
-    pub fn skin_into(
-        &self,
-        poses: &[Option<FpvHandPose>; 2],
-        dest: &mut [[u8; asset_iw4::size::GFX_PACKED_VERTEX]],
-    ) -> bool {
-        if poses
-            .iter()
-            .flatten()
-            .any(|pose| pose.generation != self.generation)
-        {
-            return false;
-        }
-        for slot in &self.slots {
-            let Some(pose) = poses[slot.hand].as_ref() else {
-                continue;
-            };
-            let part = &self.composition.parts[slot.part];
-            let model = &part.model;
-            let Some(skel) = self
-                .meshes
-                .get_at(model.catalog_entry)
-                .map(|entry| &entry.skel)
-            else {
-                continue;
-            };
-            let end = slot.dest_base.saturating_add(model.layout.dest_vertex_n);
-            if end > dest.len() {
-                continue;
-            }
-            let rows = &mut dest[slot.dest_base..end];
-            skin_packed_into(
-                skel,
-                |bone| pose.eye_from_world * pose.skin[part.bone_base + bone],
-                |_| false,
-                0,
-                &model.layout,
-                rows,
-            );
-            if pose.offset != Vec3::ZERO {
-                translate_packed_rows(rows, pose.offset);
-            }
-        }
-        true
-    }
-}
-
-fn translate_packed_rows(rows: &mut [[u8; asset_iw4::size::GFX_PACKED_VERTEX]], delta: Vec3) {
-    for row in rows {
-        let x = f32::from_le_bytes([row[0], row[1], row[2], row[3]]) + delta.x;
-        let y = f32::from_le_bytes([row[4], row[5], row[6], row[7]]) + delta.y;
-        let z = f32::from_le_bytes([row[8], row[9], row[10], row[11]]) + delta.z;
-        row[0..4].copy_from_slice(&x.to_le_bytes());
-        row[4..8].copy_from_slice(&y.to_le_bytes());
-        row[8..12].copy_from_slice(&z.to_le_bytes());
     }
 }

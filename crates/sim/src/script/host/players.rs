@@ -711,6 +711,23 @@ pub(crate) fn script_weapon(world: &mut World, client: u32, weapon: u32) -> u32 
     {
         return stand_in;
     }
+    // Published configurations can have distinct wire IDs for the same script
+    // setup (for example, camouflage variants). Preserve the class bridge when
+    // a script resolves that configuration back through its authored name.
+    let bridge = world
+        .resource::<crate::script::MatchScript>()
+        .weapon_bridge
+        .get(&client)
+        .cloned()
+        .unwrap_or_default();
+    let frame = FrameWorld::from_world(world);
+    if let Some(setup) = frame.weapon_setup(weapon)
+        && let Some((stand_in, _)) = bridge
+            .iter()
+            .find(|(_, native)| frame.weapon_setup(*native) == Some(setup))
+    {
+        return *stand_in;
+    }
     let needs_lock_bridge = FrameWorld::from_world(world)
         .missile_launch_facts(weapon)
         .is_some_and(|facts| facts.require_lock_to_fire && matches!(facts.missile_guidance, 1 | 3));
@@ -1044,17 +1061,32 @@ impl PlayerSlot {
 }
 
 pub(crate) fn script_seats(world: &World) -> Vec<(ClientId, crate::ScriptSeat)> {
-    world
-        .resource::<RoundScript>()
+    let runtime = world.resource::<RoundScript>();
+    let final_kill = level_flag(runtime, "showingfinalkillcam");
+    runtime
         .players
         .iter()
         .filter(|(_, slot)| &*slot.sessionstate == "spectator" && slot.spectator.target.is_some())
         .map(|(client, slot)| {
             let mut seat = slot.seat;
             seat.spectator_client = slot.spectator.target.unwrap() as i32;
+            seat.final_kill = final_kill;
             (ClientId(*client), seat)
         })
         .collect()
+}
+
+fn level_flag(runtime: &RoundScript, name: &str) -> bool {
+    let symbol = runtime
+        .program
+        .as_ref()
+        .and_then(|program| program.symbol_ids.get(name))
+        .or_else(|| runtime.dynamic_symbols.get(name));
+    match symbol.and_then(|symbol| runtime.objects.get(&0)?.get(symbol)) {
+        Some(Value::Int(n)) => *n != 0,
+        Some(Value::Float(f)) => *f != 0.0,
+        _ => false,
+    }
 }
 
 const SEAT_FIELDS: [&str; 6] = [

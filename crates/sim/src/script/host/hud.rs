@@ -398,6 +398,7 @@ fn print(
     FrameWorld::from_world(world).push_print(crate::PendingPrint {
         recipient: recipient.map(crate::ClientId),
         bold,
+        chat: false,
         template,
         arg,
     });
@@ -417,48 +418,17 @@ pub(crate) fn chat(
     if !matches!(message, Value::String(_) | Value::LocalizedString(_)) {
         return Err("chat message must be a string".into());
     }
-    let name =
-        super::players::load_field(world, sender, "name").ok_or("chat sender is not connected")?;
-    let text = format!(
-        "{}{}{}",
-        print_text(world, &name),
-        crate::HUD_PRINT_ARG_SEPARATOR,
-        print_text(world, message)
-    );
-    let recipients = if team_only {
-        let clients: Vec<u32> = world
-            .resource::<RoundScript>()
-            .players
-            .keys()
-            .copied()
-            .collect();
-        let frame = FrameWorld::from_world(world);
-        let team = frame
-            .client_meta(crate::ClientId(sender))
-            .ok_or("chat sender is not connected")?
-            .client_state_team;
-        clients
-            .into_iter()
-            .filter(|client| {
-                frame
-                    .client_meta(crate::ClientId(*client))
-                    .is_some_and(|meta| meta.client_state_team == team)
-            })
-            .map(|client| Some(crate::ClientId(client)))
-            .collect::<Vec<_>>()
+    let text = print_text(world, message);
+    let send = if matches!(message, Value::LocalizedString(_)) {
+        crate::chat::send_localized
     } else {
-        vec![None]
+        crate::chat::send
     };
-    let template = format!("{}&&1^7: &&2", crate::HUD_STRING_PLAIN);
     let mut frame = FrameWorld::from_world(world);
-    for recipient in recipients {
-        frame.push_print(crate::PendingPrint {
-            recipient,
-            bold: false,
-            template: template.clone(),
-            arg: text.clone(),
-        });
+    if frame.client_meta(crate::ClientId(sender)).is_none() {
+        return Err("chat sender is not connected".into());
     }
+    send(&mut frame, crate::ClientId(sender), team_only, &text);
     Ok(Value::Undefined)
 }
 

@@ -16,6 +16,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
                 read_body_combat(s, body)?,
                 Some(body),
                 WeaponAssets {
+                    kill_icon: material_name_at(s, links, body.at(sz::WEAPON_DEF_KILL_ICON_OFF)),
                     reticle_center: material_name_at(s, links, body.at(0x1a0)),
                     reticle_side: material_name_at(s, links, body.at(0x1a4)),
                     ..WeaponAssets::default()
@@ -65,6 +66,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         _ => None,
     };
     s.record_weapon(WeaponGeometry {
+        kill_icon_name: assets.kill_icon,
         overlay_material_name,
         overlay_material_lowres_name,
         reticle_center_name: assets.reticle_center,
@@ -155,7 +157,7 @@ fn load_weapon_def(
     for off in [0x394, 0x398, 0x39c, 0x3a0, 0x3a4, 0x3a8, 0x48c] {
         follow_name(s, p, off)?;
     }
-    asset_ptr_at(s, links, AssetType::Material, p.at(0x578))?;
+    let kill_icon = follow_material_name(s, links, p.at(sz::WEAPON_DEF_KILL_ICON_OFF))?;
     asset_ptr_at(s, links, AssetType::Material, p.at(0x328))?;
     follow_name(s, p, 0x58c)?;
     follow_name(s, p, 0x590)?;
@@ -220,6 +222,7 @@ fn load_weapon_def(
     asset_ptr_at(s, links, AssetType::Fx, p.at(0x7f8))?;
     asset_ptr_at(s, links, AssetType::Fx, p.at(0x7fc))?;
     Ok(WeaponAssets {
+        kill_icon,
         gun: gun0,
         hand: hand0,
         rocket,
@@ -397,6 +400,7 @@ fn follow_material_name(
 
 #[derive(Default)]
 struct WeaponAssets {
+    kill_icon: Option<Ptr>,
     gun: Option<Ptr>,
     hand: Option<Ptr>,
     rocket: Option<Ptr>,

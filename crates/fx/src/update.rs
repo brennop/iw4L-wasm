@@ -2,8 +2,8 @@ use fx_iw4::{
     FX_ELEM_TYPE_SPARK_CLOUD, FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_STATUS_HAS_PENDING_LOOP_ELEMS,
     FX_STATUS_REF_COUNT_MASK_IW4, FxUpdateEffectBolt, axis_to_quat,
     begin_iterating_over_effects_exclusive, bolt_compose_orientation, bolt_mark_lost,
-    elem_norm_time, elem_uses_collision, end_iterating_over_effects, end_iterating_runs_gc,
-    unit_quat_to_axis, update_effect_bolt, vector_vectors,
+    elem_norm_time, elem_skips_position_update, elem_uses_collision, end_iterating_over_effects,
+    end_iterating_runs_gc, unit_quat_to_axis, update_effect_bolt, vector_vectors,
 };
 use std::collections::HashMap;
 
@@ -384,7 +384,7 @@ fn pending_collide_for_elem(
     if msec_now >= death {
         return None;
     }
-    if !elem_uses_collision(elem.flags) {
+    if !elem_uses_collision(elem.flags) && !elem_skips_position_update(elem.elem_type, elem.flags) {
         return None;
     }
     let def_index = elem.def_index;

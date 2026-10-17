@@ -8,6 +8,7 @@ pub mod packet;
 pub mod packing;
 pub mod products;
 pub mod retained;
+pub mod skinning;
 pub mod sun_effects;
 pub mod sun_shadow;
 pub mod texture_bind;
@@ -46,9 +47,8 @@ pub use packet::{
 };
 pub use products::{
     FrameMaterialRefusal, FrameProduct, FrameProductKind, FrameProductStatus,
-    FrameProductsSnapshot, MissingProductCause, PACKED_SEGMENT_OWNERS, PackedSegment,
-    PackedSegments, ProductTarget, RenderFocusFrame, SourceRevisions, SpotShadowFrameSlot,
-    publish_rows,
+    FrameProductsSnapshot, MissingProductCause, ProductTarget, RenderFocusFrame, SourceRevisions,
+    SpotShadowFrameSlot, publish_rows,
 };
 pub use retained::{
     BspCameraLane, LightAttenuationBind, RENDER_FX_DEPTH_HACK, RetainedDrawItem, RetainedDrawKind,

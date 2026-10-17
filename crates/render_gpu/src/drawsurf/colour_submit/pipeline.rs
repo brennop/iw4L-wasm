@@ -128,7 +128,14 @@ pub(super) fn kick_admitted_pipelines(
         views
             .iter()
             .map(|(target, msaa)| (target.main_texture_format(), msaa.map_or(1, Msaa::samples)))
-            .collect()
+            .fold(Vec::new(), |mut signatures, signature| {
+                // Pipelines depend on the attachment signature, not the number
+                // of cameras using it (for example, an outgoing transition view).
+                if !signatures.contains(&signature) {
+                    signatures.push(signature);
+                }
+                signatures
+            })
     };
     let generation_changed = kicked.generation != Some(extracted.world.generation);
     let views_changed = kicked.views != view_sig;

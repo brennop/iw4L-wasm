@@ -42,6 +42,7 @@ T6 common and map materials use captured native headers, technique sets, state,
 constants and textures. Missing captures or wrong source families refuse before
 adding a compiled material. Common weapons do not inherit IW4 material surfaces.
 Packed state decoding is shared; family adapters own alpha-test and draw rules.
+T6 static models use their captured light-grid palette selection with full SH coefficients; spatial sampling handles placements without an available authored palette row.
 
 Corrupt mip cache records with impossible level counts, truncation or trailing
 data are refused before construction.

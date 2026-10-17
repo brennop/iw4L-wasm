@@ -22,6 +22,7 @@ pub struct SimCamera {
     pub enabled: bool,
 
     pub freeze_fly: bool,
+    pub view_override: Option<CameraView>,
 }
 
 pub fn transform_from_iw_view(view: WorldCameraPose) -> Transform {
@@ -38,4 +39,10 @@ pub fn transform_from_iw_view(view: WorldCameraPose) -> Transform {
         rotation: Quat::from_mat3(&Mat3::from_cols(right, up, -forward)),
         ..default()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CameraView {
+    pub transform: Transform,
+    pub horizontal_fov: f32,
 }

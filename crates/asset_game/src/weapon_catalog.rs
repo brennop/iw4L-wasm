@@ -3,7 +3,7 @@ mod editor;
 mod model_linking;
 pub use editor::{EditorWeaponCatalog, EditorWeaponSelection};
 mod publication;
-use catalog_linking::{material_hint_edge, stamp_combat_fx};
+use catalog_linking::{material_hint_edge, stamp_combat_fx, stamp_mw2_tracer};
 mod capture_merge;
 use capture_merge::{
     apply_leftover_default_anim_overrides, apply_leftover_default_sound_overrides,
@@ -1329,6 +1329,7 @@ pub struct T6AttachmentModel {
 struct WeaponRow {
     preparation: WeaponPreparationRecipe,
     name: String,
+    native_script_name: String,
     alternate_weapon: Option<String>,
     impact_payload: Option<String>,
     alternate_index: u32,
@@ -1469,6 +1470,7 @@ impl Default for WeaponRow {
         Self {
             preparation: WeaponPreparationRecipe::native(crate::AssetNamespace::Iw4),
             name: String::new(),
+            native_script_name: String::new(),
             alternate_weapon: None,
             impact_payload: None,
             alternate_index: 0,
@@ -2091,6 +2093,13 @@ impl WeaponBuild {
     pub fn resolve_combat_fx(&mut self, fx: &crate::FxCatalog, tracers: &crate::TracerCatalog) {
         let n = self.registry.rows.len().min(self.combat_slots.len());
         for i in 1..n {
+            let category = {
+                let row = &self.registry.rows[i];
+                self.registry
+                    .item_groups
+                    .get(&(row.namespace, row.name.clone()))
+                    .and_then(|group| crate::cac_category_from_item_group(group))
+            };
             let row = &mut self.registry.rows[i];
             let Some(namespace) = row.component_namespace(WeaponComponent::Effect) else {
                 row.combat_fx.refuse_preparation();
@@ -2103,6 +2112,9 @@ impl WeaponBuild {
                 fx,
                 tracers,
             );
+            if row.namespace != crate::AssetNamespace::Iw4 {
+                stamp_mw2_tracer(&mut row.combat_fx, &row.facts, category, tracers);
+            }
             row.preparation.bind_combat_effects(
                 &mut row.combat_fx,
                 self.combat_slots[i],

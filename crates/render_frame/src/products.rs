@@ -71,47 +71,6 @@ pub fn publish_rows<T: PartialEq>(published: &mut Vec<T>, rebuilt: &mut Vec<T>) 
     true
 }
 
-pub const PACKED_SEGMENT_OWNERS: usize = 8;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct PackedSegment {
-    pub start: u32,
-
-    pub rows: u32,
-
-    pub revision: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct PackedSegments {
-    pub layout: u64,
-
-    pub live: bool,
-    pub owners: [PackedSegment; PACKED_SEGMENT_OWNERS],
-}
-
-impl PackedSegments {
-    pub fn forget(&mut self) {
-        self.live = false;
-        self.owners = [PackedSegment::default(); PACKED_SEGMENT_OWNERS];
-        self.layout = self.layout.wrapping_add(1);
-    }
-
-    pub fn publish(&mut self, owners: [PackedSegment; PACKED_SEGMENT_OWNERS]) {
-        let moved = !self.live
-            || self
-                .owners
-                .iter()
-                .zip(owners.iter())
-                .any(|(was, now)| was.start != now.start || was.rows != now.rows);
-        self.owners = owners;
-        self.live = true;
-        if moved {
-            self.layout = self.layout.wrapping_add(1);
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameProductKind {
     Depth,

@@ -39,17 +39,15 @@ pub(crate) const COMMAND_TIME_STEP_MS: i32 = 200;
 
 pub const MAX_COMMAND_STALL_MS: i32 = 1000;
 
-/// A queued head whose seq is past the expected one (datagrams lost) is skipped
-/// after this long, well before `MAX_COMMAND_STALL_MS` would kick the client.
-pub const COMMAND_GAP_SKIP_MS: i32 = 250;
+pub const LOST_COMMAND_HOLD_MS: i32 = 250;
+
+pub const MAX_COMMAND_LEAD_MS: i32 = 200;
 
 pub const MAX_COMMANDS_PER_PEER_PER_FRAME: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputBacklogFault {
     QueueCount { queued: usize },
-
-    QueueDuration { queued_ms: i32 },
 
     NoProgress { stalled_ms: i32 },
 }
@@ -61,11 +59,6 @@ impl core::fmt::Display for InputBacklogFault {
                 f,
                 "InputBacklogExceeded: {queued} unique commands queued (max \
                  {MAX_QUEUED_COMMANDS_PER_PEER})"
-            ),
-            Self::QueueDuration { queued_ms } => write!(
-                f,
-                "InputBacklogExceeded: {queued_ms} ms of command time queued (max \
-                 {MAX_QUEUED_COMMAND_MS})"
             ),
             Self::NoProgress { stalled_ms } => write!(
                 f,
@@ -190,6 +183,22 @@ impl ClientCommandInbox {
         if sequenced > MAX_QUEUED_COMMANDS_PER_PEER {
             return Some(InputBacklogFault::QueueCount { queued: sequenced });
         }
+        let head = queue.iter().find_map(|(seq, _, _)| *seq)?;
+        let blocked = self.blocked_head.entry(id).or_insert((head, time_ms));
+        if blocked.0 != head {
+            *blocked = (head, time_ms);
+        }
+        let stalled_ms = time_ms.saturating_sub(blocked.1);
+        if stalled_ms > MAX_COMMAND_STALL_MS {
+            return Some(InputBacklogFault::NoProgress { stalled_ms });
+        }
+        None
+    }
+
+    fn queued_ms(&self, id: ClientId, time_ms: i32) -> i32 {
+        let Some(queue) = self.queued.get(&id) else {
+            return 0;
+        };
         let mut queued_ms: i32 = 0;
         let mut previous: Option<i32> = self
             .last_consumed
@@ -211,19 +220,22 @@ impl ClientCommandInbox {
             }
             previous = Some(cmd.server_time);
         }
-        if queued_ms > MAX_QUEUED_COMMAND_MS {
-            return Some(InputBacklogFault::QueueDuration { queued_ms });
+        queued_ms
+    }
+
+    // A burst after a stalled relay can carry more command time than the
+    // budget. Running it would let the peer outpace real time, so the oldest
+    // commands are dropped as lost instead of retiring the peer.
+    fn shed_excess(&mut self, id: ClientId, time_ms: i32) {
+        while self.queued_ms(id, time_ms) > MAX_QUEUED_COMMAND_MS {
+            let Some((seq, cmd, _)) = self.queued.get_mut(&id).and_then(VecDeque::pop_front) else {
+                return;
+            };
+            if let Some(seq) = seq {
+                self.last_acked_seq.insert(id, seq.0);
+                self.last_consumed.insert(id, cmd);
+            }
         }
-        let head = queue.iter().find_map(|(seq, _, _)| *seq)?;
-        let blocked = self.blocked_head.entry(id).or_insert((head, time_ms));
-        if blocked.0 != head {
-            *blocked = (head, time_ms);
-        }
-        let stalled_ms = time_ms.saturating_sub(blocked.1);
-        if stalled_ms > MAX_COMMAND_STALL_MS {
-            return Some(InputBacklogFault::NoProgress { stalled_ms });
-        }
-        None
     }
 
     pub fn last_acked_seq(&self, id: ClientId) -> Option<CmdSeq> {
@@ -254,54 +266,22 @@ impl ClientCommandInbox {
         ids
     }
 
-    /// Commands lost in transit leave a seq gap the client cannot fill (acks are
-    /// cumulative, so it only resends what is still pending past the gap). Once
-    /// the head has been blocked for `COMMAND_GAP_SKIP_MS`, resume at its seq.
-    fn skip_lost_commands(&mut self, id: ClientId, time_ms: i32) {
-        let Some(head) = self
-            .queued
-            .get(&id)
-            .and_then(|queue| queue.iter().find_map(|(seq, _, _)| *seq))
-        else {
-            return;
-        };
-        let last = self.last_acked_seq.get(&id).copied().unwrap_or(0);
-        let expected = last.wrapping_add(1);
-        // Wrapping distance: a head "ahead" of expected by less than half the space.
-        let ahead = head.0.wrapping_sub(expected);
-        if ahead == 0 || ahead >= u32::MAX / 2 {
-            return;
-        }
-        let blocked_since = match self.blocked_head.get(&id) {
-            Some(&(blocked, since)) if blocked == head => since,
-            _ => return,
-        };
-        if time_ms.saturating_sub(blocked_since) < COMMAND_GAP_SKIP_MS {
-            return;
-        }
-        diag::warn!(
-            Net,
-            "client {}: skipped lost commands seq {}..={}",
-            id.0,
-            expected,
-            head.0.wrapping_sub(1)
-        );
-        self.last_acked_seq.insert(id, head.0.wrapping_sub(1));
-    }
-
     pub fn take_for_tick(&mut self, time_ms: i32) -> GatheredCommands {
         let mut out = GatheredCommands::default();
         for id in self.known_clients() {
-            // Record the blocked head first (backlog_fault owns that bookkeeping),
-            // then skip a real gap before NoProgress can fire on it.
-            let _ = self.backlog_fault(id, time_ms);
-            self.skip_lost_commands(id, time_ms);
+            // After an authority hitch the client's monotonic clock stays
+            // ahead; holding its commands until their stamp starves the peer.
+            if let Some(queue) = self.queued.get_mut(&id) {
+                for (_, cmd, _) in queue.iter_mut() {
+                    if cmd.server_time > time_ms.saturating_add(MAX_COMMAND_LEAD_MS) {
+                        cmd.server_time = time_ms;
+                    }
+                }
+            }
             // A datagram burst can contain more than one frame of runnable work.
             // Consume the bounded frame budget before measuring remaining debt.
             // Count and blocked-head limits still apply before any simulation.
-            if let Some(fault) = self.backlog_fault(id, time_ms)
-                && !matches!(fault, InputBacklogFault::QueueDuration { .. })
-            {
+            if let Some(fault) = self.backlog_fault(id, time_ms) {
                 out.backlog_faults.push((id, fault));
                 continue;
             }
@@ -320,10 +300,16 @@ impl ClientCommandInbox {
                         .iter()
                         .take_while(|(seq, cmd, _)| {
                             if let Some(seq) = seq {
-                                if seq.0 != expected || cmd.server_time > time_ms {
+                                // The client resends only its oldest unacked
+                                // command plus a small rotation, so on a lossy
+                                // relay a hole may never fill. Once the command
+                                // after it is overdue, the hole is lost.
+                                let lost = seq.0 > expected
+                                    && cmd.server_time <= time_ms - LOST_COMMAND_HOLD_MS;
+                                if (seq.0 != expected && !lost) || cmd.server_time > time_ms {
                                     return false;
                                 }
-                                expected = expected.wrapping_add(1);
+                                expected = seq.0.wrapping_add(1);
                             }
                             true
                         })
@@ -341,6 +327,7 @@ impl ClientCommandInbox {
             }
             drained.sort_by_key(|(seq, _, _)| *seq);
             if drained.is_empty() {
+                self.shed_excess(id, time_ms);
                 if let Some(fault) = self.backlog_fault(id, time_ms) {
                     out.backlog_faults.push((id, fault));
                     continue;
@@ -381,6 +368,7 @@ impl ClientCommandInbox {
             if let Some(seq) = ack {
                 out.acks.push((id, seq));
             }
+            self.shed_excess(id, time_ms);
             if let Some(fault) = self.backlog_fault(id, time_ms) {
                 out.backlog_faults.push((id, fault));
             }

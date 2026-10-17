@@ -118,7 +118,7 @@ impl Default for GameSettings {
             pad_curve: 0,
             pad_acceleration: true,
             pad_aim_assist: 0,
-            pad_prompts: 0,
+            pad_prompts: 1,
             pad_vibration: true,
             pad_deadzone_left: 0.12,
             pad_deadzone_right: 0.12,
@@ -177,7 +177,7 @@ impl GameSettings {
         self.pad_stick_layout = self.pad_stick_layout.min(3);
         self.pad_curve = self.pad_curve.min(2);
         self.pad_aim_assist = 0;
-        self.pad_prompts = self.pad_prompts.min(3);
+        self.pad_prompts = 1;
         let finite = |v: f32, lo: f32, hi: f32, default: f32| {
             if v.is_finite() {
                 v.clamp(lo, hi)

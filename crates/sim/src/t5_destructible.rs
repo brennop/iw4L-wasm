@@ -8,6 +8,7 @@ pub(crate) struct State {
     definition: Arc<T5DestructibleDef>,
     health: Vec<i16>,
     timers: Vec<(usize, usize, f32, i32)>,
+    effects: Vec<(usize, u64)>,
     initial_model: String,
     initial_hide_parts: xmodel_runtime::HidePartBits,
 }
@@ -17,6 +18,7 @@ pub fn install(dobj: &mut AuthorityDObjState, definition: Arc<T5DestructibleDef>
         health: definition.pieces.iter().map(|p| p.health as i16).collect(),
         definition,
         timers: Vec::new(),
+        effects: Vec::new(),
         initial_model: dobj.current_model.clone(),
         initial_hide_parts: dobj.semantic_state.hide_part_bits,
     });
@@ -178,10 +180,20 @@ fn publish(
         .as_ref()
         .and_then(|cap| cap.pose(&dobj.pose_request, dobj.world_from_model).ok());
     let mut events = Vec::new();
+    let mut effects = Vec::new();
+    let mut stopped = Vec::new();
     let mut debris = Vec::new();
     for event in breaks {
         let piece = &definition.pieces[event.piece];
         let st = &piece.stages[event.stage];
+        state.effects.retain(|(piece, id)| {
+            if *piece == event.piece {
+                stopped.push(*id);
+                false
+            } else {
+                true
+            }
+        });
 
         let bone = dobj.capability.as_ref().and_then(|cap| {
             cap.pose
@@ -256,12 +268,17 @@ fn publish(
         if let Some(notify) = &st.break_notify {
             callbacks.push(notify.clone());
         }
-        if let Some(fx) = &st.break_effect {
-            events.push((
-                entity_iw4::EntityEventKind::PLAY_FX,
+        if let Some(fx) = st.break_effect.as_ref().filter(|_| {
+            !st.break_effect_looping
+                || piece.stage(event.piece, state.health[event.piece]) == Some(event.stage + 1)
+        }) {
+            effects.push((
+                event.piece,
+                st.break_effect_looping,
                 fx.clone(),
                 origin,
                 direction,
+                matrix.z_axis.truncate().normalize().to_array(),
             ));
         }
         if let Some(sound) = &st.break_sound {
@@ -274,6 +291,9 @@ fn publish(
         }
     }
     update_hide_parts(dobj);
+    for id in stopped {
+        crate::script::stop_destructible_effect(world.ecs(), id);
+    }
     for (part, offset, half, velocity) in debris {
         crate::script::destructible_debris(world.ecs(), part, offset, half, velocity);
     }
@@ -309,11 +329,21 @@ fn publish(
             ],
         );
     }
-    for (kind, name, origin, direction) in events {
-        if kind == entity_iw4::EntityEventKind::PLAY_FX {
-            crate::script::destructible_effect(world.ecs(), name, origin, direction);
-            continue;
+    for (piece, looping, name, origin, direction, up) in effects {
+        if let Some(id) =
+            crate::script::destructible_effect(world.ecs(), name, origin, direction, up)
+            && looping
+            && let Some(state) = world
+                .entity_collision_capabilities_mut()
+                .iter_mut()
+                .find(|row| row.owner == owner)
+                .and_then(|row| row.dobj.as_mut())
+                .and_then(|dobj| dobj.t5_destructible.as_mut())
+        {
+            state.effects.push((piece, id));
         }
+    }
+    for (kind, name, origin, direction) in events {
         let index = world.sound_alias_index(&name);
         world.push_entity_event(
             tick,
@@ -528,6 +558,7 @@ pub(crate) fn restart(world: &mut FrameWorld) {
             .map(|p| p.health as i16)
             .collect();
         state.timers.clear();
+        state.effects.clear();
         dobj.replace_model(&model, capability);
         dobj.semantic_state.hide_part_bits = hide;
         dobj.pose_request.hide_part_bits = hide;

@@ -4,12 +4,12 @@
 
 use super::conn::{Conn, ConnRecv, ConnSend, MasterConn, MasterRecvStream, MasterSendStream};
 #[cfg(target_arch = "wasm32")]
-use super::conn_web::connect;
+pub(super) use super::conn_web::connect;
 use super::rt;
 use super::*;
 use super::{Error, Result};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -60,7 +60,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn endpoint_build() -> String {
+pub(super) fn endpoint_build() -> String {
     format!(
         "iw4l-net/{} game={} master={}",
         env!("CARGO_PKG_VERSION"),
@@ -286,6 +286,7 @@ fn arm_master_browser(
 }
 
 fn apply_master_menu_action(
+    dvars: Res<frame::UiMenuDvars>,
     mut pending: ResMut<PendingMasterMenuAction>,
     mut intent: ResMut<MasterLaunchIntent>,
     mut role: ResMut<frame::RuntimeRole>,
@@ -312,6 +313,12 @@ fn apply_master_menu_action(
         }
         MasterMenuAction::UpdateLobby { map, mode } => {
             if let Some(bridge) = bridge {
+                if let Some(families) = bridge.state().families()
+                    && let Err(error) = families.require_map(&map)
+                {
+                    diag::warn!(Net, "{error}");
+                    return;
+                }
                 bridge.send(MasterBridgeCommand::UpdateLobby { map, mode });
             } else {
                 diag::warn!(Net, "master lobby update requested without a live bridge");
@@ -320,6 +327,12 @@ fn apply_master_menu_action(
         }
         MasterMenuAction::StartMatch { map, mode } => {
             if let Some(bridge) = bridge {
+                if let Some(families) = bridge.state().families()
+                    && let Err(error) = families.require_map(&map)
+                {
+                    diag::warn!(Net, "{error}");
+                    return;
+                }
                 bridge.send(MasterBridgeCommand::StartMatch { map, mode });
             } else {
                 diag::warn!(Net, "master lobby start requested without a live bridge");
@@ -377,7 +390,11 @@ fn apply_master_menu_action(
             mode,
             password,
         } => {
-            let requires = match content_required_by_map(&map) {
+            let requires = match frame::AssetFamilies::from_inventory(browser.have.0, &dvars)
+                .and_then(|families| {
+                    families.require_map(&map)?;
+                    Ok(ContentFlags(families.0))
+                }) {
                 Ok(value) => value,
                 Err(error) => {
                     diag::warn!(Net, "master host content: {error}");
@@ -713,6 +730,12 @@ fn apply_master_lifecycle(
 }
 
 pub fn register_master_bridge(app: &mut App) {
+    // The browser has no community files to poll.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_systems(
+        Update,
+        super::population::poll_communities.in_set(crate::ClientSet::Load),
+    );
     app.init_resource::<PendingMasterMenuAction>()
         .add_systems(
             Update,
@@ -831,6 +854,7 @@ fn observe_master_bridge(
             map: map.to_owned(),
             mode: mode.to_owned(),
             match_key: identity.match_key(),
+            families: current.families().expect("live room asset families"),
         });
         *seen_start = Some((identity.room_id, identity.epoch));
     }
@@ -1479,6 +1503,7 @@ fn publish_room_view(
             max_players: view.max_players,
             skip_votes,
             in_match,
+            families: frame::AssetFamilies(view.requires.0),
         };
         return;
     }
@@ -1493,6 +1518,7 @@ fn publish_room_view(
             max_players: view.max_players,
             skip_votes,
             in_match,
+            families: frame::AssetFamilies(view.requires.0),
         };
     } else {
         *current = MasterBridgeState::Joining { identity };
@@ -1832,11 +1858,20 @@ fn handle_frame(
                 | ResponseBody::RoomJoined { member_id, view } => (view, member_id),
                 ResponseBody::RoomUpdated { view } => (view, identity.member_id),
                 ResponseBody::Error(error) => {
-                    return Err(TransportFault::new("control_rpc", role, error.to_string()));
+                    let message = match &error {
+                        master_protocol::ServiceError::MissingContent { requires, have } => {
+                            frame::AssetFamilies(requires.0)
+                                .missing_notice(have.0)
+                                .unwrap_or_else(|| error.to_string())
+                        }
+                        _ => error.to_string(),
+                    };
+                    return Err(TransportFault::new("control_rpc", role, message));
                 }
                 ResponseBody::RoomLeft
                 | ResponseBody::Ack
                 | ResponseBody::Status(_)
+                | ResponseBody::Population { .. }
                 | ResponseBody::RoomList { .. } => return Ok(()),
             };
             apply_room_view(
@@ -2061,17 +2096,18 @@ fn apply_peer_event(
                         now_ms: now_ms(),
                     },
                 );
-                // A peer that reported its map and drew no effect is a peer
-                // that will wait out the match in the loading screen. Name the
-                // gate that owes it an offer.
-                if applied.effects.is_empty() {
+                // MapLoaded can arrive before AuthorityReady. The core retains
+                // that report and offers its bootstrap when the host is ready.
+                // Repeated reports from an admitted peer also need no effect.
+                if !applied.accepted {
                     diag::warn!(
                         Net,
-                        "peer map loaded admits nothing: epoch={epoch} host_phase={:?} host_match={:?} host_world={:?} peer={:?} — no bootstrap offer will follow",
+                        "peer map loaded rejected: epoch={epoch} host_phase={:?} host_match={:?} host_world={:?} peer={:?} transition={}",
                         host_match.phase(),
                         host_match.match_key(),
                         host_match.host_world(),
                         host_match.peer(member_id).map(|peer| peer.phase),
+                        applied.transition,
                     );
                 }
                 execute_host_match_effects(
@@ -2422,6 +2458,10 @@ async fn gameplay_egress(
     is_host: bool,
 ) -> std::result::Result<(), TransportFault> {
     let mut fragmenter = relay_fragmenter();
+    // Quinn reserves bookkeeping space even for an empty datagram buffer. The
+    // browser transports report no buffer, and send every packet at once.
+    let empty_buffer_space = connection.datagram_send_buffer_space();
+    let mut pending: VecDeque<(MemberId, Vec<u8>)> = VecDeque::new();
     let mut tick = rt::interval(QUEUE_POLL);
     let mut sampled = web_time::Instant::now();
     loop {
@@ -2431,36 +2471,81 @@ async fn gameplay_egress(
                 if sampled.elapsed() >= Duration::from_millis(100) {
                     sampled = web_time::Instant::now();
                     if let Some(path) = connection.path_stats() {
+                        let queued = match (empty_buffer_space, connection.datagram_send_buffer_space()) {
+                            (Some(empty), Some(free)) => empty.saturating_sub(free) as u64,
+                            _ => path.queued,
+                        };
                         perf::net_path(
                             role,
                             path.rtt_us,
                             path.cwnd,
                             path.lost_packets,
                             path.congestion_events,
-                            path.queued,
+                            queued,
                         );
                     }
                 }
                 for (member, packet) in mailbox.take_outbound() {
-                    let fragments = match fragmenter.split(&packet) {
+                    // Gameplay packets carry the newest input/snapshot plus
+                    // unacknowledged reliable rows. Replace unsent older state
+                    // for this peer rather than building a latency backlog.
+                    if let Some((_, previous)) = pending.iter_mut().find(|(id, _)| *id == member) {
+                        *previous = packet;
+                    } else {
+                        pending.push_back((member, packet));
+                    }
+                }
+                while let Some((member, packet)) = pending.front() {
+                    let fragments = match fragmenter.split(packet) {
                         Ok(fragments) => fragments,
                         Err(error) => {
                             diag::warn!(Net, "master {role} packet not splittable: {error}");
+                            pending.pop_front();
                             continue;
                         }
                     };
-                    for fragment in fragments {
+                    let mut datagrams = Vec::with_capacity(fragments.len());
+                    for fragment in &fragments {
                         let datagram = if is_host {
                             RelayDatagram::HostToMember {
-                                member_id: member,
-                                payload: &fragment,
+                                member_id: *member,
+                                payload: fragment,
                             }
                         } else {
-                            RelayDatagram::ClientToHost(&fragment)
+                            RelayDatagram::ClientToHost(fragment)
                         };
-                        let bytes = encode_relay(datagram).map_err(|error| {
+                        datagrams.push(encode_relay(datagram).map_err(|error| {
                             TransportFault::with_connection("encode_relay", role, error, &connection)
-                        })?;
+                        })?);
+                    }
+                    if let (Some(empty), Some(free)) =
+                        (empty_buffer_space, connection.datagram_send_buffer_space())
+                    {
+                        let wire_bytes = datagrams.iter().map(Vec::len).sum::<usize>();
+                        if wire_bytes > DATAGRAM_SEND_BUFFER {
+                            return Err(TransportFault::with_connection(
+                                "send_datagram",
+                                role,
+                                "fragmented gameplay packet exceeds the send buffer",
+                                &connection,
+                            ));
+                        }
+                        let queued = empty.saturating_sub(free);
+                        let window = connection
+                            .path_stats()
+                            .map_or(usize::MAX, |path| path.cwnd as usize);
+                        // Queue complete packets together. Quinn discards oldest
+                        // datagrams when its buffer fills, which can otherwise leave
+                        // every fragmented snapshot incomplete. One packet may exceed
+                        // the congestion window, but never enqueue a history behind it.
+                        if wire_bytes > free
+                            || (queued != 0 && queued.saturating_add(wire_bytes) > window)
+                        {
+                            break;
+                        }
+                    }
+                    pending.pop_front();
+                    for bytes in datagrams {
                         if let Err(error) = connection.send_datagram(bytes) {
                             return Err(TransportFault::with_connection(
                                 "send_datagram",
@@ -2521,7 +2606,7 @@ async fn read_owned_frame(mut recv: ConnRecv) -> (ConnRecv, Result<ControlFrame>
     (recv, frame)
 }
 
-async fn read_frame(recv: &mut ConnRecv) -> Result<ControlFrame> {
+pub(super) async fn read_frame(recv: &mut ConnRecv) -> Result<ControlFrame> {
     let mut header = [0_u8; 4];
     recv.read_exact(&mut header).await?;
     let len = stream_frame_len(header)?;
@@ -2530,12 +2615,12 @@ async fn read_frame(recv: &mut ConnRecv) -> Result<ControlFrame> {
     Ok(decode_stream_payload(&body)?)
 }
 
-async fn write_frame(send: &mut ConnSend, frame: &ControlFrame) -> Result<()> {
+pub(super) async fn write_frame(send: &mut ConnSend, frame: &ControlFrame) -> Result<()> {
     send.write_all(&encode_stream_frame(frame)?).await?;
     Ok(())
 }
 
-async fn io_timeout<T>(
+pub(super) async fn io_timeout<T>(
     cancel: &CancellationToken,
     fut: impl std::future::Future<Output = std::result::Result<T, impl Into<Error>>>,
 ) -> Result<T> {
@@ -2552,7 +2637,7 @@ async fn io_timeout<T>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn connect(
+pub(super) async fn connect(
     target: &MasterTarget,
     cancel: &CancellationToken,
 ) -> Result<(quinn::Endpoint, Conn)> {
@@ -2571,6 +2656,7 @@ async fn connect(
         quinn::IdleTimeout::try_from(SESSION_IDLE).expect("session idle fits QUIC VarInt"),
     ));
     transport.keep_alive_interval(Some(SESSION_KEEP_ALIVE));
+    transport.datagram_send_buffer_size(DATAGRAM_SEND_BUFFER);
     transport.max_concurrent_uni_streams(MAX_RELAY_UNI_STREAMS.into());
     client_config.transport_config(Arc::new(transport));
 

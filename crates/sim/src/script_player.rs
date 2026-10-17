@@ -49,6 +49,7 @@ pub(crate) fn spawn(
     };
     world.unlink_player_area(id);
     world.client_meta_mut(id).shield = None;
+    let prev_health = world.player(id).map(|p| p.health);
     let mut ps = spawn_player_state(origin, angles);
     if let Some(max) = world
         .client_meta(id)
@@ -56,8 +57,12 @@ pub(crate) fn spawn(
         .filter(|&n| n > 0)
     {
         ps.max_health = max;
-        ps.health = max;
     }
+    ps.health = match sessionstate {
+        "playing" => ps.max_health,
+        "dead" | "intermission" => prev_health.unwrap_or(0),
+        _ => 0,
+    };
     let cmd = spawn_command_angles(world, id);
     ps.delta_angles = std::array::from_fn(|axis| angles[axis] - cmd[axis] as f32 * SHORT2ANGLE);
     let prev_teleport = world
@@ -309,7 +314,15 @@ pub(crate) fn finish_damage(
     };
     movement_iw4::update_damage_timer(ps, amount, dir);
     ps.health = (ps.health - amount.max(0)).max(0);
-    ps.damage_count = ps.damage_count.saturating_add(1);
+    if let Some(dir) = dir.filter(|dir| *dir != [0.0; 3]) {
+        let angles = math_iw4::vect_to_angles(dir);
+        ps.damage_pitch = (angles[0] / 360.0 * 256.0) as u32 & 0xff;
+        ps.damage_yaw = (angles[1] / 360.0 * 256.0) as u32 & 0xff;
+    } else {
+        ps.damage_pitch = 255;
+        ps.damage_yaw = 255;
+    }
+    ps.damage_count = amount.clamp(0, 127);
     ps.damage_event = ps.damage_event.wrapping_add(1);
     if ps.health > 0 {
         return Finish::Hurt;

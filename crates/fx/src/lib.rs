@@ -37,7 +37,9 @@ pub use marks::{
     FxMarksSystemHost, GfxMarkMeshCensus, GfxMarkMeshSurf, MarkImpactRequest, MarkImpactResult,
     MarkReceiverEnable, MarkTraceRecord,
 };
-pub use motion::{evaluate_elem_collide_motion, evaluate_elem_motion};
+pub use motion::{
+    evaluate_elem_collide_motion, evaluate_elem_motion, evaluate_elem_physics_motion,
+};
 pub use play::{
     FxPlayPose, FxPlayRequest, PlayResult, axis_from_hit_normal, axis_from_impact_velocity,
     play_at_origin, play_bolted, play_oriented, spawn_impact_or_death_effect, spawn_oriented,

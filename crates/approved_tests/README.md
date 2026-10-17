@@ -24,6 +24,8 @@ nowhere else: maps, seed rule, scenes, positions, angles, weapons, durations
 and input. To pin a scene to an owner-chosen position, replace its `Place`
 there; the runner does not change.
 
+The heavy scenario uses a 2560×1440 window with vsync off, recorded alongside the observed render target in `run.json`.
+
 The heavy scenario also plants a claymore, drops a weapon through player death,
 restarts the script round in place, and captures entity and resource ownership at gameplay and teardown boundaries.
 Both scenarios use isolated accounts and wait for native progression content and run `unlock all` from the menu before

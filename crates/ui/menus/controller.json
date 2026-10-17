@@ -1066,20 +1066,8 @@
      "dvar": "ui_pad_prompts",
      "choices": [
       [
-       "Auto",
-       "0"
-      ],
-      [
        "Xbox",
        "1"
-      ],
-      [
-       "PlayStation",
-       "2"
-      ],
-      [
-       "Generic",
-       "3"
       ]
      ],
      "vis_exp": "1",

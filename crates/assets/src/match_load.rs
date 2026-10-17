@@ -29,12 +29,15 @@ pub struct MatchLoadRequest {
     pub zone_ff: Result<PathBuf, String>,
     pub common_mp: Result<PathBuf, String>,
     pub progress: LoadProgress,
+    pub families: frame::AssetFamilies,
 }
 
 #[derive(Resource)]
 struct MatchLoadTask {
     task: Task<Result<Option<PreparedMatchReady>, MapLoadFailed>>,
     request_id: u64,
+    load_key: frame::LocalLoadKey,
+    zone: String,
     progress: LoadProgress,
 }
 
@@ -43,6 +46,7 @@ pub struct MatchLoadAccepted {
     pub request_id: u64,
     pub load_key: frame::LocalLoadKey,
     pub zone: String,
+    pub families: frame::AssetFamilies,
 }
 
 #[derive(Resource)]
@@ -139,6 +143,7 @@ fn start_match_load(
     let load_key = request.load_key;
     let zone = request.zone.clone();
     let zone_accepted = zone.clone();
+    let zone_task = zone.clone();
     let cancel_handle = progress.clone();
     // The process outlives the overlay and every task this spawns: it is what
     // the table reads, what admission finishes, and what the bench still has
@@ -150,17 +155,21 @@ fn start_match_load(
         cancel_handle.clone(),
     ));
 
+    let families = request.families;
     let games = identity.map(|identity| asset_transport::GamesRoot(identity.games_root.clone()));
     let task = crate::session_load::load_pool().spawn(async move {
         let sound_path = zone_ff.clone();
-        match load_prepared_match(zone_ff, common_mp, progress.clone()).await {
+        match load_prepared_match(zone_ff, common_mp, progress.clone(), families).await {
             MatchLoadOutcome::Ready(mut prepared) => {
                 if progress.is_canceled() {
                     return Ok(None);
                 }
                 prepared.sound = Some(match (games, sound_path) {
                     (Some(games), Ok(path)) => {
-                        let sources = asset_audio::gather_sound_sources(&games, &path);
+                        let sources =
+                            asset_audio::gather_sound_sources_filtered(&games, &path, |ns| {
+                                families.enabled(ns.as_str())
+                            });
                         let map = prepared
                             .sound
                             .take()
@@ -207,6 +216,7 @@ fn start_match_load(
                 request_id,
                 load_key,
                 zone: zone_accepted,
+                families,
             },
             frame::MatchScope::Loading,
         );
@@ -217,6 +227,8 @@ fn start_match_load(
             MatchLoadTask {
                 task,
                 request_id,
+                load_key,
+                zone: zone_task,
                 progress: cancel_handle,
             },
             frame::MatchScope::Loading,
@@ -230,6 +242,9 @@ fn approve_map_load(
     mut approved: MessageReader<MapLoadApproved>,
     mut failed: MessageWriter<MapLoadFailed>,
     identity: Res<LaunchIdentity>,
+    role: Res<frame::RuntimeRole>,
+    dvars: Res<frame::UiMenuDvars>,
+    server_families: Option<Res<frame::AssetFamilies>>,
     abort: Option<Res<MatchLoadAbort>>,
 ) {
     for request in approved.read() {
@@ -246,6 +261,44 @@ fn approve_map_load(
             continue;
         }
         let games = asset_transport::GamesRoot(identity.games_root.clone());
+        let trees = asset_transport::NamespaceTrees::discover(&games);
+        let have = trees.present().fold(0, |mask, (ns, _)| {
+            mask | match ns.as_str() {
+                "iw4" => 1,
+                "iw5" => 2,
+                "t5" => 4,
+                "t6" => 8,
+                _ => 0,
+            }
+        });
+        let selection =
+            if *role == frame::RuntimeRole::Client || !request.load_key.match_key.is_none() {
+                server_families
+                    .as_deref()
+                    .copied()
+                    .ok_or_else(|| "Server asset families were not supplied".to_owned())
+            } else {
+                frame::AssetFamilies::from_inventory(have, &dvars)
+            };
+        let selection = selection.and_then(|families| {
+            families.require_map(&request.zone)?;
+            if let Some(message) = families.missing_notice(have) {
+                return Err(message);
+            }
+            Ok(families)
+        });
+        let families = match selection {
+            Ok(families) => families,
+            Err(error) => {
+                failed.write(MapLoadFailed {
+                    request_id: request.request_id,
+                    load_key: request.load_key,
+                    zone: request.zone.clone(),
+                    error,
+                });
+                continue;
+            }
+        };
         let found = asset_transport::find_zone_file(&games, &request.zone);
         let zone = found
             .as_ref()
@@ -280,6 +333,7 @@ fn approve_map_load(
             zone_ff,
             common_mp,
             progress,
+            families,
         });
     }
 }
@@ -307,8 +361,13 @@ fn poll_match_load(
             task.request_id
         );
     }
-    let Some(outcome) = future::block_on(future::poll_once(&mut task.task)) else {
-        return;
+    let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        future::block_on(future::poll_once(&mut task.task))
+    }));
+    let outcome = match polled {
+        Ok(None) => return,
+        Ok(Some(outcome)) => outcome,
+        Err(panic) => Err(walk_panic_failure(task, panic.as_ref())),
     };
     let request_id = task.request_id;
     inflight.0 = false;
@@ -367,6 +426,26 @@ fn poll_match_load(
     commands.queue(move |world: &mut World| {
         frame::scope::insert(world, ready, frame::MatchScope::Loading);
     });
+}
+
+fn walk_panic_failure(task: &MatchLoadTask, panic: &(dyn std::any::Any + Send)) -> MapLoadFailed {
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("no message");
+    diag::error!(
+        World,
+        "match load: walk request #{} (`{}`) panicked: {message} — reported as a failed map load",
+        task.request_id,
+        task.zone
+    );
+    MapLoadFailed {
+        request_id: task.request_id,
+        load_key: task.load_key,
+        zone: task.zone.clone(),
+        error: format!("The load stopped on an internal error: {message}"),
+    }
 }
 
 fn expire_match_load_abort(

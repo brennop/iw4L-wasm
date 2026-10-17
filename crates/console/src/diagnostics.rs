@@ -55,7 +55,7 @@ fn finish_replay_playback(
     let Some(playback) = playback.as_mut() else {
         return;
     };
-    if !playback.ended || playback.exit_queued {
+    if !playback.ended || playback.exit_queued || playback.retain_at_end {
         return;
     }
     playback.exit_queued = true;

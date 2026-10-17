@@ -17,9 +17,11 @@ game. Keep them this short: nobody opens a long file twice.
 | [`RENDER.md`](RENDER.md) | the nine crates of the island, the frame path `IR → cull → one drawsurf list → tess → material → SM3 → wgpu`, GPU-side ownership, the `d3d9_*` border | touching the picture, techsets, lighting |
 | [`MATERIALS.md`](MATERIALS.md) | compiled material state, preparation generations, dynamic dependencies and adaptation provenance | changing material preparation or state admission |
 | [`PRESENTATION.md`](PRESENTATION.md) | fire product receipts, immutable UI lookup owners, editor capabilities and appearance refusals | changing presentation ownership or retry policy |
+| [`THEATER.md`](THEATER.md) | saved films and clips, previews, local editor controls, camera keys and cut export | playing or editing a recording |
 | [`KILLCAM.md`](KILLCAM.md) | archived cameras, life clipping, sound and FX transitions | projectile or autonomous weapon killcams |
 | [`AUDIO.md`](AUDIO.md) | client AudioRuntime, control/render/device threads, fixed slots, virtualization and offline PCM execution | touching sound ownership, playback or callback resources |
 | [`CUES.md`](CUES.md) | compiled cue semantics, typed spatial/routing requirements, media decode policy and revision ownership | changing cue or media preparation |
+| [`SERVER-ASSETS.md`](SERVER-ASSETS.md) | enabling optional games, join requirements and disabled-family loading | configuring a host for players with fewer games |
 | [`FAMILIES.md`](FAMILIES.md) | family identity, native dependencies, map-selected characters and supported FPV combinations | changing cross-family composition |
 | [`WEAPONS.md`](WEAPONS.md) | weapon configuration resolution, published consumer projections, host rules and registry lifetimes | changing attachments, combat or FPV preparation |
 | [`ANIM.md`](ANIM.md) | three floors: `anim_iw4` (facts and curves), `xmodel_runtime` (tree and pose), who picks the clip (`sim` / `render_frontend/adapters/anim/`) | viewmodel, skeleton, bone hits |
@@ -30,4 +32,5 @@ game. Keep them this short: nobody opens a long file twice.
 | [`GSC-RUNTIME.md`](GSC-RUNTIME.md) | GSC → executable IR → Bevy runtime; args, arrays and tables still share one `Runtime` | implementing gameplay or script execution |
 | [`POSTFX.md`](POSTFX.md) | authored map-family film, bloom and highlight profiles; remaining effects | comparing game-family presentation |
 | [`GSC-POSTFX.md`](GSC-POSTFX.md) | script vision, color correction, blur, DoF and bloom | authoring or debugging GSC post effects |
+| [`KILLSTREAKS.md`](KILLSTREAKS.md) | EMP ownership and sentry script/engine boundaries, including the missing visible turret aim pose | checking killstreak damage or sentry rotation |
 | [`BOTS.md`](BOTS.md) | host AI: the per-tick pipeline, what a probe that never ran may not claim, the shared query budget, resumable routes, fighting from a position | bot decisions, bot movement, "why is it standing there" |

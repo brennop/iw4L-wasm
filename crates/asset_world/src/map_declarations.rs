@@ -123,6 +123,12 @@ impl MapDeclarations {
             );
         }
         out.push_str("\n\tmaps\\mp\\_load::main();\n");
+        if entity_blocks(entities)
+            .iter()
+            .any(|entity| entity.get("targetname").map(String::as_str) == Some("explodable_barrel"))
+        {
+            out.push_str("\tiw4l_maps\\barrels::main();\n");
+        }
         if let Some(compass) = &self.compass {
             let _ = writeln!(out, "\tmaps\\mp\\_compass::setupMiniMap( \"{compass}\" );");
         }

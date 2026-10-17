@@ -9,6 +9,8 @@ use weapon_iw4::{
 
 pub const CONTENTS_SOLID: u32 = 0x0000_0001;
 
+pub const CONTENTS_SKY: u32 = 0x0000_0800;
+
 pub const MASK_PLAYER_SOLID: u32 = 0x0281_0011;
 
 pub const MASK_SHOT: u32 = 0x0280_6831;
@@ -372,6 +374,18 @@ impl AuthorityDObjState {
             self.pose_revision,
         );
         self.pose_request = xmodel_runtime::DObjPoseRequest::bind_pose();
+    }
+
+    pub fn set_tag_rotations(&mut self, rotations: Vec<xmodel_runtime::TagRotation>) {
+        if self.semantic_state.tag_rotations == rotations {
+            return;
+        }
+        self.pose_request.tag_rotations = rotations.clone();
+        self.semantic_state.tag_rotations = rotations;
+        self.pose_revision = self.pose_revision.wrapping_add(1);
+        self.semantic_state.pose_revision = self.pose_revision;
+        self.materialized_pose_revision = None;
+        self.current_collision = None;
     }
 
     pub fn set_attachments(&mut self, attachments: &[(&str, &str)]) {

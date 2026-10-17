@@ -538,6 +538,11 @@ pub fn inflate_zlib(data: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("zlib inflate: {error:?}"))
 }
 
+pub fn inflate_deflate(data: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    miniz_oxide::inflate::decompress_to_vec_with_limit(data, limit)
+        .map_err(|error| format!("deflate inflate: {error:?}"))
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct IwdSoundIndex {
     dir: PathBuf,

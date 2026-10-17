@@ -739,10 +739,16 @@ pub(crate) fn text_width(font: &FontDef, text: &str) -> i32 {
             width = 0;
             continue;
         }
-        let Some(glyph) = font.glyph(letter) else {
+        let dx = if char::from_u32(letter)
+            .and_then(frame::ControllerIcon::from_char)
+            .is_some()
+        {
+            font.pixel_height
+        } else if let Some(glyph) = font.glyph(letter) {
+            i32::from(glyph.dx)
+        } else {
             continue;
         };
-        let dx = i32::from(glyph.dx);
         width += dx;
         if max_width < width {
             max_width = width;
@@ -942,10 +948,12 @@ fn push_stretch(
         );
         if rest.w > f32::EPSILON && rest.w < surface.width() {
             let grow = surface.width() / rest.w;
-            let centre = applied.x + applied.w * 0.5;
+            let centre_x = applied.x + applied.w * 0.5;
+            let centre_y = applied.y + applied.h * 0.5;
             applied.w *= grow;
             applied.h *= grow;
-            applied.x = centre - applied.w * 0.5;
+            applied.x = centre_x - applied.w * 0.5;
+            applied.y = centre_y - applied.h * 0.5;
         }
     }
     let color = style.fill_color(item);

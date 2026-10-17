@@ -5,6 +5,8 @@ use crate::scenario::{
     MapB, Phase, Place, ResolvedScene, Scenario, Scene, Weapon, capture_commands,
 };
 
+pub const RESOLUTION: (u32, u32) = (2560, 1440);
+
 pub const SCENARIO: Scenario = Scenario {
     name: "heavy_gameplay_lifecycle",
     gametype: "dm",

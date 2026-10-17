@@ -125,6 +125,25 @@ pub(crate) fn settle_collision(world: &mut World) {
             (presence, (origin, angles, hidden, solid))
         })
         .collect();
+    let turrets: Vec<_> = runtime
+        .engine
+        .turrets
+        .iter()
+        .filter_map(|(object, turret)| {
+            Some((
+                *object,
+                runtime.entities.get(object)?.presence?,
+                turret.clone(),
+            ))
+        })
+        .collect();
+    let rotations: BTreeMap<_, _> = turrets
+        .into_iter()
+        .map(|(object, presence, turret)| {
+            let base = vector(&mut runtime, object, "angles");
+            (presence, turret.model_rotations(base))
+        })
+        .collect();
     let mut frame = FrameWorld::from_world(world);
     for row in frame.entity_collision_capabilities_mut() {
         let Some(&(origin, angles, hidden, solid)) =
@@ -134,6 +153,11 @@ pub(crate) fn settle_collision(world: &mut World) {
         };
         row.hidden = hidden;
         row.solid = solid;
+        if let Some(rotations) = row.owner.script_model().and_then(|id| rotations.get(&id))
+            && let Some(dobj) = row.dobj.as_mut()
+        {
+            dobj.set_tag_rotations(rotations.clone());
+        }
         let settled = row
             .followed_pose
             .is_some_and(|(at, facing)| near(at, origin) && near_angles(facing, angles));
@@ -289,25 +313,54 @@ fn present(world: &mut World, now: i32) {
     }
 }
 
-fn tag_lookup(world: &mut World, object: u64, tag: &str) -> Option<Option<[f32; 3]>> {
+fn with_tag_dobj<T>(
+    world: &mut World,
+    object: u64,
+    read: impl FnOnce(&AuthorityDObjState) -> Option<T>,
+) -> Option<T> {
     let presence = world
         .resource::<RoundScript>()
         .entities
         .get(&object)?
         .presence?;
     let frame = settled(world);
-    let dobj = frame
+    if let Some(dobj) = frame
         .entity_collision_capabilities()
         .iter()
         .find(|row| row.owner.script_model() == Some(presence))?
         .dobj
-        .as_ref()?;
-    Some(dobj.tag_world_pose(tag).map(|(at, _)| {
-        dobj.world_from_model
-            .inverse()
-            .transform_point3(glam::Vec3::from(at))
-            .to_array()
-    }))
+        .as_ref()
+    {
+        return read(dobj);
+    }
+    let (model, origin, angles) = {
+        let mut runtime = world.resource_mut::<RoundScript>();
+        (
+            model_field(&mut runtime, object)?,
+            vector(&mut runtime, object, "origin"),
+            vector(&mut runtime, object, "angles"),
+        )
+    };
+    let capability = FrameWorld::from_world(world)
+        .model_capability(&model)
+        .flatten()?;
+    read(&AuthorityDObjState::at_pose(
+        &model,
+        Some(capability),
+        origin,
+        angles,
+    ))
+}
+
+fn tag_lookup(world: &mut World, object: u64, tag: &str) -> Option<Option<[f32; 3]>> {
+    with_tag_dobj(world, object, |dobj| {
+        Some(dobj.tag_world_pose(tag).map(|(at, _)| {
+            dobj.world_from_model
+                .inverse()
+                .transform_point3(glam::Vec3::from(at))
+                .to_array()
+        }))
+    })
 }
 
 pub(crate) fn tag_world(
@@ -315,19 +368,7 @@ pub(crate) fn tag_world(
     object: u64,
     tag: &str,
 ) -> Option<([f32; 3], [[f32; 3]; 3])> {
-    let presence = world
-        .resource::<RoundScript>()
-        .entities
-        .get(&object)?
-        .presence?;
-    let frame = settled(world);
-    let matrix = frame
-        .entity_collision_capabilities()
-        .iter()
-        .find(|row| row.owner.script_model() == Some(presence))?
-        .dobj
-        .as_ref()?
-        .tag_world_matrix(tag)?;
+    let matrix = with_tag_dobj(world, object, |dobj| dobj.tag_world_matrix(tag))?;
     let axis = |v: glam::Vec4| v.truncate().normalize_or_zero().to_array();
     Some((
         matrix.w_axis.truncate().to_array(),

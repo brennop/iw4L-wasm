@@ -15,9 +15,16 @@ pub struct BoneCollision {
     pub part_classification: u8,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagRotation {
+    pub tag: String,
+    pub angles: [f32; 3],
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct DObjPoseRequest {
     pub tree: Option<XAnimTreeRuntime>,
+    pub tag_rotations: Vec<TagRotation>,
     pub requested_parts: Option<PartBits>,
     pub hide_part_bits: HidePartBits,
 }
@@ -26,6 +33,7 @@ impl DObjPoseRequest {
     pub const fn bind_pose() -> Self {
         Self {
             tree: None,
+            tag_rotations: Vec::new(),
             requested_parts: None,
             hide_part_bits: HidePartBits::from_words([0; PartBits::WORDS]),
         }
@@ -437,6 +445,15 @@ pub fn pose_dobj_with_controller(
     } else {
         dobj.bind_locals()
     };
+    for rotation in &request.tag_rotations {
+        if let Some(bone) = dobj.find(&rotation.tag) {
+            let local = &mut locals[bone];
+            local.rotation = (glam::Quat::from_array(crate::set_angles(rotation.angles))
+                * glam::Quat::from_array(local.rotation))
+            .normalize()
+            .to_array();
+        }
+    }
     controller(dobj, &requested, &mut locals);
     dobj.apply_duplicates(&mut locals);
     Ok(dobj.compose(&locals, world_from_model))

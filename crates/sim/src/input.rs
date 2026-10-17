@@ -95,6 +95,12 @@ pub enum ClientAction {
         name: [u8; 16],
     },
 
+    Chat {
+        request_id: ActionRequestId,
+        team_only: bool,
+        text: [u8; crate::chat::CHAT_BYTES],
+    },
+
     UseCopycat {
         request_id: ActionRequestId,
     },
@@ -231,6 +237,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::DebugDamage { request_id, .. }
         | ClientAction::SetName { request_id, .. }
         | ClientAction::SetProfile { request_id, .. }
+        | ClientAction::Chat { request_id, .. }
         | ClientAction::UseCopycat { request_id }
         | ClientAction::ActionSlot { request_id, .. }
         | ClientAction::ChooseDefaultClass { request_id, .. }

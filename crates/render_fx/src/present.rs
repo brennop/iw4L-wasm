@@ -12,16 +12,17 @@ use fx::{
     FxModelInstance, FxPackedLightingSrc, FxPlayPose, FxPlayRequest, FxSparkDrawQuery,
     FxSparkFillQuery, FxSparkFillVisual, FxSpriteInstance, FxSystemHost, FxTrailCollideHit,
     FxTrailDrawDef, FxTrailSampleVisual, PendingCollide, PlayResult, axis_from_hit_normal,
-    evaluate_elem_collide_motion, evaluate_elem_motion, generate_verts_with_trails, play_bolted,
-    play_oriented, spawn_impact_or_death_effect, spawn_looping_partial, spawn_oriented,
-    update as fx_update,
+    evaluate_elem_collide_motion, evaluate_elem_motion, evaluate_elem_physics_motion,
+    generate_verts_with_trails, play_bolted, play_oriented, spawn_impact_or_death_effect,
+    spawn_looping_partial, spawn_oriented, update as fx_update,
 };
 use fx_iw4::{
-    FX_ELEM_ATLAS_OFF, FX_ELEM_ATLAS_SIZE, FxElemType, FxRandomChannel, apply_lighting_frac_bgra,
-    build_cloud, clamp_elem_rotation_time, cull_cloud, cull_elem_light,
-    effect_def_needs_lighting_sample, elem_light_color_bgr, elem_uses_lighting_frac,
+    FX_ELEM_AT_REST_NONE, FX_ELEM_ATLAS_OFF, FX_ELEM_ATLAS_SIZE, FxElemType, FxRandomChannel,
+    apply_lighting_frac_bgra, build_cloud, clamp_elem_rotation_time, cull_cloud, cull_elem_light,
+    effect_def_needs_lighting_sample, elem_light_color_rgb, elem_uses_lighting_frac,
     evaluate_rotation_total, evaluate_scale, evaluate_size0, evaluate_size1, get_elem_angles_axis,
-    get_velocity_at_time, sample_f32, sprite_atlas_uv, vec3_normalize, vis_blocker_add_prepared,
+    get_velocity_at_time, msec_for_sampling_axis, sample_f32, sprite_atlas_uv, vec3_normalize,
+    vis_blocker_add_prepared,
 };
 use math_iw4::angle_vectors;
 use sim::SimWorld;
@@ -658,6 +659,14 @@ fn eval_pending_collide(
     let Some(elem) = effect.elems.get(q.def_index as usize) else {
         return out;
     };
+    if fx_iw4::elem_skips_position_update(elem.view.elem_type, elem.view.flags) {
+        let Some(world) = clip_world else {
+            out.gap = Some(q.def_index);
+            return out;
+        };
+        out.result = Some(evaluate_physics_piece(elem, world, q));
+        return out;
+    }
     if fx_iw4::elem_uses_collision(elem.view.flags) {
         let Some(world) = clip_world else {
             out.gap = Some(q.def_index);
@@ -673,6 +682,7 @@ fn eval_pending_collide(
             elem.view.coll_maxs,
             elem.view.use_item_clip != 0,
             !elem.effect_on_impact.is_absent(),
+            elem.view.elem_type == FxElemType::Model as u8,
             elem.vel_graph_local.as_slice(),
             elem.vel_graph_world.as_slice(),
             q,
@@ -697,6 +707,29 @@ fn eval_pending_collide(
         q,
     );
     out
+}
+
+fn evaluate_physics_piece(
+    elem: &asset_game::OwnedFxElemDef,
+    world: &SimWorld,
+    q: fx::FxElemMotionQuery<'_>,
+) -> FxElemMotionResult {
+    evaluate_elem_physics_motion(
+        elem.view.flags,
+        elem.view.use_item_clip != 0,
+        elem.vel_graph_local.as_slice(),
+        elem.vel_graph_world.as_slice(),
+        q,
+        |start, end, mins, maxs, mask| {
+            let t = world.trace_world(start, end, mins, maxs, mask);
+            FxElemTraceHit {
+                fraction: t.fraction,
+                normal: t.normal,
+                startsolid: t.startsolid != 0,
+                allsolid: t.allsolid != 0,
+            }
+        },
+    )
 }
 
 const COLLIDE_JOBS_PER_WORKER: usize = 16;
@@ -830,6 +863,13 @@ fn tick_fx_pass(
             let out = (|| {
                 let effect = catalog_lookup(catalog, q.catalog_index)?;
                 let elem = effect.elems.get(q.def_index as usize)?;
+                if fx_iw4::elem_skips_position_update(elem.view.elem_type, elem.view.flags) {
+                    let Some(world) = clip_world else {
+                        collide_gap_indices.borrow_mut().push(q.def_index);
+                        return None;
+                    };
+                    return Some(evaluate_physics_piece(elem, world, q));
+                }
                 if fx_iw4::elem_uses_collision(elem.view.flags) {
                     let Some(world) = clip_world else {
                         collide_gap_indices.borrow_mut().push(q.def_index);
@@ -845,6 +885,7 @@ fn tick_fx_pass(
                         elem.view.coll_maxs,
                         elem.view.use_item_clip != 0,
                         !elem.effect_on_impact.is_absent(),
+                        elem.view.elem_type == FxElemType::Model as u8,
                         elem.vel_graph_local.as_slice(),
                         elem.vel_graph_world.as_slice(),
                         q,
@@ -1467,7 +1508,7 @@ pub fn build_fx_verts(
             is_spot: ctx.elem_type == FxElemType::SpotLight as u8,
             origin: ctx.origin,
             radius: size0,
-            color_bgr: elem_light_color_bgr(color, scale),
+            color_rgb: elem_light_color_rgb(color, scale),
             axis,
         })
     };
@@ -1521,24 +1562,36 @@ fn evaluate_fx_model_instance(
     if scale == 0.0 {
         return None;
     }
-    let rot_t = clamp_elem_rotation_time(
-        ctx.age_msec as f32,
-        ctx.life_msec as f32,
-        ctx.at_rest_fraction,
-    );
-    let axis = get_elem_angles_axis(
+    let landed_piece = ctx.at_rest_fraction != FX_ELEM_AT_REST_NONE
+        && fx_iw4::elem_skips_position_update(elem.view.elem_type, elem.view.flags);
+    let rot_t = if landed_piece {
+        msec_for_sampling_axis(ctx.at_rest_fraction, ctx.life_msec as f32).min(ctx.age_msec as f32)
+    } else {
+        clamp_elem_rotation_time(
+            ctx.age_msec as f32,
+            ctx.life_msec as f32,
+            ctx.at_rest_fraction,
+        )
+    };
+    let mut axis = get_elem_angles_axis(
         elem.view.spawn_angles,
         elem.view.angular_velocity,
         ctx.elem_random_seed,
         rot_t,
         ctx.axis,
     );
+    let mut origin = ctx.origin;
+    if landed_piece && let Some(piece) = elem.phys_piece(ctx.elem_random_seed) {
+        let (flat, lift) = piece.rest_pose(axis, scale);
+        axis = flat;
+        origin[2] += lift;
+    }
     Some(FxModelInstance {
         def_name: ctx.def_name.to_owned(),
         def_index: ctx.def_index,
         model_index,
         elem_handle: ctx.elem_handle,
-        origin: ctx.origin,
+        origin,
         axis,
         scale,
         flags: ctx.flags,

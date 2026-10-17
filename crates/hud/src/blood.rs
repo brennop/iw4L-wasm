@@ -17,6 +17,8 @@ pub(crate) struct HudRootVisible(pub Option<i32>);
 #[derive(Resource, Default)]
 pub(crate) struct BloodOverlayLatch {
     intensity: f32,
+    subject: Option<ViewSubject>,
+    last_time: Option<i32>,
     pub(crate) packed: PackedList,
     last_gpu_intensity: Option<f32>,
     last_w: Option<f32>,
@@ -72,6 +74,12 @@ pub(crate) fn update_blood_overlay(
             latch.intensity = 0.0;
         }
     }
+    let now = cg_clock.time();
+    if latch.subject != Some(*view) || latch.last_time.is_some_and(|time| now < time) {
+        latch.intensity = 0.0;
+    }
+    latch.subject = Some(*view);
+    latch.last_time = Some(now);
     let in_game = matches!(*screen, AppScreen::InGame);
     let Some(ps) = presented.player(local.0) else {
         latch.intensity = 0.0;

@@ -78,7 +78,7 @@ pub const SUN_SHADOW_MAX_CLIP_PLANES: usize = 10;
 
 /// The volume a cascade collects casters from, as world-space planes that hold
 /// for the points inside it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SunShadowClipPlanes {
     planes: [[f32; 4]; SUN_SHADOW_MAX_CLIP_PLANES],
     count: u8,
@@ -118,7 +118,7 @@ impl SunShadowClipPlanes {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SunShadowPartition {
     pub clip_from_world: glam::Mat4,
     pub view: glam::Mat4,
@@ -129,7 +129,7 @@ pub struct SunShadowPartition {
     pub clip_planes: SunShadowClipPlanes,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SunShadowForcedFrame {
     pub partitions: [SunShadowPartition; 2],
     pub pixel_adjust: [f32; 4],

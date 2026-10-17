@@ -94,11 +94,8 @@ pub fn cull_elem_light(
 }
 
 #[inline]
-pub fn elem_light_color_bgr(color_rgba: [u8; 4], scale: f32) -> [f32; 3] {
+pub fn elem_light_color_rgb(color_rgba: [u8; 4], scale: f32) -> [f32; 3] {
     let s = scale * (crate::FX_RECIP_255 as f32);
-    [
-        color_rgba[2] as f32 * s,
-        color_rgba[1] as f32 * s,
-        color_rgba[0] as f32 * s,
-    ]
+    let [r, g, b, _a] = color_rgba;
+    [r as f32 * s, g as f32 * s, b as f32 * s]
 }

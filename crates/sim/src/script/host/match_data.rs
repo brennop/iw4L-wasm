@@ -68,7 +68,7 @@ impl MatchData {
         let value = data_value(lookup.ty, value)?;
         definition
             .write(&mut buffer.bytes, &mut buffer.dirty, lookup, value)
-            .map_err(data_error)?;
+            .map_err(|error| format!("{} at {keys:?}: {value:?}", data_error(error)))?;
         Ok(Value::Undefined)
     }
 

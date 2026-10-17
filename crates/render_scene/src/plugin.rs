@@ -13,6 +13,7 @@ pub struct RenderScenePlugin;
 impl Plugin for RenderScenePlugin {
     fn build(&self, app: &mut App) {
         app.scoped::<HostGfxScene>(frame::MatchScope::Live)
+            .scoped::<crate::PreparedSunShadowFrame>(frame::MatchScope::Live)
             .scoped::<crate::ModelLightingAtlasTileWrites>(frame::MatchScope::Live)
             .scoped::<DynAtPointLookup>(frame::MatchScope::Live)
             .scoped::<crate::WorldDpvsCells>(frame::MatchScope::Live)

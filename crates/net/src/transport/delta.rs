@@ -119,7 +119,7 @@ impl SnapshotEncoder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SnapshotDecoder {
     baseline: Vec<(ClientId, PlayerState)>,
     projectile_baseline: HashMap<ProjectileId, ProjectileState>,

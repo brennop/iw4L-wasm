@@ -13,6 +13,9 @@ use crate::session::{Playback, Recording};
 pub struct PendingReplayArm {
     pub playback: Option<Playback>,
     pub quit_on_end: bool,
+    pub control: Option<PlaybackControl>,
+    pub request_id: Option<u64>,
+    pub in_place: bool,
 }
 
 #[derive(Resource, Default)]
@@ -23,11 +26,38 @@ pub struct ReplayDiagnostics {
     pub line: Option<String>,
 }
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReplayPump;
+
+#[derive(Clone, Copy, Debug)]
+pub struct PlaybackControl {
+    pub paused: bool,
+    pub rate: f32,
+    pub steps: u32,
+    pub stop_at: Option<u64>,
+}
+
+impl Default for PlaybackControl {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            rate: 1.0,
+            steps: 0,
+            stop_at: None,
+        }
+    }
+}
+
 #[derive(Resource)]
 pub struct ReplayPlayback {
     playback: Playback,
+    pub control: PlaybackControl,
     acc_ms: f32,
+    presented_once: bool,
+    paused_last_pump: bool,
+    initial_ticks: u64,
     pub ended: bool,
+    pub retain_at_end: bool,
 
     pub quit_on_end: bool,
     pub exit_queued: bool,
@@ -35,10 +65,16 @@ pub struct ReplayPlayback {
 
 impl ReplayPlayback {
     pub fn new(playback: Playback) -> Self {
+        let initial_ticks = playback.ticks();
         Self {
             playback,
+            control: PlaybackControl::default(),
             acc_ms: AUTHORITY_MS as f32,
+            presented_once: false,
+            paused_last_pump: false,
+            initial_ticks,
             ended: false,
+            retain_at_end: false,
             quit_on_end: true,
             exit_queued: false,
         }
@@ -49,8 +85,25 @@ impl ReplayPlayback {
         self
     }
 
+    pub fn step(&mut self) {
+        self.control.paused = true;
+        self.control.stop_at = None;
+        self.control.steps = self.control.steps.saturating_add(1);
+        self.quit_on_end = false;
+    }
+
     pub fn ticks(&self) -> u64 {
         self.playback.ticks()
+    }
+
+    pub fn presented_frame(&self) -> f64 {
+        let ticks = self.ticks();
+        if self.control.paused || self.ended || ticks <= self.initial_ticks.saturating_add(1) {
+            ticks.saturating_sub(1) as f64
+        } else {
+            ticks.saturating_sub(2) as f64
+                + (self.acc_ms / AUTHORITY_MS as f32).clamp(0.0, 1.0) as f64
+        }
     }
 
     pub fn acc_ms(&self) -> f32 {
@@ -92,6 +145,7 @@ impl Plugin for ReplayPlugin {
                     .in_set(ClientSet::Load)
                     .after(SessionSwapApplied),
                 pump_playback
+                    .in_set(ReplayPump)
                     .in_set(frame::InMatch)
                     .in_set(ClientSet::Load)
                     .run_if(resource_exists::<ReplayPlayback>)
@@ -105,15 +159,55 @@ fn sync_theater_occupancy(
     mut commands: Commands,
     mut pending: ResMut<PendingReplayArm>,
     role: Res<RuntimeRole>,
+    generation: Option<Res<frame::WorldGeneration>>,
+    timeline: Res<frame::ScopeEpoch<frame::Timeline>>,
+    mut restarting: Local<Option<u64>>,
 ) {
+    if pending
+        .request_id
+        .is_some_and(|id| generation.as_ref().is_none_or(|g| g.stamp().0 != Some(id)))
+    {
+        return;
+    }
     if *role != RuntimeRole::Replay {
         return;
+    }
+    if pending.playback.is_none() {
+        *restarting = None;
+        return;
+    }
+    // The new playback is armed only after the timeline restart has retired
+    // the old ticks; arming in the same frame would feed its first snapshot
+    // into state that is about to be dropped.
+    if pending.in_place {
+        match *restarting {
+            None => {
+                *restarting = Some(timeline.0);
+                commands.queue(|world: &mut World| {
+                    world
+                        .resource_mut::<NextState<frame::Timeline>>()
+                        .set(frame::Timeline::Running);
+                });
+                return;
+            }
+            Some(requested) if requested == timeline.0 => return,
+            Some(_) => {
+                *restarting = None;
+                commands.trigger(net::KillcamFxTransition { entering: false });
+            }
+        }
     }
     let Some(playback) = pending.playback.take() else {
         return;
     };
+    pending.in_place = false;
     let quit_on_end = pending.quit_on_end;
-    let playback = ReplayPlayback::new(playback).with_quit_on_end(quit_on_end);
+    let mut playback = ReplayPlayback::new(playback).with_quit_on_end(quit_on_end);
+    playback.control = pending
+        .control
+        .take()
+        .unwrap_or_else(PlaybackControl::default);
+    pending.request_id = None;
     commands.queue(move |world: &mut World| {
         frame::scope::insert(world, playback, frame::MatchScope::Live);
     });
@@ -128,12 +222,17 @@ fn record_received_ticks(
     received: Res<ReceivedTicks>,
     role: Res<RuntimeRole>,
     mut ring: ResMut<ClipRing>,
+    mut session: ResMut<ReplaySession>,
+    mut diag: ResMut<ReplayDiagnostics>,
 ) {
-    if role.runs_authority() {
+    if *role == RuntimeRole::Dedicated {
         return;
     }
     for tick in &received.0 {
         ring.push(tick.snapshot.clone());
+        if *role != RuntimeRole::Replay {
+            record_snapshot(&mut session, &tick.snapshot, &mut diag);
+        }
     }
 }
 
@@ -147,13 +246,22 @@ fn record_server_tick(
     let Some(tick) = server_tick.0.as_ref() else {
         return;
     };
-    if role.runs_authority() {
-        ring.push(tick.snapshot.clone());
+    if *role != RuntimeRole::Dedicated {
+        return;
     }
+    ring.push(tick.snapshot.clone());
+    record_snapshot(&mut session, &tick.snapshot, &mut diag);
+}
+
+fn record_snapshot(
+    session: &mut ReplaySession,
+    snapshot: &sim::Snapshot,
+    diag: &mut ReplayDiagnostics,
+) {
     let Some(recording) = session.0.as_mut() else {
         return;
     };
-    if let Err(error) = recording.record(&tick.snapshot) {
+    if let Err(error) = recording.record(snapshot) {
         let line = format!("record: write failed, recording stopped: {error}");
         diag::info!(Net, "{line}");
         diag.line = Some(line);
@@ -175,12 +283,36 @@ fn pump_playback(
     if hold.is_none_or(|h| h.0) {
         return;
     }
-    session.acc_ms += time.delta_secs() * 1000.0;
     let slot = AUTHORITY_MS as f32;
-    while session.acc_ms >= slot {
-        session.acc_ms -= slot;
+    if session.paused_last_pump && !session.control.paused {
+        session.acc_ms = slot;
+    }
+    let rate = session.control.rate;
+    if !session.control.paused && rate.is_finite() && (0.05..=16.0).contains(&rate) {
+        session.acc_ms += time.delta_secs() * 1000.0 * rate;
+    }
+    let mut budget = 256;
+    while budget > 0
+        && session
+            .control
+            .stop_at
+            .is_none_or(|end| session.ticks() < end)
+        && (!session.presented_once
+            || session.control.steps > 0
+            || (!session.control.paused && session.acc_ms >= slot))
+    {
+        budget -= 1;
+        if !session.presented_once && session.control.paused && session.control.steps == 0 {
+            session.acc_ms = 0.0;
+        } else if session.control.steps > 0 {
+            session.control.steps -= 1;
+            session.acc_ms = 0.0;
+        } else {
+            session.acc_ms -= slot;
+        }
         match session.playback.next_tick() {
             Ok(Some(played)) => {
+                session.presented_once = true;
                 if let Some(clock) = clock.as_mut() {
                     clock.tick = played.snapshot.tick.0;
                     clock.time_ms = ServerTime::from_tick(played.snapshot.tick).ms();
@@ -213,5 +345,18 @@ fn pump_playback(
             }
         }
     }
-    client_clock.accumulator_ms = session.acc_ms;
+    if session
+        .control
+        .stop_at
+        .is_some_and(|end| session.ticks() >= end)
+    {
+        session.control.paused = true;
+        session.acc_ms = 0.0;
+    }
+    session.paused_last_pump = session.control.paused;
+    client_clock.accumulator_ms = if session.control.paused || session.ended {
+        slot
+    } else {
+        session.acc_ms.min(slot)
+    };
 }

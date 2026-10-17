@@ -31,6 +31,7 @@ pub use render_scene::{XModelColourRefusal, XModelSurfaceDraw};
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct XModelDrawPlan {
+    pub skin_jobs: Vec<render_frame::skinning::PackedSkinJob>,
     pub vertices: Vec<SmodelVertex>,
 
     pub decoded_n: usize,
@@ -48,8 +49,6 @@ pub struct XModelDrawPlan {
 
     pub packed_share: Option<Arc<Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>>>,
 
-    pub packed_segments: render_frame::PackedSegments,
-
     published_packed: Option<PackedContentKey>,
 
     pub index_share: Option<Arc<Vec<u32>>>,
@@ -63,8 +62,6 @@ pub struct XModelDrawPlan {
     last_topology: Option<XModelTopologyKey>,
     concat_layout: bool,
     last_admitted: u8,
-
-    packed_owner_vertices: [[u64; 8]; super::SHARE_BANKS],
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -82,6 +79,7 @@ pub const XMODEL_PACKED_EMPTY_PLAN: &str = "xmodel plan has no vertices";
 
 impl XModelDrawPlan {
     pub fn clear(&mut self) {
+        self.skin_jobs.clear();
         self.vertices.clear();
         self.decoded_n = 0;
         self.indices.clear();
@@ -90,7 +88,6 @@ impl XModelDrawPlan {
         self.draws.clear();
         self.fx_object_id_exhausted = 0;
         self.packed_share = None;
-        self.packed_segments.forget();
         self.index_share = None;
         self.range_share = None;
         self.decoded_share = None;
@@ -98,7 +95,6 @@ impl XModelDrawPlan {
         self.last_topology = None;
         self.concat_layout = false;
         self.last_admitted = 0;
-        self.packed_owner_vertices = [[0; 8]; super::SHARE_BANKS];
         self.packed_vertices = asset_world::PackedVertexPayload::Unavailable {
             source_layout: XMODEL_PACKED_UNAVAILABLE,
         };
@@ -174,6 +170,15 @@ fn scene_ent_admitted(scene: Option<&crate::GfxScene>, entnum: Option<u32>) -> b
         None => true,
         Some(n) => scene.is_some_and(|s| s.scene_ent_live(n) && !s.scene_ent_skips_draw(n)),
     }
+}
+
+#[must_use]
+fn script_draw_admitted(scene: Option<&crate::GfxScene>, draw: &XModelSurfaceDraw) -> bool {
+    scene_ent_admitted(scene, draw.scene_entnum)
+        || (draw.colour_refusal.is_some()
+            && draw
+                .scene_entnum
+                .is_some_and(|n| scene.is_some_and(|s| s.scene_ent_hidden(n))))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,7 +357,7 @@ fn xmodel_merge_stamp(
         scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
     }
     for draw in scripts.draws() {
-        scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
+        script_draw_admitted(scene, draw).hash(&mut occupancy);
     }
     for draw in missiles.draws() {
         scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
@@ -416,6 +421,7 @@ pub fn merge_xmodel_draw_plan(
         fpv, bodies, scripts, missiles, items, fx_models, dynents, scene, sky,
     );
     if merged.last_input == Some(stamp) {
+        publish_skin_jobs(merged, fpv, bodies);
         return XModelMergeStamps {
             concatenated: false,
             ..XModelMergeStamps::default()
@@ -429,23 +435,15 @@ pub fn merge_xmodel_draw_plan(
         if vertices_changed {
             let packed_started = Instant::now();
             let prev_packed = merged.packed_share.take();
-            let (mut packed, fresh) = merged.packed_banks.take_write_keep();
-            let write = merged.packed_banks.write_index();
-            if fresh {
-                merged.packed_owner_vertices[write] = [0; 8];
-            }
+            let mut packed = merged.packed_banks.take_write();
             let mut packed_ok = true;
             recopy_concat_packed_bank(
                 &mut packed,
                 &mut packed_ok,
-                fresh,
-                &mut merged.packed_owner_vertices[write],
-                stamp.vertices,
                 merged.last_admitted,
                 concat_packed_owners(
                     fpv, bodies, scripts, missiles, items, fx_models, dynents, sky,
                 ),
-                &mut merged.packed_segments,
             );
             let key = packed_ok
                 .then(|| PackedContentKey::new(&stamp, merged.last_admitted, packed.len()));
@@ -465,6 +463,7 @@ pub fn merge_xmodel_draw_plan(
             );
         }
         merged.last_input = Some(stamp);
+        publish_skin_jobs(merged, fpv, bodies);
         return XModelMergeStamps {
             concatenated: true,
             packed_ms,
@@ -475,9 +474,6 @@ pub fn merge_xmodel_draw_plan(
     let prev_index = merged.index_share.take();
     let prev_range = merged.range_share.take();
     let mut packed = merged.packed_banks.take_write();
-    let packed_write = merged.packed_banks.write_index();
-    merged.packed_owner_vertices[packed_write] = [0; 8];
-    merged.packed_segments.forget();
     packed.clear();
     let indices = merged.index_banks.take_write();
     let ranges = merged.range_banks.take_write();
@@ -498,6 +494,7 @@ pub fn merge_xmodel_draw_plan(
             + packed_row_count(dynents.packed_vertices()),
     );
     let mut packed_ok = true;
+    let mut admitted = 0u8;
     let append_started = Instant::now();
     let mut next_body_object = XMODEL_OBJECT_ID_BODY_BASE;
     let (fx_draws, fx_object_id_exhausted) = dense_fx_object_ids(
@@ -510,7 +507,7 @@ pub fn merge_xmodel_draw_plan(
             .max(),
     );
     merged.fx_object_id_exhausted = fx_object_id_exhausted;
-    append_admitted_source(
+    if append_admitted_source(
         merged,
         &mut packed,
         &mut packed_ok,
@@ -544,10 +541,12 @@ pub fn merge_xmodel_draw_plan(
                 }
             })
         }),
-    );
+    ) {
+        admitted |= ADMIT_BODY;
+    }
 
     if fpv_scene_colour(fpv, scene) {
-        append_admitted_source(
+        if append_admitted_source(
             merged,
             &mut packed,
             &mut packed_ok,
@@ -572,10 +571,12 @@ pub fn merge_xmodel_draw_plan(
                 body_client: None,
                 caster_bound: None,
             }),
-        );
+        ) {
+            admitted |= ADMIT_FPV;
+        }
     }
 
-    append_admitted_source(
+    if append_admitted_source(
         merged,
         &mut packed,
         &mut packed_ok,
@@ -588,10 +589,12 @@ pub fn merge_xmodel_draw_plan(
             .draws()
             .iter()
             .copied()
-            .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
-    );
+            .filter(|d| script_draw_admitted(scene, d)),
+    ) {
+        admitted |= ADMIT_SCRIPT;
+    }
 
-    append_admitted_source(
+    if append_admitted_source(
         merged,
         &mut packed,
         &mut packed_ok,
@@ -605,9 +608,11 @@ pub fn merge_xmodel_draw_plan(
             .iter()
             .copied()
             .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
-    );
+    ) {
+        admitted |= ADMIT_MISSILE;
+    }
 
-    append_admitted_source(
+    if append_admitted_source(
         merged,
         &mut packed,
         &mut packed_ok,
@@ -621,8 +626,11 @@ pub fn merge_xmodel_draw_plan(
             .iter()
             .copied()
             .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
-    );
+    ) {
+        admitted |= ADMIT_ITEM;
+    }
     if !fx_draws.is_empty() {
+        admitted |= ADMIT_FX;
         append_source_plan(
             merged,
             fx_models.vertices().len(),
@@ -638,7 +646,7 @@ pub fn merge_xmodel_draw_plan(
             fx_models.vertices().len(),
         );
     }
-    append_admitted_source(
+    if append_admitted_source(
         merged,
         &mut packed,
         &mut packed_ok,
@@ -648,9 +656,11 @@ pub fn merge_xmodel_draw_plan(
         dynents.materials(),
         dynents.packed_vertices(),
         dynents.draws().iter().copied(),
-    );
+    ) {
+        admitted |= ADMIT_DYNENT;
+    }
     if let Some((sky, eye)) = sky {
-        append_admitted_source(
+        if append_admitted_source(
             merged,
             &mut packed,
             &mut packed_ok,
@@ -663,16 +673,13 @@ pub fn merge_xmodel_draw_plan(
                 world_from_local: Mat4::from_translation(eye),
                 ..*draw
             }),
-        );
+        ) {
+            admitted |= ADMIT_SKY;
+        }
     }
     let append_ms = append_started.elapsed().as_secs_f32() * 1000.0;
     let packed_started = Instant::now();
-    if packed_ok {
-        merged.packed_owner_vertices[packed_write] = stamp.vertices;
-    }
-    merged.last_admitted = admitted_mask(
-        fpv, bodies, scripts, missiles, items, fx_models, dynents, scene, sky,
-    );
+    merged.last_admitted = admitted;
     let key = packed_ok.then(|| PackedContentKey::new(&stamp, merged.last_admitted, packed.len()));
     let payload = install_retained_packed(
         packed_ok,
@@ -696,11 +703,35 @@ pub fn merge_xmodel_draw_plan(
     publish_decoded_share(merged);
     merged.last_input = Some(stamp);
     merged.last_topology = Some(stamp.topology);
+    publish_skin_jobs(merged, fpv, bodies);
     let packed_ms = packed_started.elapsed().as_secs_f32() * 1000.0;
     XModelMergeStamps {
         append_ms,
         packed_ms,
         concatenated: true,
+    }
+}
+
+fn publish_skin_jobs(merged: &mut XModelDrawPlan, fpv: &FpvDrawPlan, bodies: &RemoteBodyDrawPlan) {
+    merged.skin_jobs.clear();
+    if merged.last_admitted & ADMIT_BODY != 0 {
+        merged.skin_jobs.extend(bodies.skin_jobs.iter().cloned());
+    }
+    if merged.last_admitted & ADMIT_FPV == 0 {
+        return;
+    }
+    let base = if merged.last_admitted & ADMIT_BODY != 0 {
+        bodies.decoded_n()
+    } else {
+        0
+    };
+    for job in &fpv.skin_jobs {
+        let mut job = job.clone();
+        job.destination = u32::try_from(base)
+            .expect("xmodel vertex base fits u32")
+            .checked_add(job.destination)
+            .expect("xmodel skin destination fits u32");
+        merged.skin_jobs.push(job);
     }
 }
 
@@ -748,7 +779,6 @@ fn concat_draws_changed(prev: XModelMergeStamp, stamp: &XModelMergeStamp) -> boo
 
 struct ConcatPackedOwner<'a> {
     admit: u8,
-    rev_i: usize,
     payload: &'a asset_world::PackedVertexPayload,
     decoded_n: usize,
 }
@@ -767,49 +797,41 @@ fn concat_packed_owners<'a>(
     [
         ConcatPackedOwner {
             admit: ADMIT_BODY,
-            rev_i: 1,
             payload: bodies.packed_vertices(),
             decoded_n: bodies.decoded_n(),
         },
         ConcatPackedOwner {
             admit: ADMIT_FPV,
-            rev_i: 0,
             payload: fpv.packed_vertices(),
             decoded_n: fpv.decoded_n(),
         },
         ConcatPackedOwner {
             admit: ADMIT_SCRIPT,
-            rev_i: 2,
             payload: scripts.packed_vertices(),
             decoded_n: scripts.vertices().len(),
         },
         ConcatPackedOwner {
             admit: ADMIT_MISSILE,
-            rev_i: 3,
             payload: missiles.packed_vertices(),
             decoded_n: missiles.vertices().len(),
         },
         ConcatPackedOwner {
             admit: ADMIT_ITEM,
-            rev_i: 4,
             payload: items.packed_vertices(),
             decoded_n: items.vertices().len(),
         },
         ConcatPackedOwner {
             admit: ADMIT_FX,
-            rev_i: 5,
             payload: fx_models.packed_vertices(),
             decoded_n: fx_models.vertices().len(),
         },
         ConcatPackedOwner {
             admit: ADMIT_DYNENT,
-            rev_i: 6,
             payload: dynents.packed_vertices(),
             decoded_n: dynents.vertices().len(),
         },
         ConcatPackedOwner {
             admit: ADMIT_SKY,
-            rev_i: 7,
             payload: sky_geom
                 .map(|g| &g.packed_vertices)
                 .unwrap_or(bodies.packed_vertices()),
@@ -831,79 +853,20 @@ fn concat_packed_layout(admitted: u8, owners: &[ConcatPackedOwner<'_>; 8]) -> ([
     (counts, expected)
 }
 
-fn concat_packed_segments(
-    counts: [usize; 8],
-    stamp_vertices: [u64; 8],
-    owners: &[ConcatPackedOwner<'_>; 8],
-) -> [render_frame::PackedSegment; render_frame::PACKED_SEGMENT_OWNERS] {
-    let mut start = 0u32;
-    std::array::from_fn(|i| {
-        let rows = u32::try_from(counts[i]).unwrap_or(u32::MAX);
-        let segment = render_frame::PackedSegment {
-            start,
-            rows,
-            revision: stamp_vertices[owners[i].rev_i],
-        };
-        start = start.saturating_add(rows);
-        segment
-    })
-}
-
 fn recopy_concat_packed_bank(
     packed: &mut Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
     packed_ok: &mut bool,
-    fresh: bool,
-    bank_vertices: &mut [u64; 8],
-    stamp_vertices: [u64; 8],
     admitted: u8,
     owners: [ConcatPackedOwner<'_>; 8],
-    published: &mut render_frame::PackedSegments,
 ) {
-    let (counts, expected) = concat_packed_layout(admitted, &owners);
-    let can_patch = !fresh && packed.len() == expected && *packed_ok;
-    if !can_patch {
-        packed.clear();
-        packed.reserve(expected);
-        for owner in &owners {
-            if admitted & owner.admit != 0 {
-                append_packed_source(packed, packed_ok, owner.payload, owner.decoded_n);
-            }
+    let (_, expected) = concat_packed_layout(admitted, &owners);
+    packed.clear();
+    packed.reserve(expected);
+    for owner in &owners {
+        if admitted & owner.admit != 0 {
+            append_packed_source(packed, packed_ok, owner.payload, owner.decoded_n);
         }
-        *bank_vertices = if *packed_ok { stamp_vertices } else { [0; 8] };
-        published.forget();
-        return;
     }
-    let mut off = 0usize;
-    for (i, owner) in owners.iter().enumerate() {
-        if admitted & owner.admit == 0 || owner.decoded_n == 0 {
-            continue;
-        }
-        let n = counts[i];
-        if n != owner.decoded_n {
-            *packed_ok = false;
-            packed.clear();
-            *bank_vertices = [0; 8];
-            published.forget();
-            return;
-        }
-        if bank_vertices[owner.rev_i] != stamp_vertices[owner.rev_i] {
-            match owner.payload {
-                asset_world::PackedVertexPayload::Iw4(rows) if rows.len() == n => {
-                    packed[off..off + n].copy_from_slice(rows);
-                }
-                _ => {
-                    *packed_ok = false;
-                    packed.clear();
-                    *bank_vertices = [0; 8];
-                    published.forget();
-                    return;
-                }
-            }
-        }
-        off = off.saturating_add(n);
-    }
-    *bank_vertices = stamp_vertices;
-    published.publish(concat_packed_segments(counts, stamp_vertices, &owners));
 }
 
 fn append_concat_owner_draws(
@@ -1014,7 +977,7 @@ fn refresh_concat_draws(
             .draws()
             .iter()
             .copied()
-            .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
+            .filter(|d| script_draw_admitted(scene, d)),
     );
     append_concat_owner_draws(
         merged,
@@ -1064,61 +1027,6 @@ fn refresh_concat_draws(
             }),
         );
     }
-}
-
-fn admitted_mask(
-    fpv: &FpvDrawPlan,
-    bodies: &RemoteBodyDrawPlan,
-    scripts: &ScriptModelDrawPlan,
-    missiles: &MissileDrawPlan,
-    items: &ItemDrawPlan,
-    fx_models: &FxModelDrawPlan,
-    dynents: &DynEntDrawPlan,
-    scene: Option<&crate::GfxScene>,
-    sky: Option<(&super::sky::SkyModelDrawPlan, Vec3)>,
-) -> u8 {
-    let mut admitted = 0u8;
-    if bodies
-        .draws()
-        .iter()
-        .any(|d| scene_ent_admitted(scene, d.scene_entnum))
-    {
-        admitted |= ADMIT_BODY;
-    }
-    if fpv_scene_colour(fpv, scene) {
-        admitted |= ADMIT_FPV;
-    }
-    if scripts
-        .draws()
-        .iter()
-        .any(|d| scene_ent_admitted(scene, d.scene_entnum))
-    {
-        admitted |= ADMIT_SCRIPT;
-    }
-    if missiles
-        .draws()
-        .iter()
-        .any(|d| scene_ent_admitted(scene, d.scene_entnum))
-    {
-        admitted |= ADMIT_MISSILE;
-    }
-    if items
-        .draws()
-        .iter()
-        .any(|d| scene_ent_admitted(scene, d.scene_entnum))
-    {
-        admitted |= ADMIT_ITEM;
-    }
-    if !fx_models.draws().is_empty() {
-        admitted |= ADMIT_FX;
-    }
-    if !dynents.draws().is_empty() {
-        admitted |= ADMIT_DYNENT;
-    }
-    if sky.is_some_and(|(sky, _)| !sky.draws.is_empty()) {
-        admitted |= ADMIT_SKY;
-    }
-    admitted
 }
 
 fn publish_packed_payload(
@@ -1230,10 +1138,10 @@ fn append_admitted_source(
     materials: &[SmodelPassMaterial],
     packed_payload: &asset_world::PackedVertexPayload,
     draws: impl IntoIterator<Item = XModelSurfaceDraw>,
-) {
+) -> bool {
     let draws: Vec<XModelSurfaceDraw> = draws.into_iter().collect();
     if draws.is_empty() {
-        return;
+        return false;
     }
     let mut used = vec![false; surface_ranges.len()];
     for d in &draws {
@@ -1252,7 +1160,7 @@ fn append_admitted_source(
             draws.into_iter(),
         );
         append_packed_source(packed, packed_ok, packed_payload, decoded_n);
-        return;
+        return true;
     }
     compact_admitted_source(
         merged,
@@ -1266,6 +1174,7 @@ fn append_admitted_source(
         &used,
         draws,
     );
+    true
 }
 
 fn compact_admitted_source(

@@ -14,7 +14,11 @@ pub use file::{
     ZONE_FIELD_LEN, demo_path, demo_stem, sanitize_demo_name,
 };
 pub use plugin::{
-    PendingReplayArm, ReplayDiagnostics, ReplayPlayback, ReplayPlugin, ReplaySession,
+    PendingReplayArm, PlaybackControl, ReplayDiagnostics, ReplayPlayback, ReplayPlugin, ReplayPump,
+    ReplaySession,
 };
-pub use session::{Playback, PlayedTick, Recording, auto_demo_name, next_free_demo_name};
+pub use session::{
+    Keyframe, Playback, PlayedTick, Recording, SEEK_KEYFRAME_TICKS, SeekIndex, auto_demo_name,
+    next_free_demo_name,
+};
 pub use ulid::{UlidError, new_ulid};

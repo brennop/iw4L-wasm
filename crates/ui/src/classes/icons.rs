@@ -122,7 +122,8 @@ fn decode_class_select_icons(
     let mut decoded = Vec::new();
     let mut missing = 0usize;
     for stem in stems {
-        match asset_material::decode_ui_image(publication, games, &stem) {
+        let key = format!("iw4:material/{stem}");
+        match asset_material::decode_ui_image(publication, games, &key) {
             Ok(Some((width, height, pixels))) => {
                 decoded.push((stem.to_owned(), rgba_ui_image(width, height, pixels)));
             }

@@ -35,6 +35,14 @@ pub enum PeerConnection {
 }
 
 impl PeerConnection {
+    /// Free bytes in the datagram send buffer; only QUIC peers expose it.
+    pub fn datagram_send_buffer_space(&self) -> Option<usize> {
+        match self {
+            Self::Quic(c) => Some(c.datagram_send_buffer_space()),
+            Self::WebTransport(_) | Self::WebSocket(_) => None,
+        }
+    }
+
     /// Per-transport Hello deadline: native QUIC peers keep `HELLO_DEADLINE`
     /// (8 s); browser peers get longer (main-thread load stall).
     pub fn hello_deadline(&self) -> Duration {

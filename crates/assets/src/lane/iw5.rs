@@ -755,6 +755,7 @@ impl ZoneLane for Iw5Lane {
             fpv: sink.fpv_meshes,
             world_weapons: sink.world_weapons,
             xanims: sink.xanims,
+            player_anim_sources: sink.player_anim_sources,
             light_defs,
             fx: sink.fx,
             scene_models: sink.scene_models,

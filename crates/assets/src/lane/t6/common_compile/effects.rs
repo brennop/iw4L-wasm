@@ -1,7 +1,7 @@
 use crate::lane::CommonDependencyRefusal;
 use asset_material::MaterialCatalog;
 
-pub(super) fn bind_t6_fx(
+pub(in crate::lane::t6) fn bind_t6_fx(
     content: &mut super::super::T6Content,
     materials: &mut MaterialCatalog,
     catalog: &mut asset_game::FxCatalog,

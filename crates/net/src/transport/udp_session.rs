@@ -211,6 +211,52 @@ struct PeerReplicationState {
     last_control_seq: Option<u16>,
     control_drops_sent: u32,
     account: Option<PeerAccount>,
+    pace: SnapshotPace,
+    held_ack: Option<(ClientId, CmdSeq)>,
+}
+
+const SNAPSHOT_RATE_BYTES_PER_SEC: i64 = 25_000;
+const SNAPSHOT_PACKET_OVERHEAD: i64 = 48;
+const SNAPSHOT_CREDIT_PER_TICK: i64 =
+    SNAPSHOT_RATE_BYTES_PER_SEC * crate::authority::inbox::AUTHORITY_MS as i64 / 1000;
+const STALE_BASELINE_SNAPSHOTS: u32 = 29;
+const MAX_STALE_BACKOFF: u32 = 4;
+
+#[derive(Debug, Default)]
+struct SnapshotPace {
+    credit: i64,
+    refilled: Option<Tick>,
+    backoff: u32,
+    stale_until: Option<Tick>,
+}
+
+impl SnapshotPace {
+    fn ready(&mut self, tick: Tick, unacked: Option<u32>) -> bool {
+        let elapsed = self
+            .refilled
+            .map_or(1, |last| i64::from(tick.0.saturating_sub(last.0)));
+        self.refilled = Some(tick);
+        self.credit =
+            (self.credit + elapsed * SNAPSHOT_CREDIT_PER_TICK).min(SNAPSHOT_CREDIT_PER_TICK);
+        if self.credit <= 0 {
+            return false;
+        }
+        if unacked.is_none_or(|age| age < STALE_BASELINE_SNAPSHOTS) {
+            self.backoff = 0;
+            self.stale_until = None;
+            return true;
+        }
+        if self.stale_until.is_some_and(|until| tick.0 < until.0) {
+            return false;
+        }
+        self.stale_until = Some(Tick(tick.0.saturating_add(1 << self.backoff)));
+        self.backoff = (self.backoff + 1).min(MAX_STALE_BACKOFF);
+        true
+    }
+
+    fn charge(&mut self, bytes: usize) {
+        self.credit -= bytes as i64 + SNAPSHOT_PACKET_OVERHEAD;
+    }
 }
 
 #[derive(Debug)]
@@ -243,6 +289,8 @@ impl PeerReplicationState {
             last_control_seq: None,
             control_drops_sent: 0,
             account: None,
+            pace: SnapshotPace::default(),
+            held_ack: None,
         }
     }
 
@@ -973,6 +1021,17 @@ impl UdpAuthorityHub {
             {
                 continue;
             }
+            if let Some(ack) = acks.iter().rev().find(|(id, _)| *id == client) {
+                peer.held_ack = Some(*ack);
+            }
+            let via_bootstrap = baseline_seq == 0
+                && self.bootstrap.is_some()
+                && !matches!(peer.admission, PeerAdmission::Committed { .. });
+            let unacked =
+                (baseline_seq != 0).then(|| peer.next_snap_seq.wrapping_sub(baseline_seq));
+            if !via_bootstrap && !peer.pace.ready(snapshot.tick, unacked) {
+                continue;
+            }
             let mut encoder = std::mem::take(&mut peer.encoder);
             if baseline_seq == 0 {
                 peer.last_full = Some(snapshot.tick);
@@ -980,11 +1039,7 @@ impl UdpAuthorityHub {
             } else if let Some(baseline) = peer.baseline.baseline_for_encode() {
                 encoder.adopt_baseline(baseline);
             }
-            let peer_acks: Vec<(ClientId, CmdSeq)> = acks
-                .iter()
-                .copied()
-                .filter(|(id, _)| *id == client)
-                .collect();
+            let peer_acks: Vec<(ClientId, CmdSeq)> = peer.held_ack.take().into_iter().collect();
             let (peer_snap, meta) = match for_peer(client, snapshot) {
                 Some(own) => {
                     let meta = Arc::new(WireMeta::without_reliable_events(&own.meta));
@@ -1119,6 +1174,7 @@ impl UdpAuthorityHub {
             if let Err(e) = self.send_outgoing(target, &bytes) {
                 last_err = Some(e);
             } else if let Some(peer) = self.replication.get_mut(&conn) {
+                peer.pace.charge(bytes.len());
                 peer.sent_ticks.push_back(snapshot.tick);
                 while peer.sent_ticks.len() > 32 {
                     peer.sent_ticks.pop_front();

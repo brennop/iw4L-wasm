@@ -39,7 +39,7 @@ impl WorldObjectSyncEncoder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WorldObjectSyncDecoder {
     state: WorldObjectSnapshot,
 }

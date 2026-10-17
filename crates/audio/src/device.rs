@@ -93,7 +93,7 @@ pub(crate) fn supervise(shared: Arc<RenderShared>, shutdown: Arc<AtomicBool>) {
 pub(crate) fn open(
     shared: Arc<RenderShared>,
     failed: Arc<AtomicU8>,
-    error_tx: SyncSender<cpal::StreamError>,
+    error_tx: SyncSender<cpal::Error>,
 ) -> Result<cpal::Stream, String> {
     let device = cpal::default_host()
         .default_output_device()
@@ -158,8 +158,8 @@ fn build<T: SizedSample + FromSample<f32>>(
     config: &cpal::StreamConfig,
     shared: Arc<RenderShared>,
     failed: Arc<AtomicU8>,
-    error_tx: SyncSender<cpal::StreamError>,
-) -> Result<cpal::Stream, cpal::BuildStreamError> {
+    error_tx: SyncSender<cpal::Error>,
+) -> Result<cpal::Stream, cpal::Error> {
     let channels = usize::from(config.channels);
     let step = f64::from(SAMPLE_RATE) / f64::from(config.sample_rate);
     let mut block = [[0.0; 2]; QUANTUM];
@@ -170,7 +170,7 @@ fn build<T: SizedSample + FromSample<f32>>(
     let mut primed = false;
     let errors = shared.clone();
     device.build_output_stream(
-        config,
+        config.clone(),
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
             shared.device_callbacks.fetch_add(1, Ordering::Release);
             let mut next = || {
@@ -212,14 +212,21 @@ fn build<T: SizedSample + FromSample<f32>>(
             }
             frames.into_remainder().fill(T::EQUILIBRIUM);
         },
-        move |error| match error {
-            cpal::StreamError::BufferUnderrun => {
+        move |error| match error.kind() {
+            cpal::ErrorKind::Xrun => {
                 errors.device_underruns.fetch_add(1, Ordering::Relaxed);
             }
-            error => {
-                let code = match &error {
-                    cpal::StreamError::DeviceNotAvailable => 1,
-                    cpal::StreamError::StreamInvalidated => 2,
+            cpal::ErrorKind::DeviceChanged => {
+                // The backend follows the default device and keeps this stream alive.
+                diag::info!(Audio, "audio: output device changed: {error}");
+            }
+            cpal::ErrorKind::RealtimeDenied => {
+                diag::warn!(Audio, "audio: realtime scheduling unavailable: {error}");
+            }
+            kind => {
+                let code = match kind {
+                    cpal::ErrorKind::DeviceNotAvailable => 1,
+                    cpal::ErrorKind::StreamInvalidated => 2,
                     _ => 3,
                 };
                 let _ = error_tx.try_send(error);

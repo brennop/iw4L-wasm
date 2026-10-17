@@ -76,6 +76,42 @@ impl Default for CommunityServers {
     }
 }
 
+impl CommunityServers {
+    pub fn display_choices(&self, counts: &[Option<u32>]) -> Vec<(String, String)> {
+        self.choices
+            .iter()
+            .map(|(name, value)| {
+                if value.is_empty() {
+                    return (name.clone(), value.clone());
+                }
+                let count = value
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| counts.get(index))
+                    .copied()
+                    .flatten();
+                let suffix = count.map_or_else(
+                    || " (-- players)".to_owned(),
+                    |count| format!(" ({count} players)"),
+                );
+                let name = name.trim();
+                let mut label: String = name.chars().take(28).collect();
+                if name.chars().count() > 28 {
+                    label.truncate(
+                        label
+                            .char_indices()
+                            .nth(25)
+                            .map_or(label.len(), |(index, _)| index),
+                    );
+                    label.push_str("...");
+                }
+                label.push_str(&suffix);
+                (label, value.clone())
+            })
+            .collect()
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl CommunityServers {
     pub fn restart(&self, choice: &str) -> Result<(), String> {

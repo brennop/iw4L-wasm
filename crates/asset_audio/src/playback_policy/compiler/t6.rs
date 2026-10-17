@@ -27,8 +27,8 @@ impl CueCompiler for T6CueCompiler {
             zero_volume_unity: false,
             streamed_decode: crate::StreamedDecodePolicy::Detected,
             secondary: (
-                SecondaryActivation::OnPrimaryPrepared,
-                SecondaryPolicySource::PrimaryPreparedCompatibility,
+                SecondaryActivation::OnResolution,
+                SecondaryPolicySource::IndependentLayers,
             ),
         }
     }

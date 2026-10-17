@@ -249,18 +249,29 @@ fn origin_label(origin: ZoneSoundOrigin) -> String {
 }
 
 pub fn gather_sound_sources(games: &GamesRoot, map: &Path) -> SoundSources {
+    gather_sound_sources_filtered(games, map, |_| true)
+}
+
+pub fn gather_sound_sources_filtered(
+    games: &GamesRoot,
+    map: &Path,
+    mut enabled: impl FnMut(AssetNamespace) -> bool,
+) -> SoundSources {
     let (before, after) = sound_sources(games, map);
     let mut sources = SoundSources {
         before_map: SoundCatalog::default(),
         after_map: Vec::new(),
         gaps: Vec::new(),
     };
-    for source in before {
+    for source in before
+        .into_iter()
+        .filter(|source| enabled(source.namespace))
+    {
         if let Some(catalog) = sources.take(&source) {
             sources.before_map.absorb_unresolved((*catalog).clone());
         }
     }
-    for source in after {
+    for source in after.into_iter().filter(|source| enabled(source.namespace)) {
         if let Some(catalog) = sources.take(&source) {
             sources.after_map.push((source, catalog));
         }

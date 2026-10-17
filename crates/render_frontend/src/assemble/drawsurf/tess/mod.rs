@@ -57,21 +57,17 @@ impl<T> Default for ShareBanks<T> {
 }
 
 impl<T> ShareBanks<T> {
-    pub(crate) fn acquire_unique_keep(&mut self) -> (&mut Vec<T>, bool) {
+    fn acquire_unique(&mut self) -> &mut Vec<T> {
         for i in 0..SHARE_BANKS {
             let idx = (self.write + i) % SHARE_BANKS;
             if Arc::strong_count(&self.banks[idx]) == 1 {
                 self.write = idx;
-                let vec = Arc::get_mut(&mut self.banks[idx]).expect("unique bank");
-                return (vec, false);
+                return Arc::get_mut(&mut self.banks[idx]).expect("unique bank");
             }
         }
         self.write = (self.write + 1) % SHARE_BANKS;
         self.banks[self.write] = Arc::new(Vec::new());
-        (
-            Arc::get_mut(&mut self.banks[self.write]).expect("new bank is unique"),
-            true,
-        )
+        Arc::get_mut(&mut self.banks[self.write]).expect("new bank is unique")
     }
 
     pub(crate) fn published(&self) -> Arc<Vec<T>> {
@@ -79,19 +75,9 @@ impl<T> ShareBanks<T> {
     }
 
     pub(crate) fn take_write(&mut self) -> Vec<T> {
-        let (vec, _) = self.acquire_unique_keep();
-        let mut rows = std::mem::take(vec);
+        let mut rows = std::mem::take(self.acquire_unique());
         rows.clear();
         rows
-    }
-
-    pub(crate) fn take_write_keep(&mut self) -> (Vec<T>, bool) {
-        let (vec, fresh) = self.acquire_unique_keep();
-        (std::mem::take(vec), fresh)
-    }
-
-    pub(crate) fn write_index(&self) -> usize {
-        self.write
     }
 
     pub(crate) fn put_write(&mut self, rows: Vec<T>) {

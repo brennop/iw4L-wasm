@@ -331,14 +331,24 @@ fn mix_optional_native_vision(
 
 pub fn register(app: &mut App) {
     app.init_resource::<AppliedVision>();
-    app.init_resource::<FilmVisionView>().add_systems(
-        Update,
-        update_film_vision_view
-            .in_set(frame::InMatch)
-            .after(crate::prepare::scene::view_parms::stamp_prepared_scene_view)
-            .after(frame::ScreenEffectsPublished)
-            .in_set(net::ClientSet::Present),
-    );
+    app.init_resource::<FilmVisionView>()
+        .init_resource::<frame::ScreenBlurRequest>()
+        .add_systems(
+            Update,
+            (update_film_vision_view, apply_screen_blur_request)
+                .chain()
+                .in_set(frame::InMatch)
+                .after(crate::prepare::scene::view_parms::stamp_prepared_scene_view)
+                .after(frame::ScreenEffectsPublished)
+                .in_set(net::ClientSet::Present),
+        );
+}
+
+fn apply_screen_blur_request(
+    request: Res<frame::ScreenBlurRequest>,
+    mut film: ResMut<FilmVisionView>,
+) {
+    film.blur = film.blur.max(request.0);
 }
 
 #[allow(clippy::too_many_arguments)]

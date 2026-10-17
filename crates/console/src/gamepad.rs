@@ -74,7 +74,7 @@ pub(crate) struct PadActivity {
 }
 
 pub(crate) fn track_active_pad(
-    gamepads: Query<(Entity, &Gamepad, Option<&Name>)>,
+    gamepads: Query<&Gamepad>,
     mut events: MessageReader<GamepadEvent>,
     mut active: ResMut<frame::ActivePad>,
     mut devices: ResMut<frame::InputDevices>,
@@ -104,7 +104,7 @@ pub(crate) fn track_active_pad(
                     }
                 }
                 if matches!(event.connection, GamepadConnection::Connected { .. })
-                    && let Ok((_, pad, _)) = gamepads.get(event.gamepad)
+                    && let Ok(pad) = gamepads.get(event.gamepad)
                 {
                     for axis in [
                         GamepadAxis::LeftStickX,
@@ -148,31 +148,6 @@ pub(crate) fn track_active_pad(
     if active.0.is_none() {
         devices.pad_prompts = false;
     }
-    devices.style = match settings.pad_prompts {
-        1 => frame::PromptStyle::Xbox,
-        2 => frame::PromptStyle::PlayStation,
-        3 => frame::PromptStyle::Generic,
-        _ => active
-            .0
-            .and_then(|entity| gamepads.get(entity).ok())
-            .map_or(frame::PromptStyle::Generic, |(_, pad, name)| {
-                let name = name.map_or("", |name| name.as_str()).to_ascii_lowercase();
-                if pad.vendor_id() == Some(0x054c)
-                    || name.contains("dualshock")
-                    || name.contains("dualsense")
-                    || name == "wireless controller"
-                {
-                    frame::PromptStyle::PlayStation
-                } else if pad.vendor_id() == Some(0x045e)
-                    || name.contains("xbox")
-                    || name.contains("xinput")
-                {
-                    frame::PromptStyle::Xbox
-                } else {
-                    frame::PromptStyle::Generic
-                }
-            }),
-    };
 }
 
 const REPEAT_DELAY: f32 = 0.4;
@@ -181,6 +156,7 @@ const REPEAT_EVERY: f32 = 0.12;
 pub(crate) fn drive_menus_with_pad(
     gamepads: Query<&Gamepad>,
     active: Res<frame::ActivePad>,
+    overlay: Res<frame::UiOverlayInput>,
     script_menus: hud::MenuState<'_>,
     (devices, console, capture): (
         Res<frame::InputDevices>,
@@ -191,7 +167,7 @@ pub(crate) fn drive_menus_with_pad(
     mut requests: MessageWriter<UiMenuRequest>,
     mut repeat: Local<Option<(UiMenuKey, f32)>>,
 ) {
-    if !devices.focused || console.open {
+    if !devices.focused || console.open || overlay.0 {
         *repeat = None;
         return;
     }

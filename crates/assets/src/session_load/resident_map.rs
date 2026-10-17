@@ -55,13 +55,24 @@ pub async fn load_prepared_match(
     zone_ff: Result<PathBuf, String>,
     common_mp: Result<PathBuf, String>,
     progress: LoadProgress,
+    families: frame::AssetFamilies,
 ) -> MatchLoadOutcome {
+    if let Ok(path) = &zone_ff {
+        let family = asset_transport::zone_game_for_path(path);
+        if family.is_none_or(|family| !families.enabled(family.prefix())) {
+            return MatchLoadOutcome::Refused(format!(
+                "Map family is disabled or unavailable: {}",
+                path.display()
+            ));
+        }
+    }
     let stamp = zone_ff.as_deref().ok().and_then(ZoneStamp::of);
     if let Some(stamp) = &stamp {
         let key = CommonKey::for_match(
             Some(&stamp.path),
             common_mp.as_deref().ok(),
             &mut Vec::new(),
+            families,
         );
         let copying = web_time::Instant::now();
         if let Some(mut prepared) = resident_copy(stamp, &key) {
@@ -92,7 +103,8 @@ pub async fn load_prepared_match(
             dropped.prepared.materials.products_id
         );
     }
-    let (outcome, common) = walk_prepared_match(zone_ff, common_mp, progress.clone()).await;
+    let (outcome, common) =
+        walk_prepared_match(zone_ff, common_mp, progress.clone(), families).await;
     let MatchLoadOutcome::Ready(mut prepared) = outcome else {
         return outcome;
     };

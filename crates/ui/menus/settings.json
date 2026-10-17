@@ -131,7 +131,11 @@
     "base": "pc_options_actions",
     "item_copies": [
       {"dvar": "+melee", "fields": {"name": "change_zoom_binding", "dvar": "+changezoom", "rect": {"x": 232, "y": 288, "w": 344, "h": 20}}},
-      {"text_key": "@MENU_MELEE_ATTACK", "fields": {"name": "change_zoom_label", "text_key": "Change zoom", "rect": {"x": 232, "y": 288, "w": 344, "h": 20}}}
+      {"text_key": "@MENU_MELEE_ATTACK", "fields": {"name": "change_zoom_label", "text_key": "Change zoom", "rect": {"x": 232, "y": 288, "w": 344, "h": 20}}},
+      {"dvar": "+melee", "fields": {"name": "public_chat_binding", "dvar": "chatmodepublic", "rect": {"x": 232, "y": 328, "w": 344, "h": 20}}},
+      {"text_key": "@MENU_MELEE_ATTACK", "fields": {"name": "public_chat_label", "text_key": "Public chat", "rect": {"x": 232, "y": 328, "w": 344, "h": 20}}},
+      {"dvar": "+melee", "fields": {"name": "team_chat_binding", "dvar": "chatmodeteam", "rect": {"x": 232, "y": 348, "w": 344, "h": 20}}},
+      {"text_key": "@MENU_MELEE_ATTACK", "fields": {"name": "team_chat_label", "text_key": "Team chat", "rect": {"x": 232, "y": 348, "w": 344, "h": 20}}}
     ]
   }
 ]

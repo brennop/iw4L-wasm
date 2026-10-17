@@ -550,6 +550,20 @@ fn overlay_draw_obj_only(
                 );
             }
         }
+        RetainedDrawKind::Glass {
+            lighting_handle, ..
+        }
+        | RetainedDrawKind::MarkMesh {
+            lighting_handle, ..
+        } => {
+            overlay_smodel_tess_code_constants(
+                scratch,
+                lighting_handle,
+                inv_image_height,
+                None,
+                need,
+            );
+        }
         _ => {}
     }
 }

@@ -647,6 +647,8 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
         }
         return;
     }
+    let remote = crate::remote_missile::is_remote(world, projectile.id);
+    let mask = crate::remote_missile::projectile_mask(remote);
     let mut trace_start = start;
     let mut hops = 0u32;
     let mut hop_capped = false;
@@ -665,7 +667,7 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             &BulletTraceQuery {
                 start: trace_start,
                 end,
-                mask: MASK_BULLET_WORLD,
+                mask,
                 ignore: Some(projectile.owner),
                 ignore_hit: None,
                 ignore_model: None,
@@ -736,6 +738,22 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             continue;
         }
         break outcome;
+    };
+    let outcome = if remote {
+        let sky = crate::world::clip_trace(
+            brushes,
+            bsp,
+            mesh,
+            start,
+            end,
+            [0.0; 3],
+            [0.0; 3],
+            crate::bullet_collision::CONTENTS_SKY,
+            &|_| true,
+        );
+        crate::remote_missile::sky_wall_outcome(outcome, start, &sky)
+    } else {
+        outcome
     };
     if world.publishes_snapshot()
         && projectile.live

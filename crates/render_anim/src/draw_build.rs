@@ -702,6 +702,7 @@ pub fn install_prepared_fpv_plan(
 /// a hidden viewmodel is not a reason for the merge downstream to re-copy a
 /// vertex bank every frame.
 pub fn clear_fpv_draw_plan(plan: &mut FpvDrawPlan, lighting_handle: u32) {
+    plan.skin_jobs.clear();
     let was_empty = plan.draws.is_empty() && plan.decoded_n == 0;
     plan.lighting_handle = lighting_handle;
     plan.geometry_ok = false;

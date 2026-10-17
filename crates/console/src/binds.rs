@@ -140,33 +140,34 @@ impl PadButton {
         }
     }
 
-    pub const fn prompt(self, style: frame::PromptStyle) -> &'static str {
-        use frame::PromptStyle::*;
-        match (style, self) {
-            (Xbox, _) => self.label(),
-            (PlayStation, Self::South) => "×",
-            (PlayStation, Self::East) => "○",
-            (PlayStation, Self::West) => "□",
-            (PlayStation, Self::North) => "△",
-            (PlayStation, Self::LeftBumper) => "L1",
-            (PlayStation, Self::RightBumper) => "R1",
-            (PlayStation, Self::LeftTrigger) => "L2",
-            (PlayStation, Self::RightTrigger) => "R2",
-            (PlayStation, Self::LeftStick) => "L3",
-            (PlayStation, Self::RightStick) => "R3",
-            (PlayStation, Self::Select) => "SHARE",
-            (PlayStation, Self::Start) => "OPTIONS",
-            (Generic, Self::South) => "SOUTH",
-            (Generic, Self::East) => "EAST",
-            (Generic, Self::West) => "WEST",
-            (Generic, Self::North) => "NORTH",
-            (Generic, Self::LeftBumper) => "L-BUMPER",
-            (Generic, Self::RightBumper) => "R-BUMPER",
-            (Generic, Self::LeftTrigger) => "L-TRIGGER",
-            (Generic, Self::RightTrigger) => "R-TRIGGER",
-            (Generic, Self::LeftStick) => "L-STICK",
-            (Generic, Self::RightStick) => "R-STICK",
-            (Generic, Self::Select) => "SELECT",
+    pub const fn icon_prompt(self) -> &'static str {
+        use frame::ControllerIcon;
+        match self {
+            Self::South => ControllerIcon::A.prompt(),
+            Self::East => ControllerIcon::B.prompt(),
+            Self::West => ControllerIcon::X.prompt(),
+            Self::North => ControllerIcon::Y.prompt(),
+            Self::DpadUp => ControllerIcon::DpadUp.prompt(),
+            Self::DpadDown => ControllerIcon::DpadDown.prompt(),
+            Self::DpadLeft => ControllerIcon::DpadLeft.prompt(),
+            Self::DpadRight => ControllerIcon::DpadRight.prompt(),
+            _ => self.label(),
+        }
+    }
+
+    pub const fn generic_label(self) -> &'static str {
+        match self {
+            Self::South => "SOUTH",
+            Self::East => "EAST",
+            Self::West => "WEST",
+            Self::North => "NORTH",
+            Self::LeftBumper => "L-BUMPER",
+            Self::RightBumper => "R-BUMPER",
+            Self::LeftTrigger => "L-TRIGGER",
+            Self::RightTrigger => "R-TRIGGER",
+            Self::LeftStick => "L-STICK",
+            Self::RightStick => "R-STICK",
+            Self::Select => "SELECT",
             _ => self.label(),
         }
     }

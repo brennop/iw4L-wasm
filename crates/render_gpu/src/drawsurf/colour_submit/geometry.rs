@@ -36,10 +36,6 @@ pub(super) struct ExactColourGeometry {
 
     pub(super) xmodel: residency::GpuMesh,
     pub(super) xmodel_surface_ranges: Vec<(u32, u32)>,
-
-    pub(super) xmodel_resident_segments: render_frame::PackedSegments,
-
-    pub(super) xmodel_resident_allocation: u64,
     pub(super) fx_vertex: Option<Buffer>,
     pub(super) fx_index: Option<Buffer>,
     pub(super) fx_surface_ranges: Vec<(u32, u32)>,
@@ -55,7 +51,6 @@ pub(super) struct ExactColourGeometry {
     pub(super) mark_mesh_surface_ranges: Vec<(u32, u32)>,
     pub(super) glass_mesh: residency::GpuMesh,
     pub(super) glass_mesh_surface_ranges: Vec<(u32, u32)>,
-    pub(super) last_xmodel_gpu_hash: Option<i64>,
     pub(super) neutral_vertex_lighting: Option<Buffer>,
     pub(super) neutral_vertex_lighting_count: usize,
 }
@@ -557,8 +552,6 @@ fn upload_xmodel_streams(
         geometry.xmodel.uploaded_vertices = source.xmodel_revision;
         geometry.xmodel.uploaded_topology = source.xmodel_topology_revision;
         geometry.xmodel_surface_ranges.clear();
-        geometry.xmodel_resident_segments.forget();
-        geometry.last_xmodel_gpu_hash = None;
         return;
     }
     let policy = colour_xmodel_upload(XModelUploadQuery {
@@ -573,7 +566,6 @@ fn upload_xmodel_streams(
         cpu_verts: verts,
         cpu_indices: indices,
     });
-    let counts_stable = geometry.xmodel.vertex.len() == verts;
     let (write_vertices, write_indices) = match policy {
         XModelUpload::Resident => return,
         XModelUpload::Rewrite { vertices, indices } => (vertices, indices),
@@ -581,7 +573,7 @@ fn upload_xmodel_streams(
             geometry.xmodel.vertex.reserve(
                 device,
                 "iw4_exact_colour_xmodel_vb",
-                BufferUsages::VERTEX,
+                BufferUsages::VERTEX | BufferUsages::STORAGE,
                 verts,
                 asset_iw4::size::GFX_PACKED_VERTEX,
             );
@@ -598,13 +590,19 @@ fn upload_xmodel_streams(
     geometry.xmodel.vertex.set_len(verts);
     geometry.xmodel.index.set_len(indices);
     if write_vertices {
-        upload_xmodel_vertices(
-            geometry,
-            source,
+        if geometry.xmodel.vertex.write_at(
             queue,
-            counts_stable,
-            asset_iw4::size::GFX_PACKED_VERTEX,
-        );
+            0,
+            bytemuck::cast_slice(source.xmodel_vertices.as_slice()),
+        ) {
+            geometry.xmodel.uploaded_vertices = source.xmodel_revision;
+        } else {
+            diag::error!(
+                World,
+                "drawsurf geometry: xmodel vertex upload skipped — revision {} is not resident",
+                source.xmodel_revision,
+            );
+        }
     }
     if write_indices {
         if geometry.xmodel.index.write_at(
@@ -624,90 +622,6 @@ fn upload_xmodel_streams(
             );
         }
     }
-    geometry.last_xmodel_gpu_hash = None;
-}
-
-fn upload_xmodel_vertices(
-    geometry: &mut ExactColourGeometry,
-    source: &PublishedRenderFrame,
-    queue: &RenderQueue,
-    counts_stable: bool,
-    stride: usize,
-) {
-    let bytes: &[u8] = bytemuck::cast_slice(source.xmodel_vertices.as_slice());
-    let published = source.xmodel_packed_segments;
-    let resident = geometry.xmodel_resident_segments;
-
-    let allocation = geometry.xmodel.vertex.allocation();
-    let segmented = counts_stable
-        && published.live
-        && resident.live
-        && published.layout == resident.layout
-        && geometry.xmodel_resident_allocation == allocation;
-    if !segmented {
-        if !geometry.xmodel.vertex.write_at(queue, 0, bytes) {
-            diag::error!(
-                World,
-                "drawsurf geometry: xmodel vertex upload skipped — revision {} is not resident",
-                source.xmodel_revision,
-            );
-            return;
-        }
-        geometry.xmodel.uploaded_vertices = source.xmodel_revision;
-        geometry.xmodel_resident_segments = published;
-        geometry.xmodel_resident_allocation = allocation;
-        return;
-    }
-    let mut spans = [(0usize, 0usize); render_frame::PACKED_SEGMENT_OWNERS];
-    let mut n = 0;
-    for (was, now) in resident.owners.iter().zip(published.owners.iter()) {
-        if was.revision == now.revision || now.rows == 0 {
-            continue;
-        }
-        let start = now.start as usize * stride;
-        let end = start + now.rows as usize * stride;
-        if let Some(span) = residency::aligned_stream_span(start, end, bytes.len()) {
-            spans[n] = span;
-            n += 1;
-        }
-    }
-    let spans = coalesce_stream_spans(&mut spans[..n]);
-    for &(start, end) in spans.iter() {
-        if !geometry
-            .xmodel
-            .vertex
-            .write_at(queue, start as u64, &bytes[start..end])
-        {
-            diag::error!(
-                World,
-                "drawsurf geometry: xmodel vertex segment [{start}, {end}) upload skipped — revision {} is not resident",
-                source.xmodel_revision,
-            );
-            geometry.xmodel_resident_segments = render_frame::PackedSegments::default();
-            return;
-        }
-    }
-    geometry.xmodel.uploaded_vertices = source.xmodel_revision;
-    geometry.xmodel_resident_segments = published;
-    geometry.xmodel_resident_allocation = allocation;
-}
-
-fn coalesce_stream_spans(spans: &mut [(usize, usize)]) -> &[(usize, usize)] {
-    if spans.is_empty() {
-        return spans;
-    }
-    spans.sort_unstable_by_key(|span| span.0);
-    let mut merged = 0;
-    for i in 1..spans.len() {
-        let (start, end) = spans[i];
-        if start <= spans[merged].1 {
-            spans[merged].1 = spans[merged].1.max(end);
-        } else {
-            merged += 1;
-            spans[merged] = (start, end);
-        }
-    }
-    &spans[..merged + 1]
 }
 
 pub(super) fn record_geometry<'a>(

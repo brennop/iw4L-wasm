@@ -18,6 +18,11 @@ scenario`, `chaos`, `bench` ([`BENCH.md`](BENCH.md)), `bench-live`, `lifecycle-*
 
 Linux startup creates `iw4`, `iw5`, `t5` and `t6` symlinks in `IW4L_GAMES` for missing games with exactly one valid Steam installation. Existing entries are preserved.
 
+`menu` opens the main menu immediately while the shared weapon catalog prepares
+in the background. Opening Classes before it is ready shows Loading Classes;
+Escape returns to the menu, and readiness opens the editor for unlocked accounts. In `--cmds`,
+`wait progression` holds until then.
+
 **Cheats are on by default.** The host accepts the debug
 actions: `move`, `look`, `tp`, `nudge`, `god`, `kill`, `damage`, `force_spawn`,
 `force_match_start`, `rotatevelocity` and the `give` supply commands. `--no-cheats`
@@ -43,6 +48,14 @@ wait while preserving the queue, which inside `--cmds` takes an explicit `!`.
 A hand-typed `quit`/`exit`/`disconnect` goes further: it jumps **every** hold,
 `wait 60s` included, and releases it. A `quit` written into `--cmds` does not —
 it is part of the script and waits its turn.
+
+Public chat is **T**, team chat is **Y**. Multiplayer settings and Controls →
+Actions can rebind both;
+`bind T chatmodepublic` / `bind Y chatmodeteam` also persist. Enter sends,
+Escape cancels; arrows, Home/End, Backspace/Delete edit the message.
+`say <message>` and `say_team <message>` send from the console. Chat lasts
+eight seconds, shows five recent messages, and uses team colors for names with white
+message text. Lines contain only `nickname: message`, without status prefixes.
 
 ## Verbs and traps
 

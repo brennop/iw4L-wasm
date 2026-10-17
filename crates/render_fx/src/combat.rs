@@ -427,7 +427,7 @@ pub fn play_impact_table_cell(
             let entry = t.entries.get(row)?;
             if let Some(slot) = flesh_slot {
                 return Some(i64::from(
-                    entry.flesh.get(slot).is_none_or(|name| name.is_empty()),
+                    entry.flesh.get(slot).is_some_and(|name| name.is_empty()),
                 ));
             }
             if surf >= fx_iw4::FX_IMPACT_NONFLESH_COUNT {
@@ -435,13 +435,16 @@ pub fn play_impact_table_cell(
             }
             Some(i64::from(entry.nonflesh[surf].is_empty()))
         });
+        if combat.last_impact_cell_empty == Some(1) {
+            combat.last_impact_miss_why = None;
+            sync_combat_dump(cursor, combat);
+            return FireFxOutcome::NotApplicable("empty_impact_cell");
+        }
         let Some(def_name) = table.and_then(|t| t.effect_name(row, surf, flesh_slot)) else {
             cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
             combat.last_impact_miss_why = Some(
                 if table.is_none() {
                     "no_table"
-                } else if combat.last_impact_cell_empty == Some(1) {
-                    "empty_cell"
                 } else {
                     "cell_miss"
                 }
@@ -455,11 +458,7 @@ pub fn play_impact_table_cell(
                 );
             }
             sync_combat_dump(cursor, combat);
-            return if table.is_some() && combat.last_impact_cell_empty == Some(1) {
-                FireFxOutcome::NotApplicable("empty_impact_cell")
-            } else {
-                FireFxOutcome::DependencyRefused("impact_table_cell")
-            };
+            return FireFxOutcome::DependencyRefused("impact_table_cell");
         };
         combat.last_impact_def = Some(def_name.name.to_owned());
         combat.last_impact_miss_why = None;

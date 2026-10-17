@@ -133,6 +133,7 @@ fn make_image(
 
 #[derive(Resource, Default)]
 pub struct HudImages {
+    controller_icons: HashMap<String, Handle<Image>>,
     ui_images: asset_material::UiImagePublication,
     games_root: PathBuf,
 
@@ -385,6 +386,24 @@ impl HudImages {
         sampler: Option<u8>,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
+        if let Some(icon) = frame::ControllerIcon::ALL
+            .into_iter()
+            .find(|icon| icon.material() == name)
+        {
+            let handle = self
+                .controller_icons
+                .entry(name.to_owned())
+                .or_insert_with(|| {
+                    images.add(make_image(
+                        crate::controller_icons::SIZE,
+                        crate::controller_icons::SIZE,
+                        crate::controller_icons::rasterize(icon),
+                        HudSampling::Color,
+                        None,
+                    ))
+                });
+            return Some(handle.clone());
+        }
         let key = iwd_key(ns, name, sampling, sampler);
         if ns == HUD_CHROME_NAMESPACE && self.zone_states.get(&key.1) == Some(&None) {
             return None;

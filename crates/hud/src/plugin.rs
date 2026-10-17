@@ -41,27 +41,29 @@ impl Plugin for HudPlugin {
         );
         crate::gpu_list::register(app);
         let _ = crate::scorebar::milliseconds();
-        app.init_resource::<HudImages>()
+        app.init_resource::<frame::HudDraw>()
+            .init_resource::<HudImages>()
             .init_resource::<HudPresentationGaps>()
             .init_resource::<ReticleAdsLatch>()
             .init_resource::<IrisLetterboxFill>()
             .init_resource::<BloodOverlayLatch>()
+            .scoped::<crate::damage_direction::DamageDirections>(frame::Timeline::Running)
             .init_resource::<BloodGpuJob>()
             .init_resource::<FlashWhiteoutLatch>()
             .init_resource::<FlashGpuJob>()
-            .scoped::<PendingSplash>(frame::MatchScope::Live)
-            .scoped::<SplashSlots>(frame::MatchScope::Live)
-            .scoped::<KillfeedWindow>(frame::MatchScope::Live)
+            .scoped::<PendingSplash>(frame::Timeline::Running)
+            .scoped::<SplashSlots>(frame::Timeline::Running)
+            .scoped::<KillfeedWindow>(frame::Timeline::Running)
             .scoped::<PlayerCardCache>(frame::MatchScope::Live)
             .scoped::<UiLocalVars>(frame::MatchScope::Live)
             .init_resource::<crate::playercard::FrontendLocalVars>()
             .init_resource::<HudRootVisible>()
-            .scoped::<crate::compass::CompassPingLatch>(frame::MatchScope::Live)
+            .scoped::<crate::compass::CompassPingLatch>(frame::Timeline::Running)
             .init_resource::<crate::surface::Hud2dSurface>()
             .init_resource::<HudPresentStamp>()
             .init_resource::<HudStageStamp>()
             .init_resource::<crate::expr_cache::MenuExprCache>()
-            .scoped::<crate::hudelem::HudElemSoundLatch>(frame::MatchScope::Live)
+            .scoped::<crate::hudelem::HudElemSoundLatch>(frame::Timeline::Running)
             .scoped::<crate::menus::ScriptMenus>(frame::MatchScope::Live)
             .init_resource::<crate::menus::FrontendMenus>()
             .add_message::<net::SvcCardSlotCmd>()
@@ -126,7 +128,9 @@ impl Plugin for HudPlugin {
                             crate::use_hint::update.in_set(frame::InMatch),
                             update_hud_elems.in_set(frame::InMatch),
                             update_targetmap,
+                            crate::damage_direction::update.in_set(frame::InMatch),
                             crate::menus::update_script_menus,
+                            crate::connection_notice::update.in_set(frame::InMatch),
                             hud_stage_close::<7>,
                         )
                             .chain(),
@@ -154,7 +158,9 @@ impl Plugin for HudPlugin {
                     flush_hud_elems_tess,
                     flush_targetmap_tess,
                     flush_blood_tess,
+                    flush_damage_direction_tess,
                     flush_script_menus_tess,
+                    flush_connection_notice_tess,
                 )
                     .chain()
                     .after(hud_stage_close::<7>)
@@ -340,6 +346,7 @@ fn ensure_hud_root(mut commands: Commands, existing: Query<Entity, With<HudRoot>
         .with_children(|root| {
             crate::font_overlay::spawn_overlay(root, crate::overhead_names::OverheadNamesRaster);
             spawn_reticle(root);
+            crate::damage_direction::spawn(root);
             spawn_iris(root);
             spawn_hud_elems_back(root);
             spawn_compass(root);
@@ -357,17 +364,22 @@ fn ensure_hud_root(mut commands: Commands, existing: Query<Entity, With<HudRoot>
             spawn_hud_elems(root);
             spawn_targetmap(root);
             crate::menus::spawn_script_menus(root);
+            crate::font_overlay::spawn_overlay(
+                root,
+                crate::connection_notice::ConnectionNoticeRaster,
+            );
         });
 }
 
 fn sync_hud_visibility(
     screen: Res<AppScreen>,
     ui_draw: Option<Res<UiDraw>>,
+    hud_draw: Res<frame::HudDraw>,
     mut roots: Query<&mut Visibility, With<HudRoot>>,
     mut visible: ResMut<HudRootVisible>,
 ) {
     let ui_on = ui_draw.is_some_and(|d| d.0);
-    let show = hud_root_should_show(*screen, ui_on);
+    let show = hud_draw.0 && hud_root_should_show(*screen, ui_on);
     visible.0 = Some(i32::from(show));
     for mut vis in &mut roots {
         let want = if show {
@@ -681,6 +693,36 @@ fn flush_mantle_hint_tess(
     }
 }
 
+fn flush_damage_direction_tess(
+    surface: Res<crate::surface::Hud2dSurface>,
+    mut pass: ResMut<HudTessPass>,
+    mut hud_images: ResMut<HudImages>,
+    mut images: ResMut<Assets<Image>>,
+    mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    mut hint: Query<
+        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
+        With<crate::damage_direction::DamageDirectionRaster>,
+    >,
+) {
+    let _body = gpu_list::TessBody::open();
+    if !surface.is_ready() {
+        return;
+    }
+    let job = std::mem::take(&mut pass.damage_direction);
+    if let Ok((_, mut host, mut latch)) = hint.single_mut() {
+        gpu_list::apply_tess_job(
+            job,
+            &mut host,
+            &mut latch,
+            &mut hud_images,
+            &mut images,
+            &mut frame,
+            surface.width(),
+            surface.height(),
+        );
+    }
+}
+
 fn flush_scoreboard_tess(
     surface: Res<crate::surface::Hud2dSurface>,
     mut pass: ResMut<HudTessPass>,
@@ -883,6 +925,36 @@ fn flush_breath_hint_tess(
         return;
     }
     let job = std::mem::take(&mut pass.breath_hint);
+    if let Ok((_, mut host, mut latch)) = hint.single_mut() {
+        gpu_list::apply_tess_job(
+            job,
+            &mut host,
+            &mut latch,
+            &mut hud_images,
+            &mut images,
+            &mut frame,
+            surface.width(),
+            surface.height(),
+        );
+    }
+}
+
+fn flush_connection_notice_tess(
+    surface: Res<crate::surface::Hud2dSurface>,
+    mut pass: ResMut<HudTessPass>,
+    mut hud_images: ResMut<HudImages>,
+    mut images: ResMut<Assets<Image>>,
+    mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    mut hint: Query<
+        (Entity, &mut Node, &mut crate::gpu_list::GpuListLatch),
+        With<crate::connection_notice::ConnectionNoticeRaster>,
+    >,
+) {
+    let _body = gpu_list::TessBody::open();
+    if !surface.is_ready() {
+        return;
+    }
+    let job = std::mem::take(&mut pass.connection_notice);
     if let Ok((_, mut host, mut latch)) = hint.single_mut() {
         gpu_list::apply_tess_job(
             job,

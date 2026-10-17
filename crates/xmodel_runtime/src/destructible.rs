@@ -25,6 +25,7 @@ pub struct T5DestructibleStage {
     pub max_time: f32,
     pub flags: u32,
     pub break_effect: Option<String>,
+    pub break_effect_looping: bool,
     pub break_sound: Option<String>,
     pub break_notify: Option<String>,
     pub loop_sound: Option<String>,

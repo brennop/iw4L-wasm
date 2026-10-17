@@ -626,8 +626,7 @@ pub(super) fn draw_exact_colour(
             for draw in &prepared {
                 authored_state.note(draw.state.authored_host_fields());
             }
-            diag::warn!(
-                World,
+            let message = format!(
                 "drawsurf production gpu submit: material_runs={} pass_setups={} obj_binds={} shell_hits={} shell_misses={} overlay_const_writes={} overlay_need_known={} ready_draws={ready_draws} refused_draws={refused_draws} exec_refused={exec_refused} authored_state={authored_state:?} unsupported_state={unsupported_state:?} exec_causes={} submit_cause={} submit_cause2={} prepared={} xmodel_prepared={xmodel_draws} codemesh_prepared={codemesh_draws} markmesh_prepared={markmesh_draws} glassmesh_prepared={glassmesh_draws} floatz_blit={floatz_blit} resolved_scene_copy={resolved_scene_copy} viewmodel_held={viewmodel_held} scene_tables(before_linear,before_srgb,after_linear,after_srgb)(2d,cube,3d,samplers)={:?} texture_table_rebuilds={} shadow_table={:?} cached_slot_words={} tex_bind(hit,miss)=({},{}) fixed_texture_groups={} set_bind_group(0,1)=({},{}) constant_bind_groups={} indirect(folded,batches,uploaded_words)=({},{},{}) last={last_refusal:?}",
                 colour_run_census.material_runs,
                 colour_run_census.pass_setups,
@@ -667,6 +666,11 @@ pub(super) fn draw_exact_colour(
                 indirect.batches,
                 indirect.uploaded_words,
             );
+            if refused_draws != 0 || exec_refused != 0 {
+                diag::warn!(World, "{message}");
+            } else {
+                diag::info!(World, "{message}");
+            }
         }
     }
     scratch.prepared = prepared;

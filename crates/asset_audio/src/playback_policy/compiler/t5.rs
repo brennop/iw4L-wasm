@@ -23,7 +23,7 @@ impl CueCompiler for T5CueCompiler {
             streamed_decode: crate::StreamedDecodePolicy::WmaContainerWithWaveCompatibility,
             secondary: (
                 SecondaryActivation::OnResolution,
-                SecondaryPolicySource::T5IndependentCompatibility,
+                SecondaryPolicySource::IndependentLayers,
             ),
         }
     }

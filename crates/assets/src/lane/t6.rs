@@ -1,5 +1,6 @@
 mod camouflage;
 mod common_compile;
+mod destructible;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -53,6 +54,7 @@ struct T6Content {
 fn t6_script_model_instance(
     placement: &asset_world::ScriptModelPlacement,
     scene_assets: &mut asset_world::MapXModelSceneCatalog,
+    definitions: &BTreeMap<String, Arc<xmodel_runtime::T5DestructibleDef>>,
 ) -> asset_world::ScriptModelSceneInstance {
     use bevy::math::{EulerRot, Quat, Vec3};
     let current_model = asset_world::MapXModelAssetKey(placement.model.clone());
@@ -64,10 +66,20 @@ fn t6_script_model_instance(
             },
         );
     }
+    let definition = definitions.get(&placement.destructible_def).cloned();
+    let mut dobj_state =
+        xmodel_runtime::DObjSemanticState::bind_pose(placement.model.clone(), 1, 1);
+    if let Some(def) = &definition
+        && placement.model == def.model
+        && let Some(asset_world::MapXModelSceneAsset::T6(skel)) = scene_assets.get(&current_model)
+    {
+        let health: Vec<_> = def.pieces.iter().map(|piece| piece.health as i16).collect();
+        dobj_state.hide_part_bits = def.hide_parts(&health, &skel.bone_names);
+    }
     let [pitch, yaw, roll] = placement.angles.map(f32::to_radians);
     asset_world::ScriptModelSceneInstance {
         id: placement.id,
-        dobj_state: xmodel_runtime::DObjSemanticState::bind_pose(placement.model.clone(), 1, 1),
+        dobj_state,
         current_model,
         transform: bevy::prelude::Transform {
             translation: Vec3::from_array(placement.origin),
@@ -81,7 +93,7 @@ fn t6_script_model_instance(
             script_noteworthy: placement.script_noteworthy.clone(),
             destructible_type: placement.destructible_type.clone(),
             destructible_def: placement.destructible_def.clone(),
-            t5_destructible: None,
+            t5_destructible: definition,
             target: placement.target.clone(),
             script_exploder: placement.script_exploder.clone(),
             brush_link: placement.brush_link.clone(),
@@ -205,6 +217,71 @@ fn capture_xanims(
         "t6 xanims: {captured} of {total} weapon animations captured; {} notetrack sounds",
         content.note_sounds.len()
     ));
+}
+
+fn capture_player_animation(
+    load: &fastfile_t6::ZoneLoad,
+    others: &[fastfile_t6::ZoneLoad],
+    xanims: &mut asset_anim::XAnimBuild,
+    report: &mut Vec<String>,
+) -> asset_anim::PlayerAnimSources {
+    let mut sources = asset_anim::PlayerAnimSources::default();
+    for load in std::iter::once(load).chain(others) {
+        for asset in &load.assets {
+            if asset.ty != fastfile_t6::AssetType::RawFile {
+                continue;
+            }
+            let Some(name) = header_str(load, &asset.header, 0).filter(|name| {
+                [
+                    asset_anim::MULTIPLAYER_ANIMTREE_PATH,
+                    asset_anim::PLAYERANIM_SCRIPT_PATH,
+                    asset_anim::PLAYERANIM_TYPES_PATH,
+                ]
+                .contains(name)
+            }) else {
+                continue;
+            };
+            let data = header_u32(&asset.header, 4).and_then(|size| {
+                let ptr = decode_ptr(header_u32(&asset.header, 8)?)?;
+                load.blocks.bytes(ptr, size as usize).ok()
+            });
+            let Some(data) = data else {
+                report.push(format!(
+                    "T6 character animation source {name}: invalid raw file"
+                ));
+                continue;
+            };
+            sources.capture(asset_core::FamilyId::T6, name, data, false);
+        }
+    }
+    sources.compile();
+    report.push(sources.compile_report_line());
+    report.push(sources.parse_report_line());
+    let mut wanted: std::collections::BTreeSet<_> = sources
+        .compiled()
+        .and_then(|tree| tree.as_ref().ok())
+        .into_iter()
+        .flat_map(|tree| tree.nodes())
+        .filter(|node| node.child_count == 0)
+        .map(|node| node.name.clone())
+        .collect();
+    let total = wanted.len();
+    let mut captured = 0;
+    for load in std::iter::once(load).chain(others) {
+        for asset in &load.assets {
+            if asset.ty == fastfile_t6::AssetType::XAnimParts
+                && header_str(load, &asset.header, 0)
+                    .is_some_and(|name| wanted.remove(&name.to_ascii_lowercase()))
+                && xanims.capture_xanim_t6(asset_core::FamilyId::T6, "", load, asset)
+            {
+                captured += 1;
+            }
+        }
+    }
+    report.push(format!(
+        "T6 character animations: {captured} of {total} clips captured"
+    ));
+    sources
 }
 
 fn capture_sounds(
@@ -1303,6 +1380,12 @@ fn capture_effects(
         .map(|&name| name.to_owned())
         .collect();
     wanted.insert("maps/mp_maps/fx_mp_exp_bomb".to_owned());
+    for load in zones {
+        match destructible::effect_names(load) {
+            Ok(names) => wanted.extend(names),
+            Err(error) => content.report.push(error),
+        }
+    }
     loop {
         let before = content.fx.len();
         for &load in zones {
@@ -1903,6 +1986,8 @@ impl ZoneLane for T6Lane {
             }
             let script_placements =
                 asset_world::parse_script_model_placements(entity_string(&load)?);
+            let destructibles = destructible::capture(&load)?;
+            let destructible_models = destructible::model_names(&destructibles);
             let mut script_xmodels: Vec<asset_model::T6Model> = Vec::new();
             for asset in &load.assets {
                 let Some(model) = asset_model::T6Model::new(&load, asset) else {
@@ -1911,7 +1996,8 @@ impl ZoneLane for T6Lane {
                 let Some(name) = model.name() else {
                     continue;
                 };
-                if script_placements.iter().any(|p| p.model == name)
+                if (script_placements.iter().any(|p| p.model == name)
+                    || destructible_models.contains(name))
                     && !script_xmodels.iter().any(|seen| seen.name() == Some(name))
                 {
                     script_xmodels.push(model);
@@ -2063,7 +2149,13 @@ impl ZoneLane for T6Lane {
             }
             let script_model_instances = script_placements
                 .iter()
-                .map(|placement| t6_script_model_instance(placement, &mut map_xmodel_scene_assets))
+                .map(|placement| {
+                    t6_script_model_instance(
+                        placement,
+                        &mut map_xmodel_scene_assets,
+                        &destructibles,
+                    )
+                })
                 .collect::<Vec<_>>();
             report.push(format!(
                 "T6 script models: placements={} models={}",
@@ -2286,13 +2378,42 @@ impl ZoneLane for T6Lane {
                 .map_err(|e| report.push(format!("T6 light grid: {e}")))
                 .ok();
             let mut smodel_lighting_samples = match &light_grid {
-                Some(grid) => super::helpers::smodel_lighting_samples(
-                    &mut report,
-                    grid,
-                    asset_world::world_t6::static_model_lighting_origins(&load, world_asset)?,
-                    &static_model_instances,
-                    Some(&collision),
-                ),
+                Some(grid) => {
+                    let palette =
+                        asset_world::world_t6::static_model_lighting_palette(&load, world_asset)?;
+                    let origins =
+                        asset_world::world_t6::static_model_lighting_origins(&load, world_asset)?;
+                    let mut authored = Vec::new();
+                    let mut unresolved = Vec::new();
+                    for (slot, origin) in origins {
+                        if static_model_instances.get(slot).is_none_or(Option::is_none) {
+                            continue;
+                        }
+                        match asset_model::model_lighting::t6_smodel_palette_lighting(
+                            &grid.view(),
+                            palette[slot],
+                            slot,
+                            origin,
+                        ) {
+                            Some(sample) => authored.push(sample),
+                            None => unresolved.push((slot, origin)),
+                        }
+                    }
+                    report.push(format!(
+                        "T6 authored static model lighting: {} placements, {} spatial samples",
+                        authored.len(),
+                        unresolved.len()
+                    ));
+                    authored.extend(super::helpers::smodel_lighting_samples(
+                        &mut report,
+                        grid,
+                        unresolved,
+                        &static_model_instances,
+                        Some(&collision),
+                    ));
+                    authored.sort_unstable_by_key(|sample| sample.authored_slot);
+                    authored
+                }
                 None => Vec::new(),
             };
             let mut vertex_lighting =
@@ -2388,6 +2509,25 @@ impl ZoneLane for T6Lane {
                     None
                 }
             };
+            let mut effect_content = T6Content {
+                path: path.to_owned(),
+                ..Default::default()
+            };
+            capture_effects(&image_loads, &ipaks, &mut effect_content);
+            let mut fx = asset_game::FxCatalog::default();
+            let mut effect_refusals = Vec::new();
+            report.push(common_compile::bind_t6_fx(
+                &mut effect_content,
+                &mut materials,
+                &mut fx,
+                &mut effect_refusals,
+            ));
+            report.extend(effect_content.report);
+            report.extend(
+                effect_refusals
+                    .into_iter()
+                    .map(|refusal| format!("T6 map effects: {refusal:?}")),
+            );
             let world = crate::session_load::PreparedWorld {
                 min: draw.stats.min,
                 max: draw.stats.max,
@@ -2399,6 +2539,7 @@ impl ZoneLane for T6Lane {
                 static_model_instances,
                 map_xmodel_scene_assets,
                 script_model_instances,
+                fx,
                 smodel_lighting_samples,
                 policy: WorldDrawPolicy::t6(),
                 intermission_view: asset_world::parse_intermission_view(&entities),
@@ -2506,6 +2647,8 @@ impl ZoneLane for T6Lane {
             .collect();
         let mut content = capture_content(path, &load, &others, &ipaks);
         capture_xanims(&load, &others, &mut content);
+        let player_anim_sources =
+            capture_player_animation(&load, &others, &mut content.xanims, &mut report);
         let icon_loads: Vec<_> = others.iter().chain(std::iter::once(&load)).collect();
         let icons = capture_weapon_icons(path, &icon_loads, &ipaks, &mut report);
 
@@ -2519,6 +2662,7 @@ impl ZoneLane for T6Lane {
         ));
         CommonCensus {
             ui_images: icons,
+            player_anim_sources,
             weapons,
             material_population: material_seed,
             report,

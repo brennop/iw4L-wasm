@@ -67,6 +67,10 @@ pub(crate) fn update(
     });
     sources.desired.clear();
     for (row, alias) in speaking {
+        let (ns, alias) = alias
+            .split_once(':')
+            .and_then(|(family, name)| AssetNamespace::parse(family).map(|ns| (ns, name)))
+            .unwrap_or((ns, alias));
         let owner = row.owner.to_wire();
         let changed = sources.live.get(&owner).is_none_or(|current| {
             current.alias != alias || current.namespace != ns || current.emitter != row.snd_ent
