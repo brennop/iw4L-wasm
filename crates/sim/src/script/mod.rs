@@ -13,7 +13,7 @@ pub(crate) use bevy_ecs::prelude::Resource;
 pub(crate) use std::collections::{BTreeMap, VecDeque};
 pub(crate) use std::sync::Arc;
 
-pub(crate) use runtime::Runtime;
+pub(crate) use runtime::{MatchScript, RoundScript};
 
 pub use error::{Fault, Location};
 pub(crate) use host::controls::{
@@ -27,7 +27,7 @@ pub(crate) use host::entity_damage::{
 };
 pub(crate) use host::mechanics::Mechanics;
 pub(crate) use host::mechanics::advance_mechanics;
-pub use host::natives::engine::{EXIT_LEVEL, GlassNames, MAP_RESTART};
+pub use host::natives::engine::{EXIT_LEVEL, MAP_RESTART};
 pub(crate) use host::natives::iw4::set_dvar;
 pub(crate) use host::players::{
     answer_join, answer_menu, apply_disconnects, apply_player_links, choose_class,

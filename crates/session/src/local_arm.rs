@@ -19,11 +19,11 @@ pub fn arm_local_from_presented(
     sim_cam: Option<ResMut<SimCamera>>,
     mut look: ResMut<LookState>,
 ) {
-    if !role.runs_client() || armed.armed_for(*generation) {
+    if !role.runs_client() || armed.armed_for(generation.stamp()) {
         return;
     }
 
-    if !policy.admission_allowed || policy.generation != *generation {
+    if !policy.admission_allowed || policy.generation != generation.stamp() {
         return;
     }
     let Some(ps) = presented.alive_player(local.0) else {
@@ -49,7 +49,7 @@ pub fn arm_local_from_presented(
         ps.viewangles[1],
         ps.weapon
     );
-    armed.0 = *generation;
+    armed.0 = generation.stamp();
 }
 
 fn apply_local_input_policy(
@@ -60,8 +60,8 @@ fn apply_local_input_policy(
     mut gate: ResMut<AuthorityInputGate>,
 ) {
     gate.local_cmds_enabled = policy.local_input_allowed(
-        *generation,
-        armed.armed_for(*generation),
+        generation.stamp(),
+        armed.armed_for(generation.stamp()),
         signon.phase.is_failed(),
     );
 }
@@ -74,8 +74,8 @@ fn guard_local_input_before_prediction(
     mut gate: ResMut<AuthorityInputGate>,
 ) {
     gate.local_cmds_enabled = policy.local_input_allowed(
-        *generation,
-        armed.armed_for(*generation),
+        generation.stamp(),
+        armed.armed_for(generation.stamp()),
         signon.phase.is_failed(),
     );
 }
@@ -158,21 +158,28 @@ pub fn register_local_arm_systems(app: &mut App) {
         .add_systems(
             Update,
             (
-                arm_local_from_presented.after(ClassEquipResolved),
+                arm_local_from_presented
+                    .in_set(frame::InMatch)
+                    .after(ClassEquipResolved),
                 join_local_on_class_select.after(crate::admission::update_admission),
-                apply_local_input_policy.after(arm_local_from_presented),
+                apply_local_input_policy
+                    .in_set(frame::InMatch)
+                    .after(arm_local_from_presented),
             )
                 .in_set(ClientSet::Present),
         )
         .add_systems(
             Update,
             guard_local_input_before_prediction
+                .in_set(frame::InMatch)
                 .in_set(ClientSet::Predict)
                 .after(net::client::runtime::enforce_client_work_limits)
                 .before(net::client::runtime::predict_local_move),
         )
         .add_systems(
             Update,
-            sync_prediction_metrics_to_probe.in_set(ClientSet::Diag),
+            sync_prediction_metrics_to_probe
+                .in_set(frame::InMatch)
+                .in_set(ClientSet::Diag),
         );
 }

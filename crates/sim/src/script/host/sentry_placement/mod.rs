@@ -120,7 +120,7 @@ pub(super) fn place(
     eye_height: f32,
 ) -> (bool, [f32; 3], [f32; 3]) {
     let model = {
-        let runtime = world.resource::<crate::script::Runtime>();
+        let runtime = world.resource::<crate::script::RoundScript>();
         let actor = runtime.players.get(&client).map(|p| p.object);
         runtime.engine.turrets.iter().find_map(|(object, turret)| {
             (turret.carried && actor.is_some() && turret.owner == actor)

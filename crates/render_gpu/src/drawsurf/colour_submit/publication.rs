@@ -40,7 +40,7 @@ impl std::ops::Deref for InstalledRenderWorld {
 #[derive(Clone, Debug, Default)]
 pub struct RenderWorldData {
     pub generation: MaterialGenerationId,
-    pub world_generation: frame::WorldGeneration,
+    pub world_generation: frame::WorldStamp,
     pub world_products: frame::WorldProducts,
     pub smc_revision: Option<u64>,
     pub ports: Arc<Vec<crate::drawsurf::AdmittedExactPort>>,
@@ -88,7 +88,7 @@ impl std::ops::Deref for PublishedRenderFrame {
 pub struct RenderFrameData {
     pub frame_products: ExtractedRenderFrameProducts,
     pub generation: MaterialGenerationId,
-    pub world_generation: frame::WorldGeneration,
+    pub world_generation: frame::WorldStamp,
     pub sun_shadow: Option<SunShadowForcedFrame>,
     pub sun_effects: Option<render_frame::SunEffectsFrame>,
     pub warm_pipelines: bool,

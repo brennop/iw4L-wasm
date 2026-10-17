@@ -1,9 +1,8 @@
+use frame::ScopeApp;
 use web_time::Instant;
 
 use bevy::prelude::*;
-use frame::{
-    AppScreen, LaunchIdentity, LaunchReport, LifeFrontPublished, LifeStarted, MatchTornDown, UiDraw,
-};
+use frame::{AppScreen, LaunchIdentity, LaunchReport, LifeFrontPublished, LifeStarted, UiDraw};
 use net::{ClientSet, UpdatePhaseCensus};
 
 use crate::blood::{BloodGpuJob, BloodOverlayLatch, HudRootVisible, update_blood_overlay};
@@ -36,10 +35,13 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(
+            OnExit(frame::MatchScope::Live),
+            release_hud_publication.in_set(frame::ScopeSet::Release),
+        );
         crate::gpu_list::register(app);
         let _ = crate::scorebar::milliseconds();
-        app.init_resource::<frame::ScreenEffectsView>()
-            .init_resource::<HudImages>()
+        app.init_resource::<HudImages>()
             .init_resource::<HudPresentationGaps>()
             .init_resource::<ReticleAdsLatch>()
             .init_resource::<IrisLetterboxFill>()
@@ -47,19 +49,21 @@ impl Plugin for HudPlugin {
             .init_resource::<BloodGpuJob>()
             .init_resource::<FlashWhiteoutLatch>()
             .init_resource::<FlashGpuJob>()
-            .init_resource::<PendingSplash>()
-            .init_resource::<SplashSlots>()
-            .init_resource::<KillfeedWindow>()
-            .init_resource::<PlayerCardCache>()
-            .init_resource::<UiLocalVars>()
+            .scoped::<PendingSplash>(frame::MatchScope::Live)
+            .scoped::<SplashSlots>(frame::MatchScope::Live)
+            .scoped::<KillfeedWindow>(frame::MatchScope::Live)
+            .scoped::<PlayerCardCache>(frame::MatchScope::Live)
+            .scoped::<UiLocalVars>(frame::MatchScope::Live)
+            .init_resource::<crate::playercard::FrontendLocalVars>()
             .init_resource::<HudRootVisible>()
-            .init_resource::<crate::compass::CompassPingLatch>()
+            .scoped::<crate::compass::CompassPingLatch>(frame::MatchScope::Live)
             .init_resource::<crate::surface::Hud2dSurface>()
             .init_resource::<HudPresentStamp>()
             .init_resource::<HudStageStamp>()
             .init_resource::<crate::expr_cache::MenuExprCache>()
-            .init_resource::<crate::hudelem::HudElemSoundLatch>()
-            .init_resource::<crate::menus::ScriptMenus>()
+            .scoped::<crate::hudelem::HudElemSoundLatch>(frame::MatchScope::Live)
+            .scoped::<crate::menus::ScriptMenus>(frame::MatchScope::Live)
+            .init_resource::<crate::menus::FrontendMenus>()
             .add_message::<net::SvcCardSlotCmd>()
             .add_message::<net::SvcOpenMenuCmd>();
 
@@ -70,7 +74,6 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
-                    reset_match_hud_on_torn_down,
                     hud_stamp_open,
                     sync_games_root,
                     sync_map_zone_tree,
@@ -94,32 +97,34 @@ impl Plugin for HudPlugin {
                         (
                             hud_surfaces_open,
                             crate::surface::update_hud_surface,
-                            update_reticle,
+                            update_reticle.in_set(frame::InMatch),
                             hud_stage_close::<0>,
-                            update_iris,
+                            update_iris.in_set(frame::InMatch),
                             hud_stage_close::<1>,
-                            update_blood_overlay,
+                            update_blood_overlay.in_set(frame::InMatch),
                             hud_stage_close::<2>,
-                            update_flash_whiteout.after(frame::ScreenEffectsPublished),
+                            update_flash_whiteout
+                                .in_set(frame::InMatch)
+                                .after(frame::ScreenEffectsPublished),
                             hud_stage_close::<3>,
-                            update_compass,
+                            update_compass.in_set(frame::InMatch),
                             hud_stage_close::<4>,
-                            update_playercard,
-                            update_weaponbar,
+                            update_playercard.in_set(frame::InMatch),
+                            update_weaponbar.in_set(frame::InMatch),
                             hud_stage_close::<5>,
                         )
                             .chain(),
                         (
-                            update_scorebar,
-                            update_splash,
-                            update_killfeed,
+                            update_scorebar.in_set(frame::InMatch),
+                            update_splash.in_set(frame::InMatch),
+                            update_killfeed.in_set(frame::InMatch),
                             update_scoreboard,
                             update_killcam_skip,
-                            crate::emp_static::update,
+                            crate::emp_static::update.in_set(frame::InMatch),
                             update_mantle_hint,
-                            crate::breath_hint::update,
-                            crate::use_hint::update,
-                            update_hud_elems,
+                            crate::breath_hint::update.in_set(frame::InMatch),
+                            crate::use_hint::update.in_set(frame::InMatch),
+                            update_hud_elems.in_set(frame::InMatch),
                             update_targetmap,
                             crate::menus::update_script_menus,
                             hud_stage_close::<7>,
@@ -298,8 +303,9 @@ fn sync_frontend_camera(
             commands.spawn((
                 FrontendCamera,
                 Camera3d::default(),
-                bevy::camera::CompositingSpace::Srgb,
+                frame::DisplayEncodedCamera,
                 bevy::core_pipeline::tonemapping::Tonemapping::None,
+                bevy::render::view::DebandDither::Disabled,
                 Camera {
                     order: -1,
                     ..default()
@@ -771,24 +777,6 @@ fn hud_surfaces_close(stamp: Res<HudPresentStamp>, mut census: ResMut<UpdatePhas
     census.hud_tess_jobs = Some(jobs);
 }
 
-fn reset_match_hud_on_torn_down(
-    mut torn: MessageReader<MatchTornDown>,
-    mut killfeed: ResMut<KillfeedWindow>,
-    mut splash: ResMut<SplashSlots>,
-    mut pings: ResMut<crate::compass::CompassPingLatch>,
-    mut cache: ResMut<PlayerCardCache>,
-    mut local_vars: ResMut<UiLocalVars>,
-) {
-    if torn.read().len() == 0 {
-        return;
-    }
-    *killfeed = KillfeedWindow::default();
-    *splash = SplashSlots::default();
-    *pings = crate::compass::CompassPingLatch::default();
-    *cache = PlayerCardCache::default();
-    *local_vars = UiLocalVars::default();
-}
-
 fn flush_use_hint_tess(
     surface: Res<crate::surface::Hud2dSurface>,
     mut pass: ResMut<HudTessPass>,
@@ -907,4 +895,18 @@ fn flush_breath_hint_tess(
             surface.height(),
         );
     }
+}
+
+fn release_hud_publication(
+    mut latches: Query<&mut crate::gpu_list::GpuListLatch>,
+    mut frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    mut blood: ResMut<BloodGpuJob>,
+    mut flash: ResMut<FlashGpuJob>,
+) {
+    for mut latch in &mut latches {
+        latch.mark_hidden();
+    }
+    *frame = Default::default();
+    *blood = BloodGpuJob::Hide;
+    *flash = FlashGpuJob::Hide;
 }

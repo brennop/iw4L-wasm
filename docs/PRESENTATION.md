@@ -30,11 +30,11 @@ legal. Late delivery after expiry may create a fresh product. `fx_dump` reports
 scope/time, product budget refusals, receipt size/capacity and sweep costs.
 
 `asset_material::UiImagePublication` owns material mappings, preview policy,
-zone payloads and archive indices. Preparation returns private products;
-shell/match installation selects the active owner. A late shell completion
-cannot replace an installed match. HUD handle/RGBA caches and asynchronous
-class/loading previews adopt publication identity. Menu overlays replace their
-own maps and caches when the menu resource changes.
+zone payloads and archive indices. Shell/match installation selects privately
+prepared products. A late shell completion cannot replace an installed match.
+HUD caches and class/loading previews adopt publication identity. Shell previews
+use this publication; gameplay archive image plans begin with the first match
+and remain shared. Menu overlays replace maps and caches when menus change.
 
 Installation revisions cover relevant file metadata, following game symlinks.
 Unix revisions also include inode/change time. A new load checks the revision;

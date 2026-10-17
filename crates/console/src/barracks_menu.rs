@@ -287,16 +287,16 @@ pub(crate) fn sync_profile(
     profile: Res<BarracksProfile>,
     (generation, has_world, role): (
         Res<frame::WorldGeneration>,
-        Res<frame::HasWorld>,
+        Res<State<frame::MatchScope>>,
         Res<frame::RuntimeRole>,
     ),
     local: Option<Res<net::LocalPresentClient>>,
     link: Option<Res<net::UdpClientLink>>,
     mut inbox: Option<ResMut<net::ClientActionInbox>>,
     mut seq: ResMut<net::ActionRequestIds>,
-    mut sent: Local<Option<(frame::WorldGeneration, sim::ClientId, sim::PlayerProfile)>>,
+    mut sent: Local<Option<(frame::WorldStamp, sim::ClientId, sim::PlayerProfile)>>,
 ) {
-    if !has_world.0 || *role == frame::RuntimeRole::Replay {
+    if !(*has_world.get() == frame::MatchScope::Live) || *role == frame::RuntimeRole::Replay {
         *sent = None;
         return;
     }
@@ -315,7 +315,7 @@ pub(crate) fn sync_profile(
         return;
     }
     let selection = profile.selection;
-    let next = (*generation, local.0, selection);
+    let next = (generation.stamp(), local.0, selection);
     if sent.as_ref() == Some(&next) {
         return;
     }

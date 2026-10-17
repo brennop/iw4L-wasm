@@ -2,7 +2,7 @@ use super::super::args::{arg, float, int, kind, optional, string, vector};
 use super::super::arrays::{array_values, iteration_key, new_array};
 use super::super::tables::{table, table_lookup, table_lookup_by_row, table_search};
 use super::iw4::atoi;
-use crate::script::{ArrayKey, Namespace, NativeRegistry, Runtime, Value};
+use crate::script::{ArrayKey, Namespace, NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -41,7 +41,7 @@ fn nearest_on_segment(a: [f32; 3], b: [f32; 3], point: [f32; 3]) -> [f32; 3] {
 }
 
 pub(crate) fn random(world: &mut World) -> u32 {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let mut x = runtime.rng;
     x ^= x << 13;
     x ^= x >> 17;
@@ -279,7 +279,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             return Err("getarraykeys expects an array".into());
         };
         let keys: Vec<_> = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .arrays
             .get(id)
             .ok_or("invalid array reference")?
@@ -305,7 +305,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::LocalizedString(table_lookup_by_row(world, args)?))
     });
     registry.register(Function, "tablelookuprownum", |world, _, args| {
-        let tables = world.resource::<Runtime>().tables.clone();
+        let tables = world.resource::<RoundScript>().tables.clone();
         let name = string(args, 0)?;
         let column = int(args, 1)?;
         let value = string(args, 2)?;

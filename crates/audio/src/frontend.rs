@@ -8,22 +8,20 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, TaskPool, futures_lite::future},
 };
 use frame::{
-    ClientSet, LaunchIdentity, ReturnedToMenu, UiPlayMusic, UiPlaySound, UiStopMusic,
-    register_ui_contracts,
+    ClientSet, LaunchIdentity, UiPlayMusic, UiPlaySound, UiStopMusic, register_ui_contracts,
 };
 
 use crate::{
     ClipStore, SoundClass,
-    ambient::SoundIwd,
     clip_store::CueFeedback,
     playback::{MissingAliasGaps, SoundBank, play_alias_oneshot},
     start::StartDecisions,
 };
 
-#[derive(Resource, Clone)]
+#[derive(Resource)]
 pub struct FrontendAudio {
     pub bank: Arc<SoundCatalog>,
-    pub iwd: Arc<NamespaceSoundIwd>,
+    pub clips: ClipStore,
 }
 
 const FRONTEND_SOUND_ZONE: &str = "iw4:code_post_gfx_mp";
@@ -47,15 +45,12 @@ pub(crate) struct MenuSources {
 pub(crate) fn register_frontend_audio(app: &mut App) {
     register_ui_contracts(app);
     app.init_resource::<MenuSources>()
-        .add_message::<ReturnedToMenu>()
+        .init_resource::<FrontendCueFeedback>()
         .add_systems(
             Update,
             (
                 start_frontend_audio_prepare,
                 install_frontend_audio_prepare.after(start_frontend_audio_prepare),
-                restore_frontend_audio_on_menu
-                    .after(install_frontend_audio_prepare)
-                    .after(crate::ambient::stop_map_ambient_on_match_end),
             )
                 .in_set(ClientSet::Load),
         )
@@ -143,53 +138,29 @@ fn install_frontend_audio_prepare(
         );
         return;
     };
-    commands.insert_resource(FrontendAudio {
-        bank,
-        iwd: walked.iwd,
-    });
+    let clips = ClipStore::start(Arc::clone(&bank), Some(walked.iwd));
+    commands.insert_resource(FrontendAudio { bank, clips });
     diag::info!(Audio, "audio: frontend sound resident");
 }
 
-pub(crate) fn restore_frontend_audio_on_menu(
-    mut returned: MessageReader<ReturnedToMenu>,
-    frontend: Option<Res<FrontendAudio>>,
-    live: Option<Res<SoundBank>>,
-    silent: Option<Res<crate::AudioSilent>>,
-    mut commands: Commands,
-) {
-    if returned.read().count() == 0 || silent.is_some() {
-        return;
-    }
-    let Some(frontend) = frontend else {
-        diag::warn!(
-            Audio,
-            "audio: no resident frontend bank — the menu runs without sound (typed gap)"
-        );
-        return;
-    };
-    if live.is_some_and(|live| Arc::ptr_eq(&live.0, &frontend.bank)) {
-        return;
-    }
-    commands.insert_resource(CueFeedback::default());
-    commands.insert_resource(SoundBank(Arc::clone(&frontend.bank)));
-    commands.insert_resource(SoundIwd(Arc::clone(&frontend.iwd)));
-    commands.insert_resource(ClipStore::start(
-        Arc::clone(&frontend.bank),
-        Some(Arc::clone(&frontend.iwd)),
-    ));
-    diag::info!(Audio, "audio: frontend sound restored");
-}
+#[derive(Resource, Default)]
+struct FrontendCueFeedback(CueFeedback);
 
 fn play_ui_sound_messages(
     mut events: MessageReader<UiPlaySound>,
     runtime: Res<crate::AudioRuntime>,
     mut gaps: ResMut<MissingAliasGaps>,
-    mut pending: ResMut<CueFeedback>,
+    mut pending: ResMut<FrontendCueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<crate::backend::MatchEpoch>,
+    frontend: Option<Res<FrontendAudio>>,
+    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
     namespace: Option<Res<crate::ambient::SoundBankNamespace>>,
 ) {
+    let bank = bank
+        .as_ref()
+        .map(|bank| &bank.0)
+        .or_else(|| frontend.as_ref().map(|frontend| &frontend.bank));
     let Some(bank) = bank else {
         for event in events.read().filter(|_| !crate::AudioSilent::active()) {
             diag::warn!(
@@ -211,12 +182,12 @@ fn play_ui_sound_messages(
             &event.alias,
         );
         let outcome = play_alias_oneshot(
-            &bank.0,
+            bank,
             ns,
             alias,
             None,
             &runtime,
-            &mut pending,
+            &mut pending.0,
             &mut decisions,
             Some(crate::SND_ENT_LOCAL),
             SoundClass::Ui,
@@ -233,6 +204,7 @@ fn play_ui_music_messages(
     mut stop_events: MessageReader<UiStopMusic>,
     mut desired: ResMut<MenuSources>,
     bank: Option<Res<SoundBank>>,
+    frontend: Option<Res<FrontendAudio>>,
     runtime: Res<crate::AudioRuntime>,
 ) {
     if stop_events.read().count() > 0 {
@@ -255,11 +227,15 @@ fn play_ui_music_messages(
         return;
     }
     desired.source = None;
+    let bank = bank
+        .as_ref()
+        .map(|bank| &bank.0)
+        .or_else(|| frontend.as_ref().map(|frontend| &frontend.bank));
     let Some(bank) = bank else {
         return;
     };
     let Some(cue) = runtime.source_cue(crate::sources::SourceCueRequest {
-        bank: bank.0.clone(),
+        bank: bank.clone(),
         namespace: asset_core::AssetNamespace::Iw4,
         alias,
         emitter: None,

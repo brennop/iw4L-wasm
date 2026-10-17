@@ -20,7 +20,7 @@ use crate::prepare::scene::smodel_lighting::WorldSmodelLighting;
 use crate::prepare::scene::view_parms::PreparedSceneView;
 use crate::prepare::scene::world::WorldScene;
 use bevy::prelude::*;
-use frame::WorldGeneration;
+use frame::{WorldGeneration, WorldStamp};
 use render_frame::{BspCameraLane, RetainedDrawItem, RetainedDrawKind};
 use std::sync::Arc;
 use web_time::Instant;
@@ -98,7 +98,7 @@ pub struct StaticDrawLane {
 
     logged_buckets: Option<[u32; 5]>,
 
-    pub(crate) world_generation: WorldGeneration,
+    pub(crate) world_generation: WorldStamp,
     pub(crate) colour: Vec<RetainedDrawItem>,
     pub(crate) emissive: Vec<RetainedDrawItem>,
     pub(crate) distortion: Vec<RetainedDrawItem>,
@@ -128,7 +128,7 @@ pub struct StaticDrawLane {
 impl StaticDrawLane {
     pub(crate) fn live_for(
         &self,
-        current: WorldGeneration,
+        current: WorldStamp,
     ) -> (
         &[RetainedDrawItem],
         &[RetainedDrawItem],
@@ -631,7 +631,7 @@ pub(crate) fn rebuild_static_draw_lane(
         .unwrap_or(&[]);
     let world_id = world_list.draw_items_id;
     let vis_id = dpvs.as_ref().map(|stats| stats.smodel_vis_id).unwrap_or(0);
-    let world_generation = world_generation.map(|g| *g).unwrap_or_default();
+    let world_generation = world_generation.map(|g| g.stamp()).unwrap_or_default();
     let eye = prepared.as_ref().filter(|v| v.ready).map(|v| v.eye);
     let lod_args = lod_ramp.args();
     let eye_key = eye_lod_reuse_key(eye, lod_args);

@@ -97,7 +97,7 @@ pub(crate) fn register_diagnostics_mirror(app: &mut App) {
             mirror_runtime_diagnostics,
             drain_pending_console_lines,
             finish_replay_playback,
-            update_showpos_overlay,
+            update_showpos_overlay.in_set(frame::InMatch),
         )
             .in_set(ClientSet::Diag),
     );

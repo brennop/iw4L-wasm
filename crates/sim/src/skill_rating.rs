@@ -64,6 +64,26 @@ impl SkillRatings {
         Ok(ratings)
     }
 
+    pub(crate) fn updated_ranked(
+        mut self,
+        mode: &str,
+        opponents: &[(Self, f32)],
+    ) -> Result<Self, SkillRatingError> {
+        let index = mode_index(mode).ok_or(SkillRatingError::InvalidMode)?;
+        if opponents.is_empty() {
+            return Ok(self);
+        }
+        let first = self.rows[index];
+        let mut delta = 0.0;
+        for (opponent, score) in opponents {
+            let difference = f64::from(opponent.rows[index].rating) - f64::from(first.rating);
+            let expected = 1.0 / (1.0 + 10.0_f64.powf(difference / 400.0));
+            delta += 32.0 * (f64::from(*score) - expected);
+        }
+        self.rows[index] = updated(first, (delta / opponents.len() as f64).round() as i32)?;
+        Ok(self)
+    }
+
     pub(crate) fn updated_pair(
         mut self,
         mut opponent: Self,

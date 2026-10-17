@@ -26,7 +26,7 @@ pub struct TracerDrawGate {
 }
 
 impl TracerDrawGate {
-    pub fn adopt_scope(&mut self, generation: frame::WorldGeneration, timeline: u64) {
+    pub fn adopt_scope(&mut self, generation: frame::WorldStamp, timeline: u64) {
         let scope = (generation.0, timeline);
         if self.scope != Some(scope) {
             *self = Self {

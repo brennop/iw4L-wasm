@@ -50,7 +50,7 @@ pub(crate) fn weapon_check_hands_for_sprint(
         }
     } else if !sprinting && matches!(ws, WeaponState::SprintIn | WeaponState::SprintLoop) {
         for hand in hands {
-            begin_sprint_out(hand, facts);
+            begin_sprint_out(hand, facts, cmd.perks1);
         }
     }
 }
@@ -106,11 +106,16 @@ fn sprint_loop(hand: &mut WeaponHandState) {
     );
 }
 
-fn begin_sprint_out(hand: &mut WeaponHandState, facts: &WeaponCombatFacts) {
+fn begin_sprint_out(hand: &mut WeaponHandState, facts: &WeaponCombatFacts, perks1: u32) {
     let time = if facts.sprint_drop_time_ms > 0 {
         facts.sprint_drop_time_ms
     } else {
         1
+    };
+    let time = if perks1 & playerstate_iw4::PERK1_FASTSPRINTRECOVERY != 0 {
+        ((time as f32) * playerstate_iw4::SPRINT_RECOVERY_MULTIPLIER) as i32
+    } else {
+        time
     };
     hand.weaponstate = WeaponState::SprintOut as i32;
     hand.weapon_time = time;

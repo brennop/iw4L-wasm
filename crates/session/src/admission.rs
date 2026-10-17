@@ -1,6 +1,6 @@
 use assets::LoadingScreen;
 use bevy::prelude::*;
-use frame::{AppScreen, ClientSet, HasWorld, RuntimeRole};
+use frame::{AppScreen, ClientSet, RuntimeRole};
 use net::{AuthorityLoadHold, ClientAdmission, SignonPhase, SignonState};
 use render_frontend::prepare::scene::world::WorldScene;
 
@@ -11,7 +11,7 @@ pub fn update_admission(
     mut admission: ResMut<ClientAdmission>,
     role: Res<RuntimeRole>,
     mut hold: Option<ResMut<AuthorityLoadHold>>,
-    has_world: Option<Res<HasWorld>>,
+    has_world: Option<Res<State<frame::MatchScope>>>,
     scene: Option<Res<WorldScene>>,
     audio: Option<Res<audio::AudioReady>>,
     mut live: Option<ResMut<LiveWorldIdentity>>,
@@ -41,7 +41,7 @@ pub fn update_admission(
         }
         live.load_key = installed;
     }
-    let installed = has_world.is_some_and(|world| world.0)
+    let installed = has_world.is_some_and(|world| *world.get() == frame::MatchScope::Live)
         && live.as_ref().is_some_and(|live| {
             generation.0 == Some(live.load_key.local_load_request_id)
                 && admission.core.installed() == Some(live.load_key)
@@ -49,7 +49,7 @@ pub fn update_admission(
     let decision = crate::readiness::decide_readiness(
         *role,
         headless.is_some(),
-        *generation,
+        generation.stamp(),
         installed,
         navigation.as_ref().map(|report| report.0),
         scene.as_ref().map(|scene| scene.readiness),
@@ -94,7 +94,7 @@ pub fn update_admission(
             .as_ref()
             .filter(|_| installed)
             .map(|live| live.load_key),
-        generation: *generation,
+        generation: generation.stamp(),
         advancement_allowed: decision.advancement,
         presentation_allowed: decision.presentation,
         admission_allowed: admitted,
@@ -103,7 +103,7 @@ pub fn update_admission(
     let presentation_ready = decision.presentation;
     let audio_ready = audio
         .as_ref()
-        .is_some_and(|report| report.0.ready_for(*generation));
+        .is_some_and(|report| report.0.ready_for(generation.stamp()));
     if signon.admitted != admitted {
         signon.admitted = admitted;
         diag::info!(
@@ -119,9 +119,9 @@ pub fn drive_class_select_screen(
     mut loading: Option<ResMut<LoadingScreen>>,
     mut load: Option<ResMut<assets::MapLoadProcess>>,
     signon: Res<SignonState>,
-    has_world: Option<Res<HasWorld>>,
+    has_world: Option<Res<State<frame::MatchScope>>>,
 ) {
-    let world_installed = has_world.is_some_and(|world| world.0);
+    let world_installed = has_world.is_some_and(|world| *world.get() == frame::MatchScope::Live);
     let admitted = signon.may_select_class();
     if signon.phase.is_failed() {
         if let Some(loading) = loading.as_deref_mut()
@@ -170,6 +170,7 @@ pub fn register_admission(app: &mut App) {
         .add_systems(
             Update,
             update_admission
+                .in_set(frame::InMatch)
                 .in_set(ClientSet::Present)
                 .before(crate::local_arm::arm_local_from_presented),
         )

@@ -117,7 +117,7 @@ fn entity_event_sound(
         play_cs_sound_alias(
             &sound.event,
             Some(crate::AudioEvent::from_entity(
-                *generation,
+                generation.stamp(),
                 sound.entity,
                 &sound.event,
                 0,
@@ -226,7 +226,7 @@ fn entity_event_sound(
     };
     output.write(WeaponSound {
         event: Some(crate::AudioEvent::from_entity(
-            *generation,
+            generation.stamp(),
             sound.entity,
             &sound.event,
             0,
@@ -308,13 +308,35 @@ fn movement_sound(
         .client()
         .and_then(|id| presented.player(id))
         .is_some_and(|ps| (ps.perks[0] & playerstate_iw4::PERK_QUIETER) != 0);
+    let selective_hearing = presented
+        .player(local.0)
+        .is_some_and(|ps| ps.perks[0] & playerstate_iw4::PERK_SELECTIVEHEARING != 0);
+    let allied = presented.snapshot().is_some_and(|snapshot| {
+        let listener = snapshot
+            .meta
+            .for_client(local.0)
+            .map(|meta| meta.client_state_team);
+        let emitter = identity
+            .client()
+            .and_then(|id| snapshot.meta.for_client(id))
+            .map(|meta| meta.client_state_team);
+        listener.is_some_and(|team| team != 0 && emitter == Some(team))
+    });
+    let volume_scale = if !selective_hearing {
+        1.0
+    } else if player_view || allied {
+        0.25
+    } else {
+        4.0
+    };
     let origin_inches = (!player_view).then_some(sound.event.payload.origin);
     if let Some(index) = sound.event.event.landing_surface_index() {
         let surface_flags = (index as u32) << 20;
         let (alias, fallback) = land_aliases(surface_flags, player_view, quieter);
         land.write(LandSound {
+            volume_scale,
             event: Some(crate::AudioEvent::from_entity(
-                *generation,
+                generation.stamp(),
                 sound.entity,
                 &sound.event,
                 0,
@@ -337,7 +359,7 @@ fn movement_sound(
             let fallback = player_view.then(|| gear_alias(false).to_owned());
             play.write(crate::AliasCommand::Play(PlayAlias {
                 event: Some(crate::AudioEvent::from_entity(
-                    *generation,
+                    generation.stamp(),
                     sound.entity,
                     &sound.event,
                     0,
@@ -363,8 +385,9 @@ fn movement_sound(
     let surface_flags = u32::from(sound.event.payload.surf_type) << 20;
     let (alias, fallback) = footstep_aliases(gait, surface_flags, player_view, quieter);
     footsteps.write(Footstep {
+        volume_scale,
         event: Some(crate::AudioEvent::from_entity(
-            *generation,
+            generation.stamp(),
             sound.entity,
             &sound.event,
             0,
@@ -376,7 +399,7 @@ fn movement_sound(
     });
     gear.write(WeaponSound {
         event: Some(crate::AudioEvent::from_entity(
-            *generation,
+            generation.stamp(),
             sound.entity,
             &sound.event,
             1,
@@ -585,7 +608,7 @@ pub(crate) fn play_viewmodel_notetrack_messages(
         .filter(|(bank, weapons)| table.owns(&bank.0, &weapons.registry()))
         .map(|(bank, _)| Arc::clone(&bank.0));
     for batch in notes.read() {
-        if batch.generation != *generation
+        if batch.generation != generation.stamp()
             || batch.client != local.0
             || !presented
                 .snapshot()
@@ -729,7 +752,7 @@ fn grenade_contact(
     };
     output.write(WeaponSound {
         event: Some(crate::AudioEvent::from_entity(
-            *generation,
+            generation.stamp(),
             contact.entity,
             &contact.event,
             0,

@@ -1160,7 +1160,37 @@ fn capture_content(
     content.melee = melee_weapon(load);
     let (mut failed, mut decoded, mut missing) = (0usize, 0usize, 0usize);
     let mut native_textures = DecodedTextures::new();
-    for (name, (view, hands)) in wanted {
+    let wanted: Vec<_> = wanted.into_iter().collect();
+    let jobs: Vec<_> = wanted
+        .iter()
+        .map(|(name, _)| {
+            let source = copies
+                .get(name)
+                .map_or(name.as_str(), |(model, _)| model.as_str());
+            let &(load, asset) = models.get(source)?;
+            asset_model::T6Model::new(load, asset)
+        })
+        .collect();
+    let pool = crate::session_load::load_pool();
+    let chunk_size = jobs.len().div_ceil(pool.thread_num().max(1) * 16).max(1);
+    let mut captured = pool.scope(|scope| {
+        for (index, chunk) in jobs.chunks(chunk_size).enumerate() {
+            scope.spawn(async move {
+                let skels: Vec<_> = chunk
+                    .iter()
+                    .map(|model| {
+                        model.and_then(|model| asset_model::capture_model_skel_t6(model, |_| None))
+                    })
+                    .collect();
+                (index, skels)
+            });
+        }
+    });
+    // Complete pure captures in parallel, then retain the input mutation
+    // and refusal order regardless of which task finished first.
+    captured.sort_unstable_by_key(|(index, _)| *index);
+    let captured = captured.into_iter().flat_map(|(_, skels)| skels);
+    for ((name, (view, hands)), skel) in wanted.into_iter().zip(captured) {
         let copy = copies.get(&name);
         let source = copy.map_or(name.as_str(), |(model, _)| model.as_str());
         let Some(&(load, asset)) = models.get(source) else {
@@ -1172,7 +1202,7 @@ fn capture_content(
         let Some(model) = asset_model::T6Model::new(load, asset) else {
             continue;
         };
-        let Some(mut skel) = asset_model::capture_model_skel_t6(model, |_| None) else {
+        let Some(mut skel) = skel else {
             failed += 1;
             content
                 .report

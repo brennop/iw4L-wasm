@@ -15,6 +15,9 @@ pub(super) trait MaterialCompiler {
     fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState;
     fn color_space(&self, slot: u8) -> PassColorSpace;
     fn hardware_shadow_compare(&self) -> bool;
+    fn depth_to_colour(&self, _slot: u8) -> bool {
+        false
+    }
 }
 
 pub(super) fn compile_technique(
@@ -160,6 +163,7 @@ pub(super) fn compile_technique(
                 arguments,
                 color_space: compiler.color_space(slot),
                 hardware_shadow_compare: compiler.hardware_shadow_compare(),
+                depth_to_colour: compiler.depth_to_colour(slot),
             };
 
             sort_pass_args(&mut runtime_pass);

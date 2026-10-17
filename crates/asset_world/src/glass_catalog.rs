@@ -152,8 +152,6 @@ pub struct FxGlassReset {
     pub piece_limit: usize,
 
     pub geo_data_limit: usize,
-
-    pub names: Vec<(String, Vec<u16>)>,
 }
 
 impl FxGlassReset {
@@ -265,34 +263,112 @@ pub fn build_fx_glass_reset(stream: &ZoneStream<'_>) -> Option<FxGlassReset> {
         geo_cursor,
         piece_limit: g.piece_limit,
         geo_data_limit: g.geo_data_limit,
-        names: glass_names(stream),
     })
 }
 
-fn glass_names(s: &ZoneStream<'_>) -> Vec<(String, Vec<u16>)> {
-    let Some(g) = s.glass_data() else {
-        return Vec::new();
-    };
-    let Some(rows) = g.names else {
-        return Vec::new();
-    };
-    let mut out = Vec::with_capacity(g.name_count);
-    for i in 0..g.name_count {
-        let row = rows.at(i * s.layout(sz::G_GLASS_NAME, 24));
-        let Some(name) = cstr_field(s, row, 0).filter(|name| !name.is_empty()) else {
-            continue;
-        };
-        let count = s.u16_at(row, s.layout(6, 10)).unwrap_or(0) as usize;
-        let pieces = match s.ptr_at(row, s.layout(8, 16)) {
-            Ok(ZonePtr::Offset(q)) => {
-                let q = s.resolve_alias(q);
-                (0..count).map_while(|n| s.u16_at(q, n * 2).ok()).collect()
+pub fn build_map_content(
+    s: &ZoneStream<'_>,
+    visual: Option<&FxGlassReset>,
+    clip: Option<&ClipCollision>,
+) -> asset_core::MapContentDefinition {
+    let prepare = || -> Result<asset_core::GlassContent, String> {
+        let collision: Vec<_> = clip
+            .into_iter()
+            .flat_map(|clip| &clip.brushes)
+            .filter_map(|brush| brush.glass_encoded.checked_sub(1))
+            .map(u32::from)
+            .collect();
+        let Some(visual) = visual else {
+            if s.fx_world().is_some() || s.glass_data().is_some() || !collision.is_empty() {
+                return Err("glass data has no complete visual geometry".into());
             }
-            _ => Vec::new(),
+            return Ok(asset_core::GlassContent::Absent);
         };
-        out.push((name, pieces));
+        let panes: Vec<_> = (0..visual.piece_places.len())
+            .map(|id| {
+                let (origin, axis_s, axis_t) = visual
+                    .pane_basis(id)
+                    .ok_or_else(|| format!("glass piece {id} has no plane"))?;
+                Ok(asset_core::GlassPaneBasis {
+                    origin,
+                    axis_s,
+                    axis_t,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        if let Some(clip) = clip {
+            for id in &collision {
+                let pane = panes
+                    .get(*id as usize)
+                    .ok_or_else(|| format!("glass collision piece {id} has no visual plane"))?;
+                let aligned = clip
+                    .brushes
+                    .iter()
+                    .filter(|brush| u32::from(brush.glass_encoded) == id + 1)
+                    .any(|brush| {
+                        brush.planes.iter().all(|plane| {
+                            plane.iter().all(|value| value.is_finite())
+                                && pane.origin[0] * plane[0]
+                                    + pane.origin[1] * plane[1]
+                                    + pane.origin[2] * plane[2]
+                                    - plane[3]
+                                    <= 1.0
+                        })
+                    });
+                if !aligned {
+                    return Err(format!(
+                        "glass piece {id} visual origin is outside its collision brushes"
+                    ));
+                }
+            }
+        }
+        let mut names = Vec::new();
+        if let Some(g) = s.glass_data() {
+            if g.piece_count != panes.len() {
+                return Err(format!(
+                    "game glass pieces {} != visual pieces {}",
+                    g.piece_count,
+                    panes.len()
+                ));
+            }
+            if g.name_count > 0 {
+                let rows = g.names.ok_or("glass name rows absent")?;
+                for i in 0..g.name_count {
+                    let row = rows.at(i * s.layout(sz::G_GLASS_NAME, 24));
+                    let name =
+                        cstr_field(s, row, 0).ok_or_else(|| format!("glass name {i} invalid"))?;
+                    let count =
+                        s.u16_at(row, s.layout(6, 10))
+                            .map_err(|error| error.to_string())? as usize;
+                    let pieces = if count == 0 {
+                        Vec::new()
+                    } else {
+                        let q = match s
+                            .ptr_at(row, s.layout(8, 16))
+                            .map_err(|error| error.to_string())?
+                        {
+                            ZonePtr::Offset(q) => s.resolve_alias(q),
+                            _ => return Err(format!("glass set {name:?} has no piece indices")),
+                        };
+                        (0..count)
+                            .map(|n| {
+                                s.u16_at(q, n * 2)
+                                    .map(u32::from)
+                                    .map_err(|error| error.to_string())
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                    };
+                    names.push((name, pieces));
+                }
+            }
+        }
+        Ok(asset_core::GlassContent::Prepared(
+            asset_core::GlassDefinition::checked(panes, names, collision)?,
+        ))
+    };
+    asset_core::MapContentDefinition {
+        glass: prepare().unwrap_or_else(asset_core::GlassContent::Invalid),
     }
-    out
 }
 
 fn glass_material_edge(

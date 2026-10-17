@@ -237,7 +237,12 @@ pub(crate) fn update_reticle(
         side_size_v,
     );
 
-    let center_size_v = assets.center_size as f32 * trans_scale;
+    let cook_size = if facts.cooks_grenade && ps.grenade_time_left > 0 {
+        (ps.grenade_time_left % 1000) as f32 / 100.0
+    } else {
+        0.0
+    };
+    let center_size_v = (assets.center_size as f32 + cook_size) * trans_scale;
     let alpha = calc_reticle_alpha(
         1.0,
         CG_CROSSHAIR_ALPHA_DEFAULT,

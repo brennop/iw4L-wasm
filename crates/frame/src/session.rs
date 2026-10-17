@@ -80,9 +80,6 @@ impl Default for LaunchReport {
     }
 }
 
-#[derive(Resource, Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct HasWorld(pub bool);
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CacWeaponOffer {
     pub key: String,
@@ -122,10 +119,44 @@ pub struct ClassSelectHandoff {
     pub lock_reasons: Vec<Option<String>>,
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct WorldGeneration(pub Option<u64>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct WorldStamp(pub Option<u64>);
 
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorldGeneration {
+    id: std::num::NonZeroU64,
+    stamp: WorldStamp,
+}
 impl WorldGeneration {
+    pub fn from_install(request_id: u64) -> Self {
+        Self {
+            id: std::num::NonZeroU64::new(
+                request_id
+                    .checked_add(1)
+                    .expect("match generation exhausted"),
+            )
+            .unwrap(),
+            stamp: WorldStamp(Some(request_id)),
+        }
+    }
+    pub fn id(self) -> std::num::NonZeroU64 {
+        self.id
+    }
+    pub fn stamp(self) -> WorldStamp {
+        self.stamp
+    }
+}
+impl std::ops::Deref for WorldGeneration {
+    type Target = WorldStamp;
+    fn deref(&self) -> &WorldStamp {
+        &self.stamp
+    }
+}
+
+impl WorldStamp {
+    pub fn stamp(self) -> Self {
+        self
+    }
     pub fn from_install(request_id: u64) -> Self {
         Self(Some(request_id))
     }
@@ -201,8 +232,8 @@ pub struct AdmissionKey {
     pub bootstrap_id: u32,
 }
 
-#[derive(Message, Clone, Debug, PartialEq, Eq)]
-pub struct MatchInstalled {
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct InstalledMatch {
     pub request_id: u64,
 
     pub load_key: LocalLoadKey,
@@ -210,26 +241,6 @@ pub struct MatchInstalled {
     pub zone: String,
 
     pub spawn_count: usize,
-}
-
-#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MatchTornDown {
-    pub reason: TeardownReason,
-
-    pub world_generation: WorldGeneration,
-
-    pub match_key: MatchKey,
-
-    pub match_epoch: u32,
-}
-
-#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReturnedToMenu {
-    pub swap_id: u64,
-
-    pub had_world: bool,
-
-    pub reason: Option<TeardownReason>,
 }
 
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -359,10 +370,10 @@ pub struct HudInputView {
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LocalSpawnArmed(pub WorldGeneration);
+pub struct LocalSpawnArmed(pub WorldStamp);
 
 impl LocalSpawnArmed {
-    pub fn armed_for(self, generation: WorldGeneration) -> bool {
+    pub fn armed_for(self, generation: WorldStamp) -> bool {
         generation.0.is_some() && self.0 == generation
     }
 }
@@ -378,22 +389,22 @@ pub enum ReadinessState {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WorldReadiness {
-    pub generation: WorldGeneration,
+    pub generation: WorldStamp,
     pub state: ReadinessState,
 }
 
 impl WorldReadiness {
-    pub fn new(generation: WorldGeneration, state: ReadinessState) -> Self {
+    pub fn new(generation: WorldStamp, state: ReadinessState) -> Self {
         Self { generation, state }
     }
 
-    pub fn ready_for(self, generation: WorldGeneration) -> bool {
+    pub fn ready_for(self, generation: WorldStamp) -> bool {
         generation.0.is_some()
             && self.generation == generation
             && matches!(self.state, ReadinessState::Ready | ReadinessState::Silent)
     }
 
-    pub fn failed_for(self, generation: WorldGeneration) -> bool {
+    pub fn failed_for(self, generation: WorldStamp) -> bool {
         generation.0.is_some()
             && self.generation == generation
             && self.state == ReadinessState::Failed
@@ -406,3 +417,7 @@ pub struct BotNavigationReady(pub WorldReadiness);
 
 #[derive(Component)]
 pub struct UiCamera;
+
+#[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
+#[extract_app(bevy::render::RenderApp)]
+pub struct DisplayEncodedCamera;

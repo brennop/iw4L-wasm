@@ -1,14 +1,14 @@
 use super::args::{string, vector};
 use super::natives::engine::entity_id;
 use crate::frame::FrameWorld;
-use crate::script::{Namespace, NativeRegistry, Runtime, Value};
+use crate::script::{Namespace, NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 use entity_iw4::EntityEventKind;
 
 fn alias_index(world: &World, args: &[Value]) -> Result<i32, String> {
     let name = string(args, 0)?;
     world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .precached
         .get(&("rumble", name.clone()))
         .copied()
@@ -41,7 +41,7 @@ fn entity_change(
     if args.len() != 1 {
         return Err("entity rumble requires one rumble name".into());
     }
-    let number = world.resource::<Runtime>().entities[&id].number;
+    let number = world.resource::<RoundScript>().entities[&id].number;
     let origin = match super::players::entity_field(world, id, "origin") {
         Value::Vector(origin) => origin,
         _ => [0.0; 3],

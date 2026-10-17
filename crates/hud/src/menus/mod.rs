@@ -7,15 +7,44 @@ use runtime::Runner;
 use state::OpenMenu;
 pub use state::ScriptMenus;
 
+#[derive(bevy::prelude::Resource, Default)]
+pub struct FrontendMenus(pub ScriptMenus);
+
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct MenuState<'w> {
+    scoped: Option<bevy::prelude::Res<'w, ScriptMenus>>,
+    frontend: Option<bevy::prelude::Res<'w, FrontendMenus>>,
+}
+impl MenuState<'_> {
+    pub fn as_ref(&self) -> Option<&ScriptMenus> {
+        self.scoped
+            .as_deref()
+            .or_else(|| self.frontend.as_deref().map(|menus| &menus.0))
+    }
+    pub fn as_deref(&self) -> Option<&ScriptMenus> {
+        self.as_ref()
+    }
+    pub fn is_some(&self) -> bool {
+        self.as_ref().is_some()
+    }
+    pub fn is_some_and(&self, predicate: impl FnOnce(&ScriptMenus) -> bool) -> bool {
+        self.as_ref().is_some_and(predicate)
+    }
+    pub fn open_names(&self) -> Vec<String> {
+        self.as_ref().map_or_else(Vec::new, ScriptMenus::open_names)
+    }
+    pub fn focused_item(&self) -> Option<(&str, usize)> {
+        self.as_ref().and_then(ScriptMenus::focused_item)
+    }
+}
+
 use std::collections::HashMap;
 
 use asset_game::{MenuCatalog, MenuDef, SessionTeamSettings};
 use assets::PreparedLocalizedStrings;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
-use frame::{
-    AppScreen, MatchTornDown, RuntimeRole, UiExecCommand, UiMenuKey, UiMenuRequest, UiPlaySound,
-};
+use frame::{AppScreen, RuntimeRole, UiExecCommand, UiMenuKey, UiMenuRequest, UiPlaySound};
 use net::{
     ActionRequestIds, ClientActionInbox, ClientActionInput, LocalPresentClient, PresentedSnapshot,
 };
@@ -82,6 +111,54 @@ fn painted_def(def: &MenuDef, open: &OpenMenu) -> MenuDef {
     out
 }
 
+fn custom_class_slot(item: &asset_game::MenuItem) -> Option<usize> {
+    fn response(events: &[asset_game::MenuEvent]) -> Option<usize> {
+        events.iter().find_map(|event| match event {
+            asset_game::MenuEvent::Script(text) => {
+                script::parse(text).into_iter().find_map(|cmd| {
+                    let script::Command::ScriptMenuResponse(value) = cmd else {
+                        return None;
+                    };
+                    value
+                        .strip_prefix("custom")?
+                        .parse::<usize>()
+                        .ok()?
+                        .checked_sub(1)
+                        .filter(|&slot| slot < sim::match_state::PERSONAL_CLASS_SLOTS)
+                })
+            }
+            asset_game::MenuEvent::If { then, .. } | asset_game::MenuEvent::Else(then) => {
+                response(then)
+            }
+            _ => None,
+        })
+    }
+    response(&item.handlers.action).or_else(|| response(&item.handlers.accept))
+}
+
+fn class_unavailable<'a>(
+    menu: &str,
+    item: &asset_game::MenuItem,
+    dvars: &'a frame::UiMenuDvars,
+) -> Option<&'a str> {
+    let key = if menu.eq_ignore_ascii_case("class_picker") || menu.eq_ignore_ascii_case("class_samples_picker") {
+        let slot = item.name.strip_prefix("choice_")?.parse::<usize>().ok()?;
+        format!("ui_class_choice_unavailable_{slot}")
+    } else if menu.eq_ignore_ascii_case("iw4l_main") && item.name == "classes"
+        || menu.eq_ignore_ascii_case("game_lobby") && item.handlers.action.iter().any(|event| {
+            matches!(event, asset_game::MenuEvent::Script(text) if text.contains("ui_class_setup"))
+        })
+    {
+        "ui_class_feature_lock".to_owned()
+    } else if menu.to_ascii_lowercase().starts_with("changeclass") {
+        let slot = custom_class_slot(item)?;
+        format!("ui_class_unavailable_{slot}")
+    } else {
+        return None;
+    };
+    dvars.get(&key).filter(|reason| !reason.is_empty())
+}
+
 #[derive(Component)]
 pub(crate) struct ScriptMenuRaster;
 
@@ -115,6 +192,7 @@ pub(crate) struct MenuInputs<'w, 's> {
     compass: Option<Res<'w, assets::SessionCompass>>,
     party: Res<'w, frame::UiPartyState>,
     frontend_strings: Option<Res<'w, asset_game::LocalizeCatalog>>,
+    player_data: Option<Res<'w, sim::LocalPlayerData>>,
 }
 
 #[derive(Default)]
@@ -155,17 +233,28 @@ pub(crate) fn update_script_menus(
     local: Res<LocalPresentClient>,
     role: Option<Res<RuntimeRole>>,
     mut input: MenuInputs,
-    mut torn: MessageReader<MatchTornDown>,
-    mut menus: ResMut<ScriptMenus>,
-    mut locals: ResMut<UiLocalVars>,
+    mut transitions: MessageReader<StateTransitionEvent<frame::MatchScope>>,
+    mut menu_states: (Option<ResMut<ScriptMenus>>, ResMut<FrontendMenus>),
+    mut local_states: (
+        Option<ResMut<UiLocalVars>>,
+        ResMut<crate::playercard::FrontendLocalVars>,
+    ),
     mut exprs: ResMut<MenuExprCache>,
     mut out: MenuOutputs,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
     mut pass: ResMut<HudTessPass>,
 ) {
+    let mut menus = menu_states.0.as_deref_mut().unwrap_or(&mut menu_states.1.0);
+    let mut locals = local_states
+        .0
+        .as_deref_mut()
+        .unwrap_or(&mut local_states.1.0);
     pass.script_menus = TessJob::Hide;
-    if torn.read().count() > 0 {
+    if transitions
+        .read()
+        .any(|event| event.exited == Some(frame::MatchScope::Live))
+    {
         out.binding.command = None;
         *menus = ScriptMenus::default();
     }
@@ -205,6 +294,7 @@ pub(crate) fn update_script_menus(
         input.frontend_strings.as_deref()
     };
     let world = MenuWorld {
+        player_data: input.player_data.as_deref(),
         ms: crate::scorebar::milliseconds() as i32,
         in_game,
         party: &input.party,
@@ -396,6 +486,18 @@ pub(crate) fn update_script_menus(
         let mut painted = painted_def(def, open);
         let mut slider_parts = Vec::new();
         for item in &mut painted.items {
+            if let Some(reason) = class_unavailable(&open.name, item, &out.dvars) {
+                if let Some(slot) = custom_class_slot(item) {
+                    let name = world
+                        .classes
+                        .and_then(|classes| classes.slots.get(slot))
+                        .map_or("Class", |class| class.name.as_str());
+                    item.text_key = format!("{name} — {reason}");
+                    item.text_literal = true;
+                    item.text_exp.clear();
+                }
+                item.fore_color = [0.5, 0.5, 0.5, 1.0];
+            }
             if item.item_type == 14 && !item.dvar.is_empty() {
                 item.text_key = out
                     .dvars

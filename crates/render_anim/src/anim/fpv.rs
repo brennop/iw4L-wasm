@@ -150,6 +150,7 @@ pub struct FpvAuthoritySample {
     pub last_weapon_hand: i32,
 
     pub perks0: u32,
+    pub perks1: u32,
 
     pub clip_ammo: Option<i32>,
 
@@ -320,7 +321,7 @@ pub struct FpvNotetracks {
 impl FpvNotetracks {
     pub fn into_audio_batch(
         self,
-        generation: frame::WorldGeneration,
+        generation: frame::WorldStamp,
         timeline: u64,
         client: sim::ClientId,
         life: sim::LifeSequence,
@@ -401,7 +402,9 @@ pub fn tick_equipped_fpv_with_extra_events(
         }
     }
     if let Some(sample) = sample {
-        equipped.controller.set_predicted_perks(sample.perks0);
+        equipped
+            .controller
+            .set_predicted_perks(sample.perks0, sample.perks1);
     }
     apply_present_events(&mut equipped.controller, &events);
     if let Some(sample) = sample {
@@ -442,7 +445,7 @@ pub fn tick_equipped_fpv_with_extra_events(
     equipped.controller.apply_ads_overlay_frame(ads_frac);
     if let (Some(left), Some(sample)) = (equipped.left.as_mut(), sample) {
         if sample.last_weapon_hand == 1 {
-            left.set_predicted_perks(sample.perks0);
+            left.set_predicted_perks(sample.perks0, sample.perks1);
             match present.observe_weap_anim_secondary_edge(sample.weap_anim_secondary) {
                 WeapAnimEdge::Unchanged => {}
                 WeapAnimEdge::Idle => {

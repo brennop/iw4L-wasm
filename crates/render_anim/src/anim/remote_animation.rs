@@ -31,6 +31,14 @@ pub struct RemoteBodyTrees {
 }
 
 impl RemoteBodyTrees {
+    pub fn retained_bindings(&self) -> usize {
+        self.by_ent.len()
+    }
+
+    pub fn tree_storage_bytes(&self) -> usize {
+        self.by_ent.capacity() * std::mem::size_of::<(u32, PersistentRemoteTree)>()
+    }
+
     pub fn get(&self, persist_key: u32) -> Option<&PersistentRemoteTree> {
         self.by_ent.get(&persist_key)
     }

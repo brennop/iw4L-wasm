@@ -381,13 +381,7 @@ fn draw_one_elem(
             let age = host.msec_now.wrapping_sub(elem.msec_begin);
             let norm = elem_norm_time(age, elem.life_span_msec);
             let elem_random_seed = elem.random_seed;
-            let origin = crate::spark::spark_elem_world_origin(
-                elem.origin,
-                elem.flags,
-                &effect.frame_now(),
-                &effect.frame_when_played(),
-                Some(elem.orient_spawn_params(elem_random_seed)),
-            );
+            let origin = elem.world_origin(&effect.frame_now(), &effect.frame_when_played());
             let ctx = FxDrawElemContext {
                 def_name: effect.def_name.as_str(),
                 catalog_index: effect.catalog_index,
@@ -539,13 +533,7 @@ fn draw_one_elem(
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
                 let norm = elem_norm_time(age, elem.life_span_msec);
                 let elem_random_seed = elem.random_seed;
-                let origin = crate::spark::spark_elem_world_origin(
-                    elem.origin,
-                    elem.flags,
-                    &effect.frame_now(),
-                    &effect.frame_when_played(),
-                    Some(elem.orient_spawn_params(elem_random_seed)),
-                );
+                let origin = elem.world_origin(&effect.frame_now(), &effect.frame_when_played());
                 let ctx = FxDrawElemContext {
                     def_name: effect.def_name.as_str(),
                     catalog_index: effect.catalog_index,
@@ -579,13 +567,7 @@ fn draw_one_elem(
                 let age = host.msec_now.wrapping_sub(elem.msec_begin);
                 let norm = elem_norm_time(age, elem.life_span_msec);
                 let elem_random_seed = elem.random_seed;
-                let origin = crate::spark::spark_elem_world_origin(
-                    elem.origin,
-                    elem.flags,
-                    &effect.frame_now(),
-                    &effect.frame_when_played(),
-                    Some(elem.orient_spawn_params(elem_random_seed)),
-                );
+                let origin = elem.world_origin(&effect.frame_now(), &effect.frame_when_played());
                 let ctx = FxDrawElemContext {
                     def_name: effect.def_name.as_str(),
                     catalog_index: effect.catalog_index,
@@ -631,13 +613,7 @@ fn draw_one_elem(
     let age = host.msec_now.wrapping_sub(elem.msec_begin);
     let norm = elem_norm_time(age, elem.life_span_msec);
     let elem_random_seed = elem.random_seed;
-    let origin = crate::spark::spark_elem_world_origin(
-        elem.origin,
-        elem.flags,
-        &effect.frame_now(),
-        &effect.frame_when_played(),
-        Some(elem.orient_spawn_params(elem_random_seed)),
-    );
+    let origin = elem.world_origin(&effect.frame_now(), &effect.frame_when_played());
     let ctx = FxDrawElemContext {
         def_name: effect.def_name.as_str(),
         catalog_index: effect.catalog_index,

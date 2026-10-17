@@ -5,7 +5,6 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::Screenshot;
 use bevy::time::Real;
 use bevy::window::PresentMode;
-use frame::HasWorld;
 use net::ClientSet;
 use serde::{Deserialize, Serialize};
 
@@ -174,8 +173,10 @@ pub fn register_acceptance_systems(app: &mut App) {
     app.init_resource::<AcceptanceState>().add_systems(
         Update,
         (
-            acceptance_prepare,
-            acceptance_sample.after(apply_dpvs_cull),
+            acceptance_prepare.in_set(frame::InMatch),
+            acceptance_sample
+                .in_set(frame::InMatch)
+                .after(apply_dpvs_cull),
             acceptance_capture_and_exit,
         )
             .chain()
@@ -186,14 +187,14 @@ pub fn register_acceptance_systems(app: &mut App) {
 fn acceptance_prepare(
     run: Res<AcceptanceRun>,
     mut state: ResMut<AcceptanceState>,
-    has_world: Res<HasWorld>,
+    has_world: Res<State<frame::MatchScope>>,
     scene: Res<WorldScene>,
     mut sim_cam: Option<ResMut<SimCamera>>,
 ) {
     if state.phase != Phase::WaitWorld {
         return;
     }
-    if !has_world.0 {
+    if !(*has_world.get() == frame::MatchScope::Live) {
         return;
     }
     if scene.intermission_view.is_none() {

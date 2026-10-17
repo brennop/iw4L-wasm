@@ -88,7 +88,7 @@ pub struct LoadoutSpec {
     pub perks: [u32; 3],
 }
 
-pub const PERSONAL_CLASS_SLOTS: usize = 5;
+pub const PERSONAL_CLASS_SLOTS: usize = 10;
 
 pub const CLASS_CATALOG_DEATHSTREAKS: [&str; 4] = [
     "specialty_copycat",

@@ -26,6 +26,8 @@ mod missile;
 mod missile_guidance;
 pub use missile_guidance::{MissileGuide, MissileTarget};
 mod penetration;
+mod progression;
+pub use progression::LocalPlayerData;
 mod persistent_data;
 mod persistent_defaults;
 pub use persistent_data::{

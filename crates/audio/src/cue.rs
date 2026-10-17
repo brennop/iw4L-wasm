@@ -114,10 +114,15 @@ fn alias_admission(
 
 pub(crate) struct CueState {
     pub(crate) release: Arc<crate::media::CueRelease>,
-    result: OnceLock<Result<ResolvedCue, CueFailure>>,
+    result: OnceLock<Result<ResolvedCueInfo, CueFailure>>,
     completion: OnceLock<crate::StartDecision>,
     pub(crate) playback: OnceLock<Arc<crate::render_core::InstanceState>>,
     children: Mutex<Vec<(String, Arc<CueState>)>>,
+}
+
+struct ResolvedCueInfo {
+    bank_revision: u64,
+    looping: asset_audio::LoopingPolicy,
 }
 
 pub(crate) struct CueHandle(pub Arc<CueState>);
@@ -138,30 +143,23 @@ impl CueHandle {
 
     pub(crate) fn completion(&self) -> Option<crate::StartDecision> {
         let mut decision = self.0.completion()?;
-        if let Some(Ok(cue)) = self.result() {
+        if let Some(Ok(cue)) = self.0.result.get() {
             decision.detail = Some(self.0.playback.get().map_or_else(
                 || {
                     format!(
                         "bank_revision={} looping_policy={:?}",
-                        cue.bank.revision(),
-                        cue.policy.looping
+                        cue.bank_revision, cue.looping
                     )
                 },
                 |instance| {
                     format!(
                         "instance={} bank_revision={} looping_policy={:?}",
-                        instance.id,
-                        cue.bank.revision(),
-                        cue.policy.looping
+                        instance.id, cue.bank_revision, cue.looping
                     )
                 },
             ));
         }
         Some(decision)
-    }
-
-    pub fn result(&self) -> Option<Result<ResolvedCue, CueFailure>> {
-        self.0.result.get().cloned()
     }
 }
 
@@ -226,7 +224,10 @@ impl CueState {
         let _ = self.completion.set(decision);
     }
     pub(crate) fn resolved(&self, result: Result<ResolvedCue, CueFailure>) {
-        let _ = self.result.set(result);
+        let _ = self.result.set(result.map(|cue| ResolvedCueInfo {
+            bank_revision: cue.bank.revision(),
+            looping: cue.policy.looping,
+        }));
     }
 }
 
@@ -241,6 +242,7 @@ pub(crate) struct CueRequest {
     pub scope: AudioScope,
     pub epoch: u64,
     pub pitch_scale: f32,
+    pub volume_scale: f32,
 }
 
 impl CueRequest {
@@ -307,7 +309,14 @@ impl CueResolver {
             .map_err(|_| CueFailure::MissingPolicy)?;
         let policy = bound.policy();
         let clip = clip_key_for_sound(bound).map_err(|_| CueFailure::InvalidMediaBinding)?;
-        let volume = policy.volume(unit_random(&mut self.lcg));
+        let scale = if request.volume_scale.is_finite() {
+            request.volume_scale.max(0.0)
+        } else {
+            1.0
+        };
+        let volume = policy
+            .volume(unit_random(&mut self.lcg))
+            .map(|volume| volume * scale);
         let pitch = policy.pitch(unit_random(&mut self.lcg));
         let scale = if request.pitch_scale.is_finite() && request.pitch_scale > 0.0 {
             request.pitch_scale

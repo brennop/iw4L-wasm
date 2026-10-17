@@ -5,10 +5,11 @@ use bevy::prelude::*;
 use net::PresentedSnapshot;
 
 use crate::ambient::SoundBankNamespace;
-use crate::backend::{AudioScope, MatchEpoch};
+use crate::backend::AudioScope;
 use crate::playback::SoundBank;
 use crate::runtime::AudioRuntime;
 use crate::sources::{DesiredSource, SourceKey};
+use frame::{MatchScope, ScopeEpoch};
 
 struct PresentedLoop {
     alias: String,
@@ -29,7 +30,7 @@ pub(crate) fn update(
     presented: Res<PresentedSnapshot>,
     bank: Option<Res<SoundBank>>,
     namespace: Option<Res<SoundBankNamespace>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
     runtime: Res<AudioRuntime>,
     mut sources: ResMut<DestructibleSources>,
 ) {

@@ -1,6 +1,6 @@
 use crate::frame::FrameWorld;
 use crate::script::runtime::{raise, run_now};
-use crate::script::{Arc, BTreeMap, Fault, Location, Runtime, Value, VecDeque};
+use crate::script::{Arc, BTreeMap, Fault, Location, RoundScript, Value, VecDeque};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
 
@@ -17,7 +17,7 @@ pub(crate) fn now_ms(world: &World) -> i64 {
 
 pub(crate) fn player_object(world: &World, client: u32) -> Value {
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .get(&client)
         .map_or(Value::Undefined, |slot| Value::Object(slot.object))
@@ -31,7 +31,7 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
     let Value::Object(object) = victim else {
         return;
     };
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if !runtime.entities[&object].accepts_damage(hit.flags)
         || runtime.engine.players_ignore_radius_damage
             && hit.flags & crate::script_player::IDFLAGS_RADIUS != 0
@@ -61,10 +61,10 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
         Value::string(hitloc),
         Value::Int(0),
     ];
-    world.resource_mut::<Runtime>().current_hit = Some(hit.clone());
+    world.resource_mut::<RoundScript>().current_hit = Some(hit.clone());
     let now = i64::from(tick.0) * i64::from(crate::MATCH_TICK_MS);
     let result = run_now(world, DAMAGE, victim, args, now);
-    world.resource_mut::<Runtime>().current_hit = None;
+    world.resource_mut::<RoundScript>().current_hit = None;
     if result.is_ok() {
         // Deaths from this hit are settled before the caller continues.
         settle_deaths(world);
@@ -79,7 +79,7 @@ pub(crate) fn crush_player(world: &mut World, victim: ClientId, pusher: u64, poi
     let Value::Object(object) = target else {
         return;
     };
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if !runtime.entities[&object].accepts_damage(0) || !runtime.entities.contains_key(&pusher) {
         return;
     }
@@ -103,14 +103,14 @@ pub(crate) fn crush_player(world: &mut World, victim: ClientId, pusher: u64, poi
 
 fn world_entity(world: &World) -> Value {
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .engine
         .world
         .map_or(Value::Undefined, Value::Object)
 }
 
 pub(crate) fn damage_entity(world: &World, value: Option<&Value>) -> Value {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     match value {
         Some(Value::Object(object))
             if runtime.entities.contains_key(object)
@@ -126,7 +126,7 @@ fn damage_inflictor(world: &mut World, hit: &crate::script_player::Hit) -> Optio
     match hit.inflictor? {
         crate::script_player::HitInflictor::Projectile(id) => projectile_entity(world, id, hit),
         crate::script_player::HitInflictor::ScriptModel(presence) => world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .presented_by(presence)
             .map(Value::Object),
     }
@@ -137,7 +137,7 @@ fn projectile_entity(
     id: crate::ProjectileId,
     hit: &crate::script_player::Hit,
 ) -> Option<Value> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let object = runtime
         .entities
         .iter()
@@ -177,7 +177,7 @@ pub(crate) fn flashbang(
 
 pub(crate) fn owe(world: &mut World, client: u32, callback: &'static str, args: Vec<Value>) {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .deaths
         .push_back((client, callback, args));
 }
@@ -217,7 +217,7 @@ pub(crate) fn force_death(world: &mut World, tick: crate::Tick, client: u32) {
 }
 
 fn profile_data(world: &World, profile: crate::PlayerProfile) -> Option<Vec<(Vec<Value>, Value)>> {
-    let tables = &world.resource::<Runtime>().tables;
+    let tables = &world.resource::<RoundScript>().tables;
     let titles = super::tables::table(tables, "mp/cardTitleTable.csv")?;
     let emblems = super::tables::table(tables, "mp/cardIconTable.csv")?;
     let streaks = super::tables::table(tables, "mp/killstreakTable.csv")?;
@@ -301,7 +301,7 @@ pub(crate) fn give_killstreak(world: &mut World, client: u32, name: &str) -> boo
 pub(crate) fn settle_deaths(world: &mut World) {
     let now = now_ms(world);
     loop {
-        let Some((client, callback, args)) = world.resource_mut::<Runtime>().deaths.pop_front()
+        let Some((client, callback, args)) = world.resource_mut::<RoundScript>().deaths.pop_front()
         else {
             return;
         };
@@ -348,20 +348,20 @@ pub(crate) fn answer_menu(world: &mut World, client: u32, menu: &str, response: 
 }
 
 pub(crate) fn answer_join(world: &mut World, client: u32) {
-    if world.resource_mut::<Runtime>().joined.insert(client) {
+    if world.resource_mut::<RoundScript>().joined.insert(client) {
         answer_menu(world, client, TEAM_MENU, "autoassign");
     }
 }
 
 pub(crate) fn note_team_answer(world: &mut World, client: u32, menu: &str) {
     if menu == TEAM_MENU {
-        world.resource_mut::<Runtime>().joined.insert(client);
+        world.resource_mut::<RoundScript>().joined.insert(client);
     }
 }
 
 fn push_answer(world: &mut World, client: u32, answer: MenuAnswer) {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .menu_answers
         .entry(client)
         .or_default()
@@ -372,7 +372,7 @@ const T5_DEFAULT_CLASSES: [&str; 5] = ["smg_mp", "cqb_mp", "assault_mp", "lmg_mp
 
 pub(crate) fn is_t5(world: &World) -> bool {
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .is_some_and(|p| p.rules() == crate::script::Realm::T5)
@@ -380,11 +380,11 @@ pub(crate) fn is_t5(world: &World) -> bool {
 
 pub(crate) fn choose_default_class(world: &mut World, client: u32, index: u8) {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .selected_classes
         .remove(&client);
     let realm = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .map(|p| p.rules());
@@ -410,7 +410,7 @@ const T5_STAND_INS: [&str; 4] = ["ak47_mp", "m1911_mp", "frag_grenade_mp", "flas
 
 pub(crate) fn stand_in_for(world: &mut World, slot: usize, weapon: u32) -> Option<u32> {
     let realm = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .map_or(crate::script::Realm::Iw4, |p| p.rules());
@@ -451,7 +451,7 @@ fn bridge_class_weapon(world: &mut World, client: u32, slot: usize, weapon: u32)
     let Some(stand_in) = stand_in_for(world, slot, weapon) else {
         return;
     };
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<crate::script::MatchScript>();
     let bridge = runtime.weapon_bridge.entry(client).or_default();
     bridge.retain(|(from, _)| *from != stand_in);
     bridge.push((stand_in, weapon));
@@ -459,7 +459,7 @@ fn bridge_class_weapon(world: &mut World, client: u32, slot: usize, weapon: u32)
 
 fn offhand_stand_in(world: &mut World, weapon: u32) -> Option<u32> {
     let realm = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .map_or(crate::script::Realm::Iw4, |p| p.rules());
@@ -488,7 +488,7 @@ fn bridge_offhand(world: &mut World, client: u32, weapon: u32) {
     let Some(stand_in) = offhand_stand_in(world, weapon) else {
         return;
     };
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<crate::script::MatchScript>();
     let bridge = runtime.weapon_bridge.entry(client).or_default();
     bridge.retain(|(from, _)| *from != stand_in);
     bridge.push((stand_in, weapon));
@@ -541,7 +541,7 @@ pub(crate) fn insertion_light(
         .iter()
         .find(|(flare, _)| *flare == effect)?;
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .insertion_spots
         .iter()
         .find(|(spot, _)| {
@@ -566,7 +566,7 @@ pub(crate) fn note_insertion_throw(
     }
     let model: Arc<str> = format!("{}{native}", crate::WEAPON_MODEL_PREFIX).into();
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .thrown_insertions
         .insert(client, (model, grenade));
 }
@@ -576,7 +576,7 @@ pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) 
         return;
     }
     let origin = match world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .object_field(object, "origin")
     {
         Value::Vector(origin) => origin,
@@ -586,7 +586,7 @@ pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) 
         a.iter().zip(b).map(|(a, b)| (a - b) * (a - b)).sum::<f32>() <= reach * reach
     };
     let placed = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .insertion_spots
         .iter()
         .find(|(spot, _)| near(*spot, origin, 1.0))
@@ -595,7 +595,7 @@ pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) 
         Some(model) => model,
         None => {
             let throwers: Vec<u32> = world
-                .resource::<Runtime>()
+                .resource::<RoundScript>()
                 .thrown_insertions
                 .keys()
                 .copied()
@@ -606,16 +606,14 @@ pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) 
                     .player(ClientId(client))
                     .is_some_and(|ps| near(ps.origin, origin, INSERTION_PLANT_REACH))
             });
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             let Some((model, grenade)) =
                 thrower.and_then(|client| runtime.thrown_insertions.remove(&client))
             else {
                 return;
             };
-            if runtime.entities.contains_key(&grenade)
-                && !runtime.pending_deletes.contains(&grenade)
-            {
-                runtime.pending_deletes.push(grenade);
+            if runtime.entities.contains_key(&grenade) && runtime.can_receive_call(&grenade) {
+                runtime.request_delete(grenade);
             }
             if runtime.insertion_spots.len() >= 32 {
                 runtime.insertion_spots.remove(0);
@@ -624,7 +622,7 @@ pub(crate) fn dress_insertion_glow(world: &mut World, object: u64, model: &str) 
             model
         }
     };
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let Some(entity) = runtime.entities.get_mut(&object) else {
         return;
     };
@@ -643,7 +641,7 @@ fn bridge_insertion_carrier(world: &mut World, client: u32, weapon: u32) {
     if weapon == 0 || FrameWorld::from_world(world).weapon_script_name(stand_in) != INSERTION {
         return;
     }
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<crate::script::MatchScript>();
     let bridge = runtime.weapon_bridge.entry(client).or_default();
     bridge.retain(|(from, _)| *from != carrier);
     bridge.push((carrier, weapon));
@@ -667,7 +665,7 @@ fn mark_t6_offhands(world: &mut World, client: u32, class: &crate::ClassDef) {
     let Value::Object(player) = player_object(world, client) else {
         return;
     };
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.set_object_field(player, "t6lethal", lethal);
     runtime.set_object_field(player, "t6tactical", tactical);
 }
@@ -696,7 +694,7 @@ pub(crate) fn give_carried_insertion(
 
 pub(crate) fn bridged_weapon(world: &World, client: u32, weapon: u32) -> u32 {
     world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .weapon_bridge
         .get(&client)
         .and_then(|bridge| bridge.iter().find(|(from, _)| *from == weapon))
@@ -705,7 +703,7 @@ pub(crate) fn bridged_weapon(world: &World, client: u32, weapon: u32) -> u32 {
 
 pub(crate) fn script_weapon(world: &mut World, client: u32, weapon: u32) -> u32 {
     if let Some(stand_in) = world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .weapon_bridge
         .get(&client)
         .and_then(|bridge| bridge.iter().find(|(_, native)| *native == weapon))
@@ -717,7 +715,10 @@ pub(crate) fn script_weapon(world: &mut World, client: u32, weapon: u32) -> u32 
         .missile_launch_facts(weapon)
         .is_some_and(|facts| facts.require_lock_to_fire && matches!(facts.missile_guidance, 1 | 3));
     if needs_lock_bridge
-        && world.resource::<Runtime>().players.contains_key(&client)
+        && world
+            .resource::<RoundScript>()
+            .players
+            .contains_key(&client)
         && let Some(stand_in) = stand_in_for(world, 1, weapon)
     {
         bridge_class_weapon(world, client, 1, weapon);
@@ -732,15 +733,16 @@ pub(crate) fn personal_class(
     class: crate::ClassId,
 ) -> Option<crate::ClassDef> {
     world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .personal_classes
         .get(&(client, class.0))
         .cloned()
 }
 
 pub(crate) fn selected_camouflage(world: &World, client: u32, weapon: u32) -> Option<u8> {
-    let runtime = world.resource::<Runtime>();
-    let class = runtime
+    let runtime = world.resource::<RoundScript>();
+    let class = world
+        .resource::<crate::script::MatchScript>()
         .personal_classes
         .get(&(client, *runtime.selected_classes.get(&client)?))?;
     [class.primary, class.secondary]
@@ -751,20 +753,20 @@ pub(crate) fn selected_camouflage(world: &World, client: u32, weapon: u32) -> Op
 
 pub(crate) fn choose_class(world: &mut World, client: u32, class: &crate::ClassDef) {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .selected_classes
         .insert(client, class.id.0);
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<crate::script::MatchScript>()
         .personal_classes
         .insert((client, class.id.0), class.clone());
     let realm = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .map(|p| p.rules());
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<crate::script::MatchScript>()
         .weapon_bridge
         .remove(&client);
     bridge_class_weapon(world, client, 0, class.primary);
@@ -899,7 +901,7 @@ fn menu_kind(menu: &str) -> Option<bool> {
 
 fn deliver_answers(world: &mut World, client: u32) {
     // Answers queued ahead of the open menu's kind were for a menu the scripts skipped.
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let Some(slot) = runtime.players.get(&client) else {
         return;
     };
@@ -919,12 +921,12 @@ fn deliver_answers(world: &mut World, client: u32) {
         })
         .unwrap_or(0);
     if skipped > 0 {
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         if let Some(queue) = runtime.menu_answers.get_mut(&client) {
             queue.drain(..skipped);
         }
     }
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let Some(slot) = runtime.players.get(&client) else {
         return;
     };
@@ -940,7 +942,7 @@ fn deliver_answers(world: &mut World, client: u32) {
         return;
     }
     let object = slot.object;
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let answer = runtime
         .menu_answers
         .get_mut(&client)
@@ -949,7 +951,7 @@ fn deliver_answers(world: &mut World, client: u32) {
     let slot = runtime.players.get_mut(&client).expect("checked above");
     slot.menu = None;
     if let Err(message) = super::natives::player::write_class_data(world, client, &answer.data) {
-        world.resource_mut::<Runtime>().fault = Some(Fault::at(
+        world.resource_mut::<RoundScript>().fault = Some(Fault::at(
             &Location {
                 module: "<engine>".into(),
                 function: "class selection".into(),
@@ -1043,7 +1045,7 @@ impl PlayerSlot {
 
 pub(crate) fn script_seats(world: &World) -> Vec<(ClientId, crate::ScriptSeat)> {
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .iter()
         .filter(|(_, slot)| &*slot.sessionstate == "spectator" && slot.spectator.target.is_some())
@@ -1068,12 +1070,12 @@ const RADAR_FIELDS: [&str; 3] = ["hasradar", "radarmode", "isradarblocked"];
 
 pub(crate) fn publish_radar(world: &mut World) {
     let constant = world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .dvars
         .get(crate::CONSTANT_RADAR_DVAR)
         .is_some_and(|value| value.trim().parse::<i32>().is_ok_and(|on| on != 0));
     let rows: Vec<(u32, bool, crate::RadarMode, bool)> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .iter()
         .map(|(client, slot)| (*client, slot.has_radar, slot.radar_mode, slot.radar_blocked))
@@ -1083,7 +1085,7 @@ pub(crate) fn publish_radar(world: &mut World) {
             Some(Value::String(team)) => team.to_string(),
             _ => String::new(),
         };
-        let engine = &world.resource::<Runtime>().engine;
+        let engine = &world.resource::<RoundScript>().engine;
         let team_on = engine.team_radar.get(&team).is_some_and(|on| *on != 0);
         let team_blocked = engine.team_radar_blocked.contains(&team);
         let radar = if blocked || team_blocked {
@@ -1142,7 +1144,7 @@ pub(crate) fn apply_disconnects(world: &mut World) {
     {
         return;
     }
-    let disconnects = std::mem::take(&mut world.resource_mut::<Runtime>().disconnects);
+    let disconnects = std::mem::take(&mut world.resource_mut::<RoundScript>().disconnects);
     for client in disconnects {
         FrameWorld::from_world(world).retire_client(ClientId(client));
     }
@@ -1151,17 +1153,25 @@ pub(crate) fn apply_disconnects(world: &mut World) {
 pub(crate) fn disconnect_player(world: &mut World, client: u32) {
     super::triggers::release_client_claims(world, client);
     {
-        let mut runtime = world.resource_mut::<Runtime>();
+        world
+            .resource_mut::<RoundScript>()
+            .selected_classes
+            .remove(&client);
+        let mut runtime = world.resource_mut::<crate::script::MatchScript>();
         runtime
             .personal_classes
             .retain(|(owner, _), _| *owner != client);
         runtime.weapon_bridge.remove(&client);
-        runtime.selected_classes.remove(&client);
         if runtime.local_presentation_client == Some(ClientId(client)) {
             runtime.pending_local_dvars.clear();
         }
     }
-    let Some(slot) = world.resource::<Runtime>().players.get(&client).cloned() else {
+    let Some(slot) = world
+        .resource::<RoundScript>()
+        .players
+        .get(&client)
+        .cloned()
+    else {
         return;
     };
     let now = now_ms(world);
@@ -1175,11 +1185,18 @@ pub(crate) fn disconnect_player(world: &mut World, client: u32) {
     world
         .resource_mut::<crate::PersistentDataStore>()
         .unbind(crate::ClientId(client));
-    let mut runtime = world.resource_mut::<Runtime>();
-    runtime.players.remove(&client);
-    if runtime.local_presentation_client == Some(ClientId(client)) {
-        runtime.pending_local_dvars.clear();
+    if world
+        .resource::<crate::script::MatchScript>()
+        .local_presentation_client
+        == Some(ClientId(client))
+    {
+        world
+            .resource_mut::<crate::script::MatchScript>()
+            .pending_local_dvars
+            .clear();
     }
+    let mut runtime = world.resource_mut::<RoundScript>();
+    runtime.players.remove(&client);
     runtime.menu_answers.remove(&client);
     runtime.joined.remove(&client);
     runtime.delete_entity(slot.object);
@@ -1201,7 +1218,7 @@ pub(crate) fn sync_players(world: &mut World) {
         return;
     }
     let now = i64::from(request.tick.0) * i64::from(crate::MATCH_TICK_MS);
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if runtime.program.is_none() || runtime.fault.is_some() || !runtime.started {
         return;
     }
@@ -1219,17 +1236,21 @@ pub(crate) fn sync_players(world: &mut World) {
             .collect()
     };
     for (client, joined) in clients {
-        let slot = world.resource::<Runtime>().players.get(&client).cloned();
+        let slot = world
+            .resource::<RoundScript>()
+            .players
+            .get(&client)
+            .cloned();
         match slot {
             Some(slot) if !slot.begun && joined => {
                 raise(world, Value::Object(slot.object), "begin", Vec::new());
-                if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
+                if let Some(slot) = world.resource_mut::<RoundScript>().players.get_mut(&client) {
                     slot.begun = true;
                 }
             }
             Some(_) => {}
             None => {
-                let mut runtime = world.resource_mut::<Runtime>();
+                let mut runtime = world.resource_mut::<RoundScript>();
                 let object = match runtime.create_player(client) {
                     Ok(object) => object,
                     Err(message) => {
@@ -1253,7 +1274,7 @@ pub(crate) fn sync_players(world: &mut World) {
                 };
                 match pers {
                     Ok(pers) => world
-                        .resource_mut::<Runtime>()
+                        .resource_mut::<RoundScript>()
                         .set_object_field(object, "pers", pers),
                     Err(_) => return,
                 }
@@ -1284,21 +1305,21 @@ fn client_name(name: &[u8]) -> String {
 pub(crate) fn load_field(world: &mut World, client: u32, name: &str) -> Option<Value> {
     let id = ClientId(client);
     if name == "sessionstate" {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         return runtime
             .players
             .get(&client)
             .map(|slot| Value::String(slot.sessionstate.clone().into()));
     }
     if SEAT_FIELDS.contains(&name) {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         return runtime
             .players
             .get(&client)
             .map(|slot| load_seat_field(&slot.seat, name));
     }
     if RADAR_FIELDS.contains(&name) {
-        let slot = world.resource::<Runtime>().players.get(&client)?;
+        let slot = world.resource::<RoundScript>().players.get(&client)?;
         return Some(match name {
             "hasradar" => Value::Int(slot.has_radar.into()),
             "isradarblocked" => Value::Int(slot.radar_blocked.into()),
@@ -1331,17 +1352,17 @@ pub(crate) fn load_field(world: &mut World, client: u32, name: &str) -> Option<V
 }
 
 pub(crate) fn entity_field(world: &mut World, id: u64, name: &str) -> Value {
-    if let Some(client) = world.resource::<Runtime>().player_client(id)
+    if let Some(client) = world.resource::<RoundScript>().player_client(id)
         && let Some(value) = load_field(world, client, name)
     {
         return value;
     }
-    world.resource_mut::<Runtime>().object_field(id, name)
+    world.resource_mut::<RoundScript>().object_field(id, name)
 }
 
 pub(crate) fn alive_on_team(world: &mut World, team: &str) -> i32 {
     let clients: Vec<u32> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .iter()
         .filter(|(_, slot)| &*slot.sessionstate == "playing")
@@ -1371,7 +1392,7 @@ pub(crate) fn store_field(
         other => Err(format!("player field {name} takes a number, not {other:?}")),
     };
     if SEAT_FIELDS.contains(&name) {
-        if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
+        if let Some(slot) = world.resource_mut::<RoundScript>().players.get_mut(&client) {
             store_seat_field(&mut slot.seat, name, value)?;
         }
         return Ok(true);
@@ -1391,7 +1412,7 @@ pub(crate) fn store_field(
             Some(_) => false,
             None => int(value)? != 0,
         };
-        if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
+        if let Some(slot) = world.resource_mut::<RoundScript>().players.get_mut(&client) {
             match (name, mode) {
                 (_, Some(mode)) => slot.radar_mode = mode,
                 ("hasradar", _) => slot.has_radar = on,
@@ -1408,7 +1429,7 @@ pub(crate) fn store_field(
             if !matches!(&**state, "playing" | "dead" | "spectator" | "intermission") {
                 return Err(format!("invalid sessionstate '{state}'"));
             }
-            if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
+            if let Some(slot) = world.resource_mut::<RoundScript>().players.get_mut(&client) {
                 slot.sessionstate = state.clone().into();
             }
         }
@@ -1539,7 +1560,7 @@ pub(crate) fn link_player(world: &mut World, client: u32, link: PlayerLink) {
             ps.link_weapon_angles = ps.viewangles;
         }
     }
-    if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client) {
+    if let Some(slot) = world.resource_mut::<RoundScript>().players.get_mut(&client) {
         slot.link = Some(link);
     }
 }
@@ -1547,7 +1568,7 @@ pub(crate) fn link_player(world: &mut World, client: u32, link: PlayerLink) {
 pub(crate) fn unlink_player(world: &mut World, client: u32) {
     let id = ClientId(client);
     let link = world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .players
         .get_mut(&client)
         .and_then(|slot| slot.link.take());
@@ -1601,7 +1622,7 @@ fn scale_rotation(m: [[f32; 3]; 3], fraction: f32) -> [[f32; 3]; 3] {
 /// a `PM_TYPE_NORMAL_LINKED` origin alone.
 pub(crate) fn apply_player_links(world: &mut World) {
     let links: Vec<(u32, PlayerLink)> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .iter()
         .filter_map(|(client, slot)| Some((*client, slot.link.clone()?)))
@@ -1612,7 +1633,7 @@ pub(crate) fn apply_player_links(world: &mut World) {
             .client_meta(id)
             .is_some_and(|meta| meta.controls.linked);
         let parent_alive = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .objects
             .contains_key(&link.parent);
         if !still_linked || !parent_alive {
@@ -1628,7 +1649,7 @@ pub(crate) fn apply_player_links(world: &mut World) {
         );
         let parent = math_iw4::axis_to_angles(axis);
         let entity_num = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .entities
             .get(&link.parent)
             .map_or(playerstate_iw4::ENTITYNUM_NONE, |entity| entity.number);
@@ -1687,7 +1708,7 @@ pub(crate) fn apply_player_links(world: &mut World) {
                 angles,
             });
         }
-        if let Some(slot) = world.resource_mut::<Runtime>().players.get_mut(&client)
+        if let Some(slot) = world.resource_mut::<RoundScript>().players.get_mut(&client)
             && let Some(link) = slot.link.as_mut()
         {
             link.parent_axis = axis;

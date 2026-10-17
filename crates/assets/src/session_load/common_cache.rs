@@ -119,7 +119,9 @@ pub struct CommonSet {
     pub(super) key: CommonKey,
     /// Taken, not cloned, when no next map will reuse the set.
     pub(super) products: std::sync::Mutex<Option<CommonProducts>>,
+    editor_weapons: asset_game::EditorWeaponCatalog,
     donor_images: async_lock::OnceCell<Vec<KeptImages>>,
+    donor_plans: std::sync::Mutex<Option<Vec<(&'static str, HeldImagePlan)>>>,
     pub(super) fpv_plan: Option<ImageDemandPlan>,
     pub(super) retained: std::sync::Mutex<asset_material::material_images::PayloadRetention>,
     pub(super) cac_tables: Vec<(asset_core::AssetNamespace, asset_game::CapturedStringTable)>,
@@ -137,15 +139,15 @@ impl CommonSet {
             .expect("common products were taken by a one-shot load")
     }
 
-    /// A copy of the weapons alone; the shell needs nothing else.
-    fn weapons(&self) -> WeaponBuild {
-        self.products
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .as_ref()
-            .expect("common products were taken by a one-shot load")
-            .weapons
-            .clone()
+    /// The products, borrowed under the lock.
+    fn with_products<R>(&self, read: impl FnOnce(&CommonProducts) -> R) -> R {
+        read(
+            self.products
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .as_ref()
+                .expect("common products were taken by a one-shot load"),
+        )
     }
 
     /// The products themselves; the set is spent, so it also leaves the process slot.
@@ -158,6 +160,49 @@ impl CommonSet {
             .expect("common products were already taken");
         release_common();
         products
+    }
+
+    pub(super) fn start_donor_images(self: &Arc<Self>) {
+        let Some(plans) = self
+            .donor_plans
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+        else {
+            return;
+        };
+        // A canceled match must not poison the shared image publication.
+        let progress = LoadProgress::default();
+        let pending: Vec<_> = plans
+            .into_iter()
+            .map(|(namespace, plan)| (namespace, plan.enqueue(&progress)))
+            .collect();
+        let keeping = Arc::clone(self);
+        load_pool()
+            .spawn(async move {
+                let mut kept = Vec::new();
+                for (namespace, pending) in pending {
+                    let job = pending.job;
+                    let (label, batch) = pending.join().await;
+                    let batch = batch.into_kept();
+                    keeping.retain(&batch);
+                    kept.push(KeptImages {
+                        label,
+                        namespace,
+                        batch,
+                        job,
+                    });
+                }
+                diag::info!(
+                    World,
+                    "common set: {} donor image batches kept, {} payloads ({:.1}MiB)",
+                    kept.len(),
+                    keeping.retained_payloads(),
+                    keeping.retained_bytes() as f64 / (1024.0 * 1024.0),
+                );
+                let _ = keeping.donor_images.set(kept).await;
+            })
+            .detach();
     }
 
     pub(super) async fn donor_images(&self) -> &[KeptImages] {
@@ -279,6 +324,9 @@ pub(super) async fn ensure_common(key: CommonKey) -> (Arc<CommonSet>, &'static s
 }
 
 pub struct ShellCommon {
+    pub player_defaults_config: Option<String>,
+    pub challenges: Option<crate::script_sources::ScriptTable>,
+    pub player_schemas: std::collections::BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
     pub ui_images: asset_material::UiImagePublication,
     pub weapons: asset_game::EditorWeaponCatalog,
     pub strings: LocalizeCatalog,
@@ -290,7 +338,7 @@ pub async fn load_shell_common(games: asset_transport::GamesRoot) -> ShellCommon
     let mut report = Vec::new();
     let key = CommonKey::shell(&games, &mut report);
     let (common, reach) = ensure_common(key).await;
-    let weapons = common.weapons().publish_for_editor();
+    let weapons = common.editor_weapons.clone();
 
     report.push(format!(
         "CAC: {reach} common set {}; weapons={} (iw4={} iw5={} t5={} t6={}) tables={}",
@@ -332,10 +380,29 @@ pub async fn load_shell_common(games: asset_transport::GamesRoot) -> ShellCommon
             table.rows
         ));
     }
+    let (player_defaults_config, challenges, player_schemas, strings) =
+        common.with_products(|products| {
+            (
+                products
+                    .scripts
+                    .config("mp/stats_init.cfg")
+                    .map(str::to_owned),
+                products
+                    .scripts
+                    .tables()
+                    .get("mp/allchallengestable.csv")
+                    .cloned(),
+                products.scripts.schemas().clone(),
+                products.strings.clone(),
+            )
+        });
     ShellCommon {
+        player_defaults_config,
+        challenges,
+        player_schemas,
         ui_images: common.ui_images.clone(),
         weapons,
-        strings: common.products().strings.clone(),
+        strings,
         tables: common.cac_tables.clone(),
         report,
     }
@@ -789,8 +856,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
                 load_pool(),
             );
             stage.done();
-            camouflage_images = hold_image_plan("T5 camouflage", Some(plan), job)
-                .map(|held| held.enqueue(&progress));
+            camouflage_images = hold_image_plan("T5 camouflage", Some(plan), job);
         }
     }
 
@@ -827,7 +893,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let prepared_ms = started.elapsed().as_secs_f32() * 1000.0;
     diag::info!(
         World,
-        "common set: {key} prepared in {prepared_ms:.0}ms; donor images still decoding"
+        "common set: {key} prepared in {prepared_ms:.0}ms; donor images deferred until a match"
     );
 
     material_seed.mark_images_common_owned();
@@ -851,8 +917,9 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             ui_images.preview_fallback(family.key.namespace, &family.image, image);
         }
     }
-    let set = Arc::new(CommonSet {
+    Arc::new(CommonSet {
         ui_images: ui_images.publish(),
+        editor_weapons: preview_weapons,
         id: NEXT_COMMON_PROFILE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         key,
         products: std::sync::Mutex::new(Some(CommonProducts {
@@ -901,48 +968,23 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             localize_report,
         })),
         donor_images: async_lock::OnceCell::new(),
+        donor_plans: std::sync::Mutex::new(Some(
+            [
+                ("t5", t5_images),
+                ("t5", camouflage_images),
+                ("iw5", foreign_images),
+                ("iw5", bundle_images),
+            ]
+            .into_iter()
+            .filter_map(|(namespace, plan)| Some((namespace, plan?)))
+            .collect(),
+        )),
         fpv_plan,
         retained: std::sync::Mutex::new(Default::default()),
         cac_tables,
         prepared_ms,
         ready_at: web_time::Instant::now(),
-    });
-
-    let keeping = Arc::clone(&set);
-    load_pool()
-        .spawn(async move {
-            let mut kept = Vec::new();
-            for (namespace, pending) in [
-                ("t5", t5_images),
-                ("t5", camouflage_images),
-                ("iw5", foreign_images),
-                ("iw5", bundle_images),
-            ] {
-                let Some(pending) = pending else {
-                    continue;
-                };
-                let job = pending.job;
-                let (label, batch) = pending.join().await;
-                let batch = batch.into_kept();
-                keeping.retain(&batch);
-                kept.push(KeptImages {
-                    label,
-                    namespace,
-                    batch,
-                    job,
-                });
-            }
-            diag::info!(
-                World,
-                "common set: {} donor image batches kept, {} payloads ({:.1}MiB)",
-                kept.len(),
-                keeping.retained_payloads(),
-                keeping.retained_bytes() as f64 / (1024.0 * 1024.0),
-            );
-            let _ = keeping.donor_images.set(kept).await;
-        })
-        .detach();
-    set
+    })
 }
 
 fn walk_iw5_startup(donor: &Path, progress: &LoadProgress) -> crate::lane::MaterialPopulation {

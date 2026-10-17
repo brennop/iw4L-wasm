@@ -1,14 +1,12 @@
+use frame::ScopeApp;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 
-use crate::adapters::anim::dyn_ent::DynEntCellBits;
-use crate::prepare::scene::camera::FlyCamera;
-use crate::prepare::scene::cull::{DynEntModelEntity, ScriptModelEntity, StaticModelEntity};
 use crate::prepare::scene::world::WorldScene;
-use frame::{LaunchReport, MatchInstalled, MatchTornDown, WorldGeneration};
+use frame::{LaunchReport, WorldGeneration, WorldStamp};
 use render_fx::{HostFxSystem, PreparedFxCatalog, PreparedTracers};
 
 pub(crate) use super::world_gpu::WorldGpuReady;
@@ -122,7 +120,7 @@ pub struct WorldSpawnJob {
 
     pub gpu_wait: super::world_gpu::WorldGpuWait,
 
-    pub spawn: WorldGeneration,
+    pub spawn: WorldStamp,
 
     last_slice_at: Option<web_time::Instant>,
 }
@@ -396,14 +394,22 @@ pub(crate) fn spawn_world(
             programs,
             exact_shaders,
         );
-        commands.insert_resource(
-            render_scene::TessMaterials::new(
+        {
+            let value = render_scene::TessMaterials::new(
                 std::sync::Arc::clone(&generation.catalog),
                 std::sync::Arc::clone(&generation.prepared),
             )
-            .expect("admitted material publication"),
-        );
-        commands.insert_resource(scene.map_xmodel_scene_assets.clone());
+            .expect("admitted material publication");
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
+        {
+            let value = scene.map_xmodel_scene_assets.clone();
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
         match &generation.postfx {
             crate::assemble::drawsurf::RuntimePostFxResources::Ready(film) => diag::info!(
                 World,
@@ -417,8 +423,19 @@ pub(crate) fn spawn_world(
                 diag::warn!(World, "post-fx film material: RED cause=Uninstalled")
             }
         }
-        commands.insert_resource(generation);
-        commands.insert_resource(crate::assemble::drawsurf::MaterialFrameInputs::default());
+        {
+            let value = generation;
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(
+                world,
+                crate::assemble::drawsurf::MaterialFrameInputs::default(),
+                frame::MatchScope::Live,
+            );
+        });
         match scene.exp_fog {
             Some(fog) => {
                 diag::info!(
@@ -429,7 +446,13 @@ pub(crate) fn spawn_world(
                     fog.max_opacity,
                     fog.sun.is_some()
                 );
-                commands.insert_resource(crate::assemble::drawsurf::MapFrameFog::new(fog));
+                commands.queue(move |world: &mut World| {
+                    frame::scope::insert(
+                        world,
+                        crate::assemble::drawsurf::MapFrameFog::new(fog),
+                        frame::MatchScope::Live,
+                    );
+                });
             }
             None => {
                 commands.remove_resource::<crate::assemble::drawsurf::MapFrameFog>();
@@ -452,7 +475,12 @@ pub(crate) fn spawn_world(
                     light.color[1],
                     light.color[2]
                 );
-                commands.insert_resource(light);
+                {
+                    let value = light;
+                    commands.queue(move |world: &mut World| {
+                        frame::scope::insert(world, value, frame::MatchScope::Live);
+                    });
+                };
             }
             None => {
                 commands.remove_resource::<crate::assemble::drawsurf::MapDirPrimaryLight>();
@@ -469,8 +497,13 @@ pub(crate) fn spawn_world(
                     "drawsurf T5 sunParse exposure: READY {exposure:.4} volumes={}",
                     scene.t5_exposure_volume_count
                 );
-                commands
-                    .insert_resource(crate::assemble::drawsurf::MapT5SunParseExposure { exposure });
+                commands.queue(move |world: &mut World| {
+                    frame::scope::insert(
+                        world,
+                        crate::assemble::drawsurf::MapT5SunParseExposure { exposure },
+                        frame::MatchScope::Live,
+                    )
+                });
             }
             None => {
                 commands.remove_resource::<crate::assemble::drawsurf::MapT5SunParseExposure>();
@@ -481,24 +514,36 @@ pub(crate) fn spawn_world(
             scene.t5_tree_scatter_amount,
         ) {
             (Some(intensity), Some(amount)) => {
-                commands.insert_resource(crate::assemble::drawsurf::MapT5TreeScatter {
-                    intensity,
-                    amount,
-                });
+                {
+                    let value = crate::assemble::drawsurf::MapT5TreeScatter { intensity, amount };
+                    commands.queue(move |world: &mut World| {
+                        frame::scope::insert(world, value, frame::MatchScope::Live);
+                    });
+                };
             }
             _ => {
                 commands.remove_resource::<crate::assemble::drawsurf::MapT5TreeScatter>();
             }
         }
-        commands.insert_resource(crate::assemble::drawsurf::MapOutdoor {
-            image: scene
-                .outdoor_image
-                .map(|id| crate::assemble::drawsurf::RuntimeImageId(id)),
-            lookup: scene.outdoor_lookup,
-        });
-        commands.insert_resource(crate::assemble::drawsurf::MapSunEffects {
-            def: scene.sun_effects,
-        });
+        {
+            let value = crate::assemble::drawsurf::MapOutdoor {
+                image: scene
+                    .outdoor_image
+                    .map(|id| crate::assemble::drawsurf::RuntimeImageId(id)),
+                lookup: scene.outdoor_lookup,
+            };
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
+        {
+            let value = crate::assemble::drawsurf::MapSunEffects {
+                def: scene.sun_effects,
+            };
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
         match scene.sun_effects {
             Some(sun) => diag::info!(
                 World,
@@ -529,16 +574,26 @@ pub(crate) fn spawn_world(
                 f32::from_bits(scene.outdoor_lookup[12])
             ),
         }
-        commands.insert_resource(crate::assemble::drawsurf::MapPrimaryLightTypes {
-            types: scene.primary_light_types.clone(),
-        });
-        commands.insert_resource(crate::assemble::drawsurf::MapPrimaryLights {
-            lights: scene.primary_light_pack.clone(),
-            attenuation: scene.primary_light_attenuation.clone(),
-            overrides: scene.primary_light_overrides.clone(),
-            reflection_probe_sh: scene.reflection_probe_sh.clone(),
-            dynamic: scene.dynamic_light,
-        });
+        {
+            let value = crate::assemble::drawsurf::MapPrimaryLightTypes {
+                types: scene.primary_light_types.clone(),
+            };
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
+        {
+            let value = crate::assemble::drawsurf::MapPrimaryLights {
+                lights: scene.primary_light_pack.clone(),
+                attenuation: scene.primary_light_attenuation.clone(),
+                overrides: scene.primary_light_overrides.clone(),
+                reflection_probe_sh: scene.reflection_probe_sh.clone(),
+                dynamic: scene.dynamic_light,
+            };
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
         {
             let n = scene.primary_light_pack.len();
             let falloff_w = scene
@@ -660,7 +715,12 @@ pub(crate) fn spawn_world(
                 scene.reflection_probe_origins.len(),
             );
         }
-        commands.insert_resource(crate::assemble::drawsurf::DrawMethodDfog(false));
+        {
+            let value = crate::assemble::drawsurf::DrawMethodDfog(false);
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
         if let Some(stage) = job.admit.take_stage() {
             stage.done();
         }
@@ -698,8 +758,18 @@ pub(crate) fn spawn_world(
             fx_catalog.as_deref(),
         );
         let fx_geometry = super::world_plan::empty_fx_model_geometry(&scene);
-        commands.insert_resource(fx_geometry.0.clone());
-        commands.insert_resource(fx_geometry);
+        {
+            let value = fx_geometry.0.clone();
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
+        {
+            let value = fx_geometry;
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
         tess.material_images = std::sync::Arc::new(job.images.exact_handles().to_vec());
         if let Some(host) = fx_host.as_mut() {
             match scene.fx_glass.as_ref() {
@@ -747,10 +817,19 @@ pub(crate) fn spawn_world_finish(
         job.images.probe_handles().to_vec(),
         job.images.lightmap_handles().to_vec(),
     );
-    // Needs the model lighting atlas, which world_occupancy::place builds.
     let fx_geometry = super::world_plan::prepare_fx_model_geometry(&scene, fx_models.as_deref());
-    commands.insert_resource(fx_geometry.0.clone());
-    commands.insert_resource(fx_geometry);
+    {
+        let value = fx_geometry.0.clone();
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(world, value, frame::MatchScope::Live);
+        });
+    };
+    {
+        let value = fx_geometry;
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(world, value, frame::MatchScope::Live);
+        });
+    };
     tess.material_images = std::sync::Arc::new(job.images.exact_handles().to_vec());
     job.last_work_ms = frame_started.elapsed().as_secs_f32() * 1000.0;
     if paced {
@@ -812,10 +891,10 @@ fn record_first_world_frame(
 }
 
 #[derive(Resource, Clone, Default)]
-pub(crate) struct WorldPresentAck(Arc<Mutex<Option<(WorldGeneration, web_time::Instant)>>>);
+pub(crate) struct WorldPresentAck(Arc<Mutex<Option<(WorldStamp, web_time::Instant)>>>);
 
 impl WorldPresentAck {
-    fn presented_at(&self, generation: WorldGeneration) -> Option<web_time::Instant> {
+    fn presented_at(&self, generation: WorldStamp) -> Option<web_time::Instant> {
         self.0.lock().ok().and_then(|ack| {
             ack.as_ref()
                 .filter(|(seen, _)| *seen == generation)
@@ -825,7 +904,7 @@ impl WorldPresentAck {
 }
 
 #[derive(Resource, Default)]
-struct ExtractedWorldPresent(Option<WorldGeneration>);
+struct ExtractedWorldPresent(Option<WorldStamp>);
 
 fn log_load_ledger(
     job: &WorldSpawnJob,
@@ -865,119 +944,21 @@ fn finish_world_spawn(scene: &mut WorldScene, job: &mut WorldSpawnJob, commands:
     job.phase = WorldSpawnPhase::Done;
     scene.spawned = true;
     scene.readiness.state = frame::ReadinessState::Ready;
-    commands.insert_resource(render_scene::WorldPresentFacts { spawned: true });
+    {
+        let value = render_scene::WorldPresentFacts { spawned: true };
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(world, value, frame::MatchScope::Live);
+        });
+    };
     perf::world_ready(1);
 }
 
-pub(crate) fn despawn_world_entities_on_teardown(
-    mut torn: MessageReader<MatchTornDown>,
-    smodels: Query<Entity, With<StaticModelEntity>>,
-    scripts: Query<Entity, With<ScriptModelEntity>>,
-    dynents: Query<Entity, With<DynEntModelEntity>>,
-    mut commands: Commands,
-) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    for entity in smodels.iter().chain(scripts.iter()).chain(dynents.iter()) {
-        commands.entity(entity).despawn();
-    }
-}
-
-pub(crate) fn reset_world_spawn_on_teardown(
-    mut torn: MessageReader<MatchTornDown>,
-    mut job: ResMut<WorldSpawnJob>,
-    mut gpu: ResMut<WorldGpuReady>,
-    mut demand: ResMut<super::world_gpu::PipelineDemandTracker>,
-    mut image_handles: Option<ResMut<crate::assemble::drawsurf::RuntimeImageHandles>>,
-    mut retiring: ResMut<frame::Retiring>,
-    images: Res<Assets<Image>>,
-    mut commands: Commands,
-) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    let live_before = images.len();
-    retiring.hand_over(std::mem::take(&mut *job));
-    *gpu = WorldGpuReady::default();
-    *demand = super::world_gpu::PipelineDemandTracker::default();
-    if let Some(handles) = image_handles.as_mut() {
-        **handles = crate::assemble::drawsurf::RuntimeImageHandles::default();
-    }
-    diag::info!(
-        World,
-        "world: render side let go of its images ({live_before} live in Assets<Image> at the \
-         moment of release; what survives is what another owner still holds)"
-    );
-    commands.insert_resource(crate::assemble::drawsurf::MapSunEffects::default());
-    commands.queue(|world: &mut World| {
-        frame::retire::retire_resources(world, |batch| {
-            batch
-                .reset::<super::cull::DpvsFrameStats>()
-                .resource::<crate::assemble::drawsurf::WorldDrawGpuPlan>()
-                .resource::<crate::assemble::drawsurf::SmodelGpuPlan>()
-                .resource::<crate::assemble::drawsurf::tess::sky::SkyModelDrawPlan>()
-                .resource::<crate::prepare::scene::smodel_lighting::WorldSmodelLighting>()
-                .resource::<crate::prepare::scene::smodel_geom_cache::WorldStaticModelCache>()
-                .resource::<crate::prepare::scene::model_lighting_atlas::WorldModelLightingAtlas>()
-                .resource::<crate::prepare::scene::model_lighting_cache::WorldModelLightingCache>();
-        });
-    });
-}
-
-pub(crate) fn shutdown_world_on_teardown(
-    mut torn: MessageReader<MatchTornDown>,
-    mut retiring: ResMut<frame::Retiring>,
-    mut scene: Option<ResMut<WorldScene>>,
-    mut membership: Option<ResMut<DynEntCellBits>>,
-    mut present: ResMut<render_scene::WorldPresentFacts>,
-    mut tess: ResMut<render_scene::TessMaterials>,
-    mut lookup: ResMut<render_scene::DynAtPointLookup>,
-    mut cells: ResMut<render_scene::WorldDpvsCells>,
-) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    if let Some(scene) = scene.as_mut() {
-        retiring.hand_over(std::mem::take(&mut **scene));
-    }
-    if let Some(membership) = membership.as_mut() {
-        **membership = DynEntCellBits::default();
-    }
-    *present = render_scene::WorldPresentFacts::default();
-    *tess = render_scene::TessMaterials::default();
-    lookup.clear();
-    *cells = render_scene::WorldDpvsCells::default();
-    let spawned = scene.as_ref().map(|s| i64::from(s.spawned)).unwrap_or(0);
-    perf::world_hold(spawned, 0, 0);
-    diag::info!(
-        World,
-        "world: shutdown — leftover geometry, tess plans, and model lighting dropped"
-    );
-}
-
-pub(crate) fn despawn_fly_cameras_on_teardown(
-    mut torn: MessageReader<MatchTornDown>,
-    cameras: Query<Entity, With<FlyCamera>>,
-    mut commands: Commands,
-) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    for entity in &cameras {
-        commands.entity(entity).despawn();
-    }
-}
-
 pub(crate) fn arm_world_spawn_on_install(
-    mut installed: MessageReader<MatchInstalled>,
+    generation: Res<WorldGeneration>,
     mut job: ResMut<WorldSpawnJob>,
     mut gpu: ResMut<WorldGpuReady>,
 ) {
-    let Some(install) = installed.read().last().cloned() else {
-        return;
-    };
-    let spawn = WorldGeneration::from_install(install.request_id);
+    let spawn = generation.stamp();
     *job = WorldSpawnJob {
         spawn,
         ..Default::default()
@@ -990,8 +971,14 @@ pub(crate) fn arm_world_spawn_on_install(
 
 pub(crate) fn register_world_gpu_ready(app: &mut App) {
     super::world_gpu::register_resources(app);
-    app.init_resource::<super::world_images::ResidentGpuImages>();
-    app.add_systems(Update, supply_requested_shaders.before(spawn_world));
+    app.scoped::<super::world_images::ResidentGpuImages>(frame::MatchScope::Live);
+    app.add_systems(
+        Update,
+        supply_requested_shaders
+            .in_set(frame::InMatch)
+            .in_set(frame::ClientSet::Present)
+            .before(spawn_world),
+    );
     let present_ack = WorldPresentAck::default();
     app.insert_resource(present_ack.clone());
     let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
@@ -1021,8 +1008,8 @@ fn extract_world_present(
 ) {
     let generation = main_world
         .get_resource::<WorldGeneration>()
-        .copied()
-        .unwrap_or(WorldGeneration(None));
+        .map(|generation| generation.stamp())
+        .unwrap_or(WorldStamp(None));
     let spawned = main_world
         .get_resource::<WorldScene>()
         .is_some_and(|scene| scene.spawned && scene.readiness.ready_for(generation));

@@ -289,6 +289,8 @@ pub trait QueueInterface: CommonTraits {
     fn on_submitted_work_done(&self, callback: BoxSubmittedWorkDoneCallback);
 
     fn compact_blas(&self, blas: &DispatchBlas) -> (Option<u64>, DispatchBlas);
+
+    fn present(&self, detail: &DispatchSurfaceOutputDetail);
 }
 
 pub trait ShaderModuleInterface: CommonTraits {
@@ -305,8 +307,10 @@ pub trait BufferInterface: CommonTraits {
         range: Range<crate::BufferAddress>,
         callback: BufferMapCallback,
     );
-    fn get_mapped_range(&self, sub_range: Range<crate::BufferAddress>)
-        -> DispatchBufferMappedRange;
+    fn get_mapped_range(
+        &self,
+        sub_range: Range<crate::BufferAddress>,
+    ) -> Result<DispatchBufferMappedRange, crate::MapRangeError>;
 
     fn unmap(&self);
 
@@ -325,7 +329,9 @@ pub trait BlasInterface: CommonTraits {
     fn ready_for_compaction(&self) -> bool;
 }
 pub trait TlasInterface: CommonTraits {}
-pub trait QuerySetInterface: CommonTraits {}
+pub trait QuerySetInterface: CommonTraits {
+    fn destroy(&self);
+}
 pub trait PipelineLayoutInterface: CommonTraits {}
 pub trait RenderPipelineInterface: CommonTraits {
     fn get_bind_group_layout(&self, index: u32) -> DispatchBindGroupLayout;
@@ -435,6 +441,14 @@ pub trait ComputePassInterface: CommonTraits + Drop {
         indirect_buffer: &DispatchBuffer,
         indirect_offset: crate::BufferAddress,
     );
+
+    fn transition_resources<'a>(
+        &mut self,
+        buffer_transitions: &mut dyn Iterator<Item = wgt::BufferTransition<&'a DispatchBuffer>>,
+        texture_transitions: &mut dyn Iterator<
+            Item = wgt::TextureTransition<&'a DispatchTextureView>,
+        >,
+    );
 }
 pub trait RenderPassInterface: CommonTraits + Drop {
     fn set_pipeline(&mut self, pipeline: &DispatchRenderPipeline);
@@ -454,7 +468,7 @@ pub trait RenderPassInterface: CommonTraits + Drop {
     fn set_vertex_buffer(
         &mut self,
         slot: u32,
-        buffer: &DispatchBuffer,
+        buffer: Option<&DispatchBuffer>,
         offset: crate::BufferAddress,
         size: Option<crate::BufferSize>,
     );
@@ -565,7 +579,7 @@ pub trait RenderBundleEncoderInterface: CommonTraits {
     fn set_vertex_buffer(
         &mut self,
         slot: u32,
-        buffer: &DispatchBuffer,
+        buffer: Option<&DispatchBuffer>,
         offset: crate::BufferAddress,
         size: Option<crate::BufferSize>,
     );
@@ -587,6 +601,22 @@ pub trait RenderBundleEncoderInterface: CommonTraits {
     fn finish(self, desc: &crate::RenderBundleDescriptor<'_>) -> DispatchRenderBundle
     where
         Self: Sized;
+
+    /// Object-safe version of `finish` for dyn dispatch through `Box<dyn RenderBundleEncoderInterface>`.
+    ///
+    /// A default implementation cannot be provided here: a default that calls `finish` would
+    /// require `Self: Sized` (to move out of the box), which would remove the method from the
+    /// vtable and break object safety. Every concrete backend must implement this as:
+    /// ```ignore
+    /// fn finish_boxed(self: Box<Self>, desc: &RenderBundleDescriptor<'_>) -> DispatchRenderBundle {
+    ///     (*self).finish(desc)
+    /// }
+    /// ```
+    #[cfg(custom)]
+    fn finish_boxed(
+        self: Box<Self>,
+        desc: &crate::RenderBundleDescriptor<'_>,
+    ) -> DispatchRenderBundle;
 }
 
 pub trait CommandBufferInterface: CommonTraits {}
@@ -594,6 +624,15 @@ pub trait RenderBundleInterface: CommonTraits {}
 
 pub trait SurfaceInterface: CommonTraits {
     fn get_capabilities(&self, adapter: &DispatchAdapter) -> crate::SurfaceCapabilities;
+
+    /// The backing display's current HDR / luminance characteristics.
+    ///
+    /// Defaults to [`crate::DisplayHdrInfo::default`] (all fields `None`) so
+    /// custom backends without a display query need not override it.
+    fn display_hdr_info(&self, adapter: &DispatchAdapter) -> crate::DisplayHdrInfo {
+        let _ = adapter;
+        crate::DisplayHdrInfo::default()
+    }
 
     fn configure(&self, device: &DispatchDevice, config: &crate::SurfaceConfiguration);
     fn get_current_texture(
@@ -606,8 +645,8 @@ pub trait SurfaceInterface: CommonTraits {
 }
 
 pub trait SurfaceOutputDetailInterface: CommonTraits {
-    fn present(&self);
     fn texture_discard(&self);
+    fn texture_release(&self);
 }
 
 pub trait QueueWriteBufferInterface: CommonTraits {
@@ -620,7 +659,8 @@ pub trait QueueWriteBufferInterface: CommonTraits {
 }
 
 pub trait BufferMappedRangeInterface: CommonTraits {
-    #[allow(dead_code)]
+    // Used only in wgpu_core's `impl QueueWriteBufferInterface`
+    #[cfg_attr(not(wgpu_core), expect(unused))]
     fn len(&self) -> usize;
 
     /// # Safety

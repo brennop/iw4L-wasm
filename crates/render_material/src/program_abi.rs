@@ -157,6 +157,7 @@ pub fn prepare_program_abi<'a>(
             pass.custom_sampler_flags,
             pass.t5_custom_sampler_flags,
             pass.hardware_shadow_compare,
+            pass.depth_to_colour,
         )
         .map_err(ProgramAbiRefusal::Abi)?;
         (abi, PreparedShaderPrograms::Sm3 { vertex, pixel })

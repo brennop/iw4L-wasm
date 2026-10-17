@@ -70,6 +70,7 @@ pub struct ViewmodelController {
     last_ads_frac: f32,
 
     predicted_perks0: u32,
+    predicted_perks1: u32,
 }
 
 impl ViewmodelController {
@@ -87,6 +88,7 @@ impl ViewmodelController {
             action_remaining: None,
             last_ads_frac: 0.0,
             predicted_perks0: 0,
+            predicted_perks1: 0,
         };
         this.set_weight(
             WeaponAnimSlot::Idle,
@@ -115,8 +117,9 @@ impl ViewmodelController {
         self.state
     }
 
-    pub fn set_predicted_perks(&mut self, perks0: u32) {
+    pub fn set_predicted_perks(&mut self, perks0: u32, perks1: u32) {
         self.predicted_perks0 = perks0;
+        self.predicted_perks1 = perks1;
     }
 
     pub fn weapon_name(&self) -> &str {
@@ -483,7 +486,13 @@ impl ViewmodelController {
         }
     }
 
-    fn perk_scaled_reload_timer(&self, state: WeaponState, timer_ms: Option<i32>) -> Option<i32> {
+    fn perk_scaled_action_timer(&self, state: WeaponState, timer_ms: Option<i32>) -> Option<i32> {
+        if state == WeaponState::SprintOut
+            && self.predicted_perks1 & playerstate_iw4::PERK1_FASTSPRINTRECOVERY != 0
+        {
+            return timer_ms
+                .map(|t| ((t as f32) * playerstate_iw4::SPRINT_RECOVERY_MULTIPLIER) as i32);
+        }
         let reload_family = matches!(
             state,
             WeaponState::Reloading { .. } | WeaponState::ReloadStarting | WeaponState::ReloadEnding
@@ -517,7 +526,7 @@ impl ViewmodelController {
             return EventResult::IgnoredMissingClip(slot);
         };
         let duration = clip.duration();
-        let timer_ms = self.perk_scaled_reload_timer(state, timer_ms);
+        let timer_ms = self.perk_scaled_action_timer(state, timer_ms);
         self.zero_dispatch_slots(ACTION_GOAL_TIME_SECS);
         self.tree
             .set_clip(slot.index(), Arc::clone(&clip))

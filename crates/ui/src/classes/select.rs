@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 use frame::{AppScreen, ClientSet, RuntimeRole};
 use net::SignonState;
 
@@ -165,7 +166,7 @@ pub fn commit_class_equip(
 }
 
 pub fn accept_class_equip(
-    store: &mut SessionClassStore,
+    equipped: &mut crate::classes::store::EquippedClass,
     phase: &mut ClassSelectPhase,
     overlay: &mut ClassSelectOverlayOpen,
     request_id: u32,
@@ -175,7 +176,7 @@ pub fn accept_class_equip(
             request_id: pending,
             class_index,
         } if pending == request_id => {
-            store.equipped = Some(class_index);
+            equipped.0 = Some(class_index);
             *phase = ClassSelectPhase::Interactive;
             overlay.0 = false;
             true
@@ -210,9 +211,9 @@ impl Plugin for ClassSelectPlugin {
         app.init_resource::<ClassSelectOverlayOpen>()
             .init_resource::<ClassChangeAllowed>()
             .init_resource::<ClassChangeBlockReason>()
-            .init_resource::<PendingClassEquip>()
-            .init_resource::<ClassSelectPhase>()
-            .init_resource::<ClassSelectStatus>()
+            .scoped::<PendingClassEquip>(frame::MatchScope::Live)
+            .scoped::<ClassSelectPhase>(frame::MatchScope::Live)
+            .scoped::<ClassSelectStatus>(frame::MatchScope::Live)
             .init_resource::<ClassSelectHighlight>()
             .init_resource::<ClassSelectIconCache>()
             .init_resource::<UiAssetRoot>()

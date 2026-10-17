@@ -9,7 +9,7 @@ use asset_transport::{LoadLaneTiming, LoadProgress};
 use assets::{LoadingScreen, MatchLoadBusy, MatchLoadRequest};
 use audio::MapAmbientBooted;
 use bevy::prelude::*;
-use frame::MatchInstalled;
+use frame::InstalledMatch;
 use render_frontend::prepare::scene::cull::DpvsFrameStats;
 use render_frontend::prepare::scene::world::WorldScene;
 use render_gpu::ColourWorkingSet;
@@ -141,7 +141,7 @@ fn sanitize(zone: &str) -> String {
 pub(crate) fn poll(
     request: Option<Res<MatchLoadRequest>>,
     busy: Option<Res<MatchLoadBusy>>,
-    mut installed: MessageReader<MatchInstalled>,
+    installed: Option<Res<InstalledMatch>>,
     scene: Option<Res<WorldScene>>,
     loading: Option<Res<LoadingScreen>>,
     screen: Option<Res<ui::AppScreen>>,
@@ -151,7 +151,7 @@ pub(crate) fn poll(
 ) {
     let now = Instant::now();
     let saw_request = request.is_some() || busy.is_some_and(|busy| busy.0);
-    let saw_installed = installed.read().next().is_some();
+    let saw_installed = installed.is_some_and(|installed| installed.is_added());
     let spawned_now = scene.as_deref().is_some_and(|scene| scene.spawned);
     let overlay_now = loading.is_some();
     let ingame_now = screen.is_some_and(|screen| matches!(*screen, ui::AppScreen::InGame));

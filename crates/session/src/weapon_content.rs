@@ -61,6 +61,7 @@ pub(crate) fn compile(
             })
             .unwrap_or(sim::WeaponScriptSounds::default());
         sim::SimWeaponRow {
+            unlock_requirement: weapons.weapon_unlock_requirement(id).map_err(str::to_owned),
             wire_id: id,
             scales: weapon.movement_scales(),
             execution,
@@ -91,7 +92,11 @@ pub(crate) fn compile(
                 .unwrap_or(sim::EquipmentRuntimeFacts::default()),
         }
     });
-    let content = sim::SimWeaponContent::compile(rows, aliases, pen_table, pen_table_loaded)?;
+    let ranks = weapons
+        .rank_progression()
+        .map_err(|_| sim::SimWeaponContentRefusal::InvalidProgression)?;
+    let content =
+        sim::SimWeaponContent::compile(rows, aliases, pen_table, pen_table_loaded, ranks)?;
     if !refused.is_empty() {
         diag::info!(
             Sim,

@@ -62,6 +62,8 @@ pub(super) async fn walk_prepared_match(
         return (MatchLoadOutcome::Canceled, None);
     }
 
+    common.start_donor_images();
+
     let cloning = web_time::Instant::now();
     let CommonProducts {
         scripts: mut iw4_scripts,
@@ -743,6 +745,7 @@ pub(super) async fn walk_prepared_match(
     ));
 
     let prepared_map = PreparedMap {
+        content: Arc::clone(&world.map_content),
         zone: zone_name,
         namespace: map_namespace,
         spawns: dm_spawns,

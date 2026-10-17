@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 use net::{ClientActionInbox, ClientSet, LocalPresentClient, PresentedSnapshot};
 use sim::{ClassId, ClientAction, ClientLifecycle, SimEvent};
 
@@ -16,6 +17,8 @@ pub struct EquipTxnWatch {
 pub fn apply_pending_class_equip(
     mut pending: ResMut<PendingClassEquip>,
     store: Res<SessionClassStore>,
+    catalog: Res<crate::ClassLoadoutCatalog>,
+    player_data: Res<sim::LocalPlayerData>,
     weapons: Option<Res<assets::PreparedWeapons>>,
     mut actions: ResMut<ClientActionInbox>,
     mut watch: ResMut<EquipTxnWatch>,
@@ -52,6 +55,15 @@ pub fn apply_pending_class_equip(
         );
         return;
     };
+    if let Err(reason) = catalog.validate_progression(slot, &player_data) {
+        diag::info!(
+            Ui,
+            "class equip: refused request_id={} — {reason}",
+            req.request_id
+        );
+        reject_class_equip(&mut phase, &mut status, req.request_id, reason);
+        return;
+    }
     let resolved = weapons
         .as_ref()
         .ok_or_else(|| "Weapon catalog is not ready".to_owned())
@@ -62,6 +74,11 @@ pub fn apply_pending_class_equip(
     let loadout = match resolved {
         Ok(loadout) => loadout,
         Err(reason) => {
+            diag::info!(
+                Ui,
+                "class equip: refused request_id={} — {reason}",
+                req.request_id
+            );
             reject_class_equip(&mut phase, &mut status, req.request_id, reason);
             return;
         }
@@ -151,7 +168,7 @@ pub fn sync_class_change_allowed(
 }
 
 pub fn resolve_class_equip_transaction(
-    mut store: ResMut<SessionClassStore>,
+    mut equipped: ResMut<crate::classes::store::EquippedClass>,
     mut phase: ResMut<ClassSelectPhase>,
     mut overlay: ResMut<ClassSelectOverlayOpen>,
     mut status: ResMut<ClassSelectStatus>,
@@ -183,7 +200,7 @@ pub fn resolve_class_equip_transaction(
             SimEvent::ClassAccepted {
                 request_id: rid, ..
             } if rid == request_id => {
-                if accept_class_equip(&mut store, &mut phase, &mut overlay, request_id) {
+                if accept_class_equip(&mut equipped, &mut phase, &mut overlay, request_id) {
                     diag::info!(
                         Ui,
                         "class select: reliable Accept request_id={request_id} (overlay closed)"
@@ -199,20 +216,20 @@ pub fn resolve_class_equip_transaction(
 
 pub(crate) fn register_equip_systems(app: &mut App) {
     app.add_systems(
-        Update,
-        reset_equip_transaction
-            .after(frame::SessionSwapApplied)
-            .before(apply_pending_class_equip),
+        OnExit(frame::MatchScope::Live),
+        release_equip.in_set(frame::ScopeSet::Release),
     )
-    .init_resource::<EquipTxnWatch>()
+    .scoped::<crate::classes::store::EquippedClass>(frame::MatchScope::Live)
+    .scoped::<EquipTxnWatch>(frame::MatchScope::Live)
     .init_resource::<frame::ClassSelectHandoff>()
     .add_systems(
         Update,
         (
             consume_class_select_handoff,
-            publish_signon_class_status,
+            publish_class_availability,
+            publish_signon_class_status.in_set(frame::InMatch),
             sync_class_change_allowed,
-            apply_pending_class_equip,
+            apply_pending_class_equip.in_set(frame::InMatch),
         )
             .chain()
             .in_set(ClientSet::Present),
@@ -220,9 +237,55 @@ pub(crate) fn register_equip_systems(app: &mut App) {
     .add_systems(
         Update,
         resolve_class_equip_transaction
+            .in_set(frame::InMatch)
             .after(apply_pending_class_equip)
             .in_set(frame::ClassEquipResolved),
     );
+}
+
+fn publish_class_availability(
+    store: Res<SessionClassStore>,
+    catalog: Res<crate::ClassLoadoutCatalog>,
+    player_data: Res<sim::LocalPlayerData>,
+    mut dvars: ResMut<frame::UiMenuDvars>,
+) {
+    if !store.is_changed()
+        && !catalog.is_changed()
+        && !player_data.is_changed()
+        && dvars.get("ui_class_unavailable_0").is_some()
+    {
+        return;
+    }
+    let feature_lock = catalog.progression_lock("cac", &player_data);
+    dvars.set(
+        "ui_class_feature_lock",
+        feature_lock.clone().unwrap_or_default(),
+    );
+    for index in 0..sim::match_state::PERSONAL_CLASS_SLOTS {
+        let reason = feature_lock
+            .clone()
+            .or_else(|| {
+                (!player_data.custom_class_available(index))
+                    .then(|| "Custom class slot is locked".to_owned())
+            })
+            .or_else(|| {
+                store.slots.get(index).map_or_else(
+                    || Some("Class is unavailable".to_owned()),
+                    |slot| {
+                        slot.lock_reason.clone().or_else(|| {
+                            catalog
+                                .validate_class(slot)
+                                .and_then(|()| catalog.validate_progression(slot, &player_data))
+                                .err()
+                        })
+                    },
+                )
+            });
+        dvars.set(
+            &format!("ui_class_unavailable_{index}"),
+            reason.unwrap_or_default(),
+        );
+    }
 }
 
 fn consume_class_select_handoff(
@@ -295,21 +358,6 @@ fn publish_signon_class_status(
     }
 }
 
-fn reset_equip_transaction(
-    mut store: ResMut<SessionClassStore>,
-    mut torn: MessageReader<frame::MatchTornDown>,
-    mut watch: ResMut<EquipTxnWatch>,
-    mut pending: ResMut<PendingClassEquip>,
-    mut phase: ResMut<ClassSelectPhase>,
-    mut status: ResMut<ClassSelectStatus>,
-) {
-    if torn.read().next().is_none() {
-        return;
-    }
-    torn.clear();
-    store.equipped = None;
-    *watch = EquipTxnWatch::default();
-    pending.0 = None;
-    *phase = ClassSelectPhase::default();
-    status.0 = None;
+fn release_equip(mut handoff: ResMut<frame::ClassSelectHandoff>) {
+    *handoff = frame::ClassSelectHandoff::default();
 }

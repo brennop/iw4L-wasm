@@ -109,6 +109,7 @@ pub fn register(app: &mut App) {
         .add_systems(
             Update,
             update_dof
+                .in_set(frame::InMatch)
                 .after(crate::prepare::scene::view_parms::stamp_prepared_scene_view)
                 .in_set(net::ClientSet::Present),
         );

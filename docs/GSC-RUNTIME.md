@@ -139,7 +139,7 @@ Natives are grouped by what they touch; the core three:
   level settings, and weapon facts from the captured weapon table.
 
 Argument reads live in `script/host/args.rs`, array helpers in `script/host/arrays.rs`,
-and table lookup in `script/host/tables.rs`. All three use the one `Runtime`
+and table lookup in `script/host/tables.rs`. All three use `RoundScript` with explicit access to `MatchScript`
 (`arrays`, `next_object`, `tables`, `rng`). The compiler is `sim::script::compiler`:
 `Token`/`lex` and the call, expression, assignment, and statement methods sit in child
 modules, and `Parser` stays in the parent.
@@ -183,7 +183,7 @@ emitting an event. Use
 
 Sounds the scripts play (`playLocalSound`, `playSoundToPlayer`, `playSoundToTeam`)
 reach the client. Effects, rumble and earthquakes validate their receiver and are
-kept in `Runtime.presented` or dropped. In-game menus (team, class, escape, leave-game,
+kept in `RoundScript.presented` or dropped. In-game menus (team, class, escape, leave-game,
 scoreboard header) and the IW4L frontend run from menuDefs through the same ordered
 GPU menu pass. `crates/ui/menus/frontend.json` defines IW4L navigation and native
 menu styling; frontend service commands connect it to session and master APIs.

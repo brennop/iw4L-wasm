@@ -16,6 +16,23 @@ pub(crate) fn spectator_lifecycle(team: i32) -> ClientLifecycle {
     }
 }
 
+fn spawn_command_angles(world: &mut FrameWorld, id: ClientId) -> [i32; 3] {
+    world
+        .ecs()
+        .get_resource::<crate::step::StepRequest>()
+        .and_then(|request| {
+            request
+                .input
+                .cmds
+                .iter()
+                .rev()
+                .find(|command| command.client == id)
+                .map(|command| command.command.angles)
+        })
+        .or_else(|| world.old_cmd_angles(id))
+        .unwrap_or([0; 3])
+}
+
 pub(crate) fn spawn(
     world: &mut FrameWorld,
     tick: Tick,
@@ -41,9 +58,8 @@ pub(crate) fn spawn(
         ps.max_health = max;
         ps.health = max;
     }
-    if let Some(cmd) = world.old_cmd_angles(id) {
-        ps.delta_angles = std::array::from_fn(|axis| angles[axis] - cmd[axis] as f32 * SHORT2ANGLE);
-    }
+    let cmd = spawn_command_angles(world, id);
+    ps.delta_angles = std::array::from_fn(|axis| angles[axis] - cmd[axis] as f32 * SHORT2ANGLE);
     let prev_teleport = world
         .player(id)
         .map(|p| p.e_flags & playerstate_iw4::eflags::TELEPORT)
@@ -426,10 +442,13 @@ pub(crate) fn move_to_forced_spawn(world: &mut FrameWorld, id: ClientId, pick: c
     let Some((origin, angles)) = forced_point(world, id, pick) else {
         return;
     };
+    let cmd_angles = spawn_command_angles(world, id);
     world.unlink_player_area(id);
     world.set_origin(id, origin);
     world.set_viewangles(id, angles);
     if let Some(ps) = world.player_mut(id) {
+        ps.delta_angles =
+            std::array::from_fn(|axis| angles[axis] - cmd_angles[axis] as f32 * SHORT2ANGLE);
         ps.velocity = [0.0; 3];
         ps.health = ps.max_health;
         ps.e_flags ^= playerstate_iw4::eflags::TELEPORT;
@@ -740,10 +759,13 @@ fn perk_bits(name: &str) -> ([u32; 2], u32) {
         "specialty_fastmantle" => playerstate_iw4::PERK_FASTMANTLE,
         "specialty_quickdraw" => playerstate_iw4::PERK_QUICKDRAW,
         "specialty_holdbreath" => playerstate_iw4::PERK_HOLDBREATH,
+        "specialty_selectivehearing" => playerstate_iw4::PERK_SELECTIVEHEARING,
         _ => 0,
     };
     let perk1 = match name {
         "specialty_spygame" => playerstate_iw4::PERK1_SPYGAME,
+        "specialty_extendedmelee" => playerstate_iw4::PERK1_EXTENDEDMELEE,
+        "specialty_fastsprintrecovery" => playerstate_iw4::PERK1_FASTSPRINTRECOVERY,
         _ => 0,
     };
     let e_flags = match name {

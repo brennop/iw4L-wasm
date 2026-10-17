@@ -41,7 +41,7 @@ pub fn pack_live_view_parms(
 
 #[must_use]
 pub fn host_clip_from_view(fov: f32, aspect: f32, near: f32) -> Mat4 {
-    Mat4::perspective_infinite_reverse_rh(fov, aspect, near)
+    bevy::math::proj::perspective_infinite_reverse(fov, aspect, near)
 }
 
 #[derive(Resource, Clone, Debug)]

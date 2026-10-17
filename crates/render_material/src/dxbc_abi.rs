@@ -286,6 +286,7 @@ pub(crate) fn build_dxbc_pass_abi(
         vertex_constants,
         pixel_constants,
         samplers,
+        depth_to_colour: false,
     };
     let lowering = PassAbi {
         vertex_inputs,

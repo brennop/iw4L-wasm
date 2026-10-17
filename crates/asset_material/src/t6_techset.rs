@@ -1,6 +1,6 @@
 mod material;
 pub use material::T6MaterialRefusal;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dxbc_sm5::wgsl::{ConstantRow, Shader, TextureDimension, TextureSlot};
 use dxbc_sm5::{BindingKind, Reflection};
@@ -842,25 +842,29 @@ impl MaterialCatalog {
         let mut gaps = BTreeSet::new();
         let mut slots = vec![None; IW4_TECHNIQUE_TYPE_COUNT];
         let mut table = TechniqueTable::default();
+        let mut compiled = BTreeMap::new();
         for (iw4_slot, iw4_name) in IW4_TECHNIQUE_TYPE_NAMES.iter().enumerate() {
             let Some(selection) = select_t6_technique(set, draw, iw4_name) else {
                 continue;
             };
-            let technique = set.techniques[usize::from(selection.slot)]
-                .as_ref()
-                .unwrap();
-            let passes: Result<Vec<_>, String> = (0u8..)
-                .zip(&technique.passes)
-                .map(|(index, pass)| {
-                    let layer_routing = if layered {
-                        &pass.layer_routing[..]
-                    } else {
-                        &[]
-                    };
-                    let vertex_decl = self.link_vertex_decl(t6_vertex_decl(layer_routing));
-                    self.t6_pass(pass, index, vertex_decl, &mut gaps, namespace)
-                })
-                .collect();
+            let passes: &Result<Vec<OwnedMaterialPass>, String> =
+                compiled.entry(selection.slot).or_insert_with(|| {
+                    let technique = set.techniques[usize::from(selection.slot)]
+                        .as_ref()
+                        .unwrap();
+                    (0u8..)
+                        .zip(&technique.passes)
+                        .map(|(index, pass)| {
+                            let layer_routing = if layered {
+                                &pass.layer_routing[..]
+                            } else {
+                                &[]
+                            };
+                            let vertex_decl = self.link_vertex_decl(t6_vertex_decl(layer_routing));
+                            self.t6_pass(pass, index, vertex_decl, &mut gaps, namespace)
+                        })
+                        .collect()
+                });
             match passes {
                 Ok(passes) => {
                     table.slots |= 1 << iw4_slot;
@@ -874,7 +878,7 @@ impl MaterialCatalog {
                         } else {
                             0
                         },
-                        passes,
+                        passes: passes.clone(),
                         body_scanned: true,
                     });
                 }

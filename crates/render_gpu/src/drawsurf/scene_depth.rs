@@ -4,14 +4,14 @@ use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::RenderDevice;
 use bevy::render::texture::TextureCache;
-use bevy::render::view::{Msaa, ViewDepthTexture};
+use bevy::render::view::{Msaa, ViewDepthStencilTexture};
 
 pub const SCENE_DEPTH_FORMAT: TextureFormat = TextureFormat::Depth24PlusStencil8;
 
 #[derive(Component)]
 pub struct SceneDepthTexture {
     pub texture: Texture,
-    attachment: ViewDepthTexture,
+    attachment: ViewDepthStencilTexture,
     sampled: TextureView,
 }
 
@@ -21,20 +21,7 @@ impl SceneDepthTexture {
     }
 
     pub fn get_attachment(&self, store: StoreOp) -> RenderPassDepthStencilAttachment<'_> {
-        let mut attachment = self.attachment.get_attachment(store);
-        attachment.stencil_ops = Some(Operations {
-            load: if attachment
-                .depth_ops
-                .as_ref()
-                .is_some_and(|ops| matches!(ops.load, LoadOp::Clear(_)))
-            {
-                LoadOp::Clear(0)
-            } else {
-                LoadOp::Load
-            },
-            store: StoreOp::Store,
-        });
-        attachment
+        self.attachment.get_attachment(store)
     }
 }
 
@@ -88,12 +75,13 @@ pub(crate) fn prepare_scene_depth(
         commands.entity(entity).insert(SceneDepthTexture {
             texture: raw,
             sampled,
-            attachment: ViewDepthTexture::new(
+            attachment: ViewDepthStencilTexture::new(
                 texture,
                 match settings.depth_load_op {
                     Camera3dDepthLoadOp::Clear(value) => Some(value),
                     Camera3dDepthLoadOp::Load => None,
                 },
+                Some(0),
             ),
         });
     }

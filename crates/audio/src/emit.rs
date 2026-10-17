@@ -42,6 +42,7 @@ pub fn emit_footstep_on_bob_wrap(
     }
     let (alias, fallback) = footstep_aliases(gait, surface_flags, local_player, quieter);
     footsteps.write(Footstep {
+        volume_scale: 1.0,
         event: None,
         alias,
         fallback,

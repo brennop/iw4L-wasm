@@ -11,7 +11,6 @@ mod match_load;
 pub mod plugin;
 pub mod prepared;
 pub mod session_load;
-mod teardown;
 
 pub use artifact_cache::{cache_flight, cache_get, cache_put, fnv1a64, fnv1a64_more};
 pub(crate) use asset_graph::stamp_match_destructible_death;

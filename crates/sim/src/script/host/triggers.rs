@@ -1,7 +1,7 @@
 use crate::bullet_collision::{PLAYER_MAXS, PLAYER_MINS};
 use crate::frame::FrameWorld;
 use crate::script::runtime::raise;
-use crate::script::{Runtime, Value};
+use crate::script::{RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -27,7 +27,7 @@ pub(crate) fn record_grenade_touch(
     end: [f32; 3],
     damage: i32,
 ) {
-    let Some(mut runtime) = world.get_resource_mut::<Runtime>() else {
+    let Some(mut runtime) = world.get_resource_mut::<RoundScript>() else {
         return;
     };
     if runtime.program.is_some()
@@ -46,7 +46,7 @@ pub(crate) fn record_grenade_touch(
     }
 }
 
-fn integer(runtime: &mut Runtime, object: u64, field: &str) -> i32 {
+fn integer(runtime: &mut RoundScript, object: u64, field: &str) -> i32 {
     match runtime.object_field(object, field) {
         Value::Int(value) => value,
         _ => 0,
@@ -82,7 +82,7 @@ fn accepts_means(flags: i32, means: &str) -> bool {
 }
 
 fn damage_trigger(
-    runtime: &mut Runtime,
+    runtime: &mut RoundScript,
     trigger: u64,
     hit: &TriggerHit,
     raised: &mut Vec<DamageNotify>,
@@ -122,25 +122,25 @@ fn damage_trigger(
         };
     if once {
         runtime.fired_once.insert(trigger);
-        runtime.pending_deletes.push(trigger);
+        runtime.request_delete(trigger);
     }
 }
 
-fn active_damage_triggers(runtime: &Runtime) -> Vec<u64> {
+fn active_damage_triggers(runtime: &RoundScript) -> Vec<u64> {
     runtime
         .entities
         .iter()
         .filter(|(object, entity)| {
             entity.classname.as_ref() == "trigger_damage"
                 && !runtime.fired_once.contains(object)
-                && !runtime.pending_deletes.contains(object)
+                && runtime.can_receive_call(object)
         })
         .map(|(object, _)| *object)
         .collect()
 }
 
 fn attacker(
-    runtime: &Runtime,
+    runtime: &RoundScript,
     client: Option<crate::ClientId>,
     missile: Option<crate::ProjectileId>,
 ) -> Value {
@@ -180,12 +180,13 @@ pub(crate) fn damage_line(
 ) {
     if amount <= 0
         || world
-            .get_resource::<Runtime>()
+            .get_resource::<RoundScript>()
             .is_none_or(|runtime| runtime.program.is_none() || !runtime.started)
     {
         return;
     }
-    let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
+    let replacement = RoundScript::new(world.resource::<crate::script::MatchScript>());
+    let mut runtime = std::mem::replace(&mut *world.resource_mut::<RoundScript>(), replacement);
     let hit = TriggerHit {
         activator: attacker(&runtime, Some(client), missile),
         amount,
@@ -204,7 +205,7 @@ pub(crate) fn damage_line(
             }
         }
     }
-    *world.resource_mut::<Runtime>() = runtime;
+    *world.resource_mut::<RoundScript>() = runtime;
     for (trigger, name, args) in raised {
         raise(world, Value::Object(trigger), name, args);
     }
@@ -224,7 +225,7 @@ pub(crate) struct TriggerBlast {
 }
 
 fn damage_bounds(
-    runtime: &mut Runtime,
+    runtime: &mut RoundScript,
     frame: &FrameWorld,
     object: u64,
 ) -> Option<([f32; 3], [f32; 3])> {
@@ -310,13 +311,14 @@ pub(crate) fn damage_blast(world: &mut World, blast: &TriggerBlast) {
             .chain([blast.radius, blast.max, blast.min])
             .all(f32::is_finite)
         || world
-            .get_resource::<Runtime>()
+            .get_resource::<RoundScript>()
             .is_none_or(|runtime| runtime.program.is_none() || !runtime.started)
     {
         return;
     }
     super::presence::settle_collision(world);
-    let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
+    let replacement = RoundScript::new(world.resource::<crate::script::MatchScript>());
+    let mut runtime = std::mem::replace(&mut *world.resource_mut::<RoundScript>(), replacement);
     let activator = attacker(&runtime, blast.client, blast.missile);
     let mut raised = Vec::new();
     {
@@ -362,14 +364,15 @@ pub(crate) fn damage_blast(world: &mut World, blast: &TriggerBlast) {
             damage_trigger(&mut runtime, trigger, &hit, &mut raised);
         }
     }
-    *world.resource_mut::<Runtime>() = runtime;
+    *world.resource_mut::<RoundScript>() = runtime;
     for (trigger, name, args) in raised {
         raise(world, Value::Object(trigger), name, args);
     }
 }
 
 pub(crate) fn dispatch_grenade_touches(world: &mut World) {
-    let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
+    let replacement = RoundScript::new(world.resource::<crate::script::MatchScript>());
+    let mut runtime = std::mem::replace(&mut *world.resource_mut::<RoundScript>(), replacement);
     let mut raised = Vec::new();
     {
         let frame = FrameWorld::from_world(world);
@@ -384,7 +387,7 @@ pub(crate) fn dispatch_grenade_touches(world: &mut World) {
                     entity.classname.as_ref() == "trigger_damage"
                         && entity.trigger_policy.grenade_touch
                         && !runtime.fired_once.contains(object)
-                        && !runtime.pending_deletes.contains(object)
+                        && runtime.can_receive_call(object)
                 })
                 .map(|(object, _)| *object)
                 .collect();
@@ -405,7 +408,7 @@ pub(crate) fn dispatch_grenade_touches(world: &mut World) {
             }
         }
     }
-    *world.resource_mut::<Runtime>() = runtime;
+    *world.resource_mut::<RoundScript>() = runtime;
     for (trigger, name, args) in raised {
         raise(world, Value::Object(trigger), name, args);
     }
@@ -423,7 +426,7 @@ impl TriggerPolicy {
     }
 }
 
-impl Runtime {
+impl RoundScript {
     pub(crate) fn release_trigger_claims(&mut self, client: u32) {
         for entity in self.entities.values_mut() {
             if entity.trigger_policy.claimed_by == Some(client) {
@@ -435,14 +438,14 @@ impl Runtime {
 }
 
 pub(crate) fn release_client_claims(world: &mut World, client: u32) {
-    if let Some(mut runtime) = world.get_resource_mut::<Runtime>() {
+    if let Some(mut runtime) = world.get_resource_mut::<RoundScript>() {
         runtime.release_trigger_claims(client);
     }
 }
 
 pub(crate) fn refresh_claims(world: &mut World) {
     let claims: Vec<(u32, TriggerPolicy)> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .entities
         .values()
         .filter_map(|entity| {
@@ -453,7 +456,10 @@ pub(crate) fn refresh_claims(world: &mut World) {
         })
         .collect();
     for (client, policy) in claims {
-        let connected = world.resource::<Runtime>().players.contains_key(&client);
+        let connected = world
+            .resource::<RoundScript>()
+            .players
+            .contains_key(&client);
         if !connected || !policy.allows(&FrameWorld::from_world(world), client) {
             release_client_claims(world, client);
         }
@@ -470,7 +476,7 @@ fn set_grenade_touch(
         return Err("grenade touch damage controls take no arguments".into());
     }
     let object = super::natives::engine::entity_id(world, receiver)?;
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let entity = runtime.entities.get_mut(&object).unwrap();
     if entity.classname.as_ref() != "trigger_damage" {
         return Err("grenade touch damage requires a damage trigger".into());
@@ -505,7 +511,7 @@ pub(crate) fn register(registry: &mut crate::script::NativeRegistry) {
             _ => return Err(format!("invalid trigger team '{name}'")),
         };
         world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .entities
             .get_mut(&object)
             .unwrap()
@@ -518,7 +524,7 @@ pub(crate) fn register(registry: &mut crate::script::NativeRegistry) {
         let client = player(world, receiver)?;
         let object = entity_id(world, arg(args, 0)?)?;
         refresh_claims(world);
-        let policy = world.resource::<Runtime>().entities[&object]
+        let policy = world.resource::<RoundScript>().entities[&object]
             .trigger_policy
             .clone();
         if !policy.allows(&FrameWorld::from_world(world), client) {
@@ -526,7 +532,7 @@ pub(crate) fn register(registry: &mut crate::script::NativeRegistry) {
         }
         release_client_claims(world, client);
         world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .entities
             .get_mut(&object)
             .unwrap()
@@ -537,7 +543,7 @@ pub(crate) fn register(registry: &mut crate::script::NativeRegistry) {
     registry.register(Method, "clientreleasetrigger", |world, receiver, args| {
         let client = player(world, receiver)?;
         let object = entity_id(world, arg(args, 0)?)?;
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let policy = &mut runtime.entities.get_mut(&object).unwrap().trigger_policy;
         if policy.claimed_by == Some(client) {
             policy.claimed_by = None;
@@ -547,7 +553,7 @@ pub(crate) fn register(registry: &mut crate::script::NativeRegistry) {
     registry.register(Method, "releaseclaimedtrigger", |world, receiver, _| {
         let object = entity_id(world, receiver)?;
         world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .entities
             .get_mut(&object)
             .unwrap()
@@ -557,7 +563,13 @@ pub(crate) fn register(registry: &mut crate::script::NativeRegistry) {
     });
 }
 
-fn eligible(runtime: &Runtime, frame: &FrameWorld, trigger: u64, client: u32, using: bool) -> bool {
+fn eligible(
+    runtime: &RoundScript,
+    frame: &FrameWorld,
+    trigger: u64,
+    client: u32,
+    using: bool,
+) -> bool {
     runtime.entities.get(&trigger).is_some_and(|entity| {
         entity.trigger_policy.allows(frame, client)
             && (!using
@@ -587,7 +599,7 @@ fn fires(classname: &str) -> Option<Fires> {
     }
 }
 
-fn volume<'f>(runtime: &mut Runtime, frame: &'f FrameWorld, object: u64) -> Option<Volume<'f>> {
+fn volume<'f>(runtime: &mut RoundScript, frame: &'f FrameWorld, object: u64) -> Option<Volume<'f>> {
     let entity = runtime.entities.get(&object)?;
     let (cylinder, brush, trigger_model) = (entity.cylinder, entity.brush, entity.trigger_model);
     let origin = match runtime.object_field(object, "origin") {
@@ -849,7 +861,7 @@ fn looks_into(frame: &FrameWorld, client: u32, volume: &Volume<'_>) -> bool {
     })
 }
 
-fn toucher(runtime: &mut Runtime, frame: &FrameWorld, object: u64) -> ([f32; 3], [f32; 3]) {
+fn toucher(runtime: &mut RoundScript, frame: &FrameWorld, object: u64) -> ([f32; 3], [f32; 3]) {
     if let Some(client) = runtime.player_client(object)
         && let Some(ps) = frame.player(crate::ClientId(client))
     {
@@ -866,7 +878,7 @@ fn toucher(runtime: &mut Runtime, frame: &FrameWorld, object: u64) -> ([f32; 3],
 }
 
 pub(crate) fn entity_bounds(world: &mut World, object: u64) -> ([f32; 3], [f32; 3]) {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if runtime.player_client(object).is_some() {
         return (PLAYER_MINS, PLAYER_MAXS);
     }
@@ -884,7 +896,8 @@ pub(crate) fn entity_bounds(world: &mut World, object: u64) -> ([f32; 3], [f32; 
 }
 
 pub(crate) fn is_touching(world: &mut World, a: u64, b: u64) -> bool {
-    let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
+    let replacement = RoundScript::new(world.resource::<crate::script::MatchScript>());
+    let mut runtime = std::mem::replace(&mut *world.resource_mut::<RoundScript>(), replacement);
     let touching = {
         let frame = FrameWorld::from_world(world);
         [(a, b), (b, a)].into_iter().find_map(|(trigger, other)| {
@@ -893,13 +906,14 @@ pub(crate) fn is_touching(world: &mut World, a: u64, b: u64) -> bool {
             Some(volume.touches(mins, maxs))
         })
     };
-    *world.resource_mut::<Runtime>() = runtime;
+    *world.resource_mut::<RoundScript>() = runtime;
     touching.unwrap_or(false)
 }
 
 pub(crate) fn dispatch_triggers(world: &mut World) {
     refresh_claims(world);
-    let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
+    let replacement = RoundScript::new(world.resource::<crate::script::MatchScript>());
+    let mut runtime = std::mem::replace(&mut *world.resource_mut::<RoundScript>(), replacement);
     let mut raised = Vec::new();
     {
         let mut frame = FrameWorld::from_world(world);
@@ -969,7 +983,7 @@ pub(crate) fn dispatch_triggers(world: &mut World) {
             }
         }
     }
-    *world.resource_mut::<Runtime>() = runtime;
+    *world.resource_mut::<RoundScript>() = runtime;
     raised.sort_unstable();
     raised.dedup();
     for (trigger, player) in raised {

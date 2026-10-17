@@ -42,9 +42,9 @@ pub(crate) fn route_replay_commands(
         ResMut<ConsoleDispatch>,
     ),
     clip: (
-        Res<ClipRing>,
+        Option<Res<ClipRing>>,
         Res<RuntimeRole>,
-        Res<net::ClientPredictionState>,
+        Option<Res<net::ClientPredictionState>>,
         Option<Res<AuthorityClock>>,
         Option<Res<PresentedSnapshot>>,
     ),
@@ -212,6 +212,10 @@ pub(crate) fn route_replay_commands(
                     echo("usage: clip".into(), console, line);
                     continue;
                 }
+                let (Some(ring), Some(prediction)) = (ring.as_ref(), prediction.as_ref()) else {
+                    echo("clip: no live match".into(), console, line);
+                    continue;
+                };
                 if ring.is_empty() {
                     echo("clip: ring empty (0 ticks)".into(), console, line);
                     continue;

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
+use frame::ScopeApp;
 use frame::{
     AbortKillcam, BeginKillcam, KillcamEnded, LifeEndCause, LifeEnded, LifeFrontPublished,
     LifeStartReason, LifeStarted, PresentedPublished, SpawnedPlayer,
@@ -160,14 +161,19 @@ fn emit_ended(
 
 pub fn register_life_front(app: &mut App) {
     app.init_resource::<LifeNotifyCensus>()
-        .init_resource::<LifeFrontCensus>()
+        .scoped::<LifeFrontCensus>(frame::MatchScope::Live)
         .add_message::<LifeStarted>()
         .add_message::<LifeEnded>()
         .add_observer(on_begin_killcam)
         .add_observer(on_abort_killcam)
         .add_observer(on_killcam_ended)
         .add_observer(on_spawned_player)
-        .add_systems(Update, publish_life_front.in_set(PresentedPublished))
+        .add_systems(
+            Update,
+            publish_life_front
+                .in_set(frame::InMatch)
+                .in_set(PresentedPublished),
+        )
         .configure_sets(
             Update,
             LifeFrontPublished

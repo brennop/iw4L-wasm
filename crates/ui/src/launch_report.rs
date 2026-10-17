@@ -8,6 +8,7 @@ pub fn publish_gap_hud(
     identity: Option<Res<LaunchIdentity>>,
     report: Option<Res<LaunchReport>>,
     class_store: Res<SessionClassStore>,
+    equipped: Option<Res<crate::classes::store::EquippedClass>>,
     mut hud: ResMut<GapHud>,
 ) {
     let Some(identity) = identity else {
@@ -30,7 +31,10 @@ pub fn publish_gap_hud(
             sim::FFA.time_limit_ms
         ),
     ];
-    if let Some(slot) = class_store.equipped_slot() {
+    if let Some(slot) = equipped
+        .and_then(|equipped| equipped.0)
+        .and_then(|index| class_store.slots.get(index))
+    {
         body.push(format!("equipped class: {}", slot.name));
     } else {
         body.push("equipped class: (choose-class gate)".into());

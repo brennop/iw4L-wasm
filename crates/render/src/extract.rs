@@ -194,8 +194,8 @@ pub fn seal_render_frame(
     let generation = runtime.catalog.generation_id();
     let world_generation = world_generation
         .as_ref()
-        .map(|generation| **generation)
-        .unwrap_or(frame::WorldGeneration(None));
+        .map(|generation| generation.stamp())
+        .unwrap_or(frame::WorldStamp(None));
     let Some(products) = products.as_ref() else {
         insert_empty_colour(&mut commands);
         return;
@@ -684,7 +684,7 @@ fn frame_submission_matches(
     inputs: Option<&render_frontend::assemble::drawsurf::FrameAssemblyInputs>,
     snapshot: &render_frame::FrameProductsSnapshot,
     generation: render_frontend::assemble::drawsurf::MaterialGenerationId,
-    world_generation: frame::WorldGeneration,
+    world_generation: frame::WorldStamp,
 ) -> bool {
     inputs.is_some_and(|inputs| {
         inputs.frame_id == snapshot.frame_id

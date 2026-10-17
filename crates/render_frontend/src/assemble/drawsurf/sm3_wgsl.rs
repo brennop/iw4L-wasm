@@ -89,6 +89,7 @@ pub fn pass_lowering_abi(abi: &PassProgramAbi, texture_binding: TextureBinding) 
             })
             .collect(),
         alpha_tests: MATERIAL_ALPHA_TESTS.to_vec(),
+        depth_to_colour: abi.depth_to_colour,
     }
 }
 

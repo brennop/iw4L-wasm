@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::World;
 
 use crate::script::host::args::{float, optional, vector};
-use crate::script::{Runtime, Value};
+use crate::script::{RoundScript, Value};
 use crate::{ScriptEarthquake, ScriptFog, ScriptFogParams, ScriptSunFog};
 
 fn duration_ms(seconds: f32) -> Result<i32, String> {
@@ -33,7 +33,7 @@ pub(super) fn set_slow_motion(
     if !slow_motion.valid() {
         return Err("slow-motion scales must be finite and positive".into());
     }
-    world.resource_mut::<Runtime>().engine.slow_motion = Some(slow_motion);
+    world.resource_mut::<RoundScript>().engine.slow_motion = Some(slow_motion);
     Ok(Value::Undefined)
 }
 
@@ -67,7 +67,7 @@ pub(super) fn set_exp_fog(world: &mut World, _: &Value, args: &[Value]) -> Resul
     }
     let duration_ms = duration_ms(float(args, if args.len() == 6 { 5 } else { 6 })?)?;
     let now = crate::level_time_ms(world.resource::<crate::step::StepRequest>().tick);
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let previous = runtime.engine.fog.map(|fog| fog.sample(now));
     runtime.engine.fog = Some(ScriptFog {
         from: previous.unwrap_or(target),
@@ -94,7 +94,7 @@ pub(super) fn earthquake(world: &mut World, _: &Value, args: &[Value]) -> Result
     if !quake.valid() {
         return Err("invalid earthquake parameters".into());
     }
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let engine = &mut runtime.engine;
     engine.earthquakes.retain(|quake| quake.active(now));
     if engine.earthquakes.len() >= crate::MAX_SCRIPT_EARTHQUAKES {

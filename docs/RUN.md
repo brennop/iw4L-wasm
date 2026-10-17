@@ -115,5 +115,21 @@ before level entry scripts start. Player-data methods read and write the bound s
 external scripts block persistent-data writes. IW4 remote admission exchanges a
 signed profile before gameplay; host updates save locally before acknowledgement.
 Installed multiplayer validation and schema migration remain incomplete.
+
+At the main menu, `unlock all` saves the maximum shared level and completes the
+native challenges, including all Pro perk requirements. `unlock reset` saves
+level 1, clears prestige, and restores initial challenge progress. Both preserve
+account identity, custom classes and other statistics. Disconnect before using
+these commands; active matches, loading and replay refuse progression edits.
+The console offers `all` and `reset` as argument completions. Unlocking progression
+does not supply missing weapon assets or enable unsupported content.
+
 Older account files upgrade while retaining stats;
 conflicting disk revisions refuse save instead of overwriting another writer.
+
+On a local match host with cheats, `round_restart` runs the script round restart
+while retaining prepared map content and round-persistent state. `map_restart`
+creates a new match on the current map.
+
+For console scripts that edit progression as the menu starts, use
+`wait progression; unlock all` to wait for native account content.

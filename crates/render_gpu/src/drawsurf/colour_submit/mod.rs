@@ -271,9 +271,10 @@ impl ExactColourTargetViews {
 fn exact_fragment_entry(
     target: TextureFormat,
     forward_z: bool,
+    depth_to_colour: bool,
     alpha_test: Option<d3d9_state::AlphaTest>,
 ) -> String {
-    if forward_z && target == TextureFormat::R32Float {
+    if forward_z && target == TextureFormat::R32Float && !depth_to_colour {
         PASS_FRAGMENT_ENTRY.to_owned()
     } else {
         alpha_test_fragment_entry(alpha_test)
@@ -298,6 +299,7 @@ fn exact_pipeline_plan(
     } else {
         Some(CompareFunction::Always)
     };
+    let depth_to_colour = port.port.abi().depth_to_colour;
     let cached_lighting = key.cached_lighting && port.cached_source.is_some();
     let source = match (cached_lighting, port.cached_source.as_ref()) {
         (true, Some(cached)) => ExactModuleSource::CachedLighting(cached.clone()),
@@ -308,7 +310,12 @@ fn exact_pipeline_plan(
             "iw4_exact_colour/{:016x}/{}",
             key.port.vertex_program_hash, key.port.vertex_type
         ),
-        fragment_entry: exact_fragment_entry(key.target, key.forward_z, key.state0.alpha_test),
+        fragment_entry: exact_fragment_entry(
+            key.target,
+            key.forward_z,
+            depth_to_colour,
+            key.state0.alpha_test,
+        ),
         vertex_buffers: if cached_lighting && !port.cached_vertex_buffers.is_empty() {
             port.cached_vertex_buffers.clone()
         } else {
@@ -329,7 +336,9 @@ fn exact_pipeline_plan(
             } else {
                 key.state0.blend.blend_state()
             },
-            write_mask: if key.target == TextureFormat::R32Float {
+            write_mask: if key.target == TextureFormat::R32Float && depth_to_colour {
+                ColorWrites::RED
+            } else if key.target == TextureFormat::R32Float {
                 key.state0.colour_writes() & ColorWrites::RED
             } else {
                 key.state0.colour_writes()
@@ -545,7 +554,7 @@ fn colour_census_ms(start: Option<Instant>) -> Option<f32> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WorldPretessKey {
-    world_generation: frame::WorldGeneration,
+    world_generation: frame::WorldStamp,
     geometry_generation: MaterialGenerationId,
     world_run_revision: u64,
     colour_world: u64,
@@ -651,7 +660,7 @@ fn world_pretess_key(
     light: &FrameProduct,
     emissive: &FrameProduct,
     run_surfs: &[u16],
-    world_generation: frame::WorldGeneration,
+    world_generation: frame::WorldStamp,
     geometry_generation: MaterialGenerationId,
     world_run_revision: u64,
 ) -> WorldPretessKey {
@@ -816,13 +825,13 @@ pub fn colour_ports_static(
 }
 
 pub fn colour_world_smodel_static(
-    (gpu_world_generation, gpu_world_products): (frame::WorldGeneration, frame::WorldProducts),
+    (gpu_world_generation, gpu_world_products): (frame::WorldStamp, frame::WorldProducts),
     gpu_world_verts: usize,
     gpu_world_indices: usize,
     gpu_world_layer: usize,
     gpu_smodel_verts: usize,
     gpu_smodel_indices: usize,
-    (cpu_world_generation, cpu_world_products): (frame::WorldGeneration, frame::WorldProducts),
+    (cpu_world_generation, cpu_world_products): (frame::WorldStamp, frame::WorldProducts),
     cpu_world_verts: usize,
     cpu_world_indices: usize,
     cpu_world_layer: usize,

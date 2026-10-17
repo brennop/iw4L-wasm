@@ -26,7 +26,7 @@ use std::num::NonZeroU64;
 use super::gpu_resources::RuntimeUploadedImageRegistry;
 use super::postfx::PostFxSet;
 
-const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/sun_effects.wgsl";
+const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/sun_effects.wesl";
 const PARAMS_SIZE: u64 = 80;
 
 #[repr(C)]
@@ -133,12 +133,14 @@ impl SpecializedRenderPipeline for SunEffectsGpu {
             vertex: VertexState {
                 shader: self.shader.clone(),
                 shader_defs: defs.clone(),
+                constants: Vec::new(),
                 entry_point: Some(vertex.into()),
                 buffers: Vec::new(),
             },
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs: defs,
+                constants: Vec::new(),
                 entry_point: Some(fragment.into()),
                 targets: vec![Some(ColorTargetState {
                     format: key.target,
@@ -537,7 +539,7 @@ fn draw_sun_effects(
 }
 
 pub(super) fn register(app: &mut App) {
-    bevy::asset::embedded_asset!(app, "sun_effects.wgsl");
+    bevy::asset::embedded_asset!(app, "sun_effects.wesl");
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };

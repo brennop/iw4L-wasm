@@ -453,12 +453,79 @@ fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|b| *b == 0)
 }
 
+fn scoped_contracts(root: &Path, paths: &[PathBuf]) -> Res<Vec<String>> {
+    let mut sources = Vec::new();
+    let mut types = std::collections::BTreeSet::new();
+    for path in paths.iter().filter(|path| {
+        path.extension().is_some_and(|ext| ext == "rs") && path.starts_with("crates")
+    }) {
+        let text = std::fs::read_to_string(root.join(path))
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        for spelling in [".scoped::<", ".staged::<"] {
+            for tail in text.split(spelling).skip(1) {
+                if let Some((name, _)) = tail.split_once('>') {
+                    types.insert(name.rsplit("::").next().unwrap_or(name).trim().to_owned());
+                }
+            }
+        }
+        sources.push((path, text));
+    }
+    let mut findings = Vec::new();
+    for (path, text) in sources {
+        if path == Path::new("crates/frame/src/scope.rs")
+            || path == Path::new("crates/net/src/role_matrix.rs")
+        {
+            continue;
+        }
+        for (index, line) in text.lines().enumerate() {
+            let compact = line.split_whitespace().collect::<String>();
+            let legacy = [
+                "MatchTornDown",
+                "ReturnedToMenu",
+                "HasWorld",
+                "frame::lifetime",
+            ]
+            .iter()
+            .any(|name| compact.contains(name));
+            let bypass = types.iter().any(|name| {
+                compact.contains(&format!(".init_resource::<{name}>"))
+                    || compact.contains(&format!(".insert_resource({name}{{"))
+                    || compact.contains(&format!(".insert_resource({name}::"))
+                    || compact.contains(&format!("If<Res<{name}>"))
+                    || compact.contains(&format!("If<ResMut<{name}>"))
+            });
+            let state_writer = path != Path::new("crates/session/src/scope_control.rs")
+                && [
+                    "NextState<MatchScope>",
+                    "NextState<frame::MatchScope>",
+                    "NextState<RoundPhase>",
+                    "NextState<frame::RoundPhase>",
+                ]
+                .iter()
+                .any(|name| compact.contains(name));
+            if legacy || bypass || state_writer {
+                findings.push(format!(
+                    "{}:{}: scoped lifetime bypass",
+                    path.display(),
+                    index + 1
+                ));
+            }
+        }
+    }
+    Ok(findings)
+}
+
 pub fn run_cli(root: &Path) -> Res<()> {
     let mut leaks = Vec::new();
     let mut offsets = Vec::new();
     let mut tests = Vec::new();
+    let paths: Vec<_> = tracked(root)?
+        .into_iter()
+        .filter(|path| root.join(path).exists())
+        .collect();
+    let mut contracts = scoped_contracts(root, &paths)?;
     let mut scanned = 0usize;
-    for path in tracked(root)? {
+    for path in paths {
         let rel = path.to_string_lossy().replace('\\', "/");
         // The leak scan runs on every tracked path, exemptions included: a file
         // is exempt from being read for offsets, never from being here at all.
@@ -479,6 +546,16 @@ pub fn run_cli(root: &Path) -> Res<()> {
         }
         // Not every text file is valid UTF-8; what is in one still counts.
         let text = String::from_utf8_lossy(&bytes);
+        if rel.starts_with("crates/render_anim/src/") {
+            for (line, source) in text.lines().enumerate() {
+                if source.contains(".init_resource::<") {
+                    contracts.push(format!(
+                        "{rel}:{}: animation resource must declare its lifetime",
+                        line + 1
+                    ));
+                }
+            }
+        }
         if let Some((line, what)) = stray_test(&rel, &text) {
             tests.push(Finding {
                 path: path.clone(),
@@ -530,6 +607,9 @@ pub fn run_cli(root: &Path) -> Res<()> {
             finding.what,
             finding.text
         );
+    }
+    if !contracts.is_empty() {
+        return Err(contracts.join("\n"));
     }
     if !leaks.is_empty() {
         return Err(format!(

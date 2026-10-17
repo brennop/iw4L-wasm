@@ -29,8 +29,8 @@ impl Plugin for RenderPlugin {
         .add_systems(
             Update,
             (
-                publish_overhead_posed_players,
-                publish_overhead_posed_models,
+                publish_overhead_posed_players.in_set(frame::InMatch),
+                publish_overhead_posed_models.in_set(frame::InMatch),
             )
                 .after(frame::WorkerCmdSet::SkinModel)
                 .in_set(hud::OverheadPosedPlayerFramePublished)

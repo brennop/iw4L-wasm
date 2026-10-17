@@ -4,7 +4,7 @@ use super::super::players::{LinkView, PlayerLink};
 use super::super::tables::perk_slot_code;
 use crate::frame::FrameWorld;
 use crate::script::Namespace::Method;
-use crate::script::{Arc, NativeRegistry, Runtime, Value, runtime};
+use crate::script::{Arc, NativeRegistry, RoundScript, Value, runtime};
 use crate::script_player;
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
@@ -12,7 +12,7 @@ use bevy_ecs::prelude::World;
 pub(crate) fn player(world: &World, receiver: &Value) -> Result<u32, String> {
     match receiver {
         Value::Object(id) => world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .player_client(*id)
             .ok_or_else(|| "receiver is not a player".into()),
         _ => Err("receiver is not a player".into()),
@@ -24,7 +24,7 @@ fn slot<'w>(
     client: u32,
 ) -> Result<&'w mut super::super::players::PlayerSlot, String> {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .into_inner()
         .players
         .get_mut(&client)
@@ -73,7 +73,7 @@ fn publish_client_dvar(world: &mut World, client: u32, name: &str, value: String
             return;
         };
         let value = value.to_string();
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<crate::script::MatchScript>();
         if runtime.local_presentation_client == Some(ClientId(client)) {
             runtime.pending_local_dvars.push((setting, value));
             return;
@@ -187,7 +187,7 @@ fn data_error(error: crate::PersistentDataError) -> String {
 
 pub(crate) fn check_data_write(world: &World) -> Result<(), String> {
     if world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .is_some_and(|program| program.has_impure_scripts())
@@ -195,7 +195,7 @@ pub(crate) fn check_data_write(world: &World) -> Result<(), String> {
         return Err("player data cannot be changed after loading external scripts".into());
     }
     if world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .dvars
         .get("developer_script")
         .and_then(|value| value.parse::<i32>().ok())
@@ -481,15 +481,25 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         "forceusehintoff",
         "predictstreampos",
     );
-    macro_rules! answers {
-        ($value:expr => $($name:literal),* $(,)?) => {$(
-            registry.register(Method, $name, |world, receiver, _| {
-                player(world, receiver)?;
-                Ok($value)
-            });
-        )*};
-    }
-    answers!(Value::Int(1) => "isitemunlocked");
+    registry.register(Method, "isitemunlocked", |world, receiver, args| {
+        let client = data_client(world, player(world, receiver)?)?;
+        let name = string(args, 0)?;
+        let tables = &world.resource::<RoundScript>().tables;
+        let table = super::super::tables::table(tables, "mp/unlockTable.csv")
+            .ok_or("unlock.missing_table")?;
+        let Some(row) = super::super::tables::table_search(table, 0, &name) else {
+            return Ok(Value::Int(1));
+        };
+        let requirement = gamemode_iw4::progression::UnlockRequirement::capture(
+            table.cell(row, 2).unwrap_or(""),
+            table.cell(row, 3).unwrap_or(""),
+        )?;
+        Ok(Value::Int(
+            crate::progression::unlocked(world, client, &requirement)
+                .map_err(data_error)?
+                .into(),
+        ))
+    });
     registry.register(Method, "playerhide", |world, receiver, _| {
         let id = client_of(world, receiver)?;
         let mut frame = FrameWorld::from_world(world);
@@ -501,7 +511,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     registry.register(Method, "playerforcedeathanim", |world, receiver, args| {
         let id = client_of(world, receiver)?;
         let inflictor = match args.first() {
-            Some(Value::Object(obj)) if world.resource::<Runtime>().live(obj) => {
+            Some(Value::Object(obj)) if world.resource::<RoundScript>().live(obj) => {
                 match super::super::players::entity_field(world, *obj, "origin") {
                     Value::Vector(v) => Some(v),
                     _ => None,
@@ -551,7 +561,14 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         });
         Ok(Value::Int(using.into()))
     });
-    answers!(Value::Vector([0.0; 3]) => "getthirdpersoncrosshairoffset");
+    registry.register(
+        Method,
+        "getthirdpersoncrosshairoffset",
+        |world, receiver, _| {
+            player(world, receiver)?;
+            Ok(Value::Vector([0.0; 3]))
+        },
+    );
 }
 
 const PLAYER_ANIM_TREE: &str = "multiplayer";
@@ -562,7 +579,10 @@ fn tick(world: &World) -> crate::Tick {
 
 fn maybe_player(world: &World, args: &[Value], index: usize) -> Option<ClientId> {
     match args.get(index) {
-        Some(Value::Object(id)) => world.resource::<Runtime>().player_client(*id).map(ClientId),
+        Some(Value::Object(id)) => world
+            .resource::<RoundScript>()
+            .player_client(*id)
+            .map(ClientId),
         _ => None,
     }
 }
@@ -575,7 +595,7 @@ fn entity_kind(
         return None;
     };
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .entities
         .get(id)
         .map(|e| (*id, e.kind.clone()))
@@ -590,7 +610,11 @@ pub(crate) fn corpse_anim(world: &World, receiver: &Value) -> Result<Option<Arc<
 
 fn item_number(world: &World, receiver: &Value) -> Result<i32, String> {
     match entity_kind(world, receiver) {
-        Some((_, super::super::entities::EntityKind::Item(number))) => Ok(number),
+        Some((id, super::super::entities::EntityKind::Item(number)))
+            if world.resource::<RoundScript>().can_receive_call(&id) =>
+        {
+            Ok(number)
+        }
         _ => Err("receiver is not a weapon item".into()),
     }
 }
@@ -619,7 +643,7 @@ pub(crate) fn new_item_entity(
     let origin = FrameWorld::from_world(world)
         .dropped_item_by_number(number)
         .map_or([0.0; 3], |i| i.origin);
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let id = runtime.create_entity(super::super::entities::EntityKind::Item(number), classname)?;
     runtime.set_object_field(id, "origin", Value::Vector(origin));
     Ok(Value::Object(id))
@@ -651,7 +675,7 @@ fn register_death(registry: &mut NativeRegistry) {
             _ => None,
         };
         let commit = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .current_hit
             .as_ref()
             .filter(|hit| hit.victim == id)
@@ -741,7 +765,7 @@ fn register_death(registry: &mut NativeRegistry) {
         let Some(slot) = script_player::clone_corpse(&mut frame, tick, id) else {
             return Ok(Value::Undefined);
         };
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let body = runtime.create_entity(
             super::super::entities::EntityKind::Corpse { slot, anim },
             "player_corpse",
@@ -872,7 +896,7 @@ pub(crate) fn link_to(
 ) -> Result<Value, String> {
     let client = player(world, receiver)?;
     let parent = super::engine::entity_id(world, arg(args, 0)?)?;
-    if world.resource::<Runtime>().player_client(parent) == Some(client) {
+    if world.resource::<RoundScript>().player_client(parent) == Some(client) {
         return Err("cannot link an entity to itself".into());
     }
     let tag = match args.get(1) {
@@ -1253,7 +1277,7 @@ fn register_body(registry: &mut NativeRegistry) {
             return Err(format!("shellshock duration {seconds} is negative"));
         }
         let index = *world
-            .resource::<Runtime>()
+            .resource::<crate::script::MatchScript>()
             .precached
             .get(&("shellshock", name.clone()))
             .ok_or_else(|| format!("shellshock '{name}' was not precached"))?;
@@ -1398,7 +1422,7 @@ fn register_inventory(registry: &mut NativeRegistry) {
         let named = weapon_arg(world, args, 0)?;
         let weapon = player_weapon(world, id, args, 0)?;
         let t5 = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .program
             .as_ref()
             .is_some_and(|program| program.rules() == crate::script::Realm::T5);
@@ -1662,7 +1686,7 @@ fn register_inventory(registry: &mut NativeRegistry) {
             registry.register(Method, $name, |world, receiver, args| {
                 let id = client_of(world, receiver)?;
                 let mut class = offhand_class_of(world, &string(args, 0)?);
-                if let Some(bridge) = world.resource::<Runtime>().weapon_bridge.get(&id.0).cloned() {
+                if let Some(bridge) = world.resource::<crate::script::MatchScript>().weapon_bridge.get(&id.0).cloned() {
                     let frame = FrameWorld::from_world(world);
                     if let Some(native_class) = bridge.iter().find_map(|(stand_in, native)| {
                         let source = frame.equipment_facts_for(*stand_in)?;

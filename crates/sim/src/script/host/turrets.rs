@@ -5,7 +5,7 @@ use crate::bullet_collision::{ColliderId, MASK_SHOT, TraceOutcome};
 use crate::frame::FrameWorld;
 use crate::script::Namespace::{Function, Method};
 use crate::script::runtime::raise;
-use crate::script::{Arc, NativeRegistry, Runtime, Value};
+use crate::script::{Arc, NativeRegistry, RoundScript, Value};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
 use glam::Vec3;
@@ -39,7 +39,7 @@ pub(crate) struct Turret {
 }
 
 fn turret_of(world: &World, receiver: &Value) -> Result<u64, String> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     match runtime.entity(receiver) {
         Some((object, _)) if runtime.engine.turrets.contains_key(&object) => Ok(object),
         _ => Err("receiver is not a turret".into()),
@@ -54,7 +54,7 @@ fn edit(
     let object = turret_of(world, receiver)?;
     change(
         world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .engine
             .turrets
             .get_mut(&object)
@@ -66,7 +66,7 @@ fn edit(
 fn player_object(world: &World, value: &Value) -> Result<Option<u64>, String> {
     match value {
         Value::Undefined => Ok(None),
-        Value::Object(id) if world.resource::<Runtime>().player_client(*id).is_some() => {
+        Value::Object(id) if world.resource::<RoundScript>().player_client(*id).is_some() => {
             Ok(Some(*id))
         }
         _ => Err("owner is not a player".into()),
@@ -91,7 +91,7 @@ pub(crate) fn muzzle(world: &mut World, object: u64) -> [f32; 3] {
 pub(crate) fn ignore_self(world: &World, object: u64) -> TraceIgnore {
     TraceIgnore {
         model: world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .entities
             .get(&object)
             .and_then(|e| e.presence),
@@ -116,7 +116,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             crate::script_player::weapon_named(&FrameWorld::from_world(world), &weaponinfo)?;
         let presence = super::presence::spawn_presence(world, origin)?;
         let birthtime = super::players::now_ms(world) as i32;
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let id = runtime.create_entity(EntityKind::Spawned, &classname)?;
         runtime.set_object_field(id, "birthtime", Value::Int(birthtime));
         runtime.set_object_field(id, "origin", Value::Vector(origin));
@@ -176,7 +176,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "getturrettarget", |world, receiver, _| {
         let object = turret_of(world, receiver)?;
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         Ok(runtime.engine.turrets[&object]
             .target
             .filter(|t| runtime.live(t))
@@ -184,12 +184,12 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "getturretowner", |world, receiver, _| {
         let object = turret_of(world, receiver)?;
-        Ok(world.resource::<Runtime>().engine.turrets[&object]
+        Ok(world.resource::<RoundScript>().engine.turrets[&object]
             .owner
             .map_or(Value::Undefined, Value::Object))
     });
     registry.register(Method, "isfiringturret", |world, receiver, _| {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         Ok(Value::Int(
             runtime
                 .entity(receiver)
@@ -296,7 +296,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
 }
 
 fn aim_point(world: &mut World, object: u64, offset: [f32; 3]) -> Option<Vec3> {
-    if !world.resource::<Runtime>().live(&object) {
+    if !world.resource::<RoundScript>().live(&object) {
         return None;
     }
     let origin = field_vector(world, object, "origin");
@@ -352,7 +352,7 @@ fn acquire(world: &mut World, object: u64, turret: &Turret, from: [f32; 3]) -> O
     let range = weapon_range(world, turret.weapon);
     let ignore = ignore_self(world, object);
     let candidates: Vec<(u32, u64)> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .iter()
         .filter(|(_, slot)| &*slot.sessionstate == "playing")
@@ -389,22 +389,26 @@ fn acquire(world: &mut World, object: u64, turret: &Turret, from: [f32; 3]) -> O
 
 pub(crate) fn advance(world: &mut World) {
     let objects: Vec<u64> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .engine
         .turrets
         .keys()
         .copied()
         .collect();
     for object in objects {
-        if !world.resource::<Runtime>().entities.contains_key(&object) {
+        if !world
+            .resource::<RoundScript>()
+            .entities
+            .contains_key(&object)
+        {
             world
-                .resource_mut::<Runtime>()
+                .resource_mut::<RoundScript>()
                 .engine
                 .turrets
                 .remove(&object);
             continue;
         }
-        let mut turret = world.resource::<Runtime>().engine.turrets[&object].clone();
+        let mut turret = world.resource::<RoundScript>().engine.turrets[&object].clone();
         let from = muzzle(world, object);
         let active = !turret.carried && &*turret.mode != "sentry_offline";
         let found = if active {
@@ -438,7 +442,7 @@ pub(crate) fn advance(world: &mut World) {
         let raise_on_target = turret.on_target && !was_on_target;
         let raise_state = turret.firing != was_firing;
         world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .engine
             .turrets
             .insert(object, turret);
@@ -457,10 +461,10 @@ pub(crate) fn advance(world: &mut World) {
 }
 
 fn shoot(world: &mut World, object: u64) {
-    let turret = world.resource::<Runtime>().engine.turrets[&object].clone();
+    let turret = world.resource::<RoundScript>().engine.turrets[&object].clone();
     let from = muzzle(world, object);
     let attacker = {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         turret
             .owner
             .and_then(|o| runtime.player_client(o))
@@ -500,7 +504,7 @@ pub(crate) fn fire_bullet(
             _ => return,
         },
     };
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let number = runtime.entities[&object].number;
     let other_entity_num = match collider {
         ColliderId::Player { client, .. } => client.0 as i32,
@@ -554,7 +558,7 @@ pub(crate) fn fire_bullet(
             flesh_flags: 0,
         });
     }
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let target = match collider {
         ColliderId::Player { client, .. } => crate::script::HitTarget::Player(client),
         ColliderId::World { .. } => return,
@@ -568,7 +572,7 @@ pub(crate) fn fire_bullet(
     };
     let inflictor = runtime.entities.get(&object).and_then(|e| e.presence);
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .hits
         .push(crate::script::ScriptHit {
             piece: None,

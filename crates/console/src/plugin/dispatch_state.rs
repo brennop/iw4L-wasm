@@ -17,6 +17,9 @@ pub struct ConsoleDispatch {
 
     pub wait_remaining: f32,
 
+    pub wait_progression: bool,
+    pub wait_progression_elapsed: f32,
+
     pub wait_world: bool,
     pub wait_world_elapsed: f32,
 
@@ -55,6 +58,7 @@ impl ConsoleDispatch {
         self.paused = false;
         self.wait_remaining = 0.0;
         self.wait_world = false;
+        self.wait_progression = false;
         self.wait_spawn = false;
         self.wait_spawn_admit = false;
         self.pending_spawn_class = None;
@@ -81,6 +85,7 @@ pub(crate) enum WaitKind {
     Seconds(f32),
     Ticks(u32),
     World,
+    Progression,
     Spawn,
     Torn,
     Ambient,
@@ -88,6 +93,7 @@ pub(crate) enum WaitKind {
 
 pub(crate) fn parse_wait_args(args: &[String]) -> WaitKind {
     match args.first().map(String::as_str) {
+        Some(s) if s.eq_ignore_ascii_case("progression") => WaitKind::Progression,
         Some(s) if s.eq_ignore_ascii_case("world") => WaitKind::World,
         Some(s) if s.eq_ignore_ascii_case("spawn") => WaitKind::Spawn,
         Some(s) if s.eq_ignore_ascii_case("torn") => WaitKind::Torn,

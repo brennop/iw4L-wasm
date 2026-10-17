@@ -357,5 +357,6 @@ pub(crate) fn build_world_draw_gpu_plan(
         scene.retained_lightmap_uvs.len(),
         scene.retained_normals.len(),
     );
-    commands.insert_resource(plan);
+    commands
+        .queue(move |world: &mut World| frame::scope::insert(world, plan, frame::MatchScope::Live));
 }

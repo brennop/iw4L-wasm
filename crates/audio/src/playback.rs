@@ -1,19 +1,20 @@
+use frame::ScopeApp;
 use std::sync::Arc;
 
 use crate::runtime::AudioRuntime;
 use asset_audio::SoundCatalog;
 use asset_core::AssetNamespace;
 use bevy::prelude::*;
-use frame::{ClientSet, FxSoundPublished, MatchTornDown, SessionSwapApplied};
+use frame::{ClientSet, FxSoundPublished};
 use net::{LastAdoptedSnapshot, SvcLocalSound};
 
-use crate::backend::MatchEpoch;
 use crate::clip_store::CueFeedback;
 use crate::messages::{
     AliasCommand, BoundWeaponSound, Footstep, LandSound, PlayAlias, SND_ENT_LOCAL,
     ViewmodelNotetracks, WeaponSound,
 };
 use crate::start::{SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome};
+use frame::{MatchScope, ScopeEpoch};
 
 #[derive(Component, Default)]
 pub struct AmbientListener;
@@ -47,29 +48,31 @@ pub(crate) struct PlayerSoundPlugin;
 
 impl Plugin for PlayerSoundPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<crate::clip_store::ResidentClipCache>()
+        app.scoped::<crate::LoadingAudioStatus>(frame::MatchScope::Loading)
+            .init_resource::<crate::clip_store::ResidentClipCache>()
             .init_resource::<MissingAliasGaps>()
             .init_resource::<StartDecisions>()
-            .init_resource::<CueFeedback>()
-            .init_resource::<crate::ambient::MapAmbientBooted>()
-            .init_resource::<crate::ambient::MapSources>()
-            .init_resource::<crate::script_ambient::ScriptAmbientPlayback>()
-            .init_resource::<crate::destructible_loops::DestructibleSources>()
-            .init_resource::<crate::ambient::SoundBankLoadAttempted>()
-            .init_resource::<crate::ambient::ResidentSoundBank>()
-            .init_resource::<crate::BobCycleTracker>()
-            .init_resource::<crate::shellshock::ShellshockSources>()
-            .init_resource::<crate::breath::BreathSources>()
-            .add_message::<AliasCommand>()
-            .add_message::<Footstep>()
-            .add_message::<WeaponSound>()
-            .add_message::<BoundWeaponSound>()
-            .add_message::<ViewmodelNotetracks>()
-            .init_resource::<crate::entity_events::NotetrackSoundTable>()
-            .add_message::<LandSound>()
+            .scoped::<CueFeedback>(frame::MatchScope::Live)
+            .scoped::<crate::ambient::MapAmbientBooted>(frame::MatchScope::Live)
+            .scoped::<crate::ambient::MapSources>(frame::MatchScope::Live)
+            .scoped::<crate::script_ambient::ScriptAmbientPlayback>(frame::MatchScope::Live)
+            .scoped::<crate::destructible_loops::DestructibleSources>(frame::MatchScope::Live)
+            .scoped::<crate::ambient::SoundBankLoadAttempted>(frame::MatchScope::Loading)
+            .scoped::<crate::ambient::ResidentSoundBank>(frame::MatchScope::Loading)
+            .scoped::<crate::BobCycleTracker>(frame::MatchScope::Live)
+            .scoped::<crate::shellshock::ShellshockSources>(frame::MatchScope::Live)
+            .scoped::<crate::breath::BreathSources>(frame::MatchScope::Live)
+            .scoped_message::<AliasCommand>(frame::MatchScope::Live)
+            .scoped_message::<Footstep>(frame::MatchScope::Live)
+            .scoped_message::<WeaponSound>(frame::MatchScope::Live)
+            .scoped_message::<BoundWeaponSound>(frame::MatchScope::Live)
+            .scoped_message::<ViewmodelNotetracks>(frame::MatchScope::Live)
+            .scoped::<crate::entity_events::NotetrackSoundTable>(frame::MatchScope::Live)
+            .scoped_message::<LandSound>(frame::MatchScope::Live)
             .add_systems(
                 Update,
                 play_weapon_sound_messages
+                    .in_set(frame::InMatch)
                     .in_set(ClientSet::Predict)
                     .after(frame::OwnerEventsPublished)
                     .after(crate::backend::publish_audio_context),
@@ -77,25 +80,37 @@ impl Plugin for PlayerSoundPlugin {
             .add_systems(
                 Update,
                 (
-                    crate::ambient::boot_map_ambient_once,
+                    crate::ambient::boot_map_ambient_once.in_set(frame::InMatch),
                     crate::script_ambient::update_script_ambient
+                        .in_set(frame::InMatch)
                         .after(crate::ambient::boot_map_ambient_once),
                     collect_cue_decisions
+                        .in_set(frame::InMatch)
                         .after(play_alias_messages)
                         .before(play_footstep_messages)
                         .before(play_land_sound_messages),
                     apply_svc_local_sound
+                        .in_set(frame::InMatch)
                         .before(play_alias_messages)
                         .run_if(resource_exists::<LastAdoptedSnapshot>),
-                    crate::shellshock::update_shellshock_tinnitus.before(play_alias_messages),
-                    crate::breath::update.before(play_alias_messages),
-                    play_alias_messages.after(FxSoundPublished),
-                    play_footstep_messages,
+                    crate::shellshock::update_shellshock_tinnitus
+                        .in_set(frame::InMatch)
+                        .before(play_alias_messages),
+                    crate::breath::update
+                        .in_set(frame::InMatch)
+                        .before(play_alias_messages),
+                    play_alias_messages
+                        .in_set(frame::InMatch)
+                        .after(FxSoundPublished),
+                    play_footstep_messages.in_set(frame::InMatch),
                     crate::entity_events::play_viewmodel_notetrack_messages
+                        .in_set(frame::InMatch)
                         .before(play_bound_weapon_sounds),
-                    play_bound_weapon_sounds.after(collect_cue_decisions),
-                    play_land_sound_messages,
-                    crate::destructible_loops::update,
+                    play_bound_weapon_sounds
+                        .in_set(frame::InMatch)
+                        .after(collect_cue_decisions),
+                    play_land_sound_messages.in_set(frame::InMatch),
+                    crate::destructible_loops::update.in_set(frame::InMatch),
                 )
                     .in_set(ClientSet::Effects),
             )
@@ -103,27 +118,17 @@ impl Plugin for PlayerSoundPlugin {
                 Update,
                 (
                     crate::ambient::start_sound_bank_compose
-                        .after(crate::ambient::stop_map_ambient_on_match_end),
+                        .run_if(in_state(frame::MatchScope::Loading)),
                     crate::ambient::install_sound_bank
+                        .run_if(in_state(frame::MatchScope::Loading))
                         .after(crate::ambient::start_sound_bank_compose),
                     crate::entity_events::bind_notetrack_sounds
+                        .in_set(frame::InMatch)
                         .after(crate::ambient::install_sound_bank),
-                    crate::ambient::stop_map_ambient_on_match_end.after(SessionSwapApplied),
-                    reset_clip_prep_on_match_torn_down,
                 )
                     .in_set(ClientSet::Load),
             );
     }
-}
-
-fn reset_clip_prep_on_match_torn_down(
-    mut torn: MessageReader<MatchTornDown>,
-    mut pending: ResMut<CueFeedback>,
-) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    pending.clear();
 }
 
 fn apply_svc_local_sound(
@@ -188,7 +193,7 @@ fn play_alias_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
     local: Res<net::LocalPresentClient>,
 ) {
     for command in events.read() {
@@ -229,6 +234,7 @@ fn play_alias_messages(
             SoundClass::World,
             epoch.0,
             pitch_scale,
+            1.0,
             event.fallback.iter().cloned().collect(),
             event.event,
         );
@@ -242,7 +248,7 @@ fn play_footstep_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
 ) {
     let Some(bank) = bank else {
         drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
@@ -261,6 +267,7 @@ fn play_footstep_messages(
             SoundClass::World,
             epoch.0,
             event.event,
+            event.volume_scale,
         );
         if outcome.allows_binding_fallback() {
             gaps.record(event.alias);
@@ -276,7 +283,7 @@ fn play_weapon_sound_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
 ) {
     let Some(bank) = bank else {
         drop_without_bank(
@@ -299,6 +306,7 @@ fn play_weapon_sound_messages(
             SoundClass::Weapon,
             epoch.0,
             1.0,
+            1.0,
             Vec::new(),
             event.event,
         );
@@ -315,7 +323,7 @@ fn play_bound_weapon_sounds(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
     local: Res<net::LocalPresentClient>,
 ) {
     let Some(bank) = bank else {
@@ -345,6 +353,7 @@ fn play_bound_weapon_sounds(
             SoundClass::Weapon,
             epoch.0,
             1.0,
+            1.0,
             Vec::new(),
             event.event,
         );
@@ -361,7 +370,7 @@ fn play_land_sound_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
 ) {
     let Some(bank) = bank else {
         drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
@@ -380,6 +389,7 @@ fn play_land_sound_messages(
             SoundClass::World,
             epoch.0,
             event.event,
+            event.volume_scale,
         );
         if outcome.allows_binding_fallback() {
             gaps.record(event.alias);
@@ -424,6 +434,7 @@ fn play_surface_alias_chain(
     class: SoundClass,
     epoch: u64,
     event: Option<crate::AudioEvent>,
+    volume_scale: f32,
 ) -> StartOutcome {
     let candidates = crate::aliases::surface_alias_candidates(alias, fallback);
     let Some(first) = candidates.first() else {
@@ -442,6 +453,7 @@ fn play_surface_alias_chain(
         class,
         epoch,
         1.0,
+        volume_scale,
         candidates[1..]
             .iter()
             .map(|name| (*name).to_owned())
@@ -514,6 +526,7 @@ pub(crate) fn play_alias_oneshot(
         class,
         epoch,
         1.0,
+        1.0,
         Vec::new(),
         None,
     )
@@ -533,6 +546,7 @@ fn play_oneshot_recorded(
     class: SoundClass,
     epoch: u64,
     pitch_scale: f32,
+    volume_scale: f32,
     fallbacks: Vec<String>,
     event: Option<crate::AudioEvent>,
 ) -> StartOutcome {
@@ -547,6 +561,7 @@ fn play_oneshot_recorded(
         class,
         epoch,
         pitch_scale,
+        volume_scale,
         fallbacks,
     });
     let outcome = StartOutcome::Pending;

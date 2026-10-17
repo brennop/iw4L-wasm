@@ -23,7 +23,7 @@ net = { path = "../net" }
 assets.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-naga = { version = "29", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
 perf.workspace = true
 
 [lints]

@@ -14,7 +14,7 @@ pub(crate) struct ScriptAmbientPlayback {
 }
 
 pub(crate) fn update_script_ambient(
-    epoch: Res<crate::backend::MatchEpoch>,
+    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
     ready: Res<crate::AudioReady>,
     generation: Res<frame::WorldGeneration>,
     loading: Option<Res<assets::LoadingScreen>>,
@@ -34,7 +34,8 @@ pub(crate) fn update_script_ambient(
         playback.voices.clear();
     }
     playback.voices.retain(CueHandle::active);
-    if !ready.0.ready_for(*generation) || loading.is_some_and(|screen| !screen.is_complete()) {
+    if !ready.0.ready_for(generation.stamp()) || loading.is_some_and(|screen| !screen.is_complete())
+    {
         return;
     }
     let Some(presented) = presented else { return };
@@ -110,6 +111,7 @@ pub(crate) fn update_script_ambient(
             class: SoundClass::Ambience,
             epoch: epoch.0,
             pitch_scale: 1.0,
+            volume_scale: 1.0,
             fallbacks: Vec::new(),
         },
         frames,

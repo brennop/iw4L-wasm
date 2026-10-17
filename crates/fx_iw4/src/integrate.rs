@@ -12,14 +12,7 @@ impl FxElemVec3Range {
     }
 }
 
-fn velocity_random(seed: u64) -> [f32; 3] {
-    use crate::random::{FxRandomChannel, sample_f32};
-    [
-        sample_f32(seed, FxRandomChannel::VelocityX),
-        sample_f32(seed, FxRandomChannel::VelocityY),
-        sample_f32(seed, FxRandomChannel::VelocityZ),
-    ]
-}
+use crate::random::velocity_random;
 
 pub fn integrate_velocity_graph(
     samples: &[FxElemVec3Range],
@@ -27,6 +20,28 @@ pub fn integrate_velocity_graph(
     end_age01: f32,
     life_ms: f32,
     seed: u64,
+) -> [f32; 3] {
+    if samples.len() < 2
+        || life_ms <= 0.0
+        || clamp01(end_age01).max(clamp01(start_age01)) <= clamp01(start_age01)
+    {
+        return [0.0; 3];
+    }
+    integrate_velocity_graph_sampled(
+        samples,
+        start_age01,
+        end_age01,
+        life_ms,
+        velocity_random(seed),
+    )
+}
+
+pub fn integrate_velocity_graph_sampled(
+    samples: &[FxElemVec3Range],
+    start_age01: f32,
+    end_age01: f32,
+    life_ms: f32,
+    random: [f32; 3],
 ) -> [f32; 3] {
     if samples.len() < 2 || life_ms <= 0.0 {
         return [0.0, 0.0, 0.0];
@@ -39,7 +54,6 @@ pub fn integrate_velocity_graph(
     let segment_count = samples.len() - 1;
 
     let segment_span_ms = life_ms * segment_count as f32;
-    let random = velocity_random(seed);
     let mut delta = [0.0f32; 3];
     let first = (libm::floorf(start * segment_count as f32) as usize).min(segment_count - 1);
     let end_excl =
@@ -64,7 +78,16 @@ pub fn integrate_velocity_graph(
 
 #[inline]
 pub fn sample_vel_graph_at_age(samples: &[FxElemVec3Range], age01: f32, seed: u64) -> [f32; 3] {
-    sample_lerp(samples, age01, velocity_random(seed))
+    sample_vel_graph_at_age_sampled(samples, age01, velocity_random(seed))
+}
+
+#[inline]
+pub fn sample_vel_graph_at_age_sampled(
+    samples: &[FxElemVec3Range],
+    age01: f32,
+    random: [f32; 3],
+) -> [f32; 3] {
+    sample_lerp(samples, age01, random)
 }
 
 fn clamp01(x: f32) -> f32 {

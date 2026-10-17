@@ -204,20 +204,20 @@ pub(crate) fn apply_master_volume(
 pub(crate) fn sync_player_name(
     settings: Res<frame::GameSettings>,
     generation: Res<frame::WorldGeneration>,
-    has_world: Res<frame::HasWorld>,
+    has_world: Res<State<frame::MatchScope>>,
     role: Res<frame::RuntimeRole>,
     local: Option<Res<net::LocalPresentClient>>,
     link: Option<Res<net::UdpClientLink>>,
     mut inbox: Option<ResMut<net::ClientActionInbox>>,
     mut seq: ResMut<net::ActionRequestIds>,
-    mut sent: Local<Option<(frame::WorldGeneration, sim::ClientId, [u8; 16])>>,
+    mut sent: Local<Option<(frame::WorldStamp, sim::ClientId, [u8; 16])>>,
     headless: Option<Res<frame::Headless>>,
 ) {
     // A dedicated host has no local player; SetName would create client 0's row.
     if headless.is_some() {
         return;
     }
-    if !has_world.0 || *role == frame::RuntimeRole::Replay {
+    if !(*has_world.get() == frame::MatchScope::Live) || *role == frame::RuntimeRole::Replay {
         *sent = None;
         return;
     }
@@ -233,7 +233,7 @@ pub(crate) fn sync_player_name(
         return;
     }
     let name = entity_iw4::pack_client_state_name(&settings.player_name);
-    let next = (*generation, local.0, name);
+    let next = (generation.stamp(), local.0, name);
     if sent.as_ref() == Some(&next) {
         return;
     }

@@ -89,6 +89,7 @@ pub struct ClientSnapshotMeta {
 pub struct SnapshotMeta {
     pub objectives: crate::ObjectiveMatch,
     pub phase: MatchPhase,
+    pub round_serial: u32,
 
     pub match_elapsed_ms: u32,
     pub prematch: gamemode_iw4::PrematchStep,

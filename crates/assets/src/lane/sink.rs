@@ -9,6 +9,11 @@ use super::helpers::MapXModelCatalog;
 
 fn is_cac_table(name: &str) -> bool {
     asset_game::is_stats_table_name(name)
+        || name.eq_ignore_ascii_case("mp/perkTable.csv")
+        || name.eq_ignore_ascii_case("mp/rankTable.csv")
+        || name.eq_ignore_ascii_case("mp/rankIconTable.csv")
+        || name.eq_ignore_ascii_case("mp/unlockTable.csv")
+        || name.eq_ignore_ascii_case("mp/unlockTableMP.csv")
         || name.eq_ignore_ascii_case("mp/attachmentTable.csv")
         || name.eq_ignore_ascii_case("mp/attachmentCombos.csv")
         || name.eq_ignore_ascii_case("mp/weaponoptions.csv")

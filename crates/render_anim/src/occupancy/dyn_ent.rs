@@ -5,6 +5,7 @@ use dpvs_iw4::{
     link_dyn_ent_primary_light_bit, unfilter_dyn_ent_from_cells,
     unlink_dyn_ent_from_primary_lights,
 };
+use frame::ScopeApp;
 
 use crate::anim::body_frustum::AdmittedCellVis;
 use crate::anim::xmodel_pose::PosedModelSurface;
@@ -146,26 +147,37 @@ impl DynEntPoseProduct {
 
 pub fn register_dyn_ent_systems(app: &mut App) {
     dyn_ent_phys::register_dyn_ent_phys(app);
-    app.init_resource::<DynEntDrawPlan>()
-        .init_resource::<DynEntPoseProduct>()
-        .init_resource::<DynEntCellBits>()
-        .init_resource::<DynEntPrimaryLightVis>()
+    app.scoped::<DynEntDrawPlan>(frame::MatchScope::Live)
+        .scoped::<DynEntPoseProduct>(frame::MatchScope::Live)
+        .scoped::<DynEntCellBits>(frame::MatchScope::Live)
+        .scoped::<DynEntPrimaryLightVis>(frame::MatchScope::Live)
         .add_systems(
             Update,
-            (
-                link_dyn_ent_cells.after(dyn_ent_phys::step_phys_world0),
+            ((
+                link_dyn_ent_cells
+                    .in_set(frame::InMatch)
+                    .after(dyn_ent_phys::step_phys_world0),
                 cull_dyn_ent_cell_models
+                    .in_set(frame::InMatch)
                     .after(link_dyn_ent_cells)
                     .after(frame::WorkerCmdSet::CellStatic),
-                pose_dyn_ents.after(cull_dyn_ent_cell_models),
-                append_dynent_draws.after(pose_dyn_ents),
+                pose_dyn_ents
+                    .in_set(frame::InMatch)
+                    .after(cull_dyn_ent_cell_models),
+                append_dynent_draws
+                    .in_set(frame::InMatch)
+                    .after(pose_dyn_ents),
             )
                 .in_set(frame::RenderSet::Anim)
-                .in_set(frame::WorkerCmdSet::CellDynModel),
+                .in_set(frame::WorkerCmdSet::CellDynModel))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            dyn_ent_phys::step_phys_world0.in_set(frame::WorkerCmdSet::Physics),
+            (dyn_ent_phys::step_phys_world0
+                .in_set(frame::InMatch)
+                .in_set(frame::WorkerCmdSet::Physics))
+            .in_set(frame::InMatch),
         );
 }
 

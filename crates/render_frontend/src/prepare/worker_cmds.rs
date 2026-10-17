@@ -169,9 +169,6 @@ pub struct SkinCachedStaticModelCmd {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellFrustumWorkerCmd {
-    /// Which planes cull the cell's entities: [`CELL_VISIT_FIRST`] the cell's first portal visit
-    /// (`DpvsFrameStats::cell_clips`), [`CELL_VISIT_FRUSTUM`] the camera frustum, else the
-    /// 1-based index of one portal visit in `DpvsFrameStats::cell_clip_visits`.
     pub visit: u32,
     pub cell: u32,
     pub plane_count: u8,
@@ -179,9 +176,7 @@ pub struct CellFrustumWorkerCmd {
     pub view: u16,
 }
 
-/// [`CellFrustumWorkerCmd::visit`]: the cell's first-visit planes.
 pub const CELL_VISIT_FIRST: u32 = 0;
-/// [`CellFrustumWorkerCmd::visit`]: the camera frustum alone.
 pub const CELL_VISIT_FRUSTUM: u32 = u32::MAX;
 
 impl CellFrustumWorkerCmd {

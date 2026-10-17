@@ -743,8 +743,7 @@ fn grab_scavenger(world: &mut FrameWorld, walker: ClientId, number: i32) {
     }
     let picker_pm_type = ps.pm_type;
     let weapon = u32::try_from(item.state.index).unwrap_or(0);
-    world.remove_dropped_item_by_number(number);
-    world.free_dynamic_entity_number(item.state.number);
+    world.despawn_dropped_item(number);
     world.item_pickups_mut().push(ItemPickupRecord {
         picker: walker.0 as i32,
         weapon,
@@ -881,8 +880,7 @@ fn grab_projectile(world: &mut FrameWorld, walker: ClientId, number: i32, tick: 
     let meta = world.client_meta_mut(walker);
     meta.set_ammo(weapon, clip, stock);
     meta.mirror_held_ammo(ps.weapon);
-    world.remove_projectile_by_number(number);
-    world.free_dynamic_entity_number(number);
+    world.despawn_projectile(number);
     world.item_pickups_mut().push(ItemPickupRecord {
         picker: walker.0 as i32,
         weapon,

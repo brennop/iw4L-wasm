@@ -29,6 +29,7 @@ pub fn register_cell_frustum_cmds(app: &mut App) {
     app.add_systems(
         Update,
         enqueue_cell_frustum_cmds_after_vis
+            .in_set(frame::InMatch)
             .after(crate::prepare::scene::cull::apply_dpvs_cull)
             .in_set(frame::WorkerCmdSet::CellStatic),
     );
@@ -52,8 +53,6 @@ fn enqueue_cell_frustum_cmds_after_vis(
             Err(_) => false,
             Ok(_) => true,
         };
-    // One command per portal visit, each culling the cell's entities against the planes it
-    // was seen through, as IW4 does: an entity seen through any of a cell's portals is drawn.
     let visits = &stats.cell_clip_visits;
     if !visits.is_empty() && visits.len() <= CELL_VISIT_BUDGET {
         for (index, (cell, clip)) in visits.iter().enumerate() {
@@ -73,9 +72,6 @@ fn enqueue_cell_frustum_cmds_after_vis(
         }
         return;
     }
-    // No walk this frame (single cell, all cells, no eye cell), or too many visits to queue:
-    // one command per cell. With visits it falls back to the camera frustum, never to one
-    // visit's planes, so nothing a later portal shows is culled.
     for cell in cells {
         let first = stats
             .cell_clips
@@ -103,6 +99,4 @@ fn enqueue_cell_frustum_cmds_after_vis(
     }
 }
 
-/// Portal visits queued as one cell command each; the cell queues hold 512 commands
-/// (`0x1800` bytes of 12), so a frame with more visits falls back to one command per cell.
 const CELL_VISIT_BUDGET: usize = 480;

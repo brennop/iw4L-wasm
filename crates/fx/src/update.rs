@@ -1,9 +1,9 @@
 use fx_iw4::{
     FX_ELEM_TYPE_SPARK_CLOUD, FX_ELEM_TYPE_SPARK_FOUNTAIN, FX_STATUS_HAS_PENDING_LOOP_ELEMS,
-    FX_STATUS_REF_COUNT_MASK_IW4, FxOrientFrame, FxUpdateEffectBolt, axis_to_quat,
+    FX_STATUS_REF_COUNT_MASK_IW4, FxUpdateEffectBolt, axis_to_quat,
     begin_iterating_over_effects_exclusive, bolt_compose_orientation, bolt_mark_lost,
     elem_norm_time, elem_uses_collision, end_iterating_over_effects, end_iterating_runs_gc,
-    get_orientation, unit_quat_to_axis, update_effect_bolt, vector_vectors,
+    unit_quat_to_axis, update_effect_bolt, vector_vectors,
 };
 use std::collections::HashMap;
 
@@ -36,6 +36,7 @@ pub struct FxElemMotionQuery<'a> {
     pub base_vel: [f32; 3],
 
     pub elem_random_seed: u64,
+    pub motion_random: fx_iw4::FxMotionRandom,
 
     pub origin: [f32; 3],
     pub prev_msec: i32,
@@ -61,6 +62,7 @@ pub struct PendingCollide {
     dt_sec: f32,
     base_vel: [f32; 3],
     elem_random_seed: u64,
+    motion_random: fx_iw4::FxMotionRandom,
     origin: [f32; 3],
     prev_msec: i32,
     msec_now: i32,
@@ -82,6 +84,7 @@ impl PendingCollide {
             dt_sec: self.dt_sec,
             base_vel: self.base_vel,
             elem_random_seed: self.elem_random_seed,
+            motion_random: self.motion_random,
             origin: self.origin,
             prev_msec: self.prev_msec,
             msec_now: self.msec_now,
@@ -387,10 +390,10 @@ fn pending_collide_for_elem(
     let def_index = elem.def_index;
     let base_vel = elem.base_vel;
     let elem_seed = elem.random_seed;
+    let motion_random = elem.motion_random;
     let origin = elem.origin;
     let msec_begin = elem.msec_begin;
     let life_msec = elem.life_span_msec.max(1);
-    let flags = elem.flags;
     let (def_name, catalog_index, now, alt) = match host.effect_at(effect_slot) {
         Some(e) => (
             slot_def_name(e),
@@ -400,11 +403,7 @@ fn pending_collide_for_elem(
         ),
         None => return None,
     };
-    let spawn = host
-        .elems
-        .get(slot)
-        .map(|e| e.orient_spawn_params(elem_seed));
-    let orient = crate::spark::spark_elem_orientation(flags, &now, &alt, spawn);
+    let orient = elem.orientation(&now, &alt);
     let life_ms = life_msec as f32;
     Some(PendingCollide {
         handle,
@@ -417,6 +416,7 @@ fn pending_collide_for_elem(
         dt_sec: (msec_now.saturating_sub(prev_msec)).max(0) as f32 * 0.001,
         base_vel,
         elem_random_seed: elem_seed,
+        motion_random,
         origin,
         prev_msec,
         msec_now,
@@ -615,6 +615,7 @@ fn update_element(
     let life_msec = elem.life_span_msec.max(1);
     let base_vel = elem.base_vel;
     let elem_seed = elem.random_seed;
+    let motion_random = elem.motion_random;
     let origin = elem.origin;
     let elem_type = elem.elem_type;
     let spark_handle = elem.spark_cloud_handle;
@@ -631,11 +632,7 @@ fn update_element(
             ),
             None => return true,
         };
-    let spawn = host
-        .elems
-        .get(slot)
-        .map(|e| e.orient_spawn_params(elem_seed));
-    let orient = crate::spark::spark_elem_orientation(flags, &now, &alt, spawn);
+    let orient = elem.orientation(&now, &alt);
 
     if msec_now >= death {
         spawn_death_child(
@@ -644,11 +641,8 @@ fn update_element(
             def_name.as_str(),
             catalog_index,
             def_index,
-            flags,
             origin,
-            &now,
-            &alt,
-            spawn,
+            orient,
             msec_now,
             products,
             mark_entity,
@@ -670,6 +664,7 @@ fn update_element(
         dt_sec,
         base_vel,
         elem_random_seed: elem_seed,
+        motion_random,
         origin,
         prev_msec,
         msec_now,
@@ -781,11 +776,8 @@ fn update_element(
                     def_name.as_str(),
                     catalog_index,
                     def_index,
-                    flags,
                     death_origin,
-                    &now,
-                    &alt,
-                    spawn,
+                    orient,
                     msec_now,
                     products,
                     mark_entity,
@@ -808,20 +800,17 @@ fn update_element(
             elem_random_seed: elem_seed,
             norm_time: elem_norm_time(msec_now.saturating_sub(msec_begin).max(0), life_msec),
         }) {
-            let (origin_now, at_rest_now, spawn, seed) = match host.elems.get(slot) {
-                Some(e) => (
-                    e.origin,
-                    e.at_rest_fraction,
-                    Some(e.orient_spawn_params(elem_seed)),
-                    elem_seed,
+            let (world, at_rest_now) = match host.elems.get(slot) {
+                Some(e) => (e.world_origin(&now, &alt), e.at_rest_fraction),
+                None => (
+                    spark_elem_world_origin(origin, flags, &now, &alt, None),
+                    at_rest_fraction,
                 ),
-                None => (origin, at_rest_fraction, None, elem_seed),
             };
-            let world = spark_elem_world_origin(origin_now, flags, &now, &alt, spawn);
             let axis = spark_elem_axis(
                 visual.spawn_angles,
                 visual.angular_velocity,
-                seed,
+                elem_seed,
                 msec_now.saturating_sub(msec_begin).max(0),
                 life_msec,
                 at_rest_now,
@@ -881,16 +870,12 @@ fn spawn_death_child(
     parent_def_name: &str,
     catalog_index: u16,
     def_index: u8,
-    flags: i32,
     elem_origin: [f32; 3],
-    effect_now: &FxOrientFrame,
-    effect_alt: &FxOrientFrame,
-    spawn: Option<fx_iw4::FxOrientSpawnParams>,
+    orient: fx_iw4::FxOrientation,
     msec: i32,
     products: crate::FxSpawnProducts,
     mark_entity: Option<u16>,
 ) {
-    let orient = get_orientation(flags, effect_now, effect_alt, spawn);
     let world = fx_iw4::orientation_pos_to_world(orient.origin, orient.axis, elem_origin);
     let played = on_child(
         host,

@@ -1,10 +1,10 @@
+use bevy::prelude::DetectChanges;
 use bevy::prelude::Resource;
-use frame::{AdmissionKey, MatchInstalled, MatchKey, MatchTornDown, RuntimeRole};
+use frame::{AdmissionKey, InstalledMatch, MatchKey, RuntimeRole};
 use sim::ClientId;
 
 use crate::session_core::{
     ClientMatchCore, FailStage, HostWorldReady, SessionFail, confirm_keyed_world_ready,
-    format_session_transition,
 };
 use crate::transport::master::{MasterBridge, MasterBridgeState};
 use crate::transport::protocol::HandshakeReject;
@@ -257,23 +257,13 @@ pub fn live_match_key(bridge: Option<&MasterBridge>) -> MatchKey {
     }
 }
 
-fn owner_match_key(bridge: Option<&MasterBridge>) -> MatchKey {
-    bridge
-        .map(|bridge| bridge.state().identity().match_key())
-        .unwrap_or(MatchKey::NONE)
-}
-
 pub fn drive_client_admission_facts(
     mut admission: bevy::prelude::ResMut<ClientAdmission>,
-    mut installed: bevy::prelude::MessageReader<MatchInstalled>,
-    mut torn: bevy::prelude::MessageReader<MatchTornDown>,
+    installed: Option<bevy::prelude::Res<InstalledMatch>>,
     link: Option<bevy::prelude::Res<UdpClientLink>>,
     bridge: Option<bevy::prelude::Res<MasterBridge>>,
 ) {
-    for fact in torn.read() {
-        admission.core.apply_teardown(*fact);
-    }
-    for fact in installed.read() {
+    if let Some(fact) = installed.filter(|fact| fact.is_added()) {
         admission.core.apply_start(fact.load_key.match_key);
         admission.core.apply_install(fact.load_key);
     }
@@ -393,7 +383,7 @@ pub fn drive_signon(
 pub fn drive_map_loaded(
     bridge: Option<bevy::prelude::Res<MasterBridge>>,
     descriptor: Option<bevy::prelude::Res<crate::MatchDescriptor>>,
-    has_world: Option<bevy::prelude::Res<frame::HasWorld>>,
+    has_world: Option<bevy::prelude::Res<bevy::prelude::State<frame::MatchScope>>>,
     admission: Option<bevy::prelude::Res<ClientAdmission>>,
     signon: bevy::prelude::Res<SignonState>,
     hold: Option<bevy::prelude::Res<crate::AuthorityLoadHold>>,
@@ -405,7 +395,7 @@ pub fn drive_map_loaded(
     let Some(bridge) = bridge else {
         return;
     };
-    let installed = has_world.is_some_and(|world| world.0);
+    let installed = has_world.is_some_and(|world| *world.get() == frame::MatchScope::Live);
     let hold = hold.is_some_and(|hold| hold.0);
     let live = live_match_key(Some(&bridge));
     let belongs = admission.as_ref().is_some_and(|admission| {
@@ -520,57 +510,36 @@ pub fn drive_map_loaded(
 }
 
 pub fn drive_match_boundary(
-    mut torn: bevy::prelude::MessageReader<MatchTornDown>,
     mut hub: Option<bevy::prelude::ResMut<crate::transport::udp_session::UdpAuthorityHub>>,
     mut link: Option<bevy::prelude::ResMut<UdpClientLink>>,
     bridge: Option<bevy::prelude::Res<MasterBridge>>,
     mut live: bevy::prelude::Local<bool>,
 ) {
-    let live_key = owner_match_key(bridge.as_deref());
-    let live_epoch = live_key.match_epoch;
-    let mut reset = false;
-    let mut end_match = false;
-    let mut torn_key = frame::MatchKey::NONE;
-    for fact in torn.read() {
-        if !crate::session_core::match_key_boundary_applies(fact.match_key, live_key) {
-            diag::info!(
-                Net,
-                "session-transition {}",
-                format_session_transition(
-                    fact.match_key.session_id,
-                    None,
-                    fact.match_epoch,
-                    None,
-                    None,
-                    None,
-                    None,
-                    &format!("live={live_epoch}"),
-                    "torn",
-                    "ignored",
-                    None,
-                    "stale world",
-                )
-            );
-            continue;
-        }
-        reset = true;
-        torn_key = fact.match_key;
-        end_match = fact.reason.keeps_session();
-    }
     let in_match = bridge
         .as_ref()
         .map(|bridge| bridge.state().in_match())
         .unwrap_or(*live);
-    if reset || (*live && !in_match) {
+    if *live && !in_match {
         if let Some(hub) = hub.as_mut() {
             hub.reset_match();
         }
         if let Some(link) = link.as_mut() {
             link.reset_match();
         }
-        if end_match && let Some(bridge) = bridge.as_ref() {
-            bridge.report_match_ended(torn_key);
-        }
     }
     *live = in_match;
+}
+
+pub(crate) fn release_match_protocol(
+    mut admission: bevy::prelude::ResMut<ClientAdmission>,
+    mut hub: Option<bevy::prelude::ResMut<crate::transport::udp_session::UdpAuthorityHub>>,
+    mut link: Option<bevy::prelude::ResMut<UdpClientLink>>,
+) {
+    admission.core.retire_match();
+    if let Some(hub) = hub.as_mut() {
+        hub.reset_match();
+    }
+    if let Some(link) = link.as_mut() {
+        link.reset_match();
+    }
 }

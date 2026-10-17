@@ -480,6 +480,24 @@ fn spawn_elem(
     let prev_head = effect.first_elem_handle[class];
     effect.first_elem_handle[class] = handle;
 
+    let spawn_orientation = fx_iw4::get_orientation(
+        elem_def.flags,
+        &effect.frame_now(),
+        &effect.frame_when_played(),
+        Some(fx_iw4::FxOrientSpawnParams {
+            spawn_origin: elem_def.spawn_origin,
+            spawn_offset_radius: [
+                elem_def.spawn_offset_radius_base,
+                elem_def.spawn_offset_radius_amp,
+            ],
+            spawn_offset_height: [
+                elem_def.spawn_offset_height_base,
+                elem_def.spawn_offset_height_amp,
+            ],
+            seed: life_idx,
+        }),
+    );
+
     host.elems[elem_slot] = FxElemSlot {
         occupied: true,
         def_index,
@@ -494,17 +512,10 @@ fn spawn_elem(
         msec_begin,
         life_span_msec: life,
         random_seed: life_idx,
+        motion_random: fx_iw4::FxMotionRandom::from_seed(life_idx),
         base_vel: [0.0; 3],
         origin,
-        spawn_origin: elem_def.spawn_origin,
-        spawn_offset_radius: [
-            elem_def.spawn_offset_radius_base,
-            elem_def.spawn_offset_radius_amp,
-        ],
-        spawn_offset_height: [
-            elem_def.spawn_offset_height_base,
-            elem_def.spawn_offset_height_amp,
-        ],
+        spawn_orientation,
         owner_effect_slot: effect_slot as u16,
         class_index: class as u8,
         sort_order: elem_def.sort_order,
@@ -529,7 +540,6 @@ fn spawn_elem(
         match crate::spark_fountain::alloc_spark_fountain(host) {
             Some(fountain_handle) => {
                 host.elems[elem_slot].spark_cloud_handle = fountain_handle;
-                // Fountain cells are world space in every run mode.
                 match crate::spark_fountain::spray_spark_fountain(
                     host,
                     fountain_handle,

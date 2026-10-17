@@ -14,11 +14,13 @@ pub use chrome::{
     mode0_from_kill_cam_entity, third_person_in_killcam,
 };
 pub use playerstate::{
-    AnimPair, BREATH_GASP_TIME_MS, BREATH_HOLD_TIME_MS, ENTITYNUM_NONE, PERK_COLDBLOODED,
-    PERK_EXTRA_BREATH_MS, PERK_FASTMANTLE, PERK_HEARTBREAKER, PERK_HOLDBREATH, PERK_PISTOLDEATH,
-    PERK_QUICKDRAW, PERK_QUICKDRAW_SPEED_SCALE, PERK_QUIETER, PERK_SCAVENGER, PERK1_SPYGAME,
-    PlayerState, breath_hold_time_ms, eflags, get_viewmodel_weapon_index, mantle_flags,
-    other_flags, pm_flags, weap_flags,
+    AnimPair, BREATH_GASP_TIME_MS, BREATH_HOLD_TIME_MS, ENTITYNUM_NONE,
+    EXTENDED_MELEE_TARGET_RANGE, PERK_COLDBLOODED, PERK_EXTRA_BREATH_MS, PERK_FASTMANTLE,
+    PERK_HEARTBREAKER, PERK_HOLDBREATH, PERK_PISTOLDEATH, PERK_QUICKDRAW,
+    PERK_QUICKDRAW_SPEED_SCALE, PERK_QUIETER, PERK_SCAVENGER, PERK_SELECTIVEHEARING,
+    PERK1_EXTENDEDMELEE, PERK1_FASTSPRINTRECOVERY, PERK1_SPYGAME, PlayerState,
+    SPRINT_RECOVERY_MULTIPLIER, breath_hold_time_ms, eflags, get_viewmodel_weapon_index,
+    mantle_flags, other_flags, pm_flags, weap_flags,
 };
 pub use seat::{
     HITSCAN_KILL_CAM_ENTITY, SeatFocus, apply_killcam_seat, rebase_archived_timers,

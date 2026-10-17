@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 
 use crate::authority::inbox::{AuthorityClock, ClientActionInbox, ClientCommandInbox};
 use crate::client::presentation::presented::{LocalPresentClient, PresentedSnapshot};
@@ -42,16 +43,22 @@ impl Plugin for NetPlugin {
             .world()
             .get_resource::<crate::MasterLaunchIntent>()
             .is_some_and(crate::MasterLaunchIntent::enabled);
+        if !app.is_plugin_added::<frame::ScopePlugin>() {
+            app.add_plugins(frame::ScopePlugin);
+        }
+        app.add_systems(
+            OnExit(frame::MatchScope::Live),
+            crate::signon::release_match_protocol.in_set(frame::ScopeSet::Release),
+        );
         app.init_resource::<crate::AccountSaveReceipt>();
         app.insert_resource(self.role)
             .init_resource::<PresentedSnapshot>()
             .init_resource::<LocalPresentClient>()
-            .init_resource::<crate::MasterMatchStart>()
-            .init_resource::<crate::client::presentation::presented::ViewweaponAim>();
+            .init_resource::<crate::MasterMatchStart>();
         app.add_systems(Last, crate::time_scale::apply_time_scale);
         {
             configure_authority_sets(app);
-            app.init_resource::<AuthorityClock>()
+            app.scoped::<AuthorityClock>(frame::MatchScope::Live)
                 .init_resource::<ClientCommandInbox>()
                 .init_resource::<ClientActionInbox>()
                 .init_resource::<crate::ClientActionLedger>()
@@ -66,11 +73,11 @@ impl Plugin for NetPlugin {
             app.init_resource::<crate::client::input::LookState>()
                 .init_resource::<crate::client::input::ClientActionInput>();
 
-            app.init_resource::<ListenLoopback>();
+            app.scoped::<ListenLoopback>(frame::MatchScope::Live);
             app.init_resource::<crate::authority::runtime::AuthorityInputGate>();
             if self.role == RuntimeRole::Client {
                 app.init_resource::<crate::authority::runtime::AuthorityLoadHold>()
-                    .init_resource::<crate::authority::inbox::AuthorityClock>();
+                    .scoped::<crate::authority::inbox::AuthorityClock>(frame::MatchScope::Live);
             }
             if !self.role.runs_authority() {
                 app.init_resource::<ClientCommandInbox>()

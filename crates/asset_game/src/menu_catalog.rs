@@ -1724,3 +1724,12 @@ impl AssetLinkSink for MenuSink {
         Ok(())
     }
 }
+
+impl gamemode_iw4::progression::ProgressionTable for CapturedStringTable {
+    fn rows(&self) -> usize {
+        self.rows
+    }
+    fn cell(&self, row: usize, column: usize) -> &str {
+        self.cell(row as i32, column as i32)
+    }
+}

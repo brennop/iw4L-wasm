@@ -103,3 +103,26 @@ pub fn elem_visual_index(count: u8, key: u64) -> usize {
     }
     ((u32::from(sample_u16(key, FxRandomChannel::Visual)) * u32::from(count)) >> 16) as usize
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FxMotionRandom {
+    pub velocity: [f32; 3],
+    pub gravity: f32,
+}
+
+impl FxMotionRandom {
+    pub fn from_seed(seed: u64) -> Self {
+        Self {
+            velocity: velocity_random(seed),
+            gravity: sample_f32(seed, FxRandomChannel::Gravity),
+        }
+    }
+}
+
+pub(crate) fn velocity_random(seed: u64) -> [f32; 3] {
+    [
+        sample_f32(seed, FxRandomChannel::VelocityX),
+        sample_f32(seed, FxRandomChannel::VelocityY),
+        sample_f32(seed, FxRandomChannel::VelocityZ),
+    ]
+}

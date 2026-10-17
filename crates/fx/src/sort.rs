@@ -1,7 +1,6 @@
 use fx_iw4::{existing_elem_sorts_before_new, sort_dist_to_cam_sq};
 
 use crate::elem::{FX_ELEM_HANDLE_NONE, elem_slot_for_handle};
-use crate::spark::spark_elem_world_origin;
 use crate::system::FxSystemHost;
 
 pub fn sort_new_elems_in_effect(
@@ -145,14 +144,7 @@ fn sort_distance(
     }
     let elem = host.elems.get(elem_slot)?;
     let effect = host.effect_at(effect_slot)?;
-    let seed = elem.random_seed;
-    let world = spark_elem_world_origin(
-        elem.origin,
-        elem.flags,
-        &effect.frame_now(),
-        &effect.frame_when_played(),
-        Some(elem.orient_spawn_params(seed)),
-    );
+    let world = elem.world_origin(&effect.frame_now(), &effect.frame_when_played());
     let distance = sort_dist_to_cam_sq(camera_origin, world);
     host.sort_distances[elem_slot] = (host.sort_epoch, distance);
     Some(distance)

@@ -370,6 +370,11 @@ pub const PERK_QUICKDRAW_SPEED_SCALE: f32 = 1.5;
 pub const PERK_COLDBLOODED: u32 = 1 << 27;
 
 pub const PERK_HEARTBREAKER: u32 = 1 << 28;
+pub const PERK_SELECTIVEHEARING: u32 = 1 << 29;
+pub const PERK1_FASTSPRINTRECOVERY: u32 = 1 << 2;
+pub const PERK1_EXTENDEDMELEE: u32 = 1 << 3;
+pub const EXTENDED_MELEE_TARGET_RANGE: f32 = 192.0;
+pub const SPRINT_RECOVERY_MULTIPLIER: f32 = 0.6;
 
 pub const PERK1_SPYGAME: u32 = 1;
 

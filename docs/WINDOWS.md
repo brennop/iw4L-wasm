@@ -34,8 +34,13 @@ restores the previous executable. There is no permanent second executable.
 
 The temporary files are `iw4l.update.exe`, `iw4l.previous.exe` and a helper in
 `%TEMP%`; the next verified startup removes the backup and helper. The lock file
-`iw4l.update.lock` serializes update checks; `iw4l.update-helper` records cleanup.
-An update error stops startup and reports the failure; a configured community requires a reachable update origin.
+`iw4l-artifacts/iw4l.update.lock` serializes update checks; the artifacts directory
+is created as needed beside the executable. `iw4l.update-helper` records cleanup.
+Update checks log DNS/TLS settings, HTTP results, download bytes/percentage/speed,
+verification and handoff steps to the console and `iw4l-artifacts/logs/`.
+If checking or downloading fails, the reason is logged and the installed game
+starts with the selected community. Online play still needs a reachable master
+and a compatible version. DNS/connect waits are limited to 8s; each HTTP request to 180s.
 Without a community descriptor, local development can launch without checking.
 
 A descriptor pins a public CA and the master's TLS name for both HTTPS and QUIC.

@@ -132,6 +132,9 @@ impl PortId {
         if pass.hardware_shadow_compare {
             id.arguments_hash ^= 0x5AD0_C0DE;
         }
+        if pass.depth_to_colour {
+            id.arguments_hash ^= 0xDE97_C010;
+        }
         Some(id)
     }
 
@@ -280,6 +283,8 @@ pub struct RuntimePass {
     pub color_space: crate::PassColorSpace,
 
     pub hardware_shadow_compare: bool,
+
+    pub depth_to_colour: bool,
 }
 
 impl RuntimePass {
@@ -290,6 +295,7 @@ impl RuntimePass {
             && self.arguments == other.arguments
             && self.color_space == other.color_space
             && self.hardware_shadow_compare == other.hardware_shadow_compare
+            && self.depth_to_colour == other.depth_to_colour
     }
 }
 

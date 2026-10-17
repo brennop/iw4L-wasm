@@ -73,6 +73,7 @@ pub(crate) fn save(
     account: Option<ResMut<LocalAccount>>,
     mut persistence: ResMut<AccountPersistence>,
     mut receipt: Option<ResMut<net::AccountSaveReceipt>>,
+    mut player_data: ResMut<sim::LocalPlayerData>,
 ) {
     if !matches!(
         *role,
@@ -94,6 +95,7 @@ pub(crate) fn save(
     let Some(snapshot) = snapshot else {
         return;
     };
+    let _ = player_data.refresh(Some(&snapshot));
     if persistence.saved.as_ref() == Some(&snapshot) {
         persistence.retry_at = None;
         persistence.last_error = None;
@@ -151,6 +153,97 @@ pub(crate) fn save(
                 persistence.last_error = Some(error);
             }
             persistence.retry_at = Some(Instant::now() + SAVE_RETRY_DELAY);
+        }
+    }
+}
+
+pub(crate) fn route_unlock_commands(
+    mut commands: MessageReader<crate::ConsoleCommand>,
+    mut echo: crate::feature_dispatch::ConsoleEcho,
+    (screen, world, role): (
+        Res<frame::AppScreen>,
+        Res<State<frame::MatchScope>>,
+        Res<frame::RuntimeRole>,
+    ),
+    (account, mut authority): (
+        Option<ResMut<LocalAccount>>,
+        Option<ResMut<net::AuthorityWorld>>,
+    ),
+    mut persistence: ResMut<AccountPersistence>,
+    mut receipt: Option<ResMut<net::AccountSaveReceipt>>,
+    mut player_data: ResMut<sim::LocalPlayerData>,
+) {
+    let mut account = account;
+    for command in commands.read().filter(|command| command.name == "unlock") {
+        let unlock = match command.args.as_slice() {
+            [mode] if mode == "all" => true,
+            [mode] if mode == "reset" => false,
+            _ => {
+                echo.write("usage: unlock <all|reset>");
+                continue;
+            }
+        };
+        if *screen != frame::AppScreen::MainMenu
+            || *world.get() == frame::MatchScope::Live
+            || !matches!(
+                *role,
+                frame::RuntimeRole::Listen | frame::RuntimeRole::Client
+            )
+        {
+            echo.write("unlock: disconnect to the main menu first");
+            continue;
+        }
+        let (Some(account), Some(path)) = (account.as_mut(), persistence.path.as_ref()) else {
+            echo.write("unlock: saved account is unavailable");
+            continue;
+        };
+        if !player_data.unlock_data_ready() {
+            echo.write("unlock: progression content is loading");
+            continue;
+        }
+        let result = (|| -> Result<_, String> {
+            let snapshot = player_data
+                .unlock_snapshot(account.id, account.snapshot.as_ref(), unlock)
+                .map_err(|error| format!("cannot edit progression: {error:?}"))?;
+            let store = authority
+                .as_ref()
+                .filter(|authority| authority.0.persistent_data().snapshot(account.id).is_some())
+                .map(|authority| {
+                    let mut store = authority.0.persistent_data().for_new_match();
+                    store.replace_unbound(snapshot.clone())?;
+                    Ok::<_, sim::PersistentDataError>(store)
+                })
+                .transpose()
+                .map_err(|error| format!("cannot replace account: {error:?}"))?;
+            let next = LocalAccount {
+                id: account.id,
+                key: account.key.clone(),
+                snapshot: Some(snapshot.clone()),
+            };
+            save_current(path, &next, persistence.saved.as_ref())
+                .map_err(|error| format!("cannot save account: {error}"))?;
+            Ok((next, snapshot, store))
+        })();
+        match result {
+            Ok((next, snapshot, store)) => {
+                if let (Some(authority), Some(store)) = (authority.as_mut(), store) {
+                    authority.0.set_persistent_data(store);
+                }
+                let _ = player_data.refresh(Some(&snapshot));
+                persistence.saved = Some(snapshot.clone());
+                persistence.retry_at = None;
+                persistence.last_error = None;
+                if let Some(receipt) = receipt.as_mut() {
+                    receipt.0 = Some(snapshot);
+                }
+                **account = next;
+                echo.write(if unlock {
+                    "unlock all: maximum level and native challenges saved; Pro perks unlocked"
+                } else {
+                    "unlock reset: level 1 and initial challenge progress saved"
+                });
+            }
+            Err(error) => echo.write(format!("unlock: {error}")),
         }
     }
 }

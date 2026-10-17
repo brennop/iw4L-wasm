@@ -124,6 +124,24 @@ impl PersistentDataStore {
         Ok(())
     }
 
+    pub fn replace_unbound(
+        &mut self,
+        snapshot: AccountSnapshot,
+    ) -> Result<(), PersistentDataError> {
+        if self
+            .clients
+            .values()
+            .any(|account| *account == snapshot.account)
+        {
+            return Err(PersistentDataError::AccountInUse);
+        }
+        let mut updated = self.clone();
+        updated.accounts.remove(&snapshot.account);
+        updated.import(snapshot)?;
+        *self = updated;
+        Ok(())
+    }
+
     pub fn initialize(
         &mut self,
         account: AccountId,
@@ -307,6 +325,12 @@ impl PersistentDataStore {
     pub fn account(&self, client: ClientId) -> Option<AccountId> {
         self.clients.get(&client).copied()
     }
+    pub(crate) fn temporary_client(&self, client: ClientId) -> bool {
+        self.account(client)
+            .and_then(|account| self.accounts.get(&account))
+            .is_some_and(|record| record.temporary)
+    }
+
     pub fn for_new_match(&self) -> Self {
         let mut store = self.clone();
         store.clear_bindings();
@@ -479,6 +503,62 @@ impl PersistentDataStore {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn submit_ranks(
+        &mut self,
+        mode: &str,
+        ranks: &BTreeMap<u32, (i32, i32)>,
+    ) -> Result<usize, PersistentDataError> {
+        let participants: Vec<_> = ranks
+            .iter()
+            .filter_map(|(&client, &(group, score))| {
+                let account = self.account(ClientId(client))?;
+                let record = self.accounts.get(&account)?;
+                (!record.temporary).then_some((
+                    account,
+                    group,
+                    score,
+                    record.skills,
+                    record.revision,
+                ))
+            })
+            .collect();
+        let mut updates = Vec::new();
+        for &(account, group, score, skills, revision) in &participants {
+            let opponents: Vec<_> = participants
+                .iter()
+                .filter(|&&(other, other_group, ..)| other != account && other_group != group)
+                .map(|&(_, _, other_score, other_skills, _)| {
+                    let outcome = match score.cmp(&other_score) {
+                        std::cmp::Ordering::Greater => 1.0,
+                        std::cmp::Ordering::Equal => 0.5,
+                        std::cmp::Ordering::Less => 0.0,
+                    };
+                    (other_skills, outcome)
+                })
+                .collect();
+            if opponents.is_empty() {
+                continue;
+            }
+            let updated = skills
+                .updated_ranked(mode, &opponents)
+                .map_err(PersistentDataError::Skill)?;
+            let revision = revision
+                .checked_add(1)
+                .ok_or(PersistentDataError::RevisionOverflow)?;
+            updates.push((account, updated, revision));
+        }
+        let count = updates.len();
+        for (account, skills, revision) in updates {
+            let record = self
+                .accounts
+                .get_mut(&account)
+                .expect("ranked account exists");
+            record.skills = skills;
+            record.revision = revision;
+        }
+        Ok(count)
     }
 
     pub fn snapshot(&self, account: AccountId) -> Option<AccountSnapshot> {

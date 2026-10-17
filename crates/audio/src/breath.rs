@@ -29,12 +29,11 @@ pub(crate) fn update(
     view: Option<Res<frame::ViewSubject>>,
     screen: Option<Res<frame::AppScreen>>,
     bank: Option<Res<crate::SoundBank>>,
-    mut torn: MessageReader<frame::MatchTornDown>,
     mut died: MessageReader<frame::LifeEnded>,
     mut state: Local<BreathAudio>,
     mut sources: ResMut<BreathSources>,
     runtime: Res<crate::AudioRuntime>,
-    epoch: Res<crate::backend::MatchEpoch>,
+    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
     mut play: MessageWriter<AliasCommand>,
 ) {
     let client = local.as_ref().map(|local| local.0);
@@ -61,15 +60,13 @@ pub(crate) fn update(
         sources.context = context;
         *state = BreathAudio::default();
     }
-    let torn_down = torn.read().count() != 0;
     let died = died.read().any(|event| {
         client.is_some_and(|client| event.client == client.0) && life == Some(event.life)
     });
     let ps = client
         .and_then(|client| presented.as_ref()?.alive_player(client))
         .filter(|_| !view.as_ref().is_some_and(|view| view.in_killcam()));
-    if torn_down
-        || died
+    if died
         || !screen.is_some_and(|screen| matches!(*screen, frame::AppScreen::InGame))
         || ps.is_none()
     {

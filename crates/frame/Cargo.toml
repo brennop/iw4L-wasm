@@ -3,7 +3,7 @@ name = "frame"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Shared frame TOC labels and session identity. No plugins, no systems."
+description = "Shared frame schedules, session identity and state-scoped ownership."
 
 [dependencies]
 bevy.workspace = true

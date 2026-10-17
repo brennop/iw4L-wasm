@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use frame::{MatchTornDown, RuntimeRole};
+use frame::RuntimeRole;
 
 use crate::plugin::NetPlugin;
 use crate::schedule::{
@@ -67,7 +67,7 @@ fn install_client_probes(app: &mut App) {
 fn probe_app() -> App {
     let mut app = App::new();
     app.add_plugins(bevy::time::TimePlugin);
-    app.add_message::<MatchTornDown>();
+    app.add_plugins(frame::ScopePlugin);
     app
 }
 
@@ -105,6 +105,10 @@ pub fn client_toc_order() -> Result<(), String> {
     app.init_resource::<Trace>();
     configure_client_sets(&mut app);
     install_client_probes(&mut app);
+    app.world_mut()
+        .resource_mut::<NextState<frame::MatchScope>>()
+        .set(frame::MatchScope::Live);
+    app.world_mut().run_schedule(StateTransition);
     app.world_mut().run_schedule(Update);
     let trace = app.world().resource::<Trace>().0.clone();
     let expected = expected_client_trace();
@@ -196,6 +200,10 @@ pub fn worker_cmd_nested_in_present() -> Result<(), String> {
         push("W:cell_static").in_set(WorkerCmdSet::CellStatic),
     );
     app.add_systems(Update, push("W:skin_model").in_set(WorkerCmdSet::SkinModel));
+    app.world_mut()
+        .resource_mut::<NextState<frame::MatchScope>>()
+        .set(frame::MatchScope::Live);
+    app.world_mut().run_schedule(StateTransition);
     app.world_mut().run_schedule(Update);
     let trace = app.world().resource::<Trace>().0.clone();
     let send = trace
@@ -246,6 +254,10 @@ pub fn role(role: RuntimeRole, expect_authority: bool, expect_client: bool) -> R
         app.world_mut().run_schedule(FixedUpdate);
     }
     if expect_client {
+        app.world_mut()
+            .resource_mut::<NextState<frame::MatchScope>>()
+            .set(frame::MatchScope::Live);
+        app.world_mut().run_schedule(StateTransition);
         app.world_mut().run_schedule(Update);
     }
 

@@ -258,114 +258,177 @@ pub fn startup() -> Result<Option<Vec<OsString>>> {
         return Ok(Some(args));
     };
     let community = read_community(&path)?;
+    SELECTED
+        .set(community.clone())
+        .map_err(|_| "community already selected")?;
     if !cfg!(windows) {
-        SELECTED
-            .set(community)
-            .map_err(|_| "community already selected")?;
         return Ok(Some(args));
     }
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(root.join("iw4l.update.lock"))
+    update_log(&format!("checking updates for {}", community.name));
+    match check_update(&exe, root, &community, &args, restarted) {
+        Ok(true) => Ok(None),
+        Ok(false) => Ok(Some(args)),
+        Err(error) => {
+            let message =
+                format!("update failed: {error}; starting game with the installed version");
+            diag::announce_stdout(&format!("[iw4l] {message}"));
+            diag::warn!(Launch, "{message}");
+            Ok(Some(args))
+        }
+    }
+}
+
+fn update_log(message: &str) {
+    diag::announce_stdout(&format!("[iw4l] {message}"));
+    diag::info!(Launch, "{message}");
+}
+
+fn check_update(
+    exe: &Path,
+    root: &Path,
+    community: &Community,
+    args: &[OsString],
+    restarted: bool,
+) -> Result<bool> {
+    let mut stage = "acquire update lock";
+    let result = (|| {
+        let lock = open_update_lock(root)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if lock.try_lock_exclusive().is_ok() {
+                break;
+            }
+            if !restarted || Instant::now() >= deadline {
+                return Err("another iw4l process is checking or applying an update".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        stage = "clean up previous update helper";
+        cleanup_helper(root)?;
+        stage = "resolve update host and configure TLS";
+        let (client, url) = client(community)?;
+        stage = "fetch update manifest";
+        let manifest =
+            Manifest::parse(&get(&client, url.clone(), MAX_MANIFEST, "manifest", None)?)?;
+        update_log(&format!(
+            "release {}: {} compressed bytes, {} executable bytes",
+            manifest.release, manifest.file.compressed_size, manifest.file.size
+        ));
+        stage = "verify installed executable";
+        update_log("checking installed executable size and SHA-256");
+        if fs::metadata(exe).map_err(|e| e.to_string())?.len() == manifest.file.size
+            && file_sha256(exe)? == manifest.file.sha256.to_ascii_lowercase()
+        {
+            let _ = fs::remove_file(root.join("iw4l.previous.exe"));
+            update_log("installed executable is up to date; starting game");
+            return Ok(false);
+        }
+        stage = "download release";
+        update_log(&format!("downloading release {}", manifest.release));
+        let blob_url = url.join(&manifest.file.path).map_err(|e| e.to_string())?;
+        let blob = get(
+            &client,
+            blob_url,
+            manifest.file.compressed_size,
+            "release",
+            Some(manifest.file.compressed_size),
+        )?;
+        stage = "decompress release";
+        update_log("decompressing release");
+        let mut decoder =
+            zstd::stream::read::Decoder::new(blob.as_slice()).map_err(|e| e.to_string())?;
+        decoder.window_log_max(29).map_err(|e| e.to_string())?;
+        let decoded = read_bounded(decoder, manifest.file.size)?;
+        stage = "verify downloaded executable";
+        update_log("verifying downloaded executable size and SHA-256");
+        if decoded.len() as u64 != manifest.file.size {
+            return Err(format!(
+                "executable size mismatch: expected {} bytes, received {}",
+                manifest.file.size,
+                decoded.len()
+            ));
+        }
+        let actual_hash = hash(&decoded);
+        if actual_hash != manifest.file.sha256.to_ascii_lowercase() {
+            return Err(format!(
+                "executable SHA-256 mismatch: expected {}, received {actual_hash}",
+                manifest.file.sha256
+            ));
+        }
+        stage = "stage verified executable";
+        update_log("writing verified executable to iw4l.update.exe");
+        let staged = root.join("iw4l.update.exe");
+        write_synced(&staged, &decoded)?;
+        fs::set_permissions(
+            &staged,
+            fs::metadata(exe).map_err(|e| e.to_string())?.permissions(),
+        )
         .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if lock.try_lock_exclusive().is_ok() {
-            break;
-        }
-        if !restarted || Instant::now() >= deadline {
-            return Err("another iw4l process is checking or applying an update".into());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    cleanup_helper(root)?;
-    let (client, url) = client(&community)?;
-    let manifest = Manifest::parse(&get(&client, url.clone(), MAX_MANIFEST)?)?;
-    if fs::metadata(&exe).map_err(|e| e.to_string())?.len() == manifest.file.size
-        && file_sha256(&exe)? == manifest.file.sha256.to_ascii_lowercase()
-    {
-        let _ = fs::remove_file(root.join("iw4l.previous.exe"));
-        SELECTED
-            .set(community)
-            .map_err(|_| "community already selected")?;
-        return Ok(Some(args));
-    }
-    println!("[iw4l] downloading release {}", manifest.release);
-    let blob_url = url.join(&manifest.file.path).map_err(|e| e.to_string())?;
-    let blob = get(&client, blob_url, manifest.file.compressed_size)?;
-    if blob.len() as u64 != manifest.file.compressed_size {
-        return Err("compressed update size mismatch".into());
-    }
-    let mut decoder =
-        zstd::stream::read::Decoder::new(blob.as_slice()).map_err(|e| e.to_string())?;
-    decoder.window_log_max(29).map_err(|e| e.to_string())?;
-    let decoded = read_bounded(decoder, manifest.file.size)?;
-    if decoded.len() as u64 != manifest.file.size
-        || hash(&decoded) != manifest.file.sha256.to_ascii_lowercase()
-    {
-        return Err("update executable size or SHA-256 mismatch".into());
-    }
-    let staged = root.join("iw4l.update.exe");
-    write_synced(&staged, &decoded)?;
-    fs::set_permissions(
-        &staged,
-        fs::metadata(&exe).map_err(|e| e.to_string())?.permissions(),
-    )
-    .map_err(|e| e.to_string())?;
-    let temp = std::env::temp_dir().join(format!(
-        "iw4l-update-{}-{}",
-        std::process::id(),
-        &manifest.file.sha256[..16]
-    ));
-    fs::create_dir(&temp).map_err(|e| format!("create helper directory: {e}"))?;
-    let helper = temp.join("iw4l-update-helper.exe");
-    fs::copy(&exe, &helper).map_err(|e| e.to_string())?;
-    let job = Job {
-        pid: std::process::id(),
-        target: exe.clone(),
-        source: staged,
-        sha256: manifest.file.sha256,
-        size: manifest.file.size,
-        args: args
-            .iter()
-            .map(|a| {
-                a.to_str()
-                    .map(str::to_owned)
-                    .ok_or("non-UTF8 launch argument")
-            })
-            .collect::<std::result::Result<_, _>>()?,
-        cwd: std::env::current_dir().map_err(|e| e.to_string())?,
-    };
-    let job_path = temp.join("job.json");
-    write_synced(
-        &job_path,
-        &serde_json::to_vec(&job).map_err(|e| e.to_string())?,
-    )?;
-    write_synced(
-        &root.join("iw4l.update-helper"),
-        temp.to_str().ok_or("non-UTF8 helper directory")?.as_bytes(),
-    )?;
-    let mut child = Command::new(helper)
-        .arg("--iw4l-replace")
-        .arg(&job_path)
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !temp.join("ready").is_file() {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            return Err("update helper exited before handoff".into());
-        }
-        if Instant::now() >= deadline {
+        stage = "prepare replacement helper";
+        update_log("preparing replacement helper");
+        let temp = std::env::temp_dir().join(format!(
+            "iw4l-update-{}-{}",
+            std::process::id(),
+            &manifest.file.sha256[..16]
+        ));
+        fs::create_dir(&temp).map_err(|e| format!("create helper directory: {e}"))?;
+        let helper = temp.join("iw4l-update-helper.exe");
+        fs::copy(exe, &helper).map_err(|e| e.to_string())?;
+        let job = Job {
+            pid: std::process::id(),
+            target: exe.to_path_buf(),
+            source: staged,
+            sha256: manifest.file.sha256,
+            size: manifest.file.size,
+            args: args
+                .iter()
+                .map(|a| {
+                    a.to_str()
+                        .map(str::to_owned)
+                        .ok_or("non-UTF8 launch argument")
+                })
+                .collect::<std::result::Result<_, _>>()?,
+            cwd: std::env::current_dir().map_err(|e| e.to_string())?,
+        };
+        let job_path = temp.join("job.json");
+        write_synced(
+            &job_path,
+            &serde_json::to_vec(&job).map_err(|e| e.to_string())?,
+        )?;
+        write_synced(
+            &root.join("iw4l.update-helper"),
+            temp.to_str().ok_or("non-UTF8 helper directory")?.as_bytes(),
+        )?;
+        stage = "start replacement helper";
+        update_log("starting replacement helper and waiting for handoff");
+        let mut child = Command::new(helper)
+            .arg("--iw4l-replace")
+            .arg(&job_path)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let handoff = (|| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !temp.join("ready").is_file() {
+                if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                    return Err(format!("update helper exited before handoff: {status}"));
+                }
+                if Instant::now() >= deadline {
+                    return Err("update helper handoff timeout".into());
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(())
+        })();
+        if let Err(error) = handoff {
             let _ = child.kill();
-            return Err("update helper handoff timeout".into());
+            let _ = child.wait();
+            return Err(error);
         }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    Ok(None)
+        update_log("replacement helper ready; handing off to install and restart");
+        Ok(true)
+    })();
+    result.map_err(|error| format!("{stage}: {error}"))
 }
 
 fn cleanup_helper(root: &Path) -> Result<()> {
@@ -418,13 +481,30 @@ fn client(community: &Community) -> Result<(reqwest::blocking::Client, reqwest::
     let port = url
         .port_or_known_default()
         .ok_or("update URL has no port")?;
-    let addresses: Vec<_> = (url.host_str().ok_or("missing update host")?, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("update address: {e}"))?
-        .collect();
+    update_log(&format!(
+        "resolving update host {}:{port} (DNS timeout 8s)",
+        url.host_str().ok_or("missing update host")?
+    ));
+    let host = url.host_str().ok_or("missing update host")?.to_owned();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let lookup_host = host.clone();
+    std::thread::spawn(move || {
+        let addresses = (lookup_host.as_str(), port)
+            .to_socket_addrs()
+            .map(|addresses| addresses.collect::<Vec<_>>());
+        let _ = sender.send(addresses);
+    });
+    let addresses = receiver
+        .recv_timeout(Duration::from_secs(8))
+        .map_err(|e| format!("DNS lookup {host}:{port} (8s timeout): {e}"))?
+        .map_err(|e| format!("DNS lookup {host}:{port}: {e}"))?;
     if addresses.is_empty() {
         return Err("update host resolved no addresses".into());
     }
+    update_log(&format!(
+        "resolved update addresses: {addresses:?}; TLS server name: {}",
+        community.master.server_name
+    ));
     let roots = trust_roots(&community.updates.ca_pem)?;
     let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
@@ -463,19 +543,98 @@ pub fn trust_roots(pem: &str) -> Result<rustls::RootCertStore> {
     Ok(roots)
 }
 
-fn get(client: &reqwest::blocking::Client, url: reqwest::Url, cap: u64) -> Result<Vec<u8>> {
-    let response = client
-        .get(url)
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(&format!(": {cause}"));
+        source = cause.source();
+    }
+    message
+}
+
+fn get(
+    client: &reqwest::blocking::Client,
+    url: reqwest::Url,
+    cap: u64,
+    label: &str,
+    expected: Option<u64>,
+) -> Result<Vec<u8>> {
+    let started = Instant::now();
+    update_log(&format!(
+        "requesting {label}: {url} (connect timeout 8s, request timeout 180s)"
+    ));
+    let mut response = client
+        .get(url.clone())
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .send()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("GET {url}: {}", error_chain(&e)))?;
+    update_log(&format!(
+        "{label}: HTTP {} after {:.1}s, content length {:?}",
+        response.status(),
+        started.elapsed().as_secs_f64(),
+        response.content_length()
+    ));
     if response.status() != reqwest::StatusCode::OK {
-        return Err(format!("update HTTP status {}", response.status()));
+        return Err(format!("GET {url}: HTTP {}", response.status()));
     }
     if response.content_length().is_some_and(|size| size > cap) {
-        return Err("update response exceeds limit".into());
+        return Err(format!("GET {url}: response exceeds {cap} byte limit"));
     }
-    read_bounded(response, cap)
+    let total = expected.or(response.content_length());
+    let mut bytes = Vec::new();
+    let mut buffer = [0; 64 * 1024];
+    let mut last_progress = Instant::now();
+    update_log(&format!("{label}: download started, 0 bytes received"));
+    loop {
+        let remaining = (cap + 1 - bytes.len() as u64).min(buffer.len() as u64) as usize;
+        let count = response.read(&mut buffer[..remaining]).map_err(|e| {
+            format!(
+                "GET {url}: read failed after {} bytes in {:.1}s: {}",
+                bytes.len(),
+                started.elapsed().as_secs_f64(),
+                error_chain(&e)
+            )
+        })?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if bytes.len() as u64 > cap {
+            return Err(format!("GET {url}: response exceeds {cap} byte limit"));
+        }
+        if last_progress.elapsed() >= Duration::from_secs(1) {
+            log_progress(label, bytes.len() as u64, total, started.elapsed());
+            last_progress = Instant::now();
+        }
+    }
+    if let Some(expected) = total
+        && bytes.len() as u64 != expected
+    {
+        return Err(format!(
+            "GET {url}: incomplete download: received {} of {expected} bytes in {:.1}s",
+            bytes.len(),
+            started.elapsed().as_secs_f64()
+        ));
+    }
+    log_progress(label, bytes.len() as u64, total, started.elapsed());
+    update_log(&format!("{label}: download complete"));
+    Ok(bytes)
+}
+
+fn log_progress(label: &str, received: u64, total: Option<u64>, elapsed: Duration) {
+    let size = match total.filter(|&total| total > 0) {
+        Some(total) => format!(
+            "{received}/{total} bytes ({:.1}%)",
+            received as f64 * 100.0 / total as f64
+        ),
+        None => format!("{received} bytes"),
+    };
+    update_log(&format!(
+        "{label}: {size}, {:.1}s elapsed, {:.1} KiB/s",
+        elapsed.as_secs_f64(),
+        received as f64 / 1024.0 / elapsed.as_secs_f64().max(0.001)
+    ));
 }
 
 fn read_bounded(reader: impl Read, cap: u64) -> Result<Vec<u8>> {
@@ -506,6 +665,18 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     file.sync_all().map_err(|e| e.to_string())
 }
 
+fn open_update_lock(root: &Path) -> Result<File> {
+    let artifacts = root.join("iw4l-artifacts");
+    fs::create_dir_all(&artifacts).map_err(|e| e.to_string())?;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(artifacts.join("iw4l.update.lock"))
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Serialize, Deserialize)]
 struct Job {
     pid: u32,
@@ -532,13 +703,7 @@ fn replace(path: &Path) -> Result<()> {
         return Err("invalid replacement source".into());
     }
     wait_parent(job.pid, &temp.join("ready"))?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(root.join("iw4l.update.lock"))
-        .map_err(|e| e.to_string())?;
+    let lock = open_update_lock(root)?;
     lock.try_lock_exclusive()
         .map_err(|_| "another process interrupted replacement")?;
     if fs::metadata(&job.source).map_err(|e| e.to_string())?.len() != job.size

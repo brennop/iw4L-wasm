@@ -885,7 +885,7 @@ fn fill_product_list(
 pub struct FrameAssemblyInputs {
     pub frame_id: u64,
 
-    pub world_generation: frame::WorldGeneration,
+    pub world_generation: frame::WorldStamp,
 
     pub catalog_generation: MaterialGenerationId,
     pub inv_image_height: Option<f32>,
@@ -920,7 +920,7 @@ pub(crate) fn open_frame_products(
     let inputs = inputs.as_mut();
     inputs.frame_id = inputs.frame_id.wrapping_add(1);
     inputs.world_generation = world_generation
-        .map(|generation| *generation)
+        .map(|generation| generation.stamp())
         .unwrap_or_default();
     inputs.catalog_generation = generation.catalog.generation_id();
     inputs.inv_image_height = lighting.as_ref().and_then(|lighting| {

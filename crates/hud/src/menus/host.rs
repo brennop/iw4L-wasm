@@ -4,6 +4,7 @@ use hud_iw4::{ExprError, ExprHost, Operand, PartyFlag, WeaponLockView};
 use crate::playercard::UiLocalVars;
 
 pub(crate) struct MenuWorld<'a> {
+    pub player_data: Option<&'a sim::LocalPlayerData>,
     pub ms: i32,
     pub in_game: bool,
     pub party: &'a frame::UiPartyState,
@@ -102,7 +103,13 @@ impl MenuHost<'_> {
         let int = |at: usize| path.get(at).map_or(-1, hud_iw4::source_int);
         let field_name = field(2).to_ascii_lowercase();
         if field_name == "inuse" {
-            return Ok(Operand::Int(i32::from(slot.is_some())));
+            return Ok(Operand::Int(i32::from(
+                slot.is_some()
+                    && self
+                        .world
+                        .player_data
+                        .is_some_and(|data| data.custom_class_available(index)),
+            )));
         }
         let Some(slot) = slot else {
             return Ok(Operand::Str(String::from("none")));
@@ -363,10 +370,32 @@ impl ExprHost for MenuHost<'_> {
         let root = path.first().map(hud_iw4::source_str).unwrap_or_default();
         if root.eq_ignore_ascii_case("customClasses") {
             self.custom_class(path)
-        } else if root.eq_ignore_ascii_case("killstreaks") {
-            Ok(Operand::Str(String::from("none")))
         } else {
-            Err(ExprError::Host("player data path"))
+            let data = self
+                .world
+                .player_data
+                .ok_or(ExprError::Host("player data unavailable"))?;
+            let names: Vec<_> = path.iter().map(hud_iw4::source_str).collect();
+            let keys: Vec<_> = names
+                .iter()
+                .zip(path)
+                .map(|(name, operand)| match operand {
+                    Operand::Int(index) => structured_data_iw4::Key::Index(*index),
+                    _ => structured_data_iw4::Key::Name(name),
+                })
+                .collect();
+            match data
+                .read(&keys)
+                .map_err(|_| ExprError::Host("player data path"))?
+            {
+                structured_data_iw4::Value::Int(n) => Ok(Operand::Int(n)),
+                structured_data_iw4::Value::Bool(n) => Ok(Operand::Int(n.into())),
+                structured_data_iw4::Value::Float(n) => Ok(Operand::Float(n)),
+                structured_data_iw4::Value::String(s) => Ok(Operand::Str(s.into())),
+                structured_data_iw4::Value::Bytes(s) => {
+                    Ok(Operand::Str(String::from_utf8_lossy(s).into_owned()))
+                }
+            }
         }
     }
     fn table_lookup(
@@ -376,10 +405,27 @@ impl ExprHost for MenuHost<'_> {
         key: &str,
         result_col: i32,
     ) -> Result<Operand, ExprError> {
+        if let Some(value) = self
+            .world
+            .player_data
+            .and_then(|data| data.table_lookup(table, col0, key, result_col))
+        {
+            return Ok(Operand::Str(value.into()));
+        }
         if let Some(value) = self.weapon_table_field(table, col0, key, result_col) {
             return Ok(Operand::Str(value));
         }
-        let Some(t) = self.world.catalog.and_then(|c| c.string_table(table)) else {
+        let shared = self.world.weapons.and_then(|weapons| {
+            if table.eq_ignore_ascii_case("mp/ranktable.csv") {
+                weapons.shared_rank_table().ok()
+            } else if table.eq_ignore_ascii_case("mp/rankicontable.csv") {
+                weapons.shared_rank_icons().ok()
+            } else {
+                None
+            }
+        });
+        let Some(t) = shared.or_else(|| self.world.catalog.and_then(|c| c.string_table(table)))
+        else {
             return Err(ExprError::Host("string table"));
         };
         Ok(Operand::Str(
@@ -389,7 +435,24 @@ impl ExprHost for MenuHost<'_> {
         ))
     }
     fn table_lookup_by_row(&self, table: &str, row: i32, col: i32) -> Result<Operand, ExprError> {
-        let Some(t) = self.world.catalog.and_then(|c| c.string_table(table)) else {
+        if let Some(value) = self
+            .world
+            .player_data
+            .and_then(|data| data.table_cell(table, row, col))
+        {
+            return Ok(Operand::Str(value.into()));
+        }
+        let shared = self.world.weapons.and_then(|weapons| {
+            if table.eq_ignore_ascii_case("mp/ranktable.csv") {
+                weapons.shared_rank_table().ok()
+            } else if table.eq_ignore_ascii_case("mp/rankicontable.csv") {
+                weapons.shared_rank_icons().ok()
+            } else {
+                None
+            }
+        });
+        let Some(t) = shared.or_else(|| self.world.catalog.and_then(|c| c.string_table(table)))
+        else {
             return Err(ExprError::Host("string table"));
         };
         Ok(Operand::Str(t.cell(row, col).to_owned()))
@@ -408,8 +471,34 @@ impl ExprHost for MenuHost<'_> {
     fn weapon_lock(&self) -> Result<WeaponLockView, ExprError> {
         Err(ExprError::Host("weapon lock"))
     }
-    fn is_item_unlocked(&self, _item: &str) -> Result<i32, ExprError> {
-        Ok(1)
+    fn is_item_unlocked(&self, item: &str) -> Result<i32, ExprError> {
+        let requirement = if let Some(family) = asset_game::FamilyKey::parse(item) {
+            self.world
+                .weapons
+                .ok_or(ExprError::Host("weapon catalog"))?
+                .item_unlock_requirement(family.namespace, &family.base)
+                .map_err(|_| ExprError::Host("unlock data"))?
+        } else {
+            let table = self
+                .world
+                .catalog
+                .and_then(|catalog| catalog.string_table("mp/unlockTable.csv"))
+                .ok_or(ExprError::Host("unlock table"))?;
+            let Some(row) = table.lookup_row_in_col(0, item) else {
+                return Ok(1);
+            };
+            gamemode_iw4::progression::UnlockRequirement::capture(
+                table.cell(row, 2),
+                table.cell(row, 3),
+            )
+            .map_err(|_| ExprError::Host("unlock requirement"))?
+        };
+        Ok(self
+            .world
+            .player_data
+            .and_then(|data| data.progression.as_ref())
+            .is_some_and(|progression| progression.unlocked(&requirement))
+            .into())
     }
     fn party_flag(&self, flag: PartyFlag) -> Result<i32, ExprError> {
         let party = self.world.party;

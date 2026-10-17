@@ -2,7 +2,7 @@ use crate::spawn::{AuthoredSpawnPoint, MatchBootstrap};
 use crate::world::SimBrush;
 use weapon_iw4::WeaponCombatFacts;
 
-pub const CONTENT_DIGEST_SCHEME: u64 = 19;
+pub const CONTENT_DIGEST_SCHEME: u64 = 21;
 
 #[derive(Clone, Copy)]
 struct Digest(u64);
@@ -361,12 +361,15 @@ pub fn content_digest(
     combat: &[WeaponCombatFacts],
     penetration: &[weapon_iw4::BulletPenFacts],
     runnable: &[bool],
+    unlocks: &[Result<gamemode_iw4::progression::UnlockRequirement, String>],
+    ranks: &gamemode_iw4::progression::RankProgression,
     transition_groups: &[u32],
     camouflage_slots: &[Vec<u8>],
     equipment: &[crate::EquipmentRuntimeFacts],
     bootstrap: &MatchBootstrap,
     clip_brushes: &[SimBrush],
     script_models: &[crate::EntityCollisionCapabilities],
+    map_content: &asset_core::MapContentDefinition,
 ) -> u64 {
     let mut h = Digest::new();
     h.u64(CONTENT_DIGEST_SCHEME);
@@ -375,9 +378,12 @@ pub fn content_digest(
     hash_weapon_admission(&mut h, runnable, transition_groups);
     hash_camouflage_slots(&mut h, camouflage_slots);
     hash_equipment(&mut h, equipment);
+    hash_unlocks(&mut h, unlocks);
+    hash_ranks(&mut h, ranks);
     hash_class_catalog(&mut h);
     hash_spawns(&mut h, &bootstrap.spawns);
     hash_collision(&mut h, clip_brushes);
+    hash_map_content(&mut h, map_content);
     hash_script_models(&mut h, script_models);
     h.finish()
 }
@@ -397,12 +403,15 @@ pub fn content_components(
     combat: &[WeaponCombatFacts],
     penetration: &[weapon_iw4::BulletPenFacts],
     runnable: &[bool],
+    unlocks: &[Result<gamemode_iw4::progression::UnlockRequirement, String>],
+    ranks: &gamemode_iw4::progression::RankProgression,
     transition_groups: &[u32],
     camouflage_slots: &[Vec<u8>],
     equipment: &[crate::EquipmentRuntimeFacts],
     bootstrap: &MatchBootstrap,
     clip_brushes: &[SimBrush],
     script_models: &[crate::EntityCollisionCapabilities],
+    map_content: &asset_core::MapContentDefinition,
 ) -> ContentComponents {
     let component = |tag: u8| {
         let mut h = Digest::new();
@@ -414,6 +423,7 @@ pub fn content_components(
     let mut map = component(b'M');
     hash_spawns(&mut map, &bootstrap.spawns);
     hash_collision(&mut map, clip_brushes);
+    hash_map_content(&mut map, map_content);
 
     let mut models = component(b'D');
     hash_script_models(&mut models, script_models);
@@ -424,6 +434,8 @@ pub fn content_components(
     hash_weapon_admission(&mut weapons, runnable, transition_groups);
     hash_camouflage_slots(&mut weapons, camouflage_slots);
     hash_equipment(&mut weapons, equipment);
+    hash_unlocks(&mut weapons, unlocks);
+    hash_ranks(&mut weapons, ranks);
 
     let mut classes = component(b'C');
     hash_class_catalog(&mut classes);
@@ -433,5 +445,74 @@ pub fn content_components(
         models: models.finish(),
         weapons: weapons.finish(),
         classes: classes.finish(),
+    }
+}
+
+fn hash_unlocks(
+    h: &mut Digest,
+    unlocks: &[Result<gamemode_iw4::progression::UnlockRequirement, String>],
+) {
+    h.u64(unlocks.len() as u64);
+    for unlock in unlocks {
+        match unlock {
+            Ok(requirement) => {
+                h.byte(1);
+                h.u32(requirement.rank);
+                h.u64(requirement.challenges.len() as u64);
+                for challenge in &requirement.challenges {
+                    h.bytes(challenge.name.as_bytes());
+                    h.i32(challenge.tier);
+                }
+            }
+            Err(reason) => {
+                h.byte(0);
+                h.bytes(reason.as_bytes());
+            }
+        }
+    }
+}
+
+fn hash_ranks(h: &mut Digest, ranks: &gamemode_iw4::progression::RankProgression) {
+    h.u64(ranks.thresholds().len() as u64);
+    for &(rank, xp) in ranks.thresholds() {
+        h.u32(rank);
+        h.i32(xp);
+    }
+}
+
+fn hash_map_content(h: &mut Digest, content: &asset_core::MapContentDefinition) {
+    match &content.glass {
+        asset_core::GlassContent::Absent => h.byte(0),
+        asset_core::GlassContent::Unsupported => h.byte(1),
+        asset_core::GlassContent::Invalid(error) => {
+            h.byte(2);
+            h.bytes(error.as_bytes());
+        }
+        asset_core::GlassContent::Prepared(glass) => {
+            h.byte(3);
+            h.u64(glass.panes().len() as u64);
+            for pane in glass.panes() {
+                for value in pane
+                    .origin
+                    .into_iter()
+                    .chain(pane.axis_s)
+                    .chain(pane.axis_t)
+                {
+                    h.f32(value);
+                }
+            }
+            h.u64(glass.names().len() as u64);
+            for (name, pieces) in glass.names() {
+                h.bytes(name.as_bytes());
+                h.u64(pieces.len() as u64);
+                for piece in pieces {
+                    h.u32(*piece);
+                }
+            }
+            h.u64(glass.collision_pieces().len() as u64);
+            for piece in glass.collision_pieces() {
+                h.u32(*piece);
+            }
+        }
     }
 }

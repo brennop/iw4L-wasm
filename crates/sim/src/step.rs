@@ -93,7 +93,7 @@ pub(crate) fn run_schedule(
     let request = ecs
         .remove_resource::<StepRequest>()
         .expect("simulation request missing");
-    if let Some(fault) = ecs.resource::<crate::script::Runtime>().fault.as_ref() {
+    if let Some(fault) = ecs.resource::<crate::script::RoundScript>().fault.as_ref() {
         return Err(fault.clone());
     }
     Ok(request
@@ -723,6 +723,11 @@ fn finalize_system(ecs: &mut World) {
 
     harvest_predictable_events(&mut world, tick);
     world.script_gaps_mut().report();
+    debug_assert!(
+        world.validate_entity_payloads().is_ok(),
+        "{:?}",
+        world.validate_entity_payloads()
+    );
 }
 
 fn publish_snapshot_system(ecs: &mut World) {
@@ -753,7 +758,7 @@ fn publish_snapshot_system(ecs: &mut World) {
     };
     drop(world);
     let script_seats = crate::script::script_seats(ecs);
-    let mut runtime = ecs.resource_mut::<crate::script::Runtime>();
+    let mut runtime = ecs.resource_mut::<crate::script::RoundScript>();
     let script_exit_level = std::mem::take(&mut runtime.exit_level);
     effects.kicks = std::mem::take(&mut runtime.kicks)
         .into_iter()
@@ -1829,7 +1834,14 @@ fn choose_bot_class(world: &mut FrameWorld, id: ClientId, index: u8) {
     let bot_classes = &world.bootstrap_ref().bot_classes;
     let def = (!bot_classes.is_empty() && !t5)
         .then(|| bot_classes[index as usize % bot_classes.len()].clone())
-        .filter(|def| !def.locked && validate_class_content(world, def).is_ok());
+        .filter(|def| !def.locked && validate_class_content(world, def).is_ok())
+        .filter(|def| {
+            world
+                .ecs_ref()
+                .resource::<crate::PersistentDataStore>()
+                .temporary_client(id)
+                || crate::progression::validate_class(world, id, def).is_ok()
+        });
     match def {
         Some(def) => crate::script::choose_class(world.ecs(), id.0, &def),
         None => crate::script::choose_default_class(world.ecs(), id.0, index),
@@ -1855,7 +1867,10 @@ fn answer_custom_class(
     let Some(def) = crate::script::personal_class(world.ecs(), id.0, crate::ClassId(slot)) else {
         return Some(ActionOutcome::Refused);
     };
-    if validate_class_content(world, &def).is_err() {
+    if validate_class_content(world, &def)
+        .and_then(|()| crate::progression::validate_class(world, id, &def))
+        .is_err()
+    {
         return Some(ActionOutcome::Refused);
     }
     crate::script::choose_class(world.ecs(), id.0, &def);
@@ -1895,7 +1910,9 @@ fn apply_select_class(
         return ActionOutcome::Refused;
     };
 
-    if let Err(reason) = validate_class_content(world, &def) {
+    if let Err(reason) = validate_class_content(world, &def)
+        .and_then(|()| crate::progression::validate_class(world, id, &def))
+    {
         diag::info!(
             Sim,
             "class select: rejected client={} id={} rev={} reason={}",
@@ -2195,7 +2212,7 @@ pub(crate) fn script_slide(
     origin: [f32; 3],
     slide: &mut crate::script::host::mechanics::Slide,
 ) -> [f32; 3] {
-    let runtime = world.resource::<crate::script::Runtime>();
+    let runtime = world.resource::<crate::script::RoundScript>();
     let linked = |mut child: u64| {
         for _ in 0..runtime.entities.len() {
             if child == object {

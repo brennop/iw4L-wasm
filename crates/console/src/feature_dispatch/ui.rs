@@ -16,7 +16,7 @@ pub(crate) fn route_ui_commands(
     ),
     mut ui_draw: ResMut<UiDraw>,
     mut game_settings: ResMut<frame::GameSettings>,
-    menus: Res<hud::ScriptMenus>,
+    menus: hud::MenuState<'_>,
     identity: Option<Res<LaunchIdentity>>,
     (authority, authority_clock, presented): (
         Option<Res<AuthorityWorld>>,

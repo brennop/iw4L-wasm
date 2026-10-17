@@ -3,7 +3,7 @@ use crate::ScriptModelId;
 use crate::bullet_collision::{AuthorityDObjState, EntityCollisionCapabilities};
 use crate::frame::FrameWorld;
 use crate::gentity::ScriptMoverGentity;
-use crate::script::{Arc, BTreeMap, Runtime, Value};
+use crate::script::{Arc, BTreeMap, RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -43,14 +43,14 @@ fn near_angles(a: [f32; 3], b: [f32; 3]) -> bool {
         .all(|(a, b)| math_iw4::angle_subtract(*a, b).abs() < 0.01)
 }
 
-fn vector(runtime: &mut Runtime, id: u64, name: &str) -> [f32; 3] {
+fn vector(runtime: &mut RoundScript, id: u64, name: &str) -> [f32; 3] {
     match runtime.object_field(id, name) {
         Value::Vector(v) => v,
         _ => [0.0; 3],
     }
 }
 
-fn model_field(runtime: &mut Runtime, id: u64) -> Option<Arc<str>> {
+fn model_field(runtime: &mut RoundScript, id: u64) -> Option<Arc<str>> {
     match runtime.object_field(id, "model") {
         Value::String(model) if !model.is_empty() && !model.starts_with('*') => Some(model.into()),
         _ => None,
@@ -68,7 +68,7 @@ pub(crate) fn initialize_map_models(world: &mut World) {
             ))
         })
         .collect();
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let objects: Vec<_> = runtime
         .entities
         .iter()
@@ -81,7 +81,7 @@ pub(crate) fn initialize_map_models(world: &mut World) {
 }
 
 pub(crate) fn spawn_presence(world: &mut World, origin: [f32; 3]) -> Result<ScriptModelId, String> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<crate::script::MatchScript>();
     let serial = runtime.next_spawned_presence;
     runtime.next_spawned_presence = serial
         .checked_add(1)
@@ -111,7 +111,7 @@ pub(crate) fn settled(world: &mut World) -> FrameWorld<'_> {
 /// Collision rows only. Networked mover state is left to `present`: posing a
 /// mover mid-tick would break its tick-to-tick velocity.
 pub(crate) fn settle_collision(world: &mut World) {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let placed: Vec<(u64, ScriptModelId, bool, bool)> = runtime
         .entities
         .iter()
@@ -171,7 +171,7 @@ pub(crate) fn sync_presence(world: &mut World) {
 }
 
 fn publish_killcam_cameras(world: &mut World) {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let cameras: Vec<_> = runtime
         .entities
         .iter()
@@ -196,7 +196,7 @@ fn publish_killcam_cameras(world: &mut World) {
 }
 
 fn present(world: &mut World, now: i32) {
-    let retired = std::mem::take(&mut world.resource_mut::<Runtime>().retired_presence);
+    let retired = std::mem::take(&mut world.resource_mut::<RoundScript>().retired_presence);
     let wanted = collect_wanted(world);
     if retired.is_empty() && wanted.is_empty() {
         return;
@@ -213,7 +213,6 @@ fn present(world: &mut World, now: i32) {
         };
         if spawned {
             frame.remove_script_mover_by_number(mover.state.number);
-            frame.remove_collision_owner(id);
         } else if let Some(mover) = frame.script_mover_mut_by_number(mover.state.number) {
             mover.state.e_flags |= entity_iw4::CG_SCRIPT_MOVER_NODRAW;
             mover.nonsolid = true;
@@ -226,7 +225,7 @@ fn present(world: &mut World, now: i32) {
         };
         let first = frame
             .ecs()
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .shown
             .get(&want.object)
             .cloned();
@@ -278,7 +277,7 @@ fn present(world: &mut World, now: i32) {
     }
     let movers = crate::frame::collect_script_movers(frame.ecs());
     crate::presence::follow_movers(frame.entity_collision_capabilities_mut(), &movers, now);
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     for (object, number, shown) in updates {
         let Some(entity) = runtime.entities.get_mut(&object) else {
             continue;
@@ -292,7 +291,7 @@ fn present(world: &mut World, now: i32) {
 
 fn tag_lookup(world: &mut World, object: u64, tag: &str) -> Option<Option<[f32; 3]>> {
     let presence = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .entities
         .get(&object)?
         .presence?;
@@ -317,7 +316,7 @@ pub(crate) fn tag_world(
     tag: &str,
 ) -> Option<([f32; 3], [[f32; 3]; 3])> {
     let presence = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .entities
         .get(&object)?
         .presence?;
@@ -346,7 +345,7 @@ pub(crate) fn tag_offset(world: &mut World, object: u64, tag: &str) -> Option<[f
 
 fn resolve_link_tags(world: &mut World) {
     let pending: Vec<(u64, u64, Arc<str>)> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .entities
         .iter()
         .filter_map(|(id, e)| {
@@ -359,7 +358,7 @@ fn resolve_link_tags(world: &mut World) {
             continue;
         };
         if let Some(link) = world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .entities
             .get_mut(&id)
             .and_then(|e| e.linked_to.as_mut())
@@ -370,7 +369,7 @@ fn resolve_link_tags(world: &mut World) {
 }
 
 fn collect_wanted(world: &mut World) -> Vec<Wanted> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let ids: Vec<(u64, ScriptModelId, bool, u64, bool)> = runtime
         .entities
         .iter()
@@ -477,7 +476,7 @@ fn present_model(frame: &mut FrameWorld, want: &Wanted) {
 const UNPRESENTED_LOOP_OWNER: u32 = 0x2000_0000;
 
 fn publish_loop_sounds(world: &mut World) {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let speaking: Vec<(u64, Option<ScriptModelId>, Arc<str>, i32)> = runtime
         .entities
         .iter()
@@ -512,7 +511,7 @@ fn publish_loop_sounds(world: &mut World) {
     frame.world_objects_mut().set_destructible_loop_sounds(rows);
 }
 
-impl Runtime {
+impl RoundScript {
     // GSC can link solid visual models to a missile (for example its grenade indicator).
     // Those models remain hittable, but must not obstruct their own parent missile.
     pub(crate) fn missile_collision_models(&self, id: crate::ProjectileId) -> Vec<ScriptModelId> {

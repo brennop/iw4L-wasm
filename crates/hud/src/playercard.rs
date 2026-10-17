@@ -25,6 +25,9 @@ pub(crate) struct UiLocalVars {
     strings: HashMap<String, String>,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct FrontendLocalVars(pub UiLocalVars);
+
 impl UiLocalVars {
     pub(crate) fn set_int(&mut self, name: &str, value: i32) {
         self.strings.remove(name);

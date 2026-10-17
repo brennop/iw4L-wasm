@@ -2,7 +2,7 @@ use super::args::{arg, float, int, optional, string, vector};
 use super::entities::EntityKind;
 use crate::script::Namespace::{Function, Method};
 use crate::script::runtime::{raise, run_now};
-use crate::script::{NativeRegistry, Runtime, Value};
+use crate::script::{NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 pub(crate) const DAMAGE: &str = "maps/mp/gametypes/_callbacksetup::codecallback_vehicledamage";
@@ -143,7 +143,7 @@ fn heli<'a>(world: &'a mut World, receiver: &Value) -> Result<&'a mut Heli, Stri
         return Err("receiver is not a vehicle".into());
     };
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .into_inner()
         .vehicles
         .get_mut(id)
@@ -151,7 +151,7 @@ fn heli<'a>(world: &'a mut World, receiver: &Value) -> Result<&'a mut Heli, Stri
 }
 
 pub(crate) fn is_heli(world: &World, receiver: &Value) -> bool {
-    matches!(receiver, Value::Object(id) if world.resource::<Runtime>().vehicles.contains_key(id))
+    matches!(receiver, Value::Object(id) if world.resource::<RoundScript>().vehicles.contains_key(id))
 }
 
 pub(crate) fn aim_turret(
@@ -169,7 +169,7 @@ fn aim_point(world: &mut World, aim: TurretAim) -> Option<[f32; 3]> {
     match aim {
         TurretAim::Point(point) => Some(point),
         TurretAim::Entity(object, offset) => {
-            if !world.resource::<Runtime>().live(&object) {
+            if !world.resource::<RoundScript>().live(&object) {
                 return None;
             }
             match super::players::entity_field(world, object, "origin") {
@@ -231,13 +231,13 @@ fn fire_weapon(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Va
         return Ok(Value::Undefined);
     }
     let owner = owner
-        .filter(|client| world.resource::<Runtime>().players.contains_key(client))
+        .filter(|client| world.resource::<RoundScript>().players.contains_key(client))
         .ok_or("vehicle owner is not connected")?;
     let end = std::array::from_fn(|i| from[i] + dir[i] * 1000.0);
     super::weapons::launch(world, crate::ClientId(owner), weapon, from, end)
 }
 
-fn vec_field(runtime: &mut Runtime, object: u64, name: &str) -> [f32; 3] {
+fn vec_field(runtime: &mut RoundScript, object: u64, name: &str) -> [f32; 3] {
     match runtime.object_field(object, name) {
         Value::Vector(v) => v,
         _ => [0.0; 3],
@@ -253,7 +253,7 @@ fn spawn_vehicle(
     flight: Option<Heli>,
 ) -> Result<Value, String> {
     let slot = if flight.is_some() {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         Some(
             (0..VEHICLE_SLOTS)
                 .find(|slot| {
@@ -269,7 +269,7 @@ fn spawn_vehicle(
     };
     let presence = super::presence::spawn_presence(world, origin)?;
     let birthtime = super::players::now_ms(world) as i32;
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let id = runtime.create_entity(EntityKind::Vehicle, classname)?;
     runtime.set_object_field(id, "birthtime", Value::Int(birthtime));
     runtime.set_object_field(id, "origin", Value::Vector(origin));
@@ -298,7 +298,7 @@ fn set_goal(heli: &mut Heli, goal: [f32; 3], stop: bool) {
     heli.near_notified = false;
 }
 
-fn node(runtime: &mut Runtime, object: u64) -> Result<[f32; 3], String> {
+fn node(runtime: &mut RoundScript, object: u64) -> Result<[f32; 3], String> {
     if !runtime
         .entities
         .get(&object)
@@ -312,7 +312,7 @@ fn node(runtime: &mut Runtime, object: u64) -> Result<[f32; 3], String> {
     }
 }
 
-fn next_node(runtime: &mut Runtime, object: u64) -> Result<Option<u64>, String> {
+fn next_node(runtime: &mut RoundScript, object: u64) -> Result<Option<u64>, String> {
     node(runtime, object)?;
     let target = match runtime.object_field(object, "target") {
         Value::Undefined => return Ok(None),
@@ -339,7 +339,7 @@ fn next_node(runtime: &mut Runtime, object: u64) -> Result<Option<u64>, String> 
 }
 
 fn vehicle_array(world: &mut World, prefix: Option<&str>) -> Result<Value, String> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let ids = match prefix {
         None => {
             let mut vehicles: Vec<_> = runtime
@@ -375,7 +375,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         vehicle_array(world, None)
     });
     registry.register(Function, "getnumvehicles", |world, _, _| {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         Ok(Value::Int(
             runtime
                 .vehicles
@@ -389,7 +389,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "getvehicleowner", |world, receiver, _| {
         let object = super::natives::engine::entity_id(world, receiver)?;
-        let owner = match world.resource::<Runtime>().planes.get(&object) {
+        let owner = match world.resource::<RoundScript>().planes.get(&object) {
             Some(plane) => Some(plane.owner),
             None => heli(world, receiver)?.owner,
         };
@@ -399,7 +399,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "vehicle_getvelocity", |world, receiver, _| {
         let object = super::natives::engine::entity_id(world, receiver)?;
-        let velocity = match world.resource::<Runtime>().planes.get(&object) {
+        let velocity = match world.resource::<RoundScript>().planes.get(&object) {
             Some(plane) => plane.velocity,
             None => heli(world, receiver)?.velocity,
         };
@@ -426,7 +426,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let angles = vector(args, 1)?;
         let object = super::natives::engine::entity_id(world, receiver)?;
         {
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             if let Some(plane) = runtime.planes.get_mut(&object) {
                 plane.origin = origin;
                 plane.velocity = [0.0; 3];
@@ -469,7 +469,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     registry.register(Method, "attachpath", |world, receiver, args| {
         heli(world, receiver)?;
         let object = super::natives::engine::entity_id(world, arg(args, 0)?)?;
-        node(&mut world.resource_mut::<Runtime>(), object)?;
+        node(&mut world.resource_mut::<RoundScript>(), object)?;
         let vehicle = heli(world, receiver)?;
         vehicle.path_node = Some(object);
         vehicle.path_running = false;
@@ -482,7 +482,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             Some(value) => super::natives::engine::entity_id(world, value)?,
             None => attached.ok_or("vehicle has no attached path")?,
         };
-        let origin = node(&mut world.resource_mut::<Runtime>(), object)?;
+        let origin = node(&mut world.resource_mut::<RoundScript>(), object)?;
         let vehicle = heli(world, receiver)?;
         vehicle.path_node = Some(object);
         vehicle.path_running = true;
@@ -493,11 +493,11 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let object = super::natives::engine::entity_id(world, receiver)?;
         let definition = string(args, 0)?;
         let owner = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .player_client_of(arg(args, 1)?)
             .ok_or("vehicle owner is not a player")?;
         let (origin, angles, model) = {
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             if !runtime.entities[&object]
                 .classname
                 .starts_with("script_vehicle")
@@ -557,7 +557,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             }),
         )?;
         if let Value::Object(object) = vehicle {
-            world.resource_mut::<Runtime>().set_object_field(
+            world.resource_mut::<RoundScript>().set_object_field(
                 object,
                 "targetname",
                 Value::string(&targetname),
@@ -567,7 +567,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "spawnhelicopter", |world, _, args| {
         let owner = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .player_client_of(arg(args, 0)?)
             .ok_or("spawnHelicopter owner is not a player")?;
         let (origin, angles) = (vector(args, 1)?, vector(args, 2)?);
@@ -594,7 +594,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "spawnplane", |world, _, args| {
         let owner = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .player_client_of(arg(args, 0)?)
             .ok_or("spawnPlane owner is not a player")?;
         let classname = string(args, 1)?;
@@ -605,7 +605,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             friendly.map(|friendly| ([friendly.clone(), enemy.unwrap_or(friendly)], [32, 32]));
         let vehicle = spawn_vehicle(world, &classname, origin, [0.0; 3], "", None)?;
         if let Value::Object(object) = vehicle {
-            world.resource_mut::<Runtime>().planes.insert(
+            world.resource_mut::<RoundScript>().planes.insert(
                 object,
                 Plane {
                     owner,
@@ -746,7 +746,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "vehicleturretcontrolon", |world, receiver, args| {
         let client = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .player_client_of(arg(args, 0)?)
             .ok_or("parameter 1: not a player")?;
         let heli = heli(world, receiver)?;
@@ -759,7 +759,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         "vehicleturretcontroloff",
         |world, receiver, args| {
             world
-                .resource::<Runtime>()
+                .resource::<RoundScript>()
                 .player_client_of(arg(args, 0)?)
                 .ok_or("parameter 1: not a player")?;
             let heli = heli(world, receiver)?;
@@ -815,7 +815,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         },
     );
     registry.register(Method, "vehicle_finishdamage", |world, receiver, args| {
-        let Some((object, _)) = world.resource::<Runtime>().entity(receiver) else {
+        let Some((object, _)) = world.resource::<RoundScript>().entity(receiver) else {
             return Err("receiver is not a vehicle".into());
         };
         let attacker = arg(args, 1)?.clone();
@@ -826,7 +826,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let point = vector(args, 6)?;
         let dir = vector(args, 7)?;
         let part = optional(args, 11, string)?.unwrap_or_default();
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let before = match runtime.object_field(object, "health") {
             Value::Int(health) => health,
             Value::Float(health) => health as i32,
@@ -964,7 +964,7 @@ fn body_tilt(
 
 pub(crate) fn advance(world: &mut World) {
     {
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let ids: Vec<u64> = runtime.planes.keys().copied().collect();
         for id in ids {
             if !runtime.entities.contains_key(&id) {
@@ -978,7 +978,7 @@ pub(crate) fn advance(world: &mut World) {
         }
     }
     let ids: Vec<u64> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .vehicles
         .keys()
         .copied()
@@ -986,17 +986,17 @@ pub(crate) fn advance(world: &mut World) {
     let now = crate::level_time_ms(world.resource::<crate::step::StepRequest>().tick);
     for id in ids {
         let (gunner, weapon) = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .vehicles
             .get(&id)
             .map_or((None, None), |heli| (heli.gunner, heli.weapon));
         let control = gunner
-            .filter(|client| world.resource::<Runtime>().players.contains_key(client))
+            .filter(|client| world.resource::<RoundScript>().players.contains_key(client))
             .and_then(|client| gunner_input(world, client));
         let fire_ms = weapon
             .and_then(|weapon| crate::frame::FrameWorld::from_world(world).combat_facts_for(weapon))
             .map_or(100, |facts| facts.fire_time_ms.max(1));
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         if !runtime.entities.contains_key(&id) {
             runtime.vehicles.remove(&id);
             continue;
@@ -1177,7 +1177,7 @@ pub(crate) fn advance(world: &mut World) {
 }
 
 pub(crate) fn compass_rows(world: &mut World) -> Vec<crate::CompassVehicle> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let mut rows: Vec<_> = runtime
         .vehicles
         .iter()
@@ -1192,7 +1192,7 @@ pub(crate) fn compass_rows(world: &mut World) -> Vec<crate::CompassVehicle> {
     rows.sort_by_key(|(id, _, _)| *id);
     rows.into_iter()
         .filter_map(|(id, owner, (icons, size))| {
-            if !world.resource::<Runtime>().live(&id) {
+            if !world.resource::<RoundScript>().live(&id) {
                 return None;
             }
             let Value::Vector(origin) = super::players::entity_field(world, id, "origin") else {
@@ -1225,7 +1225,7 @@ pub(crate) fn compass_rows(world: &mut World) -> Vec<crate::CompassVehicle> {
 }
 
 pub(crate) fn hud_targets(world: &World) -> Vec<crate::VehicleHudTarget> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let mut rows: Vec<_> = runtime
         .vehicles
         .iter()

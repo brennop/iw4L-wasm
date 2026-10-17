@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -42,7 +43,7 @@ pub(crate) struct MotionTracker {
 }
 
 pub(crate) fn register(app: &mut App) {
-    app.init_resource::<MotionTracker>();
+    app.scoped::<MotionTracker>(frame::MatchScope::Live);
 }
 
 #[allow(clippy::too_many_arguments)]

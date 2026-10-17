@@ -94,9 +94,9 @@ pub fn drop_probe(world: &mut World, reverse: bool) -> Value {
     // Everything allocated by the probe itself happens before the first read.
     let mut targets: Vec<(ComponentId, String)> = world
         .iter_resources()
-        .filter_map(|(info, _)| {
+        .filter_map(|(id, info, _)| {
             let name = info.name().to_string();
-            (!skip(&name)).then(|| (info.id(), name))
+            (!skip(&name)).then_some((id, name))
         })
         .collect();
     targets.sort_by(|a, b| a.1.cmp(&b.1));

@@ -57,7 +57,6 @@ pub struct ClientActionInput {
     pub pad_sensitivity: f32,
     pub pad_acceleration: bool,
     pub pad_ads_sensitivity: f32,
-    /// Already applied to `pad_look`.
     pub pad_invert: bool,
     pub pad_turn_rate: [f32; 2],
     /// Pitch and yaw, degrees.

@@ -998,7 +998,7 @@ pub fn lower_pass(abi: &PassAbi, vertex: &Shader, pixel: &Shader) -> Result<Stri
     let locations = varying_locations(vertex);
     let flat_location = locations.len();
 
-    let mut out = String::new();
+    let mut out = String::from("enable wgpu_binding_array;\n");
     out.push_str("diagnostic(off, derivative_uniformity);\n\n");
     out.push_str("struct Sm3ConstantArena { c: array<vec4<f32>> }\n");
     out.push_str("@group(0) @binding(0) var<storage, read> sm3_constants: Sm3ConstantArena;\n");

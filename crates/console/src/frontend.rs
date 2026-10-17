@@ -33,7 +33,7 @@ pub(crate) struct LobbyServices<'w> {
     browser: Option<Res<'w, net::MasterBrowser>>,
     bridge: Option<Res<'w, net::MasterBridge>>,
     action: Option<ResMut<'w, net::PendingMasterMenuAction>>,
-    menus: Option<Res<'w, hud::ScriptMenus>>,
+    menus: hud::MenuState<'w>,
 }
 
 impl LobbyServices<'_> {
@@ -99,7 +99,10 @@ fn change_page(page: &mut usize, command: &ConsoleCommand, len: usize) {
 
 pub(crate) fn route(
     mut events: MessageReader<ConsoleCommand>,
-    mut returned: MessageReader<frame::ReturnedToMenu>,
+    (mut returned, scope): (
+        MessageReader<StateTransitionEvent<frame::MatchScope>>,
+        Res<session::ScopeControl>,
+    ),
     mut commands: Commands,
     mut dvars: ResMut<UiMenuDvars>,
     mut party: ResMut<UiPartyState>,
@@ -122,13 +125,16 @@ pub(crate) fn route(
     let mut returned_in_menu = false;
     let mut match_ended = true;
     let mut left_session = false;
-    for fact in returned.read() {
-        returned_from_world |= fact.had_world;
-        returned_in_menu |= !fact.had_world;
-        if fact.had_world {
-            match_ended &= fact.reason == Some(frame::TeardownReason::MatchEnded);
+    for fact in returned
+        .read()
+        .filter(|event| event.exited.is_some() && event.entered == Some(frame::MatchScope::Absent))
+    {
+        returned_from_world |= fact.exited == Some(frame::MatchScope::Live);
+        returned_in_menu |= !(fact.exited == Some(frame::MatchScope::Live));
+        if fact.exited == Some(frame::MatchScope::Live) {
+            match_ended &= scope.exit_reason() == Some(frame::TeardownReason::MatchEnded);
         }
-        left_session |= fact.reason == Some(frame::TeardownReason::Disconnect);
+        left_session |= scope.exit_reason() == Some(frame::TeardownReason::Disconnect);
     }
     if returned_from_world {
         commands.remove_resource::<frame::HostMatchRules>();

@@ -200,15 +200,27 @@ fn start_match_load(
         }
     });
     inflight.0 = true;
-    commands.insert_resource(MatchLoadAccepted {
-        request_id,
-        load_key,
-        zone: zone_accepted,
+    commands.queue(move |world: &mut World| {
+        frame::scope::insert(
+            world,
+            MatchLoadAccepted {
+                request_id,
+                load_key,
+                zone: zone_accepted,
+            },
+            frame::MatchScope::Loading,
+        );
     });
-    commands.insert_resource(MatchLoadTask {
-        task,
-        request_id,
-        progress: cancel_handle,
+    commands.queue(move |world: &mut World| {
+        frame::scope::insert(
+            world,
+            MatchLoadTask {
+                task,
+                request_id,
+                progress: cancel_handle,
+            },
+            frame::MatchScope::Loading,
+        );
     });
     commands.remove_resource::<MatchLoadRequest>();
 }
@@ -337,7 +349,7 @@ fn poll_match_load(
         diag::error!(World, "prepared match has no family");
         return;
     };
-    commands.insert_resource(PreparedMatchSound {
+    let map_sound = PreparedMatchSound {
         namespace,
         load_key: ready.load_key,
         zone: ready.zone.clone(),
@@ -348,8 +360,13 @@ fn poll_match_load(
             .sound
             .take()
             .unwrap_or_else(|| Err("the map zone never opened".to_owned())),
+    };
+    commands.queue(move |world: &mut World| {
+        frame::scope::insert(world, map_sound, frame::MatchScope::Loading);
     });
-    commands.insert_resource(ready);
+    commands.queue(move |world: &mut World| {
+        frame::scope::insert(world, ready, frame::MatchScope::Loading);
+    });
 }
 
 fn expire_match_load_abort(
@@ -369,12 +386,19 @@ fn expire_match_load_abort(
 }
 
 pub fn register_match_load_systems(app: &mut App) {
+    if !app.is_plugin_added::<frame::ScopePlugin>() {
+        app.add_plugins(frame::ScopePlugin);
+    }
+    app.add_systems(
+        OnExit(frame::MatchScope::Loading),
+        cancel_loading.in_set(frame::ScopeSet::Release),
+    );
     app.init_resource::<MatchLoadBusy>().add_systems(
         Update,
         (
             approve_map_load.in_set(MapLoadApproval),
             (
-                start_match_load,
+                start_match_load.run_if(in_state(frame::MatchScope::Loading)),
                 poll_match_load.after(start_match_load),
                 expire_match_load_abort.after(poll_match_load),
             )
@@ -384,4 +408,11 @@ pub fn register_match_load_systems(app: &mut App) {
             .after(frame::SessionSwapApplied)
             .in_set(ClientSet::Load),
     );
+}
+
+fn cancel_loading(task: Option<Res<MatchLoadTask>>, mut busy: ResMut<MatchLoadBusy>) {
+    if let Some(task) = task {
+        task.progress.cancel();
+    }
+    busy.0 = false;
 }

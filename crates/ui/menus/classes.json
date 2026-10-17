@@ -607,6 +607,27 @@
     ],
     "append_items": [
       {
+        "name": "class_samples",
+        "item_type": 1,
+        "style": 1,
+        "text_key": "USE SAMPLE",
+        "text_align_mode": 6,
+        "text_align_x": -60,
+        "text_literal": true,
+        "rect": {"x": -64, "y": 350, "w": 336, "h": 20, "horz_align": 1, "vert_align": 1},
+        "background": "menu_button_selection_bar",
+        "font_enum": 3,
+        "text_scale": 0.3,
+        "fore_color": [1, 1, 1, 1],
+        "back_color": [0, 0, 0, 0],
+        "vis_exp": "op 57 s:636c6173735f656469746f72 op 1",
+        "handlers": {
+          "action": [{"Script": "play mouse_click; exec ui_class_samples;"}],
+          "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}],
+          "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]
+        }
+      },
+      {
         "name": "class_status",
         "text_exp": "op 38 s:75695f636c6173735f737461747573 op 1",
         "rect": {
@@ -4421,5 +4442,10 @@
         "static_flags": 9437184
       }
     ]
+  },
+  {
+    "name": "class_samples_picker",
+    "base": "class_picker",
+    "fields": {"fullscreen": 1}
   }
 ]

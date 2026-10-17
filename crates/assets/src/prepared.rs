@@ -50,6 +50,7 @@ pub struct MapFacts {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PreparedMap {
+    pub content: std::sync::Arc<asset_core::MapContentDefinition>,
     pub zone: String,
 
     pub namespace: Option<asset_core::AssetNamespace>,
@@ -66,7 +67,7 @@ pub struct PreparedKillstreaks(pub Vec<String>);
 pub struct PreparedWeapons(
     std::sync::Arc<WeaponRegistry>,
     Option<u32>,
-    frame::WorldGeneration,
+    frame::WorldStamp,
 );
 
 #[derive(Clone, Copy)]
@@ -91,7 +92,7 @@ impl PreparedWeapons {
         Self(
             registry,
             Some(key.match_key.match_epoch),
-            frame::WorldGeneration::from_install(key.local_load_request_id),
+            frame::WorldStamp::from_install(key.local_load_request_id),
         )
     }
 
@@ -107,7 +108,7 @@ impl PreparedWeapons {
 
     pub fn for_event(
         &self,
-        generation: frame::WorldGeneration,
+        generation: frame::WorldStamp,
     ) -> Result<BoundWeapons<'_>, asset_game::WeaponBindingRefusal> {
         if generation.0.is_none() || generation != self.2 {
             return Err(asset_game::WeaponBindingRefusal::StaleSnapshot);

@@ -7,13 +7,13 @@ use super::math::distance_sq;
 use crate::bullet_collision::{
     MASK_PLAYER_SOLID, MASK_SHOT, PLAYER_MAXS, PLAYER_MINS, TraceOutcome,
 };
-use crate::script::{Arc, ArrayKey, BTreeMap, Namespace, NativeRegistry, Resource, Runtime, Value};
+use crate::script::{Arc, ArrayKey, Namespace, NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 const ZERO: [f32; 3] = [0.0; 3];
 
-fn runtime(world: &mut World) -> bevy_ecs::world::Mut<'_, Runtime> {
-    world.resource_mut::<Runtime>()
+fn runtime(world: &mut World) -> bevy_ecs::world::Mut<'_, RoundScript> {
+    world.resource_mut::<RoundScript>()
 }
 
 fn now_ms(world: &World) -> i64 {
@@ -49,7 +49,7 @@ fn describe(value: &Value) -> &'static str {
 }
 
 pub(crate) fn entity_id(world: &World, value: &Value) -> Result<u64, String> {
-    match world.resource::<Runtime>().entity(value) {
+    match world.resource::<RoundScript>().entity(value) {
         Some((id, e)) if e.kind != EntityKind::HudElem => Ok(id),
         Some(_) => Err("hud element is not an entity".into()),
         None => Err(format!("{} is not an entity", describe(value))),
@@ -75,7 +75,7 @@ fn vector_field(world: &mut World, id: u64, name: &str) -> [f32; 3] {
 
 fn origin_of(world: &mut World, value: &Value) -> Result<[f32; 3], String> {
     match value {
-        Value::Object(id) if world.resource::<Runtime>().live(id) => {
+        Value::Object(id) if world.resource::<RoundScript>().live(id) => {
             Ok(vector_field(world, *id, "origin"))
         }
         Value::Vector(v) => Ok(*v),
@@ -135,7 +135,7 @@ impl TraceIgnore {
 }
 
 pub(crate) fn trace_ignore(world: &World, value: Option<&Value>) -> TraceIgnore {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let Some(value) = value else {
         return TraceIgnore::default();
     };
@@ -189,7 +189,7 @@ pub(crate) fn collider_entity(
     collider: crate::bullet_collision::ColliderId,
 ) -> Value {
     use crate::bullet_collision::ColliderId;
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let found = match collider {
         ColliderId::World { .. } => None,
         ColliderId::Player { client, .. } => runtime.players.get(&client.0).map(|s| s.object),
@@ -302,7 +302,7 @@ fn matching_entities(world: &mut World, args: &[Value]) -> Result<Vec<u64>, Stri
 }
 
 fn classname_prefix(world: &World, ids: Vec<u64>, prefix: &str) -> Vec<u64> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     ids.into_iter()
         .filter(|id| runtime.entities[id].classname.starts_with(prefix))
         .collect()
@@ -325,7 +325,7 @@ fn array_values(world: &World, value: &Value) -> Result<Vec<Value>, String> {
         return Err(format!("{} is not an array", kind(value)));
     };
     Ok(world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .arrays
         .get(id)
         .ok_or("invalid array reference")?
@@ -404,7 +404,7 @@ fn move_axis(
     }
     let duration = seconds_ms(time)?;
     let id = entity_id(world, receiver)?;
-    if world.resource::<Runtime>().player_client(id).is_some() {
+    if world.resource::<RoundScript>().player_client(id).is_some() {
         return Err("axis moves require a non-player entity".into());
     }
     let from = vector_field(world, id, "origin");
@@ -462,7 +462,7 @@ fn add_angle(
 
 fn name(world: &World, id: i32) -> Result<String, String> {
     world
-        .resource::<Runtime>()
+        .resource::<crate::script::MatchScript>()
         .precached
         .iter()
         .find(|((kind, _), index)| *kind == "fx" && **index == id)
@@ -682,8 +682,8 @@ fn bind_match_data(
         .get(&name)
         .cloned()
         .ok_or_else(|| format!("match data schema '{name}' is not installed"))?;
-    runtime(world)
-        .engine
+    world
+        .resource_mut::<crate::script::MatchScript>()
         .match_data
         .bind(scope, Arc::clone(&schema))?;
     let definition = &schema.definitions[0];
@@ -776,7 +776,7 @@ fn register_entities(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "getentarray", |world, _, args| {
         let ids = if args.is_empty() {
-            let runtime = world.resource::<Runtime>();
+            let runtime = world.resource::<RoundScript>();
             runtime
                 .entities
                 .iter()
@@ -810,7 +810,7 @@ fn register_entities(registry: &mut NativeRegistry) {
     registry.register(Function, "isplayer", |world, _, args| {
         let value = arg(args, 0)?;
         let player = matches!(value, Value::Object(id)
-            if world.resource::<Runtime>().player_client(*id).is_some());
+            if world.resource::<RoundScript>().player_client(*id).is_some());
         Ok(Value::Int(player.into()))
     });
     registry.register(Function, "isalive", |world, _, args| {
@@ -927,7 +927,7 @@ fn register_entities(registry: &mut NativeRegistry) {
         if runtime(world).player_client(id).is_some() {
             return Err("cannot delete a client entity".into());
         }
-        if runtime(world).pending_deletes.contains(&id) {
+        if !runtime(world).can_receive_call(&id) {
             return Ok(Value::Undefined);
         }
         let item = match runtime(world).entities.get(&id).map(|e| &e.kind) {
@@ -939,7 +939,7 @@ fn register_entities(registry: &mut NativeRegistry) {
         }
         // Script code can still read fields after delete() in the same frame
         // (for example UAV bookkeeping). Retire at the scheduler's frame boundary.
-        runtime(world).pending_deletes.push(id);
+        runtime(world).request_delete(id);
         crate::script::runtime::raise(world, Value::Object(id), "death", Vec::new());
         Ok(Value::Undefined)
     });
@@ -1027,7 +1027,9 @@ fn register_placement(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "getentitynumber", |world, receiver, _| {
         let id = entity_id(world, receiver)?;
-        Ok(Value::Int(world.resource::<Runtime>().entities[&id].number))
+        Ok(Value::Int(
+            world.resource::<RoundScript>().entities[&id].number,
+        ))
     });
 }
 
@@ -1122,14 +1124,14 @@ fn register_appearance(registry: &mut NativeRegistry) {
     registry.register(Method, "getlightintensity", |world, receiver, _| {
         let id = entity_id(world, receiver)?;
         Ok(Value::Float(
-            world.resource::<Runtime>().entities[&id].light,
+            world.resource::<RoundScript>().entities[&id].light,
         ))
     });
 }
 
 fn slide_object(world: &mut World, receiver: &Value) -> Result<u64, String> {
     let object = entity_id(world, receiver)?;
-    let entity = &world.resource::<Runtime>().entities[&object];
+    let entity = &world.resource::<RoundScript>().entities[&object];
     if !matches!(
         &*entity.classname,
         "script_model" | "script_brushmodel" | "script_origin" | "light"
@@ -1265,7 +1267,7 @@ fn register_motion(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "islinked", |world, receiver, _| {
         let id = entity_id(world, receiver)?;
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         let parent = if let Some(client) = runtime.player_client_of(receiver) {
             runtime
                 .players
@@ -1473,13 +1475,15 @@ fn register_attachments(registry: &mut NativeRegistry) {
     registry.register(Method, "getattachsize", |world, receiver, _| {
         let id = entity_id(world, receiver)?;
         Ok(Value::Int(
-            world.resource::<Runtime>().entities[&id].attachments.len() as i32,
+            world.resource::<RoundScript>().entities[&id]
+                .attachments
+                .len() as i32,
         ))
     });
     registry.register(Method, "getattachmodelname", |world, receiver, args| {
         let index = int(args, 0)?;
         let id = entity_id(world, receiver)?;
-        let entity = &world.resource::<Runtime>().entities[&id];
+        let entity = &world.resource::<RoundScript>().entities[&id];
         let (model, _) = entity
             .attachments
             .get(index.max(0) as usize)
@@ -1489,7 +1493,7 @@ fn register_attachments(registry: &mut NativeRegistry) {
     registry.register(Method, "getattachtagname", |world, receiver, args| {
         let index = int(args, 0)?;
         let id = entity_id(world, receiver)?;
-        let entity = &world.resource::<Runtime>().entities[&id];
+        let entity = &world.resource::<RoundScript>().entities[&id];
         let (_, tag) = entity
             .attachments
             .get(index.max(0) as usize)
@@ -1826,13 +1830,8 @@ fn register_match(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "map_restart", |world, _, args| {
         let persist = !args.is_empty() && int(args, 0)? != 0;
-        let mut state = runtime(world);
-        if std::mem::replace(&mut state.finished, true) {
-            return Err("map_restart already called".into());
-        }
-        state.pending_restart = Some(persist);
-        drop(state);
-        signal(world, MAP_RESTART)
+        runtime(world).request_round_restart(persist)?;
+        Ok(Value::Undefined)
     });
     registry.register(Function, "setmatchdatadef", |world, _, args| {
         bind_match_data(world, super::super::match_data::Scope::Match, args)
@@ -1841,26 +1840,26 @@ fn register_match(registry: &mut NativeRegistry) {
         bind_match_data(world, super::super::match_data::Scope::Client, args)
     });
     registry.register(Function, "setmatchdata", |world, _, args| {
-        runtime(world)
-            .engine
+        world
+            .resource_mut::<crate::script::MatchScript>()
             .match_data
             .set(super::super::match_data::Scope::Match, args)
     });
     registry.register(Function, "getmatchdata", |world, _, args| {
-        runtime(world)
-            .engine
+        world
+            .resource_mut::<crate::script::MatchScript>()
             .match_data
             .get(super::super::match_data::Scope::Match, args)
     });
     registry.register(Function, "setclientmatchdata", |world, _, args| {
-        runtime(world)
-            .engine
+        world
+            .resource_mut::<crate::script::MatchScript>()
             .match_data
             .set(super::super::match_data::Scope::Client, args)
     });
     registry.register(Function, "getclientmatchdata", |world, _, args| {
-        runtime(world)
-            .engine
+        world
+            .resource_mut::<crate::script::MatchScript>()
             .match_data
             .get(super::super::match_data::Scope::Client, args)
     });
@@ -2012,27 +2011,33 @@ fn register_level(registry: &mut NativeRegistry) {
             });
         )*};
     }
-    unavailable!("no script ranking service is connected": "sendranks", "setplayerteamrank");
     unavailable!("no script match-data upload service is connected": "sendmatchdata", "sendclientmatchdata");
     unavailable!("IW4 lobby termination is not bound to the IW4L lobby lifecycle": "endlobby");
     unavailable!("IW4 party termination is not bound to the IW4L party lifecycle": "endparty");
 }
 
-#[derive(Resource, Default)]
-pub struct GlassNames(pub BTreeMap<String, Vec<u32>>);
-
-fn glass_named(world: &World, name: &str) -> Vec<u32> {
-    let Some(pieces) = world
-        .get_resource::<GlassNames>()
-        .and_then(|names| names.0.get(name))
-    else {
-        return Vec::new();
-    };
-    pieces.clone()
+fn glass_named(world: &mut World, name: &str) -> Result<Vec<u32>, String> {
+    let frame = crate::frame::FrameWorld::from_world(world);
+    match &frame.content().map().glass {
+        asset_core::GlassContent::Prepared(glass) => Ok(glass.named(name).to_vec()),
+        asset_core::GlassContent::Absent => Ok(Vec::new()),
+        asset_core::GlassContent::Unsupported => Err("map family glass is unsupported".into()),
+        asset_core::GlassContent::Invalid(error) => Err(error.clone()),
+    }
 }
 
-fn glass_id(args: &[Value], index: usize) -> Result<u32, String> {
-    u32::try_from(int(args, index)?).map_err(|_| "glass id must not be negative".into())
+fn glass_id(world: &mut World, args: &[Value], index: usize) -> Result<u32, String> {
+    let id =
+        u32::try_from(int(args, index)?).map_err(|_| "glass id must not be negative".to_owned())?;
+    let frame = crate::frame::FrameWorld::from_world(world);
+    match &frame.content().map().glass {
+        asset_core::GlassContent::Prepared(glass) if (id as usize) < glass.panes().len() => Ok(id),
+        asset_core::GlassContent::Prepared(_) | asset_core::GlassContent::Absent => {
+            Err(format!("glass piece {id} is absent from map content"))
+        }
+        asset_core::GlassContent::Unsupported => Err("map family glass is unsupported".into()),
+        asset_core::GlassContent::Invalid(error) => Err(error.clone()),
+    }
 }
 
 fn register_glass(registry: &mut NativeRegistry) {
@@ -2040,7 +2045,7 @@ fn register_glass(registry: &mut NativeRegistry) {
 
     registry.register(Function, "getglassarray", |world, _, args| {
         let name = string(args, 0)?;
-        let ids = glass_named(world, &name)
+        let ids = glass_named(world, &name)?
             .into_iter()
             .map(|id| Value::Int(id as i32))
             .collect();
@@ -2048,12 +2053,12 @@ fn register_glass(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "getglass", |world, _, args| {
         let name = string(args, 0)?;
-        Ok(glass_named(world, &name)
+        Ok(glass_named(world, &name)?
             .first()
             .map_or(Value::Undefined, |&id| Value::Int(id as i32)))
     });
     registry.register(Function, "destroyglass", |world, _, args| {
-        let id = glass_id(args, 0)?;
+        let id = glass_id(world, args, 0)?;
         let now = i32::try_from(super::super::players::now_ms(world)).unwrap_or(i32::MAX);
         crate::frame::FrameWorld::from_world(world)
             .world_objects_mut()
@@ -2061,14 +2066,14 @@ fn register_glass(registry: &mut NativeRegistry) {
         Ok(Value::Undefined)
     });
     registry.register(Function, "isglassdestroyed", |world, _, args| {
-        let id = glass_id(args, 0)?;
+        let id = glass_id(world, args, 0)?;
         let solid = crate::frame::FrameWorld::from_world(world)
             .world_objects()
             .glass_is_solid(id);
         Ok(Value::Int(i32::from(!solid)))
     });
     registry.register(Function, "getglassorigin", |world, _, args| {
-        let id = glass_id(args, 0)?;
+        let id = glass_id(world, args, 0)?;
         Ok(crate::frame::FrameWorld::from_world(world)
             .world_objects()
             .glass_pane(id)

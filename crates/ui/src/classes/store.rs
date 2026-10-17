@@ -8,7 +8,6 @@ use sim::match_state::PERSONAL_CLASS_SLOTS;
 pub struct SessionClassStore {
     pub slots: Vec<ClassSlotState>,
 
-    pub equipped: Option<usize>,
     pub selected: usize,
 }
 
@@ -115,13 +114,8 @@ impl SessionClassStore {
         }
         Self {
             slots: slots.iter().map(ClassSlotState::from_host_slot).collect(),
-            equipped: None,
             selected: 0,
         }
-    }
-
-    pub fn equipped_slot(&self) -> Option<&ClassSlotState> {
-        self.equipped.and_then(|i| self.slots.get(i))
     }
 
     pub fn apply_coverage_locks(&mut self, reasons: impl IntoIterator<Item = Option<String>>) {
@@ -300,6 +294,11 @@ pub(crate) fn load_class_store(
                 diag::info!(Ui, "classes: {} read from {}", slots.len(), path.display());
                 file.written = Some(encode_slots(&slots));
                 store.slots = slots;
+                let mut defaults = generate().slots;
+                let start = store.slots.len();
+                store
+                    .slots
+                    .extend(defaults.drain(start.min(defaults.len())..));
                 for slot in &mut store.slots {
                     slot.lock_reason = catalog.validate_class(slot).err();
                 }
@@ -397,3 +396,6 @@ pub(crate) fn save_class_store(
         }
     }
 }
+
+#[derive(Resource, Default)]
+pub struct EquippedClass(pub Option<usize>);

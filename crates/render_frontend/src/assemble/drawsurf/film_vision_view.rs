@@ -334,6 +334,7 @@ pub fn register(app: &mut App) {
     app.init_resource::<FilmVisionView>().add_systems(
         Update,
         update_film_vision_view
+            .in_set(frame::InMatch)
             .after(crate::prepare::scene::view_parms::stamp_prepared_scene_view)
             .after(frame::ScreenEffectsPublished)
             .in_set(net::ClientSet::Present),

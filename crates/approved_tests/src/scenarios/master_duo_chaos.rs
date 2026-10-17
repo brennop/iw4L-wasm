@@ -267,14 +267,14 @@ fn execute(
 ) -> Result<()> {
     let mut host = launch(binary, cwd, run, games, descriptor, "host")?;
     host.send(
-        "set ui_mapname iw4:mp_boneyard; set ui_gametype dm; ui_create_lobby; ui_lobby_privacy",
+        "wait progression; unlock all; set ui_mapname iw4:mp_boneyard; set ui_gametype dm; ui_create_lobby; ui_lobby_privacy",
     )?;
     let status = host.wait(|s, _| field(s, "state") == Some("hosting"))?;
     let room = field(&status, "room").ok_or("missing room ID")?.to_owned();
     manifest["room"] = room.clone().into();
     let mut client = launch(binary, cwd, run, games, descriptor, "client")?;
     client.send(&format!(
-        "set ui_mapname iw4:mp_boneyard; set ui_gametype dm; ui_join_lobby_id {room}"
+        "wait progression; unlock all; set ui_mapname iw4:mp_boneyard; set ui_gametype dm; ui_join_lobby_id {room}"
     ))?;
     client.wait(|s, _| field(s, "state") == Some("joined"))?;
     host.wait(|s, _| field(s, "members") == Some("2"))?;

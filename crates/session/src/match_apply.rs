@@ -7,8 +7,8 @@ use assets::{
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use frame::{
-    CacWeaponOffer, ClassSelectHandoff, HasWorld, HostClassLoadouts, LaunchIdentity, LaunchReport,
-    MatchInstalled, WorldGeneration, WorldProducts,
+    CacWeaponOffer, ClassSelectHandoff, HostClassLoadouts, InstalledMatch, LaunchIdentity,
+    LaunchReport, WorldProducts, WorldStamp,
 };
 use net::{AuthorityInputGate, AuthorityLoadHold, AuthorityWorld, ClientSet};
 
@@ -37,6 +37,7 @@ fn log_world_report(report: &[String]) {
 #[derive(SystemParam)]
 pub struct PreparedMatchSource<'w, 's> {
     ready: ResMut<'w, PreparedMatchReady>,
+    audio_status: Option<Res<'w, audio::LoadingAudioStatus>>,
     swap: Res<'w, crate::SessionSwapRequest>,
     bridge: Option<Res<'w, net::MasterBridge>>,
     intent: Option<Res<'w, net::MasterLaunchIntent>>,
@@ -64,7 +65,6 @@ impl MatchInstallConsole<'_> {
 #[derive(SystemParam)]
 pub struct MatchInstallAuthority<'w> {
     role: Res<'w, frame::RuntimeRole>,
-    prediction: Option<Res<'w, net::ClientPredictionState>>,
     input_gate: Res<'w, AuthorityInputGate>,
     cheats: Option<Res<'w, sim::HostCheats>>,
     profile: Option<Res<'w, sim::LocalPlayerProfile>>,
@@ -77,11 +77,7 @@ pub struct MatchInstallAuthority<'w> {
 pub struct MatchInstallPresentation<'w> {
     probe: Option<ResMut<'w, LaunchReport>>,
     camera: Res<'w, SimCamera>,
-}
-
-#[derive(SystemParam)]
-pub struct MatchInstallOccupancy<'w> {
-    has_world: ResMut<'w, HasWorld>,
+    player_data: Res<'w, sim::LocalPlayerData>,
 }
 
 pub fn apply_prepared_match(
@@ -90,13 +86,13 @@ pub fn apply_prepared_match(
     mut console: MatchInstallConsole,
     authority: MatchInstallAuthority,
     presentation: MatchInstallPresentation,
-    occupancy: MatchInstallOccupancy,
     mode_selection: Option<Res<sim::HostGameModeSelection>>,
     rules: Option<Res<frame::HostMatchRules>>,
     mut failed: MessageWriter<frame::MapLoadFailed>,
 ) {
     let PreparedMatchSource {
         mut ready,
+        audio_status,
         swap,
         bridge,
         intent,
@@ -110,7 +106,6 @@ pub fn apply_prepared_match(
     } = source;
     let MatchInstallAuthority {
         role,
-        prediction,
         input_gate,
         cheats,
         profile,
@@ -122,8 +117,8 @@ pub fn apply_prepared_match(
     let MatchInstallPresentation {
         mut probe,
         camera: sim_cam,
+        player_data,
     } = presentation;
-    let MatchInstallOccupancy { mut has_world } = occupancy;
     let stale_key = !ready.load_key.match_key.is_none()
         && bridge.as_ref().is_none_or(|bridge| {
             let state = bridge.state();
@@ -164,6 +159,20 @@ pub fn apply_prepared_match(
             "match install: aborted request #{dropped} (`{zone}`) — not occupying the menu"
         );
         return;
+    }
+    match audio_status.as_deref() {
+        Some(audio::LoadingAudioStatus::Ready) => {}
+        Some(audio::LoadingAudioStatus::Failed(error)) => {
+            failed.write(frame::MapLoadFailed {
+                request_id: ready.request_id,
+                load_key: ready.load_key,
+                zone: ready.zone.clone(),
+                error: error.clone(),
+            });
+            commands.remove_resource::<PreparedMatchReady>();
+            return;
+        }
+        _ => return,
     }
     // The stage opens a frame before the work so the row is already up when
     // the main thread stops answering — the yield is the point, not an
@@ -218,7 +227,6 @@ pub fn apply_prepared_match(
                 }
                 probe.world_report = world_report;
             }
-            *has_world = HasWorld(false);
             if let Some(stage) = install_stage {
                 stage.fail();
             }
@@ -237,6 +245,7 @@ pub fn apply_prepared_match(
     };
     let prepared_install = (|| -> Result<bevy::ecs::world::CommandQueue, InstallRefusal> {
         let mut install = bevy::ecs::world::CommandQueue::default();
+        install.push(audio::stage_prepared_match_audio);
         let MatchInstallPlan {
             ui_images,
             scripts,
@@ -276,9 +285,59 @@ pub fn apply_prepared_match(
         } = plan;
         let spawn_count = prepared_map.spawns.len();
 
+        let mut local_player_data = player_data.clone();
+        let definitions = script_level
+            .schemas
+            .get("mp/playerdata.def")
+            .ok_or_else(|| {
+                InstallRefusal::new("Local progression: player data schema is missing")
+            })?;
+        let ranks = weapons
+            .registry()
+            .rank_progression()
+            .map_err(|error| InstallRefusal::new(format!("Local progression: {error}")))?;
+        local_player_data
+            .install(
+                definitions,
+                ranks,
+                account
+                    .as_ref()
+                    .and_then(|account| account.snapshot.as_ref()),
+            )
+            .map_err(|error| InstallRefusal::new(format!("Local progression: {error:?}")))?;
+        local_player_data.install_unlock_data(
+            account_defaults.clone(),
+            script_level
+                .tables
+                .get("mp/allchallengestable.csv")
+                .cloned(),
+        );
+        for name in ["mp/ranktable.csv", "mp/rankicontable.csv"] {
+            if let Some(table) = script_level.tables.get(name) {
+                local_player_data.install_rank_table(name, table.clone());
+            }
+        }
+        diag::info!(
+            Sim,
+            "local progression prepared before admission: rank={}",
+            local_player_data
+                .progression
+                .as_ref()
+                .expect("installed progression")
+                .rank
+        );
+        install.push(move |world: &mut World| {
+            world
+                .resource_mut::<crate::scope_control::InstallAnnouncement>()
+                .0
+                .push(move |world: &mut World| {
+                    world.insert_resource(local_player_data);
+                });
+        });
+
         let facts = std::mem::take(&mut prepared_map.facts);
         let airstrike_height = facts.airstrike_height;
-        stage_resource(&mut install, ui_images);
+        stage_resource(&mut install, crate::scope_control::MatchUiImages(ui_images));
         stage_resource(
             &mut install,
             assets::SessionCompass {
@@ -304,7 +363,7 @@ pub fn apply_prepared_match(
 
         let mut scene = loaded_scene;
         scene.readiness = frame::WorldReadiness::new(
-            WorldGeneration::from_install(request_id),
+            WorldStamp::from_install(request_id),
             frame::ReadinessState::Pending,
         );
         let mut sim_cam = *sim_cam;
@@ -319,6 +378,9 @@ pub fn apply_prepared_match(
         )
         .map_err(|error| InstallRefusal::new(format!("Invalid simulation weapons: {error:?}")))?;
         let mut content = sim::SimContentBuilder::for_match(Arc::clone(sim_weapons.content()));
+        content
+            .set_map(Arc::clone(&prepared_map.content))
+            .map_err(|error| InstallRefusal::new(format!("Invalid map content: {error}")))?;
         content.set_script_sound_aliases(script_sound_aliases);
         let mut sim = sim::SimWorld::new();
         if role.runs_authority()
@@ -505,34 +567,6 @@ pub fn apply_prepared_match(
                 .map_err(|e| script_refusal(&zone, gametype, "entry", &e))?;
         }
         let load_hold = AuthorityLoadHold(true);
-        if let Some(glass) = scene.fx_glass.as_ref() {
-            let panes = (0..glass.piece_places.len())
-                .filter_map(|i| {
-                    let (origin, axis_s, axis_t) = glass.pane_basis(i)?;
-                    Some((
-                        i as u32,
-                        sim::GlassPaneBasis {
-                            origin,
-                            axis_s,
-                            axis_t,
-                        },
-                    ))
-                })
-                .collect();
-            sim.world_objects_mut().install_glass_panes(panes);
-            sim.set_glass_names(
-                glass
-                    .names
-                    .iter()
-                    .map(|(name, pieces)| {
-                        (
-                            name.clone(),
-                            pieces.iter().copied().map(u32::from).collect(),
-                        )
-                    })
-                    .collect(),
-            );
-        }
         sim.world_objects_mut()
             .set_map_round_epoch(load_key.match_key.match_epoch);
         spawn_script_model_movers(&mut sim, &model_spawns);
@@ -604,39 +638,58 @@ pub fn apply_prepared_match(
             "match preparation: {:.1}ms on the main thread (scene handoff, sim boot, catalogs)",
             install_started.elapsed().as_secs_f32() * 1000.0
         );
-        if role.runs_authority() || *role == frame::RuntimeRole::Replay {
-            if let Some(prediction) = prediction.as_ref() {
-                let mut state = net::ClientPrediction::new(prediction.0.local());
-                state.arm_from_content(&sim);
-                stage_resource(&mut install, net::ClientPredictionState(state));
-            }
-            stage_resource(&mut install, AuthorityWorld(sim));
-        } else if let Some(prediction) = prediction.as_ref() {
-            install.push(|world: &mut World| {
-                world.remove_resource::<AuthorityWorld>();
-            });
-            let mut state = net::ClientPrediction::new(prediction.0.local());
-            // Prediction adopts replicated state at admission; the prepared world's
-            // GSC runtime belongs to authority and cannot be restored by snapshots.
+        if role.runs_client() {
+            let client = local.as_ref().map_or(sim::ClientId(0), |local| local.0);
+            let mut state = net::ClientPrediction::new(client);
             state.arm_from_content(&sim);
             stage_resource(&mut install, net::ClientPredictionState(state));
-        } else {
-            return Err(InstallRefusal::new(
-                "No simulation owner for this execution mode",
-            ));
+        }
+        if role.runs_authority() || *role == frame::RuntimeRole::Replay {
+            stage_resource(&mut install, AuthorityWorld(sim));
         }
         sim_cam.freeze_fly = true;
         stage_resource(&mut install, WorldProducts::from_walk(scene.products_id));
         stage_resource(&mut install, scene);
-        stage_resource(&mut install, sim_cam);
-        stage_resource(&mut install, input_gate);
-        stage_resource(&mut install, load_hold);
-        stage_resource(&mut install, class_handoff);
+        install.push(move |world: &mut World| {
+            world
+                .resource_mut::<crate::scope_control::InstallAnnouncement>()
+                .0
+                .push(move |world: &mut World| {
+                    world.insert_resource(sim_cam);
+                });
+        });
+        install.push(move |world: &mut World| {
+            world
+                .resource_mut::<crate::scope_control::InstallAnnouncement>()
+                .0
+                .push(move |world: &mut World| {
+                    world.insert_resource(input_gate);
+                });
+        });
+        install.push(move |world: &mut World| {
+            world
+                .resource_mut::<crate::scope_control::InstallAnnouncement>()
+                .0
+                .push(move |world: &mut World| {
+                    world.insert_resource(load_hold);
+                });
+        });
+        install.push(move |world: &mut World| {
+            world
+                .resource_mut::<crate::scope_control::InstallAnnouncement>()
+                .0
+                .push(move |world: &mut World| {
+                    world.insert_resource(class_handoff);
+                });
+        });
         stage_resource(&mut install, crate::LiveWorldIdentity { load_key });
-        stage_resource(&mut install, HasWorld(true));
-        stage_resource(&mut install, WorldGeneration::from_install(request_id));
+        stage_resource(
+            &mut install,
+            frame::WorldGeneration::from_install(request_id),
+        );
         let installed_zone = zone.clone();
         install.push(move |world: &mut World| {
+            world.resource_mut::<crate::scope_control::InstallAnnouncement>().0.push(move |world: &mut World| {
             if let Some(mut probe) = world.get_resource_mut::<LaunchReport>() {
                 probe.sim_gap = sim_gap;
                 probe.world_report = world_report;
@@ -644,18 +697,19 @@ pub fn apply_prepared_match(
             diag::script_boundary("installed", &script_facts);
             diag::info!(Sim, "match: {} ({}) — world installed ({} dm spawn points); class select waits for admission", kind.display_name(), kind.token(), spawn_count);
             perf::match_installed(&installed_zone, 1);
-            world.write_message(MatchInstalled {
+            frame::scope::insert(world, InstalledMatch {
                 request_id,
                 load_key,
                 zone: installed_zone,
                 spawn_count,
+            }, frame::MatchScope::Live);
             });
         });
 
         Ok(install)
     })();
     match prepared_install {
-        Ok(mut install) => {
+        Ok(install) => {
             commands.queue(move |world: &mut World| {
                 let accepts = world
                     .resource::<crate::SessionSwapRequest>()
@@ -669,7 +723,7 @@ pub fn apply_prepared_match(
                                 && bridge.incarnation() == load_key.incarnation
                         });
                 if accepts && same_match {
-                    install.apply(world);
+                    world.resource_mut::<crate::ScopeControl>().install(install);
                 }
             });
             if let Some(stage) = install_stage {
@@ -1038,7 +1092,7 @@ fn preflight_match_install(
             Default::default()
         }
     };
-    let script_level = sim::script::LevelData {
+    let mut script_level = sim::script::LevelData {
         absent_effects,
         player_data_defaults: account_defaults.clone(),
         schemas: sources.0.schemas().clone(),
@@ -1058,6 +1112,29 @@ fn preflight_match_install(
             })
             .collect(),
     };
+    let shared_ranks = weapons.registry().shared_rank_table().map_err(|error| {
+        InstallRefusal::new(format!("Invalid shared rank progression: {error}"))
+    })?;
+    script_level.tables.insert(
+        "mp/ranktable.csv".into(),
+        sim::script::StringTable {
+            columns: shared_ranks.columns,
+            rows: shared_ranks.rows,
+            cells: shared_ranks.cells.clone(),
+        },
+    );
+    let shared_icons = weapons
+        .registry()
+        .shared_rank_icons()
+        .map_err(|error| InstallRefusal::new(format!("Invalid shared rank icons: {error}")))?;
+    script_level.tables.insert(
+        "mp/rankicontable.csv".into(),
+        sim::script::StringTable {
+            columns: shared_icons.columns,
+            rows: shared_icons.rows,
+            cells: shared_icons.cells.clone(),
+        },
+    );
     let startup = sim::script::Iw4Startup::new(&sources, gametype, zone);
     let roots: Vec<&str> = startup.roots.iter().map(String::as_str).collect();
     let scripts = sim::script::Program::load(&sources, &roots, &sim::script::Catalog::iw4())
@@ -1874,6 +1951,7 @@ pub fn register_match_apply_systems(app: &mut App) {
         .add_systems(
             Update,
             apply_prepared_match
+                .after(frame::SessionSwapApplied)
                 .run_if(resource_exists::<PreparedMatchReady>)
                 .in_set(ClientSet::Load),
         );
@@ -1881,6 +1959,6 @@ pub fn register_match_apply_systems(app: &mut App) {
 
 fn stage_resource<T: Resource>(queue: &mut bevy::ecs::world::CommandQueue, resource: T) {
     queue.push(move |world: &mut World| {
-        world.insert_resource(resource);
+        frame::scope::stage(world, resource);
     });
 }

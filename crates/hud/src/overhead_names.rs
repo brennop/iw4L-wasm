@@ -2,6 +2,7 @@ use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellat
 use crate::gpu_list::{HudTessPass, TessJob};
 use asset_game::MenuCatalog;
 use bevy::prelude::*;
+use frame::ScopeApp;
 use hud_iw4::*;
 use net::{CEntity, CEntityRuntime, FrameClock, LocalPresentClient, PresentedSnapshot};
 
@@ -99,11 +100,12 @@ impl TargetBoxSettings {
 }
 
 pub(crate) fn register(app: &mut App) {
-    app.init_resource::<OverheadPosedModelFrame>()
-        .init_resource::<OverheadPosedPlayerFrame>()
+    app.scoped::<OverheadPosedModelFrame>(frame::MatchScope::Live)
+        .scoped::<OverheadPosedPlayerFrame>(frame::MatchScope::Live)
         .add_systems(
             Update,
             update_overhead_names
+                .in_set(frame::InMatch)
                 .after(OverheadPosedPlayerFramePublished)
                 .after(frame::ScreenEffectsPublished)
                 .after(crate::surface::update_hud_surface)

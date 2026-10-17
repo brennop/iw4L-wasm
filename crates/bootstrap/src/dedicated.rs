@@ -41,7 +41,7 @@ impl Plugin for DedicatedPlugin {
             // With no wgpu backend RenderPlugin skips ExtractPlugin, and with it
             // SyncWorldPlugin, but the `on_remove` hooks of synced components still
             // read `PendingSyncEntity` the first time one of them is despawned.
-            app.add_plugins(bevy::render::sync_world::SyncWorldPlugin);
+            app.add_plugins(bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default());
         } else {
             // Old path: winit drives the loop; cap it.
             let mode = UpdateMode::reactive(FRAME_INTERVAL);

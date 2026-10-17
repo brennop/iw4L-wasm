@@ -1,4 +1,5 @@
 use core::fmt;
+use frame::ScopeApp;
 
 use bevy::prelude::*;
 use diag::gap::{self as ledger, Gap as _, GapLedger};
@@ -330,6 +331,8 @@ pub(crate) fn report_render_gaps(gaps: Res<RenderPresentationGaps>) {
 }
 
 pub fn register_render_gaps(app: &mut App) {
-    app.init_resource::<RenderPresentationGaps>()
-        .add_systems(Update, report_render_gaps.in_set(net::ClientSet::Diag));
+    app.init_app::<RenderPresentationGaps>().add_systems(
+        Update,
+        (report_render_gaps.in_set(net::ClientSet::Diag)).in_set(frame::InMatch),
+    );
 }

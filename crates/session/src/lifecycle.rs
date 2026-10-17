@@ -1,11 +1,10 @@
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 use frame::{
-    AppScreen, ClassSelectHandoff, HasWorld, LaunchIdentity, LocalLoadKey, MapLoadApproved,
-    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, Retiring, ReturnedToMenu, RuntimeRole,
-    TeardownReason, WorldGeneration,
+    AppScreen, ClassSelectHandoff, InstalledMatch, LaunchIdentity, LocalLoadKey, MapLoadApproved,
+    MapLoadFailed, MatchKey, Retiring, RuntimeRole, TeardownReason,
 };
-use net::{AuthorityLoadHold, ClientSet, MatchDescriptor, PresentedSnapshot};
+use net::{AuthorityLoadHold, ClientSet, PresentedSnapshot};
 
 #[derive(Resource, Default, Debug)]
 pub struct TeardownRequest(pub Option<TeardownReason>);
@@ -178,54 +177,26 @@ impl SessionSwapRequest {
     }
 }
 
-#[derive(Resource, Default, Debug)]
-pub struct TeardownGaps(pub Vec<&'static str>);
-
-pub fn run_teardown(
-    mut commands: Commands,
-    mut request: ResMut<TeardownRequest>,
+fn release_match(
+    mut control: ResMut<crate::ScopeControl>,
     mut screen: ResMut<AppScreen>,
-    mut has_world: ResMut<HasWorld>,
-    mut world_generation: ResMut<WorldGeneration>,
     mut readiness: ResMut<crate::SessionReadinessPolicy>,
     mut armed: ResMut<frame::LocalSpawnArmed>,
     mut handoff: ResMut<ClassSelectHandoff>,
     mut identity: Option<ResMut<LaunchIdentity>>,
     mut load_hold: Option<ResMut<AuthorityLoadHold>>,
-    live_world: Option<Res<LiveWorldIdentity>>,
-    signon: Option<Res<net::SignonState>>,
     bridge: Option<Res<net::MasterBridge>>,
-    mut gaps: ResMut<TeardownGaps>,
     mut retiring: ResMut<Retiring>,
-    mut torn: MessageWriter<MatchTornDown>,
 ) {
-    let Some(reason) = request.0.take() else {
+    let Some(reason) = control.teardown.take() else {
         return;
     };
 
     if let Some(bridge) = bridge.as_ref() {
         bridge.set_installed_load(None);
     }
-    let torn_generation = *world_generation;
-    let match_key = live_world
-        .map(|live| live.load_key.match_key)
-        .unwrap_or_else(|| {
-            bridge
-                .as_ref()
-                .map(|bridge| bridge.state().identity().match_key())
-                .filter(|key| !key.is_none())
-                .unwrap_or_else(|| {
-                    MatchKey::new([0; 16], signon.map(|signon| signon.epoch.0).unwrap_or(0))
-                })
-        });
-
-    commands.remove_resource::<crate::SessionContentManifest>();
-    commands.remove_resource::<MatchDescriptor>();
-    commands.insert_resource(LiveWorldIdentity::default());
 
     *screen = AppScreen::MainMenu;
-    *has_world = HasWorld(false);
-    *world_generation = WorldGeneration(None);
     *readiness = crate::SessionReadinessPolicy::default();
     *armed = frame::LocalSpawnArmed::default();
     *handoff = ClassSelectHandoff::default();
@@ -238,38 +209,19 @@ pub fn run_teardown(
         identity.zone.clear();
     }
 
-    gaps.0 = vec![
-        "Bevy Assets<Image/Mesh> handles dropped by WorldScene::default stay \
-         until Bevy GC; they are not drawable leftover world",
-        "WorldScene Resource stays so hold still freezes level.time; render \
-         empties geometry / tess / GPU plans",
-        "AuthorityWorld Resource stays; clip is SimWorld::shutdown_game, not remove",
-    ];
-
-    diag::info!(
-        Sim,
-        "session: match torn down ({reason:?}); teardown ran, {} declared gaps",
-        gaps.0.len()
-    );
     perf::match_torn(reason.label());
     diag::lifecycle_boundary(
         "local_session_revoked",
         &format!(" reason={}", reason.label()),
     );
     retiring.mark_teardown();
-    torn.write(MatchTornDown {
-        reason,
-        world_generation: torn_generation,
-        match_key,
-        match_epoch: match_key.match_epoch,
-    });
 }
 
 fn stamp_loaded_zone(
-    mut installed: MessageReader<MatchInstalled>,
+    installed: Option<Res<InstalledMatch>>,
     mut identity: Option<ResMut<LaunchIdentity>>,
 ) {
-    let Some(fact) = installed.read().last() else {
+    let Some(fact) = installed.filter(|fact| fact.is_added()) else {
         return;
     };
     if let Some(identity) = identity.as_mut() {
@@ -331,7 +283,6 @@ fn occupy_after_teardown(
     role: &mut Option<ResMut<RuntimeRole>>,
     identity: &mut Option<ResMut<LaunchIdentity>>,
     approved: &mut MessageWriter<MapLoadApproved>,
-    menu: &mut MessageWriter<ReturnedToMenu>,
     leave: &mut Option<ResMut<net::PendingMasterMenuAction>>,
     bridge: Option<&net::MasterBridge>,
 ) -> Option<SessionSwapCompletion> {
@@ -346,11 +297,6 @@ fn occupy_after_teardown(
             {
                 action.0 = Some(net::MasterMenuAction::LeaveLobby);
             }
-            menu.write(ReturnedToMenu {
-                swap_id: pending.id,
-                had_world: pending.tore_down_world,
-                reason: Some(teardown_reason_for(&pending.target)),
-            });
             Some(SessionSwapCompletion {
                 id: pending.id,
                 result: SessionSwapResult::Menu,
@@ -393,16 +339,15 @@ fn occupy_after_teardown(
 fn run_session_swap(
     mut commands: Commands,
     mut transition: ResMut<SessionSwapRequest>,
-    has_world: Option<Res<HasWorld>>,
+    mut scope: ResMut<crate::ScopeControl>,
+    has_world: Option<Res<State<frame::MatchScope>>>,
     mut teardown: ResMut<TeardownRequest>,
     mut role: Option<ResMut<RuntimeRole>>,
     mut identity: Option<ResMut<LaunchIdentity>>,
     mut approved: MessageWriter<MapLoadApproved>,
-    mut torn: MessageReader<MatchTornDown>,
     mut failed: MessageReader<MapLoadFailed>,
     mut dvars: ResMut<frame::UiMenuDvars>,
-    mut installed: MessageReader<MatchInstalled>,
-    mut menu: MessageWriter<ReturnedToMenu>,
+    installed: Option<Res<InstalledMatch>>,
     mut leave: Option<ResMut<net::PendingMasterMenuAction>>,
     bridge: Option<Res<net::MasterBridge>>,
 ) {
@@ -411,10 +356,7 @@ fn run_session_swap(
         .find(|fact| transition.accepts_install(fact.request_id));
     let mut finish: Option<SessionSwapCompletion> = None;
     if let Some(fact) = failure {
-        let had_world = transition
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.tore_down_world);
+        scope.return_to_menu(None);
         stamp_runtime_role(&mut role, &mut identity, RuntimeRole::Listen);
         if let Some(identity) = identity.as_mut() {
             identity.zone.clear();
@@ -430,11 +372,6 @@ fn run_session_swap(
             format!("Could not load map '{}'.\n\n{details}", fact.zone),
         );
         dvars.set("ui_map_error", "1");
-        menu.write(ReturnedToMenu {
-            swap_id: fact.request_id,
-            had_world,
-            reason: None,
-        });
         diag::warn!(
             Sim,
             "session: map `{}` failed (swap #{}): {} — returned to menu",
@@ -457,25 +394,35 @@ fn run_session_swap(
         let expected_teardown = teardown_reason_for(&pending.target);
         // A leave can arrive after a match-end teardown was requested: a return to the menu
         // finishes on whichever teardown comes, but it must still wait for one.
-        let menu_accepts_any = matches!(pending.target, SessionSwapTarget::Menu { .. });
         match pending.phase {
-            SessionSwapPhase::Requested if has_world.is_some_and(|world| world.0) => {
+            SessionSwapPhase::Requested
+                if has_world
+                    .as_ref()
+                    .is_some_and(|world| *world.get() == frame::MatchScope::Live) =>
+            {
                 teardown.0 = Some(expected_teardown);
                 pending.tore_down_world = true;
                 pending.phase = SessionSwapPhase::WaitingForTeardown;
             }
             SessionSwapPhase::Requested | SessionSwapPhase::WaitingForTeardown
                 if matches!(pending.phase, SessionSwapPhase::Requested)
-                    || torn
-                        .read()
-                        .any(|fact| fact.reason == expected_teardown || menu_accepts_any) =>
+                    || !has_world
+                        .as_ref()
+                        .is_some_and(|world| *world.get() == frame::MatchScope::Live) =>
             {
+                if matches!(pending.target, SessionSwapTarget::Menu { .. }) {
+                    scope.return_to_menu(Some(expected_teardown));
+                } else if !has_world
+                    .as_ref()
+                    .is_some_and(|world| *world.get() == frame::MatchScope::Loading)
+                {
+                    scope.begin_load();
+                }
                 finish = occupy_after_teardown(
                     pending,
                     &mut role,
                     &mut identity,
                     &mut approved,
-                    &mut menu,
                     &mut leave,
                     bridge.as_deref(),
                 );
@@ -483,18 +430,20 @@ fn run_session_swap(
             SessionSwapPhase::WaitingForInstall
                 if matches!(pending.target, SessionSwapTarget::Menu { .. }) =>
             {
+                scope.return_to_menu(Some(expected_teardown));
                 finish = occupy_after_teardown(
                     pending,
                     &mut role,
                     &mut identity,
                     &mut approved,
-                    &mut menu,
                     &mut leave,
                     bridge.as_deref(),
                 );
             }
             SessionSwapPhase::WaitingForInstall
-                if let Some(fact) = installed.read().find(|fact| fact.request_id == pending.id) =>
+                if let Some(fact) = installed
+                    .as_ref()
+                    .filter(|fact| fact.request_id == pending.id) =>
             {
                 finish = Some(SessionSwapCompletion {
                     id: pending.id,
@@ -690,12 +639,12 @@ fn run_udp_peer_lobby_return(
     role: Res<RuntimeRole>,
     presented: Option<Res<PresentedSnapshot>>,
     bridge: Option<Res<net::MasterBridge>>,
-    has_world: Option<Res<HasWorld>>,
+    has_world: Option<Res<State<frame::MatchScope>>>,
     mut transition: ResMut<SessionSwapRequest>,
     mut latched: Local<bool>,
 ) {
     let master_joined = joined_in_match(bridge.as_ref().map(|b| b.state()).as_ref()).is_some();
-    let has_world = has_world.is_some_and(|h| h.0);
+    let has_world = has_world.is_some_and(|h| *h.get() == frame::MatchScope::Live);
     if !udp_peer_exit_applies(*role, master_joined, has_world) {
         *latched = false;
         return;
@@ -717,8 +666,8 @@ fn follow_master_match(
     mut offers: ResMut<net::MasterMatchStart>,
     bridge: Option<Res<net::MasterBridge>>,
     identity: Res<LaunchIdentity>,
-    live: Res<LiveWorldIdentity>,
-    has_world: Res<HasWorld>,
+    live: Option<Res<LiveWorldIdentity>>,
+    has_world: Res<State<frame::MatchScope>>,
     busy: Option<Res<assets::MatchLoadBusy>>,
     request: Option<Res<assets::MatchLoadRequest>>,
     ready: Option<Res<assets::PreparedMatchReady>>,
@@ -742,15 +691,19 @@ fn follow_master_match(
         return;
     }
     let host = matches!(state, net::MasterBridgeState::Hosting { .. });
-    if has_world.0
-        && (live.load_key.match_key == offer.match_key
-            || (host && live.load_key.match_key.is_none() && identity.zone == offer.map))
+    if (*has_world.get() == frame::MatchScope::Live)
+        && live.as_ref().is_some_and(|live| {
+            live.load_key.match_key == offer.match_key
+                || (host && live.load_key.match_key.is_none() && identity.zone == offer.map)
+        })
     {
         *pending = None;
         return;
     }
     let loading = busy.is_some_and(|busy| busy.0) || request.is_some() || ready.is_some();
-    if !*retiring && (has_world.0 || loading || swap.pending.is_some()) {
+    if !*retiring
+        && ((*has_world.get() == frame::MatchScope::Live) || loading || swap.pending.is_some())
+    {
         let id = ready
             .as_ref()
             .map(|r| r.request_id)
@@ -766,7 +719,7 @@ fn follow_master_match(
         *retiring = true;
         return;
     }
-    if has_world.0 || loading || swap.pending.is_some() {
+    if (*has_world.get() == frame::MatchScope::Live) || loading || swap.pending.is_some() {
         return;
     }
     let Some(mode) = sim::HostGameModeSelection::from_token(&offer.mode) else {
@@ -799,16 +752,9 @@ pub fn register_lifecycle(app: &mut App) {
     app.init_resource::<TeardownRequest>()
         .init_resource::<frame::UiMenuDvars>()
         .init_resource::<SessionSwapRequest>()
-        .init_resource::<TeardownGaps>()
-        .init_resource::<WorldGeneration>()
-        .init_resource::<frame::WorldProducts>()
-        .init_resource::<LiveWorldIdentity>()
         .init_resource::<Retiring>()
         .add_message::<MapLoadApproved>()
         .add_message::<MapLoadFailed>()
-        .add_message::<MatchInstalled>()
-        .add_message::<MatchTornDown>()
-        .add_message::<ReturnedToMenu>()
         .configure_sets(Update, frame::SessionSwapApplied.in_set(ClientSet::Load))
         .add_systems(
             Update,
@@ -817,7 +763,7 @@ pub fn register_lifecycle(app: &mut App) {
                 run_exit_level,
                 run_peer_lobby_return,
                 run_udp_peer_lobby_return,
-                run_teardown,
+                request_teardown,
                 run_session_swap,
             )
                 .chain()
@@ -829,5 +775,15 @@ pub fn register_lifecycle(app: &mut App) {
                 .after(crate::apply_prepared_match)
                 .in_set(ClientSet::Load),
         )
+        .add_systems(
+            OnExit(frame::MatchScope::Live),
+            release_match.in_set(frame::ScopeSet::Release),
+        )
         .add_systems(Update, retire_handed_over.in_set(ClientSet::Diag));
+}
+
+fn request_teardown(mut request: ResMut<TeardownRequest>, mut scope: ResMut<crate::ScopeControl>) {
+    if let Some(reason) = request.0.take() {
+        scope.tear_down(reason);
+    }
 }

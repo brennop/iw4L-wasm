@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::collections::{BTreeSet, HashSet};
 
 use asset_audio::SoundCatalog;
@@ -6,10 +7,10 @@ use asset_game::WeaponRegistry;
 use assets::{MapLoadProcess, MatchType10SoundHints, PreparedWeapons};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use frame::{ClientSet, LaunchIdentity, MatchTornDown, ReturnedToMenu};
+use frame::{ClientSet, LaunchIdentity};
 
 use crate::aliases::movement_prepare_names;
-use crate::ambient::{SoundBankCompose, SoundBankLoadAttempted, SoundBankNamespace};
+use crate::ambient::{SoundBankCompose, SoundBankNamespace};
 use crate::clip_store::{ClipKey, ClipStore, clip_keys_for_alias};
 use crate::playback::SoundBank;
 
@@ -46,7 +47,7 @@ struct MatchRequests {
 
 #[derive(Resource, Default)]
 struct MatchClipPrep {
-    generation: frame::WorldGeneration,
+    generation: frame::WorldStamp,
     submitted: bool,
     capacity_failure: bool,
     required: HashSet<ClipKey>,
@@ -67,13 +68,13 @@ struct AudioLoadScope<'w> {
 }
 
 impl AudioLoadScope<'_> {
-    fn generation(&self) -> frame::WorldGeneration {
+    fn generation(&self) -> frame::WorldStamp {
         self.accepted
             .as_ref()
             .map(|accepted| accepted.load_key)
             .or_else(|| self.incoming.as_ref().map(|incoming| incoming.load_key))
-            .map(|key| frame::WorldGeneration::from_install(key.local_load_request_id))
-            .unwrap_or(*self.installed)
+            .map(|key| frame::WorldStamp::from_install(key.local_load_request_id))
+            .unwrap_or(self.installed.stamp())
     }
 }
 
@@ -90,46 +91,24 @@ pub(crate) fn register(app: &mut App) {
         diag::info!(Audio, "audio: Silent (IW4L_SOUND=off)");
         app.insert_resource(AudioSilent);
     }
-    app.init_resource::<AudioReady>()
-        .init_resource::<MatchClipPrep>()
-        .init_resource::<crate::match_voices::AnnouncerRoutes>()
+    app.scoped::<AudioReady>(frame::MatchScope::Live)
+        .scoped::<MatchClipPrep>(frame::MatchScope::Live)
+        .scoped::<crate::match_voices::AnnouncerRoutes>(frame::MatchScope::Live)
         .add_systems(
             Update,
             (
-                queue_match_clips.after(crate::ambient::install_sound_bank),
-                poll_match_audio_ready.after(queue_match_clips),
-                reset_match_audio_on_match_end,
+                queue_match_clips
+                    .in_set(frame::InMatch)
+                    .after(crate::ambient::install_sound_bank),
+                poll_match_audio_ready
+                    .in_set(frame::InMatch)
+                    .after(queue_match_clips),
             )
                 .in_set(ClientSet::Load),
         );
 }
 
-fn reset_match_audio_on_match_end(
-    mut torn: MessageReader<MatchTornDown>,
-    mut returned: MessageReader<ReturnedToMenu>,
-    mut ready: ResMut<AudioReady>,
-    mut prep: ResMut<MatchClipPrep>,
-    mut announcer: ResMut<crate::match_voices::AnnouncerRoutes>,
-) {
-    let retired = torn.read().fold(false, |retired, event| {
-        retired || event.world_generation == prep.generation
-    });
-    let menu = returned.read().fold(false, |menu, event| {
-        menu || (event.had_world && prep.generation.0.is_none())
-    });
-    if !retired && !menu {
-        return;
-    }
-    *ready = AudioReady::default();
-    if let Some(stage) = prep.stage.take() {
-        stage.cancel();
-    }
-    *prep = MatchClipPrep::default();
-    *announcer = Default::default();
-}
-
 fn queue_match_clips(
-    attempted: Res<SoundBankLoadAttempted>,
     walk: Option<Res<SoundBankCompose>>,
     mut clips: Option<ResMut<ClipStore>>,
     weapons: Option<Res<PreparedWeapons>>,
@@ -173,9 +152,6 @@ fn queue_match_clips(
         diag::info!(Audio, "audio: AudioReady — Silent, no clips prepared");
         return;
     }
-    if !attempted.0 {
-        return;
-    }
     if walk.is_some() {
         return;
     }
@@ -193,7 +169,7 @@ fn queue_match_clips(
         );
         return;
     };
-    if *load_scope.installed != scope {
+    if load_scope.installed.stamp() != scope {
         return;
     }
     let Some(weapons) = weapons else {

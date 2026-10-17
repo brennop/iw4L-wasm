@@ -1,4 +1,5 @@
 use bevy::platform::collections::HashSet;
+use frame::ScopeApp;
 
 use bevy::prelude::*;
 use dpvs_iw4::{
@@ -56,14 +57,15 @@ impl SceneEntCellBits {
 }
 
 pub fn register_dyn_ent_brush_systems(app: &mut App) {
-    app.init_resource::<DynEntBrushCellBits>()
-        .init_resource::<DynEntBrushPrimaryLightVis>()
-        .init_resource::<SceneEntCellBits>()
+    app.scoped::<DynEntBrushCellBits>(frame::MatchScope::Live)
+        .scoped::<DynEntBrushPrimaryLightVis>(frame::MatchScope::Live)
+        .scoped::<SceneEntCellBits>(frame::MatchScope::Live)
         .add_systems(
             Update,
             (
-                link_dyn_ent_brush_cells,
+                link_dyn_ent_brush_cells.in_set(frame::InMatch),
                 exec_cell_dyn_brush_cmds
+                    .in_set(frame::InMatch)
                     .after(link_dyn_ent_brush_cells)
                     .after(frame::WorkerCmdSet::CellStatic),
             )
@@ -73,11 +75,13 @@ pub fn register_dyn_ent_brush_systems(app: &mut App) {
         .add_systems(
             Update,
             (
-                size_scene_ent_cell_bits,
+                size_scene_ent_cell_bits.in_set(frame::InMatch),
                 link_scene_ents
+                    .in_set(frame::InMatch)
                     .after(size_scene_ent_cell_bits)
                     .after(crate::prepare::scene::gfx_scene::GfxSceneAdd),
                 exec_cell_scene_ent_cmds
+                    .in_set(frame::InMatch)
                     .after(link_scene_ents)
                     .after(frame::WorkerCmdSet::CellStatic),
             )
@@ -87,6 +91,7 @@ pub fn register_dyn_ent_brush_systems(app: &mut App) {
         .add_systems(
             Update,
             drain_dpvs_ent_cmds
+                .in_set(frame::InMatch)
                 .after(frame::WorkerCmdSet::CellSceneEnt)
                 .in_set(frame::WorkerCmdSet::DpvsEnt),
         );
@@ -496,8 +501,6 @@ fn exec_cell_scene_ent_cmds(
 
             scene.scene_ent_walked = true;
             let bit_count = scene_ent_cell_walk_bits(GFX_CFG_ENT_COUNT);
-            // The planes this cell was seen through on this command's portal visit (see
-            // `CellFrustumWorkerCmd::visit`); the camera frustum when there are none.
             let cell_planes: Vec<[f32; 4]> = stats
                 .as_ref()
                 .and_then(|s| match cmd.visit {
@@ -639,13 +642,8 @@ fn drain_dpvs_ent_cmds(
                 }
                 dobj.cull_gate = dpvs_iw4::SCENE_DOBJ_GATE_BOUNDED;
             } else if dobj.cull_gate != dpvs_iw4::SCENE_DOBJ_GATE_BOUNDED {
-                // Skinned already, or its bounds failed.
                 return;
             }
-            // An entity seen through several cells gets a command per cell visit. One whose box
-            // does not reach the first command's cell must still be tried in the others' cells:
-            // Terminal's atrium pine is queued first for the eye's cell, which it does not reach,
-            // and vanished from the spots where that cell was walked first.
             let Some(bounds) = dobj.posed_bounds else {
                 return;
             };

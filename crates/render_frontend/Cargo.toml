@@ -44,7 +44,7 @@ render_scene.workspace = true
 sim.workspace = true
 weapon_iw4.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
-naga = { version = "29", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
 
 [lints]
 workspace = true

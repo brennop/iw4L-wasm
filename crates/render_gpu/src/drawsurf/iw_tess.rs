@@ -151,6 +151,7 @@ impl SpecializedRenderPipeline for IwTessPipeline {
             vertex: VertexState {
                 shader: self.shader.clone(),
                 shader_defs: Vec::new(),
+                constants: Vec::new(),
                 entry_point: Some("vs_tess".into()),
                 buffers: vec![VertexBufferLayout {
                     array_stride: 32,
@@ -177,6 +178,7 @@ impl SpecializedRenderPipeline for IwTessPipeline {
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs: Vec::new(),
+                constants: Vec::new(),
                 entry_point: Some("fs_tess".into()),
                 targets: vec![Some(ColorTargetState {
                     format: key.target,

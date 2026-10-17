@@ -182,7 +182,7 @@ pub struct PelletFxReport {
 
 #[allow(clippy::too_many_arguments)]
 pub fn present_pellet_segment(
-    generation: frame::WorldGeneration,
+    generation: frame::WorldStamp,
     timeline: u64,
     request: FireFxRequest,
     segment: u16,

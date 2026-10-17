@@ -24,6 +24,7 @@ use assets::{PreparedBodies, PreparedWeapons, PreparedWorldWeapons};
 use bevy::prelude::*;
 use bevy::tasks::ComputeTaskPool;
 use entity_iw4::{ET_PLAYER, ET_PLAYER_CORPSE};
+use frame::ScopeApp;
 use frame::{ModelLightingSeated, ViewSubject, WorkerCmdSet};
 use net::{
     CEntity, CEntityRuntime, ClientSet, FrameClock, LocalPresentClient, PlayerDrawGate,
@@ -68,47 +69,59 @@ struct RemoteBodyLightingBinds {
 }
 
 pub fn register_remote_body_systems(app: &mut App) {
-    app.init_resource::<RenderPresentationGaps>()
-        .init_resource::<RemoteBodyDrawPlan>()
-        .init_resource::<RemoteBodyTrees>()
-        .init_resource::<RemoteSkinPoseHashes>()
-        .init_resource::<RemoteBodySkinnedQueue>()
-        .init_resource::<RemoteBodyLightingBinds>()
-        .init_resource::<PreparedRemoteKits>()
-        .add_systems(Update, reset_remote_kits.in_set(ClientSet::Load))
+    app.init_app::<RenderPresentationGaps>()
+        .scoped::<RemoteBodyDrawPlan>(frame::MatchScope::Live)
+        .scoped::<RemoteBodyTrees>(frame::MatchScope::Live)
+        .scoped::<RemoteSkinPoseHashes>(frame::MatchScope::Live)
+        .scoped::<RemoteBodySkinnedQueue>(frame::MatchScope::Live)
+        .scoped::<RemoteBodyLightingBinds>(frame::MatchScope::Live)
+        .scoped::<PreparedRemoteKits>(frame::MatchScope::Live)
         .add_systems(
             Update,
-            prepare_remote_kits
+            (reset_remote_kits
+                .in_set(frame::InMatch)
+                .in_set(ClientSet::Load))
+            .in_set(frame::InMatch),
+        )
+        .add_systems(
+            Update,
+            (prepare_remote_kits
+                .in_set(frame::InMatch)
                 .after(sync_remote_bodies)
                 .before(occupy_remote_scene_ents)
                 .before(pose_remote_bodies)
-                .in_set(render_scene::GfxSceneAdd),
+                .in_set(render_scene::GfxSceneAdd))
+            .in_set(frame::InMatch),
         )
-        .init_resource::<crate::anim::dobj_pose::HostDObjPoseFrame>()
-        .init_resource::<crate::anim::dobj_pose::PosedPlayerFrame>()
+        .scoped::<crate::anim::dobj_pose::HostDObjPoseFrame>(frame::MatchScope::Live)
+        .scoped::<crate::anim::dobj_pose::PosedPlayerFrame>(frame::MatchScope::Live)
         .add_systems(
             Update,
-            sync_remote_bodies
+            (sync_remote_bodies
                 .after(PresentedPublished)
                 .before(occupy_remote_scene_ents)
-                .in_set(render_scene::GfxSceneAdd),
+                .in_set(render_scene::GfxSceneAdd))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            occupy_remote_scene_ents
+            (occupy_remote_scene_ents
+                .in_set(frame::InMatch)
                 .after(sync_remote_bodies)
                 .after(PresentedPublished)
                 .after(crate::occupancy::fpv_present::occupy_fpv_scene)
                 .in_set(render_scene::GfxSceneAdd)
-                .in_set(AnimSceneSubmit),
+                .in_set(AnimSceneSubmit))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            (
+            ((
                 begin_remote_body_tess
                     .after(sync_remote_bodies)
                     .before(pose_remote_bodies),
                 pose_remote_bodies
+                    .in_set(frame::InMatch)
                     .after(sync_remote_bodies)
                     .after(begin_remote_body_tess)
                     .after(crate::anim::dobj_pose::begin_dobj_pose_frame)
@@ -117,30 +130,40 @@ pub fn register_remote_body_systems(app: &mut App) {
                     .after(WorkerCmdSet::DpvsEnt),
             )
                 .after(PresentedPublished)
-                .in_set(WorkerCmdSet::SkinModel),
+                .in_set(WorkerCmdSet::SkinModel))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            crate::anim::dobj_pose::begin_dobj_pose_frame
+            (crate::anim::dobj_pose::begin_dobj_pose_frame
+                .in_set(frame::InMatch)
                 .after(PresentedPublished)
-                .in_set(ClientSet::Present),
+                .in_set(ClientSet::Present))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            enqueue_remote_body_lighting
+            (enqueue_remote_body_lighting
+                .in_set(frame::InMatch)
                 .after(WorkerCmdSet::SkinModel)
                 .after(crate::occupancy::script_model::ScriptModelSkinSet)
                 .before(WorkerCmdSet::CellDynModel)
                 .after(PresentedPublished)
-                .in_set(ClientSet::Present),
+                .in_set(ClientSet::Present))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            (
-                submit_remote_bodies.after(ModelLightingSeated),
-                finish_body_draw_plan.after(submit_remote_bodies),
+            ((
+                submit_remote_bodies
+                    .in_set(frame::InMatch)
+                    .after(ModelLightingSeated),
+                finish_body_draw_plan
+                    .in_set(frame::InMatch)
+                    .after(submit_remote_bodies),
             )
-                .in_set(WorkerCmdSet::AddSceneEnt),
+                .in_set(WorkerCmdSet::AddSceneEnt))
+            .in_set(frame::InMatch),
         );
 }
 

@@ -1,9 +1,9 @@
 use fx_iw4::{
     FX_ELEM_AT_REST_NONE, collide_marks_at_rest, collide_substep_schedule,
-    collision_reflect_base_vel_delta, elem_dies_on_touch, elem_gravity_accel_z_sampled,
+    collision_reflect_base_vel_delta, elem_dies_on_touch, elem_gravity_accel_z,
     elem_update_has_velocity_graph, elem_uses_collision, elem_uses_vel_local, elem_uses_vel_world,
-    get_at_rest_fraction, get_velocity_at_time, impact_child_speed_allows,
-    integrate_velocity_graph, orientation_pos_from_world, orientation_pos_to_world,
+    get_at_rest_fraction, get_velocity_at_time_sampled, impact_child_speed_allows,
+    integrate_velocity_graph_sampled, orientation_pos_from_world, orientation_pos_to_world,
     sample_reflection_factor, trace_mask, vec3_length_sq,
 };
 
@@ -13,7 +13,6 @@ pub fn evaluate_elem_motion(
     flags: i32,
     gravity_base: f32,
     gravity_amp: f32,
-    elem_random_seed: u64,
     vel_graph_local: &[fx_iw4::FxElemVec3Range],
     vel_graph_world: &[fx_iw4::FxElemVec3Range],
     q: FxElemMotionQuery<'_>,
@@ -26,7 +25,6 @@ pub fn evaluate_elem_motion(
         flags,
         gravity_base,
         gravity_amp,
-        elem_random_seed,
         vel_graph_local,
         vel_graph_world,
         q,
@@ -43,7 +41,6 @@ pub fn evaluate_elem_collide_motion(
     coll_maxs: [f32; 3],
     use_item_clip: bool,
     has_effect_on_impact: bool,
-    elem_random_seed: u64,
     vel_graph_local: &[fx_iw4::FxElemVec3Range],
     vel_graph_world: &[fx_iw4::FxElemVec3Range],
     q: FxElemMotionQuery<'_>,
@@ -54,7 +51,6 @@ pub fn evaluate_elem_collide_motion(
             flags,
             gravity_base,
             gravity_amp,
-            elem_random_seed,
             vel_graph_local,
             vel_graph_world,
             q,
@@ -100,7 +96,8 @@ pub fn evaluate_elem_collide_motion(
                 life_ms,
                 dt_sec,
                 base_vel,
-                elem_random_seed,
+                elem_random_seed: q.elem_random_seed,
+                motion_random: q.motion_random,
                 origin,
                 prev_msec: t0,
                 msec_now: t_end,
@@ -113,7 +110,6 @@ pub fn evaluate_elem_collide_motion(
                 flags,
                 gravity_base,
                 gravity_amp,
-                elem_random_seed,
                 vel_graph_local,
                 vel_graph_world,
                 sub_q,
@@ -155,7 +151,7 @@ pub fn evaluate_elem_collide_motion(
 
             let age_at_hit_msec = (t0.saturating_sub(q.msec_begin)).max(0) as f32
                 + (t_end.saturating_sub(t0)).max(0) as f32 * hit.fraction;
-            let pre_vel = get_velocity_at_time(
+            let pre_vel = get_velocity_at_time_sampled(
                 flags,
                 base_vel,
                 age_at_hit_msec,
@@ -163,7 +159,7 @@ pub fn evaluate_elem_collide_motion(
                 vel_graph_local,
                 vel_graph_world,
                 q.effect_axis,
-                elem_random_seed,
+                q.motion_random.velocity,
             );
             let pre_speed_sq = vec3_length_sq(pre_vel);
             if has_effect_on_impact && impact_child_speed_allows(pre_speed_sq) {
@@ -179,7 +175,7 @@ pub fn evaluate_elem_collide_motion(
             }
 
             let reflection =
-                sample_reflection_factor(reflection_base, reflection_amp, elem_random_seed);
+                sample_reflection_factor(reflection_base, reflection_amp, q.elem_random_seed);
             let scaled = [
                 pre_vel[0] * reflection,
                 pre_vel[1] * reflection,
@@ -232,23 +228,32 @@ fn integrate_free_flight(
     flags: i32,
     gravity_base: f32,
     gravity_amp: f32,
-    elem_random_seed: u64,
     local_samples: &[fx_iw4::FxElemVec3Range],
     world_samples: &[fx_iw4::FxElemVec3Range],
     q: FxElemMotionQuery<'_>,
 ) -> FxElemMotionResult {
     let mut stored = q.origin;
     if elem_uses_vel_local(flags) && local_samples.len() >= 2 {
-        let d =
-            integrate_velocity_graph(local_samples, q.age0, q.age1, q.life_ms, elem_random_seed);
+        let d = integrate_velocity_graph_sampled(
+            local_samples,
+            q.age0,
+            q.age1,
+            q.life_ms,
+            q.motion_random.velocity,
+        );
         stored[0] += d[0];
         stored[1] += d[1];
         stored[2] += d[2];
     }
     let mut world = orientation_pos_to_world(q.orient.origin, q.orient.axis, stored);
     if elem_uses_vel_world(flags) && world_samples.len() >= 2 {
-        let d =
-            integrate_velocity_graph(world_samples, q.age0, q.age1, q.life_ms, elem_random_seed);
+        let d = integrate_velocity_graph_sampled(
+            world_samples,
+            q.age0,
+            q.age1,
+            q.life_ms,
+            q.motion_random.velocity,
+        );
         world[0] += d[0];
         world[1] += d[1];
         world[2] += d[2];
@@ -257,7 +262,11 @@ fn integrate_free_flight(
     if elem_update_has_velocity_graph(flags) {
         {
             let dt = q.dt_sec;
-            let g = elem_gravity_accel_z_sampled(gravity_base, gravity_amp, elem_random_seed);
+            let g = elem_gravity_accel_z(fx_iw4::sample_float_range(
+                gravity_base,
+                gravity_amp,
+                q.motion_random.gravity,
+            ));
             world[0] += base_vel[0] * dt;
             world[1] += base_vel[1] * dt;
             world[2] += base_vel[2] * dt;

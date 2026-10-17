@@ -1,6 +1,239 @@
 use super::*;
 
 impl WeaponRegistry {
+    pub fn shared_rank_table(&self) -> Result<&crate::CapturedStringTable, &'static str> {
+        self.shared_ranks
+            .get_or_init(|| self.capture_shared_ranks())
+            .as_ref()
+            .map_err(|error| *error)
+    }
+
+    fn capture_shared_ranks(&self) -> Result<crate::CapturedStringTable, &'static str> {
+        let host = self
+            .family_tables
+            .iter()
+            .rev()
+            .find(|(ns, table)| {
+                *ns == crate::AssetNamespace::Iw4
+                    && table.name.eq_ignore_ascii_case("mp/rankTable.csv")
+            })
+            .map(|(_, table)| table)
+            .ok_or("rank.missing_table")?;
+        let maximum = |table: &crate::CapturedStringTable| {
+            (0..table.rows as i32)
+                .filter_map(|row| table.cell(row, 0).parse::<u32>().ok())
+                .max()
+        };
+        let host_max = maximum(host).ok_or("rank.invalid_table")?;
+        let donor = self
+            .family_tables
+            .iter()
+            .filter(|(_, table)| table.name.eq_ignore_ascii_case("mp/rankTable.csv"))
+            .filter_map(|(_, table)| maximum(table).map(|rank| (rank, table)))
+            .max_by_key(|(rank, _)| *rank)
+            .ok_or("rank.missing_table")?;
+        let mut shared = host.clone();
+        if donor.0 > host_max {
+            let last = host
+                .lookup_row_in_col(0, &host_max.to_string())
+                .ok_or("rank.invalid_table")?;
+            let first = donor
+                .1
+                .lookup_row_in_col(0, &(host_max + 1).to_string())
+                .ok_or("rank.invalid_table")?;
+            let next_xp = host
+                .cell(last, 7)
+                .parse::<i32>()
+                .map_err(|_| "rank.invalid_threshold")?;
+            let donor_xp = donor
+                .1
+                .cell(first, 2)
+                .parse::<i32>()
+                .map_err(|_| "rank.invalid_threshold")?;
+            let offset = next_xp
+                .checked_sub(donor_xp)
+                .ok_or("rank.invalid_threshold")?;
+            for rank in host_max + 1..=donor.0 {
+                let row = donor
+                    .1
+                    .lookup_row_in_col(0, &rank.to_string())
+                    .ok_or("rank.invalid_table")?;
+                let mut cells = (0..host.columns as i32)
+                    .map(|column| donor.1.cell(row, column).to_owned())
+                    .collect::<Vec<_>>();
+                for column in [2, 7] {
+                    cells[column] = cells[column]
+                        .parse::<i32>()
+                        .ok()
+                        .and_then(|xp| xp.checked_add(offset))
+                        .ok_or("rank.invalid_threshold")?
+                        .to_string();
+                }
+                cells[6] = host.cell(last, 6).to_owned();
+                shared.cells.extend(cells);
+                shared.rows += 1;
+            }
+            let max_row = shared
+                .lookup_row_in_col(0, "maxrank")
+                .ok_or("rank.invalid_table")?;
+            shared.cells[max_row as usize * shared.columns + 1] = donor.0.to_string();
+        }
+        gamemode_iw4::progression::RankProgression::capture(&shared)?;
+        Ok(shared)
+    }
+
+    pub fn shared_rank_icons(&self) -> Result<&crate::CapturedStringTable, &'static str> {
+        self.shared_icons
+            .get_or_init(|| self.capture_shared_icons())
+            .as_ref()
+            .map_err(|error| *error)
+    }
+
+    fn capture_shared_icons(&self) -> Result<crate::CapturedStringTable, &'static str> {
+        let mut icons = self
+            .family_tables
+            .iter()
+            .rev()
+            .find(|(ns, table)| {
+                *ns == crate::AssetNamespace::Iw4
+                    && table.name.eq_ignore_ascii_case("mp/rankIconTable.csv")
+            })
+            .map(|(_, table)| table.clone())
+            .ok_or("rank.missing_icons")?;
+        let max = (0..icons.rows as i32)
+            .filter_map(|row| icons.cell(row, 0).parse::<u32>().ok())
+            .max()
+            .ok_or("rank.invalid_icons")?;
+        let shared = self.shared_rank_table()?;
+        let shared_max = shared
+            .lookup_col("maxrank", 1)
+            .parse::<u32>()
+            .map_err(|_| "rank.invalid_table")?;
+        let last = icons
+            .lookup_row_in_col(0, &max.to_string())
+            .ok_or("rank.invalid_icons")?;
+        let last = (0..icons.columns as i32)
+            .map(|column| icons.cell(last, column).to_owned())
+            .collect::<Vec<_>>();
+        for rank in max + 1..=shared_max {
+            let mut row = last.clone();
+            row[0] = rank.to_string();
+            icons.cells.extend(row);
+            icons.rows += 1;
+        }
+        Ok(icons)
+    }
+
+    pub fn rank_progression(
+        &self,
+    ) -> Result<gamemode_iw4::progression::RankProgression, &'static str> {
+        gamemode_iw4::progression::RankProgression::capture(self.shared_rank_table()?)
+    }
+
+    pub fn item_unlock_requirement(
+        &self,
+        namespace: crate::AssetNamespace,
+        name: &str,
+    ) -> Result<gamemode_iw4::progression::UnlockRequirement, &'static str> {
+        let infinity = matches!(
+            namespace,
+            crate::AssetNamespace::Iw4 | crate::AssetNamespace::Iw5
+        );
+        let table_name = if infinity {
+            "mp/unlockTable.csv"
+        } else {
+            "mp/statsTable.csv"
+        };
+        let table = self
+            .family_tables
+            .iter()
+            .rev()
+            .find(|(ns, t)| *ns == namespace && t.name.eq_ignore_ascii_case(table_name))
+            .ok_or("unlock.missing_table")?;
+        let column = if infinity { 0 } else { 4 };
+        let row = table
+            .1
+            .lookup_row_in_col(column, name)
+            .or_else(|| table.1.lookup_row_in_col(column, &format!("{name}_mp")))
+            .or_else(|| {
+                infinity
+                    .then(|| {
+                        table.1.lookup_row_in_col(
+                            column,
+                            &format!("specialty_{}", name.replace('_', "")),
+                        )
+                    })
+                    .flatten()
+            });
+        let Some(row) = row else {
+            let native_perk = infinity
+                && self.family_tables.iter().any(|(ns, table)| {
+                    *ns == namespace
+                        && table.name.eq_ignore_ascii_case("mp/perkTable.csv")
+                        && table.lookup_row_in_col(1, name).is_some()
+                });
+            return if native_perk {
+                Ok(Default::default())
+            } else {
+                Err("unlock.missing_item")
+            };
+        };
+        if infinity {
+            return gamemode_iw4::progression::UnlockRequirement::capture(
+                table.1.cell(row, 2),
+                table.1.cell(row, 3),
+            );
+        }
+        let native = &table.1;
+        let rank = native.cell(row, 10);
+        let mut requirement = gamemode_iw4::progression::UnlockRequirement::capture(
+            if rank.is_empty() { "0" } else { rank },
+            "",
+        )?;
+        if namespace == crate::AssetNamespace::T5 {
+            let classified = native.cell(row, 15);
+            let purchases = if classified.is_empty() {
+                0
+            } else {
+                classified
+                    .parse::<u32>()
+                    .map_err(|_| "unlock.invalid_classified")?
+            };
+            if purchases > 0 {
+                let group = native.cell(row, 2);
+                let ranks = (0..native.rows as i32)
+                    .filter(|&other| native.cell(other, 2) == group)
+                    .filter(|&other| !native.cell(other, 10).is_empty())
+                    .map(|other| {
+                        native
+                            .cell(other, 10)
+                            .parse::<u32>()
+                            .map_err(|_| "unlock.invalid_rank")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                requirement.rank = ranks
+                    .into_iter()
+                    .max()
+                    .ok_or("unlock.missing_classified_group")?;
+            }
+        }
+        Ok(requirement)
+    }
+
+    pub fn weapon_unlock_requirement(
+        &self,
+        id: u32,
+    ) -> Result<gamemode_iw4::progression::UnlockRequirement, &'static str> {
+        if id == 0 {
+            return Ok(Default::default());
+        }
+        let selection = self
+            .describe_configuration(id)
+            .ok_or("unlock.missing_family")?;
+        let family = selection.family.as_ref().ok_or("unlock.missing_family")?;
+        self.item_unlock_requirement(family.namespace, &family.base)
+    }
+
     pub fn vehicle_compass(&self) -> impl Iterator<Item = (&str, &[String; 2], [i32; 2])> {
         self.vehicle_compass
             .iter()

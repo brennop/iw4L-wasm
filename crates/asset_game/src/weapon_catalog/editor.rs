@@ -63,6 +63,25 @@ impl FamilyContent for EditorWeaponCatalog {
 }
 
 impl EditorWeaponCatalog {
+    pub fn shared_rank_table(&self) -> Result<&crate::CapturedStringTable, &'static str> {
+        self.registry.shared_rank_table()
+    }
+    pub fn shared_rank_icons(&self) -> Result<&crate::CapturedStringTable, &'static str> {
+        self.registry.shared_rank_icons()
+    }
+    pub fn rank_progression(
+        &self,
+    ) -> Result<gamemode_iw4::progression::RankProgression, &'static str> {
+        self.registry.rank_progression()
+    }
+    pub fn item_unlock_requirement(
+        &self,
+        namespace: crate::AssetNamespace,
+        name: &str,
+    ) -> Result<gamemode_iw4::progression::UnlockRequirement, &'static str> {
+        self.registry.item_unlock_requirement(namespace, name)
+    }
+
     pub fn len(&self) -> usize {
         self.registry.len()
     }

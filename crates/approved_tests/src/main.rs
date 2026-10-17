@@ -306,12 +306,27 @@ fn run(root: &Path, args: &Args) -> Result<bool, String> {
     let scenes_b = resolve_scenes("b", &map_b, 1, seed, replay.as_ref());
     let phases = hgl::phases(&map_b, &scenes_a, &scenes_b);
     let script = scenario::script(&phases);
-    let child_args = vec![
-        "map".to_owned(),
-        SCENARIO.map_a.to_owned(),
-        "--cmds".to_owned(),
-        script.clone(),
-    ];
+    let child_args = vec!["menu".to_owned(), "--cmds".to_owned(), script.clone()];
+
+    if let Some(replay) = &replay {
+        let source = replay
+            .source
+            .parent()
+            .ok_or("replay: no parent directory")?
+            .join("iw4l-artifacts/profile/classes.txt");
+        let contents = std::fs::read_to_string(&source)
+            .map_err(|e| format!("replay class profile {}: {e}", source.display()))?;
+        let destination = run_dir.join("iw4l-artifacts/profile/classes.txt");
+        std::fs::create_dir_all(destination.parent().expect("has parent"))
+            .map_err(|e| format!("create replay profile directory: {e}"))?;
+        std::fs::write(&destination, &contents)
+            .map_err(|e| format!("write replay profile {}: {e}", destination.display()))?;
+        manifest["class_profile"] = json!({
+            "source": source.display().to_string(),
+            "path": destination.display().to_string(),
+            "contents": contents,
+        });
+    }
 
     let cache = prepare_cache(root, &run_dir, args.cache)?;
     manifest["cache"] = cache;
@@ -339,6 +354,14 @@ fn run(root: &Path, args: &Args) -> Result<bool, String> {
         env: vec![
             ("IW4L_PERF", "1".into()),
             ("IW4L_GAMETYPE", SCENARIO.gametype.into()),
+            (
+                "IW4L_SETTINGS_PATH",
+                run_dir.join("settings.cfg").display().to_string(),
+            ),
+            (
+                "IW4L_ACCOUNT_PATH",
+                run_dir.join("account.dat").display().to_string(),
+            ),
         ],
         phase_timeout: Duration::from_secs(SCENARIO.phase_timeout_secs),
         quit_timeout: Duration::from_secs(SCENARIO.quit_timeout_secs),

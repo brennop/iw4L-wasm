@@ -59,6 +59,15 @@ pub fn phases(map_b: &str, scenes_a: &[ResolvedScene], scenes_b: &[ResolvedScene
         ]
     };
     let mut out = vec![
+        Phase::new(
+            "account_fixture",
+            vec![
+                "wait progression".into(),
+                "unlock all".into(),
+                format!("map {}", s.map_a),
+                "wait world".into(),
+            ],
+        ),
         Phase::new("a.cold_load", vec!["wait world".into()]),
         captured("capture_00", "00_cold_load"),
         Phase::new("a.populate", populate()),
@@ -68,7 +77,35 @@ pub fn phases(map_b: &str, scenes_a: &[ResolvedScene], scenes_b: &[ResolvedScene
             .iter()
             .map(|scene| Phase::new(scene.phase(), scene.commands.clone())),
     );
+    out.push(Phase::new(
+        "a.entity_lifetimes",
+        vec![
+            "force_spawn random 75".into(),
+            "wait 2t".into(),
+            "give weapon/claymore".into(),
+            "wait 2t".into(),
+            "press +frag".into(),
+            "wait 80t".into(),
+            "dump 01a_equipment_live".into(),
+            "kill".into(),
+            "wait 10t".into(),
+            "dump 01b_dropped_weapon".into(),
+            "force_spawn random 79".into(),
+            "wait 2t".into(),
+        ],
+    ));
     out.push(captured("capture_01", "01_overgrown_gameplay"));
+    out.push(Phase::new(
+        "a.round_restart",
+        vec![
+            "round_restart".into(),
+            "wait 40t".into(),
+            "spawn 0".into(),
+            "force_match_start".into(),
+            "wait 40t".into(),
+        ],
+    ));
+    out.push(captured("capture_round", "01c_after_round_restart"));
     out.push(Phase::new(
         "disconnect",
         vec!["disconnect".into(), "wait torn".into()],

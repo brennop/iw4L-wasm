@@ -89,8 +89,6 @@ pub struct DpvsFrameStats {
 
     pub cell_clips: Vec<CellClipPlanes>,
 
-    /// Every portal visit of the walk, in order: the cell and the planes it was seen through.
-    /// A cell seen through several portals appears once per portal.
     pub cell_clip_visits: Vec<(u32, CellClipPlanes)>,
 
     pub cell_vis_all: bool,
@@ -109,9 +107,11 @@ fn single_cell_from_env() -> bool {
 pub struct WorldMeshEntity;
 
 #[derive(Component)]
+#[require(bevy::prelude::DespawnOnExit<frame::MatchScope> = bevy::prelude::DespawnOnExit(frame::MatchScope::Live))]
 pub struct StaticModelEntity;
 
 #[derive(Component)]
+#[require(bevy::prelude::DespawnOnExit<frame::MatchScope> = bevy::prelude::DespawnOnExit(frame::MatchScope::Live))]
 pub struct ScriptModelEntity;
 
 pub use render_scene::DynEntModelEntity;

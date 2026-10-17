@@ -147,6 +147,7 @@ impl Remote {
     pub fn find(ssh: &Ssh, port: u16) -> Res<Self> {
         let found = ssh.capture(&format!(
             "for f in /etc/systemd/system/*.service; do
+              [ -f \"$f\" ] || continue
               line=$(grep -m1 '^ExecStart=.* serve --bind [^ ]*:{port} ' \"$f\" || true)
               [ -z \"$line\" ] || printf '%s\\t%s\\n' \"$(basename \"$f\")\" \"${{line#ExecStart=}}\"
             done"

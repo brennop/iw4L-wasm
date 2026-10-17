@@ -3,6 +3,7 @@ use entity_iw4::{
     EntityEventAction, EntityEventKind, UnsupportedEntityEvent, consume_entity_events,
     entity_event_action, packet_entity_uses_event_ring,
 };
+use frame::ScopeApp;
 use sim::{EntityEventPayload, EventSequence, Tick};
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -30,7 +31,7 @@ pub enum EntityEventDomain {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DispatchedEntityEvent {
-    pub world: frame::WorldGeneration,
+    pub world: frame::WorldStamp,
     pub domain: EntityEventDomain,
     pub timeline: u64,
     pub sequence: EventSequence,
@@ -145,7 +146,7 @@ const TARGET_RETRY_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug)]
 struct DeferredTarget {
-    world: frame::WorldGeneration,
+    world: frame::WorldStamp,
     timeline: u64,
     client: sim::ClientId,
     life: sim::LifeSequence,
@@ -341,7 +342,7 @@ fn dispatch_entity_events(
                 number,
                 entity,
                 DispatchedEntityEvent {
-                    world: *generation,
+                    world: generation.stamp(),
                     domain: EntityEventDomain::Ring,
                     timeline,
                     sequence: EventSequence(u32::try_from(ev.sequence).unwrap_or(0)),
@@ -396,7 +397,7 @@ fn dispatch_entity_events(
                 continue;
             }
             let number = record.payload.number;
-            if target.world != *generation || target.timeline != cursor.timeline {
+            if target.world != generation.stamp() || target.timeline != cursor.timeline {
                 target_gaps.raise(NetGapCause::EventRetryScopeChanged {
                     number,
                     sequence: record.sequence,
@@ -445,7 +446,7 @@ fn dispatch_entity_events(
         walk.last_number = record.payload.number;
 
         let dispatched = DispatchedEntityEvent {
-            world: *generation,
+            world: generation.stamp(),
             domain: EntityEventDomain::Snapshot,
             timeline: cursor.timeline,
             sequence: record.sequence,
@@ -488,7 +489,7 @@ fn dispatch_entity_events(
                         let client = sim::ClientId(u32::try_from(number).ok()?);
                         let life = adopted.next()?.meta.for_client(client)?.life_sequence;
                         Some(DeferredTarget {
-                            world: *generation,
+                            world: generation.stamp(),
                             timeline: cursor.timeline,
                             client,
                             life,
@@ -558,17 +559,17 @@ fn dispatch_owner_events(
                 record.fire_cause.is_some_and(|cause| {
                     cause.client == local.0
                         && Some(cause.life) == life
-                        && verdicts.status(*generation, cause)
+                        && verdicts.status(generation.stamp(), cause)
                             != crate::PredictedFireStatus::Refused
                 })
             })
-            .map(|record| (*generation, EntityEventDomain::Predicted, record)),
+            .map(|record| (generation.stamp(), EntityEventDomain::Predicted, record)),
     );
     for record in prediction.0.take_owner_events() {
         if record.payload.fire_cause.is_some_and(|cause| {
             cause.client != local.0
                 || Some(cause.life) != life
-                || verdicts.status(*generation, cause) == crate::PredictedFireStatus::Refused
+                || verdicts.status(generation.stamp(), cause) == crate::PredictedFireStatus::Refused
         }) {
             continue;
         }
@@ -582,7 +583,7 @@ fn dispatch_owner_events(
             local_number,
             entity,
             DispatchedEntityEvent {
-                world: *generation,
+                world: generation.stamp(),
                 domain: EntityEventDomain::Predicted,
                 timeline: cursor.timeline,
                 sequence: record.sequence,
@@ -731,8 +732,7 @@ fn set_ads_from_reset(
 }
 
 pub fn register_entity_event_dispatch(app: &mut App) {
-    app.init_resource::<EntityEventCursor>()
-        .init_resource::<frame::WorldGeneration>()
+    app.scoped::<EntityEventCursor>(frame::MatchScope::Live)
         .init_resource::<AppliedEntityEventWalk>()
         .init_resource::<UnsupportedEntityEvents>()
         .init_resource::<NetIdentityGaps>()
@@ -742,9 +742,11 @@ pub fn register_entity_event_dispatch(app: &mut App) {
             Update,
             (
                 dispatch_entity_events
+                    .in_set(frame::InMatch)
                     .in_set(ClientSet::Reconcile)
                     .after(crate::sync_client_entities),
                 dispatch_owner_events
+                    .in_set(frame::InMatch)
                     .in_set(frame::OwnerEventsPublished)
                     .after(crate::predict_local_move),
             ),

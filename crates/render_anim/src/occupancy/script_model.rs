@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::collections::{HashMap, HashSet};
 
 use bevy::ecs::system::SystemParam;
@@ -256,42 +257,45 @@ pub fn register_script_model_systems(app: &mut App) {
     let select = RenderFocusSelect::from_env()
         .unwrap_or_else(|error| panic!("focused render observation refused: {error}"));
     app.insert_resource(select)
-        .init_resource::<RenderFocus>()
-        .init_resource::<ScriptModelDrawPlan>()
-        .init_resource::<ScriptModelDobjs>()
-        .init_resource::<crate::anim::dobj_pose::ScriptModelDObjFrame>()
-        .init_resource::<crate::anim::dobj_pose::ScriptModelBoltDemand>()
-        .init_resource::<ScriptModelPoseProduct>()
+        .scoped::<RenderFocus>(frame::MatchScope::Live)
+        .scoped::<ScriptModelDrawPlan>(frame::MatchScope::Live)
+        .scoped::<ScriptModelDobjs>(frame::MatchScope::Live)
+        .scoped::<crate::anim::dobj_pose::ScriptModelDObjFrame>(frame::MatchScope::Live)
+        .scoped::<crate::anim::dobj_pose::ScriptModelBoltDemand>(frame::MatchScope::Live)
+        .scoped::<ScriptModelPoseProduct>(frame::MatchScope::Live)
         .add_systems(
             Update,
-            (
+            ((
                 sync_spawned_scene_models,
                 apply_presented_script_model_dobjs,
-                apply_script_mover_centity_pose,
-                occupy_script_model_scene_ents,
+                apply_script_mover_centity_pose.in_set(frame::InMatch),
+                occupy_script_model_scene_ents.in_set(frame::InMatch),
             )
                 .chain()
                 .in_set(frame::RenderSet::Anim)
                 .before(frame::WorkerCmdSet::CellDynModel)
                 .in_set(ScriptModelDrawSet)
                 .in_set(render_scene::GfxSceneAdd)
-                .in_set(AnimSceneSubmit),
+                .in_set(AnimSceneSubmit))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            (
-                publish_script_model_dobjs,
+            ((
+                publish_script_model_dobjs.in_set(frame::InMatch),
                 publish_script_model_bolt_poses
+                    .in_set(frame::InMatch)
                     .after(crate::anim::dobj_pose::begin_dobj_pose_frame),
-                pose_script_models,
-                commit_script_model_draw_plan,
+                pose_script_models.in_set(frame::InMatch),
+                commit_script_model_draw_plan.in_set(frame::InMatch),
             )
                 .chain()
                 .after(occupy_script_model_scene_ents)
                 .after(frame::WorkerCmdSet::CellSceneEnt)
                 .after(frame::WorkerCmdSet::DpvsEnt)
                 .in_set(ScriptModelSkinSet)
-                .in_set(frame::WorkerCmdSet::SkinModel),
+                .in_set(frame::WorkerCmdSet::SkinModel))
+            .in_set(frame::InMatch),
         );
 }
 

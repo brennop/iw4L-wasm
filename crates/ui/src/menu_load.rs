@@ -14,7 +14,7 @@ use crate::loading::{
     LoadingCamera, LoadingRoot, LoadingScreen, OverlayUiCamera, dismiss_loading_overlay,
 };
 use crate::menu::MenuMapList;
-use frame::{AppScreen, LaunchIdentity, LaunchReport, MapLoadApproved, ReturnedToMenu};
+use frame::{AppScreen, LaunchIdentity, LaunchReport, MapLoadApproved};
 
 fn launch_report(
     zone: String,
@@ -159,7 +159,7 @@ pub(crate) fn begin_load_from_session(
 
 pub(crate) fn restore_menu_on_return(
     mut commands: Commands,
-    mut returned: MessageReader<ReturnedToMenu>,
+    mut returned: MessageReader<StateTransitionEvent<frame::MatchScope>>,
     mut class_overlay: ResMut<ClassSelectOverlayOpen>,
     mut maps: ResMut<MenuMapList>,
     identity: Option<Res<LaunchIdentity>>,
@@ -167,7 +167,10 @@ pub(crate) fn restore_menu_on_return(
     chrome: Query<Entity, Or<(With<LoadingRoot>, With<LoadingCamera>)>>,
     overlay_cams: Query<Entity, With<OverlayUiCamera>>,
 ) {
-    if returned.read().count() == 0 {
+    if !returned
+        .read()
+        .any(|event| event.exited.is_some() && event.entered == Some(frame::MatchScope::Absent))
+    {
         return;
     }
     class_overlay.0 = false;
@@ -241,7 +244,7 @@ fn install_menu_strings_prepare(
 }
 
 pub(crate) fn register_menu_load_systems(app: &mut App) {
-    app.add_message::<ReturnedToMenu>().add_systems(
+    app.add_systems(
         Update,
         (
             begin_load_from_session,

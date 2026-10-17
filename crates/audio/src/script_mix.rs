@@ -1,8 +1,9 @@
-use crate::backend::MatchEpoch;
 use crate::media::LiveGain;
 use asset_audio::ChannelKey;
 use asset_core::AssetNamespace;
 use bevy::prelude::*;
+use frame::ScopeApp;
+use frame::{MatchScope, ScopeEpoch};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Resource, Default)]
@@ -165,7 +166,7 @@ fn update_channel_mix(
     bank: Option<Res<crate::SoundBank>>,
     namespace: Option<Res<crate::ambient::SoundBankNamespace>>,
     local: Option<Res<net::LocalPresentClient>>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
     runtime: Res<crate::AudioRuntime>,
 ) {
     let now = runtime.audio_frame();
@@ -236,7 +237,12 @@ fn update_channel_mix(
 }
 
 pub(crate) fn register(app: &mut App) {
-    app.init_resource::<ScriptAudioMix>()
-        .init_resource::<ChannelAudioMix>()
-        .add_systems(Update, update_channel_mix.in_set(net::ClientSet::Effects));
+    app.scoped::<ScriptAudioMix>(frame::MatchScope::Live)
+        .scoped::<ChannelAudioMix>(frame::MatchScope::Live)
+        .add_systems(
+            Update,
+            update_channel_mix
+                .in_set(frame::InMatch)
+                .in_set(net::ClientSet::Effects),
+        );
 }

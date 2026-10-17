@@ -18,7 +18,7 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::shader::Shader;
 
-const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/floatz.wgsl";
+const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/floatz.wesl";
 
 const PARAMS_SIZE: u64 = 16;
 
@@ -76,12 +76,14 @@ impl SpecializedRenderPipeline for ExactFloatZResolve {
             vertex: VertexState {
                 shader: self.shader.clone(),
                 shader_defs: shader_defs.clone(),
+                constants: Vec::new(),
                 entry_point: Some("vs_fullscreen".into()),
                 buffers: Vec::new(),
             },
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs,
+                constants: Vec::new(),
                 entry_point: Some("fs_floatz".into()),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::R32Float,
@@ -313,7 +315,7 @@ pub(super) fn blit_depth(
 }
 
 pub(super) fn register(app: &mut App) {
-    bevy::asset::embedded_asset!(app, "floatz.wgsl");
+    bevy::asset::embedded_asset!(app, "floatz.wesl");
     let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
         return;
     };

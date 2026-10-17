@@ -201,7 +201,17 @@ pub(super) fn wrap_payload(payload: &PreparedPayload, wrap: WrapRecipe) -> Arc<I
         )),
         PayloadData::Mips(state) => {
             let mut state = state.lock().expect("prepared mip cache is not poisoned");
-            if let Some((_, image)) = state.images.iter().find(|(recipe, _)| *recipe == wrap) {
+            if let Some((_, image)) = state.images.iter().find(|(recipe, image)| {
+                *recipe == wrap
+                    || (image.texture_descriptor.format
+                        == texture_format(state.mips.layout().storage, wrap.linear())
+                        && image.sampler
+                            == ImageSampler::Descriptor(sampler_from_iw4(
+                                wrap.sampler_state,
+                                state.mips.layout().levels,
+                                wrap.alpha_test_color,
+                            )))
+            }) {
                 return Arc::clone(image);
             }
             if state.images.is_empty() {

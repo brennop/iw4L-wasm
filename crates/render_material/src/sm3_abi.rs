@@ -103,6 +103,8 @@ pub struct PassProgramAbi {
     pub vertex_constants: Vec<ConstantBinding>,
     pub pixel_constants: Vec<ConstantBinding>,
     pub samplers: Vec<SamplerBinding>,
+
+    pub depth_to_colour: bool,
 }
 
 pub fn format_vertex_semantic(semantic: Semantic) -> String {
@@ -240,6 +242,7 @@ pub(crate) fn build_pass_abi(
     custom_sampler_flags: u8,
     t5_custom_sampler_flags: u8,
     hardware_shadow_compare: bool,
+    depth_to_colour: bool,
 ) -> Result<PassProgramAbi, PassAbiRefusal> {
     let attributes = routed_attributes(decl, vertex_type)?;
     let vertex_inputs = bind_vertex_inputs(vertex, &attributes)?;
@@ -269,6 +272,7 @@ pub(crate) fn build_pass_abi(
         vertex_constants,
         pixel_constants,
         samplers,
+        depth_to_colour,
     })
 }
 

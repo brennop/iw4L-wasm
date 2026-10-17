@@ -252,9 +252,8 @@ fn describe_slot(store: &SessionClassStore, index: usize) -> String {
 fn class_listing(store: &SessionClassStore, highlight: usize) -> Vec<String> {
     let mut lines = Vec::with_capacity(store.slots.len() + 1);
     lines.push(format!(
-        "class: {} presets, selected {highlight}, equipped {:?}",
-        store.slots.len(),
-        store.equipped
+        "class: {} presets, selected {highlight}",
+        store.slots.len()
     ));
     for index in 0..store.slots.len() {
         let marker = if index == highlight { '>' } else { ' ' };

@@ -55,7 +55,7 @@ impl FireFxOutcome {
 
 #[derive(Clone, Copy)]
 pub struct FireFxRequest {
-    pub world: frame::WorldGeneration,
+    pub world: frame::WorldStamp,
     pub timeline: u64,
     pub domain: net::EntityEventDomain,
     pub cause: Option<sim::FireCause>,
@@ -133,7 +133,7 @@ pub struct PresentedFireFx {
 }
 
 impl PresentedFireFx {
-    fn adopt_scope(&mut self, generation: frame::WorldGeneration, timeline: u64, now: i32) -> bool {
+    fn adopt_scope(&mut self, generation: frame::WorldStamp, timeline: u64, now: i32) -> bool {
         let scope = (generation.0, timeline);
         let changed = self.scope != Some(scope)
             || self
@@ -150,12 +150,7 @@ impl PresentedFireFx {
         changed
     }
 
-    pub fn maintain(
-        &mut self,
-        generation: frame::WorldGeneration,
-        timeline: u64,
-        now: i32,
-    ) -> bool {
+    pub fn maintain(&mut self, generation: frame::WorldStamp, timeline: u64, now: i32) -> bool {
         let started = Instant::now();
         let changed = self.adopt_scope(generation, timeline, now);
         self.stats.maintenance_sweeps += 1;
@@ -173,7 +168,7 @@ impl PresentedFireFx {
 
     pub fn execute(
         &mut self,
-        generation: frame::WorldGeneration,
+        generation: frame::WorldStamp,
         timeline: u64,
         request: FireFxRequest,
         verdicts: &net::FireVerdictState,

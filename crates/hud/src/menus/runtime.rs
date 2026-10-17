@@ -649,6 +649,14 @@ impl Runner<'_, '_> {
     }
 
     pub(crate) fn activate(&mut self, menu: &str, index: usize, accept: bool) {
+        if self
+            .catalog
+            .get(menu)
+            .and_then(|def| def.items.get(index))
+            .is_some_and(|item| super::class_unavailable(menu, item, self.dvars).is_some())
+        {
+            return;
+        }
         if self.adjust(menu, index, 1) {
             return;
         }

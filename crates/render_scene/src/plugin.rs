@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 
 use crate::{
     DynAtPointLookup, HostGfxScene, ModelLightingRequests, RLockPvs, RSubwindowDvar,
@@ -11,19 +12,19 @@ pub struct RenderScenePlugin;
 
 impl Plugin for RenderScenePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostGfxScene>()
-            .init_resource::<crate::ModelLightingAtlasTileWrites>()
-            .init_resource::<DynAtPointLookup>()
-            .init_resource::<crate::WorldDpvsCells>()
-            .init_resource::<crate::PublishedCellVis>()
-            .init_resource::<crate::TessMaterials>()
-            .init_resource::<crate::WorldPresentFacts>()
-            .init_resource::<SpotShadowSceneOccupancy>()
-            .init_resource::<SpotShadowEntityOriginTrack>()
-            .init_resource::<SceneEntSkinInputs>()
-            .init_resource::<SceneEntSurfaceCache>()
-            .init_resource::<ModelLightingRequests>()
-            .init_resource::<ResolvedModelLightingTable>()
+        app.scoped::<HostGfxScene>(frame::MatchScope::Live)
+            .scoped::<crate::ModelLightingAtlasTileWrites>(frame::MatchScope::Live)
+            .scoped::<DynAtPointLookup>(frame::MatchScope::Live)
+            .scoped::<crate::WorldDpvsCells>(frame::MatchScope::Live)
+            .scoped::<crate::PublishedCellVis>(frame::MatchScope::Live)
+            .scoped::<crate::TessMaterials>(frame::MatchScope::Live)
+            .scoped::<crate::WorldPresentFacts>(frame::MatchScope::Live)
+            .scoped::<SpotShadowSceneOccupancy>(frame::MatchScope::Live)
+            .scoped::<SpotShadowEntityOriginTrack>(frame::MatchScope::Live)
+            .scoped::<SceneEntSkinInputs>(frame::MatchScope::Live)
+            .scoped::<SceneEntSurfaceCache>(frame::MatchScope::Live)
+            .scoped::<ModelLightingRequests>(frame::MatchScope::Live)
+            .scoped::<ResolvedModelLightingTable>(frame::MatchScope::Live)
             .init_resource::<SimCamera>()
             .init_resource::<crate::PreparedSceneView>()
             .init_resource::<crate::LodRampSkinnedDvar>()

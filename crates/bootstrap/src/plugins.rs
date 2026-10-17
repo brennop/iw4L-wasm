@@ -48,24 +48,9 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         .add_plugins(RenderPlugin)
         .add_plugins(SessionPlugin);
 
-    app.edit_schedule(Update, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-
-    app.edit_schedule(First, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(PreUpdate, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(PostUpdate, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(Last, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-
     if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+        // Measured: multithreaded render schedules compete with camera prepare's own
+        // ComputeTaskPool lanes for the same workers and lose ~5% fps.
         render_app.edit_schedule(bevy::render::renderer::RenderGraph, |schedule| {
             schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
         });

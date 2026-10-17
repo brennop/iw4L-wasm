@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::EntityCollisionCapabilities;
-use crate::script::{ArrayKey, Runtime, Value};
+use crate::script::{ArrayKey, RoundScript, Value};
 
-fn field<'a>(runtime: &'a Runtime, object: u64, name: &str) -> Option<&'a Value> {
+fn field<'a>(runtime: &'a RoundScript, object: u64, name: &str) -> Option<&'a Value> {
     let symbol = runtime
         .program
         .as_ref()?
@@ -13,7 +13,7 @@ fn field<'a>(runtime: &'a Runtime, object: u64, name: &str) -> Option<&'a Value>
     runtime.objects.get(&object)?.get(symbol)
 }
 
-fn body_state(runtime: &Runtime, object: u64) -> Option<&BTreeMap<ArrayKey, Value>> {
+fn body_state(runtime: &RoundScript, object: u64) -> Option<&BTreeMap<ArrayKey, Value>> {
     let Value::Array(parts) = field(runtime, object, "destructible_parts")? else {
         return None;
     };
@@ -34,7 +34,7 @@ fn integer(values: &BTreeMap<ArrayKey, Value>, key: &str) -> Option<i64> {
     }
 }
 
-pub(crate) fn entities(runtime: &Runtime, models: &[EntityCollisionCapabilities]) {
+pub(crate) fn entities(runtime: &RoundScript, models: &[EntityCollisionCapabilities]) {
     for (object, entity) in &runtime.entities {
         let Some(id) = entity.presence else {
             continue;

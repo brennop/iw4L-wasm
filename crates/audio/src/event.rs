@@ -47,7 +47,7 @@ pub struct AudioEvent {
 
 impl AudioEvent {
     pub fn from_entity(
-        generation: frame::WorldGeneration,
+        generation: frame::WorldStamp,
         entity: bevy::prelude::Entity,
         event: &net::DispatchedEntityEvent,
         ordinal: u16,
@@ -75,7 +75,7 @@ impl AudioEvent {
     }
 
     pub fn from_animation(
-        generation: frame::WorldGeneration,
+        generation: frame::WorldStamp,
         timeline: u64,
         client: sim::ClientId,
         tick: sim::Tick,
@@ -217,7 +217,7 @@ impl EventJournal {
                     ..
                 }
             ) && event.fire_cause.is_some_and(|(cause, _)| {
-                verdicts.status(frame::WorldGeneration(event.id.world), cause)
+                verdicts.status(frame::WorldStamp(event.id.world), cause)
                     == net::PredictedFireStatus::Refused
             })
         })

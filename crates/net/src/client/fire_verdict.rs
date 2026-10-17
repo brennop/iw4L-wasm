@@ -17,7 +17,7 @@ pub enum PredictedFireStatus {
 
 #[derive(Default)]
 struct Verdicts {
-    world: frame::WorldGeneration,
+    world: frame::WorldStamp,
     results: HashMap<(sim::ClientId, sim::CommandSequence), (sim::FireCommandResult, Instant)>,
 }
 
@@ -27,7 +27,7 @@ pub struct FireVerdictState(Arc<Mutex<Verdicts>>);
 impl FireVerdictState {
     pub(crate) fn apply(
         &self,
-        world: frame::WorldGeneration,
+        world: frame::WorldStamp,
         results: &[sim::FireCommandResult],
     ) -> Result<(), &'static str> {
         let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -66,11 +66,7 @@ impl FireVerdictState {
         Ok(())
     }
 
-    pub fn status(
-        &self,
-        world: frame::WorldGeneration,
-        cause: sim::FireCause,
-    ) -> PredictedFireStatus {
+    pub fn status(&self, world: frame::WorldStamp, cause: sim::FireCause) -> PredictedFireStatus {
         let state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
         if state.world != world {
             return PredictedFireStatus::Pending;
@@ -89,6 +85,6 @@ impl FireVerdictState {
     pub(crate) fn clear(&self) {
         let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
         state.results.clear();
-        state.world = frame::WorldGeneration::default();
+        state.world = frame::WorldStamp::default();
     }
 }

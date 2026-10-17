@@ -33,7 +33,7 @@ use render_frame::{
 };
 use render_material::MaterialGenerationId;
 
-const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/geometry_diagnostic.wgsl";
+const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/geometry_diagnostic.wesl";
 
 fn geometry_diagnostic_covers(kind: &RetainedDrawKind, key: u64) -> bool {
     !matches!(
@@ -176,6 +176,7 @@ impl SpecializedRenderPipeline for DiagnosticPipeline {
             vertex: VertexState {
                 shader: self.shader.clone(),
                 shader_defs: Vec::new(),
+                constants: Vec::new(),
                 entry_point: Some(match key.tess {
                     DiagnosticTess::World => "vertex".into(),
                     DiagnosticTess::Smodel | DiagnosticTess::XModel => "vertex_smodel".into(),
@@ -190,6 +191,7 @@ impl SpecializedRenderPipeline for DiagnosticPipeline {
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs: Vec::new(),
+                constants: Vec::new(),
                 entry_point: Some("fragment".into()),
                 targets: vec![Some(ColorTargetState {
                     format: key.target,
@@ -779,7 +781,7 @@ pub(super) fn register(app: &mut App) {
     if !geometry_diagnostic_enabled() {
         return;
     }
-    bevy::asset::embedded_asset!(app, "geometry_diagnostic.wgsl");
+    bevy::asset::embedded_asset!(app, "geometry_diagnostic.wesl");
     let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
         return;
     };

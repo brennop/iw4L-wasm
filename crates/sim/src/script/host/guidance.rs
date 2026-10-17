@@ -2,7 +2,7 @@ use super::args::{arg, float, int, optional, vector};
 use super::entities::EntityKind;
 use crate::frame::FrameWorld;
 use crate::script::Namespace::{Function, Method};
-use crate::script::{NativeRegistry, Runtime, Value};
+use crate::script::{NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 use glam::Vec3;
 
@@ -30,7 +30,7 @@ pub(crate) fn target(
     if let Value::Vector(point) = value {
         return Ok(crate::MissileTarget::Point(*point));
     }
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let (_, entity) = runtime
         .entity(value)
         .filter(|(id, _)| runtime.live(id))
@@ -62,7 +62,7 @@ fn guide(
     receiver: &Value,
     edit: impl FnOnce(&mut crate::MissileGuide),
 ) -> Result<Value, String> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let (_, entity) = runtime
         .entity(receiver)
         .filter(|(id, _)| runtime.live(id))
@@ -95,7 +95,7 @@ fn create_attractor(
     if max_dist <= 0.0 {
         return Err("parameter 3: maxDist must be greater than zero".into());
     }
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let slots = &mut runtime.engine.attractors;
     let index = slots.iter().position(Option::is_none).ok_or_else(|| {
         format!("Ran out of attractor/repulsors.  Max allowed: {ATTRACTOR_SLOTS}")
@@ -131,7 +131,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             .ok()
             .filter(|&index| index < ATTRACTOR_SLOTS)
             .ok_or("parameter 1: Invalid attractor or repulsor")?;
-        world.resource_mut::<Runtime>().engine.attractors[index] = None;
+        world.resource_mut::<RoundScript>().engine.attractors[index] = None;
         Ok(Value::Undefined)
     });
     registry.register(Method, "missile_settargetent", |world, receiver, args| {
@@ -177,7 +177,7 @@ pub(crate) use crate::missile_guidance::turn_toward;
 
 fn attract(world: &mut World, now: i32) {
     let slots: Vec<Attractor> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .engine
         .attractors
         .iter()

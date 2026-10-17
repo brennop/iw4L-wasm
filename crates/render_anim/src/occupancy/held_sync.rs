@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 use frame::{LaunchReport, LifeEnded, LifeFrontPublished, LifeStarted, ViewSubject};
 use net::{ClientSet, LocalPresentClient, PresentedSnapshot};
 
@@ -225,8 +226,20 @@ pub fn sync_fpv_status_to_probe(
 }
 
 pub(crate) fn register_held_sync_systems(app: &mut App) {
-    app.add_message::<LifeStarted>()
-        .add_message::<LifeEnded>()
-        .add_systems(Update, sync_fpv_to_held_weapon.in_set(LifeFrontPublished))
-        .add_systems(Update, sync_fpv_status_to_probe.in_set(ClientSet::Diag));
+    app.scoped_message::<LifeStarted>(frame::MatchScope::Live)
+        .scoped_message::<LifeEnded>(frame::MatchScope::Live)
+        .add_systems(
+            Update,
+            (sync_fpv_to_held_weapon
+                .in_set(frame::InMatch)
+                .in_set(LifeFrontPublished))
+            .in_set(frame::InMatch),
+        )
+        .add_systems(
+            Update,
+            (sync_fpv_status_to_probe
+                .in_set(frame::InMatch)
+                .in_set(ClientSet::Diag))
+            .in_set(frame::InMatch),
+        );
 }

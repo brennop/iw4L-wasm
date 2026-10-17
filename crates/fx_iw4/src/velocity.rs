@@ -1,5 +1,5 @@
 use crate::flags::{elem_uses_vel_local, elem_uses_vel_world};
-use crate::integrate::sample_vel_graph_at_age;
+use crate::integrate::sample_vel_graph_at_age_sampled;
 
 pub const FX_VEL_AT_TIME_SCALE: f64 = 1000.0;
 
@@ -13,6 +13,34 @@ pub fn get_velocity_at_time(
     world_samples: &[crate::FxElemVec3Range],
     orient_axis: [[f32; 3]; 3],
     seed: u64,
+) -> [f32; 3] {
+    if !(elem_uses_vel_world(flags) && world_samples.len() >= 2)
+        && !(elem_uses_vel_local(flags) && local_samples.len() >= 2)
+    {
+        return base_vel;
+    }
+    get_velocity_at_time_sampled(
+        flags,
+        base_vel,
+        age_msec,
+        life_ms,
+        local_samples,
+        world_samples,
+        orient_axis,
+        crate::random::velocity_random(seed),
+    )
+}
+
+#[inline]
+pub fn get_velocity_at_time_sampled(
+    flags: i32,
+    base_vel: [f32; 3],
+    age_msec: f32,
+    life_ms: f32,
+    local_samples: &[crate::FxElemVec3Range],
+    world_samples: &[crate::FxElemVec3Range],
+    orient_axis: [[f32; 3]; 3],
+    random: [f32; 3],
 ) -> [f32; 3] {
     let mut out = base_vel;
     let age01 = if life_ms > 0.0 {
@@ -30,13 +58,13 @@ pub fn get_velocity_at_time(
     let scale = FX_VEL_AT_TIME_SCALE as f32;
 
     if elem_uses_vel_world(flags) && world_samples.len() >= 2 {
-        let s = sample_vel_graph_at_age(world_samples, age01, seed);
+        let s = sample_vel_graph_at_age_sampled(world_samples, age01, random);
         out[0] += s[0] * scale;
         out[1] += s[1] * scale;
         out[2] += s[2] * scale;
     }
     if elem_uses_vel_local(flags) && local_samples.len() >= 2 {
-        let s = sample_vel_graph_at_age(local_samples, age01, seed);
+        let s = sample_vel_graph_at_age_sampled(local_samples, age01, random);
 
         let wx = s[0] * orient_axis[0][0] + s[1] * orient_axis[1][0] + s[2] * orient_axis[2][0];
         let wy = s[0] * orient_axis[0][1] + s[1] * orient_axis[1][1] + s[2] * orient_axis[2][1];

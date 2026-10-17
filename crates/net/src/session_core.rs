@@ -843,18 +843,11 @@ impl Default for ClientMatchCore {
 }
 
 impl ClientMatchCore {
-    pub fn apply_teardown(&mut self, fact: frame::MatchTornDown) {
-        if !match_key_boundary_applies(fact.match_key, self.match_key)
-            || self
-                .installed
-                .is_some_and(|load| fact.world_generation.0 != Some(load.local_load_request_id))
-        {
-            return;
-        }
+    pub fn retire_match(&mut self) {
         *self = Self {
             session_open: self.session_open,
-            retired_match: (!fact.match_key.is_none())
-                .then_some(fact.match_key)
+            retired_match: (!self.match_key.is_none())
+                .then_some(self.match_key)
                 .or(self.retired_match),
             ..Self::default()
         };

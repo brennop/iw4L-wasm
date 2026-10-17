@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 use playerstate_iw4::{ENTITYNUM_NONE, PLAYER_CORPSE_ENTITY_BASE};
 use sim::{ClientId, PlayerCorpsePool, PlayerCorpseSlot};
 
@@ -13,6 +14,7 @@ pub const CLIENT_ENTITY_SLOT_COUNT: usize = ENTITYNUM_NONE as usize;
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[component(immutable)]
+#[require(bevy::prelude::DespawnOnExit<frame::MatchScope> = bevy::prelude::DespawnOnExit(frame::MatchScope::Live))]
 pub struct CEntity {
     number: u16,
     client: Option<ClientId>,
@@ -395,22 +397,25 @@ fn sync_snapshot_entities(
 }
 
 pub(crate) fn register_authority_entities(app: &mut App) {
-    app.init_resource::<CEntitySlots>()
+    app.scoped::<CEntitySlots>(frame::MatchScope::Live)
         .init_resource::<NetIdentityGaps>()
-        .init_resource::<CEntityBirthCensus>()
+        .scoped::<CEntityBirthCensus>(frame::MatchScope::Live)
         .add_systems(
             FixedUpdate,
-            sync_authority_entities.in_set(AuthoritySet::Fanout),
+            sync_authority_entities
+                .in_set(frame::InMatch)
+                .in_set(AuthoritySet::Fanout),
         );
 }
 
 pub fn register_client_entities(app: &mut App) {
-    app.init_resource::<CEntitySlots>()
+    app.scoped::<CEntitySlots>(frame::MatchScope::Live)
         .init_resource::<NetIdentityGaps>()
-        .init_resource::<CEntityBirthCensus>()
+        .scoped::<CEntityBirthCensus>(frame::MatchScope::Live)
         .add_systems(
             Update,
             sync_client_entities
+                .in_set(frame::InMatch)
                 .in_set(ClientSet::Reconcile)
                 .after(crate::reconcile_prediction),
         );

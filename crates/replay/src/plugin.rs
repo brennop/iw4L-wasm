@@ -1,5 +1,6 @@
 use bevy::prelude::*;
-use frame::{MatchTornDown, ReturnedToMenu, RuntimeRole, SessionSwapApplied};
+use frame::ScopeApp;
+use frame::{RuntimeRole, SessionSwapApplied};
 use net::{
     AUTHORITY_MS, AuthorityClock, AuthorityLoadHold, AuthoritySet, ClientClock, ClientSet,
     ReceivedTick, ReceivedTicks, ServerTick, ServerTime, authority_should_tick,
@@ -68,12 +69,13 @@ impl Plugin for ReplayPlugin {
         app.init_resource::<ReplaySession>()
             .init_resource::<ReplayDiagnostics>()
             .init_resource::<PendingReplayArm>()
-            .init_resource::<ClipRing>();
+            .scoped::<ClipRing>(frame::MatchScope::Live);
         let role = app.world().get_resource::<RuntimeRole>().copied();
         if role.is_some_and(|role| role.runs_authority() || role == RuntimeRole::Replay) {
             app.add_systems(
                 FixedUpdate,
                 record_server_tick
+                    .in_set(frame::InMatch)
                     .in_set(AuthoritySet::Fanout)
                     .run_if(authority_should_tick),
             );
@@ -82,12 +84,15 @@ impl Plugin for ReplayPlugin {
             Update,
             (
                 record_received_ticks
+                    .in_set(frame::InMatch)
                     .after(ClientSet::Receive)
                     .before(ClientSet::Reconcile),
                 sync_theater_occupancy
+                    .in_set(frame::InMatch)
                     .in_set(ClientSet::Load)
                     .after(SessionSwapApplied),
                 pump_playback
+                    .in_set(frame::InMatch)
                     .in_set(ClientSet::Load)
                     .run_if(resource_exists::<ReplayPlayback>)
                     .after(sync_theater_occupancy),
@@ -98,17 +103,9 @@ impl Plugin for ReplayPlugin {
 
 fn sync_theater_occupancy(
     mut commands: Commands,
-    mut torn: MessageReader<MatchTornDown>,
-    mut returned: MessageReader<ReturnedToMenu>,
     mut pending: ResMut<PendingReplayArm>,
-    mut ring: ResMut<ClipRing>,
     role: Res<RuntimeRole>,
 ) {
-    if torn.read().count() > 0 || returned.read().count() > 0 {
-        ring.clear();
-        commands.remove_resource::<ReplayPlayback>();
-        perf::theater(0, None, None);
-    }
     if *role != RuntimeRole::Replay {
         return;
     }
@@ -116,7 +113,10 @@ fn sync_theater_occupancy(
         return;
     };
     let quit_on_end = pending.quit_on_end;
-    commands.insert_resource(ReplayPlayback::new(playback).with_quit_on_end(quit_on_end));
+    let playback = ReplayPlayback::new(playback).with_quit_on_end(quit_on_end);
+    commands.queue(move |world: &mut World| {
+        frame::scope::insert(world, playback, frame::MatchScope::Live);
+    });
     perf::theater(
         1,
         Some(i64::from(quit_on_end)),

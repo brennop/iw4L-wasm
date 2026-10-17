@@ -302,7 +302,6 @@ pub(crate) fn finalize_queued_hull_no_frustum(item: &mut Queued, view_dir: [f32;
     true
 }
 
-/// Called for every portal visit of a cell, with the planes it was seen through.
 pub type CellVisit<'a> = dyn FnMut(usize, &CellClipPlanes) + 'a;
 
 pub fn visit_cells(
@@ -388,10 +387,6 @@ pub fn visit_cells(
                 }
             }
         }
-        // A cell seen through several portals is visited once per portal, each visit with its
-        // own clip planes; `cell_clips` keeps only the first. Entities in the cell must be culled
-        // against every visit (IW4 queues one cell command per visit), or what shows only
-        // through a later portal vanishes.
         if let Some(visit) = on_visit.as_mut() {
             let mut planes = CellClipPlanes::EMPTY;
             record_cell_clip(&item, clip_planes, &mut planes);

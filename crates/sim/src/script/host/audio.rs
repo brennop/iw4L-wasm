@@ -1,5 +1,5 @@
 use super::args::{float, optional, string};
-use crate::script::{Namespace, NativeRegistry, Runtime, Value};
+use crate::script::{Namespace, NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 fn change(world: &mut World, args: &[Value], stop: bool, ac130: bool) -> Result<Value, String> {
@@ -33,7 +33,7 @@ fn change(world: &mut World, args: &[Value], stop: bool, ac130: bool) -> Result<
         start_ms: now,
         end_ms: end,
     };
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     if ac130 {
         runtime.engine.ac130_ambient = Some(plan);
     } else {
@@ -92,7 +92,7 @@ fn sound_fade(world: &mut World, args: &[Value]) -> Result<Value, String> {
 
 fn stop_entity_sounds(world: &mut World, receiver: &Value) -> Result<Value, String> {
     let id = super::natives::engine::entity_id(world, receiver)?;
-    let number = world.resource::<Runtime>().entities[&id].number;
+    let number = world.resource::<RoundScript>().entities[&id].number;
     let origin = match super::players::entity_field(world, id, "origin") {
         Value::Vector(origin) => origin,
         _ => [0.0; 3],
@@ -142,7 +142,7 @@ fn channel_volumes(
     } else {
         let name = string(args, 1)?.to_ascii_lowercase();
         let precached = world
-            .resource::<Runtime>()
+            .resource::<crate::script::MatchScript>()
             .precached
             .keys()
             .any(|(kind, item)| *kind == "shellshock" && item.eq_ignore_ascii_case(&name));

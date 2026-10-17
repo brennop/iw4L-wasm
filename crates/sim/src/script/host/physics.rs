@@ -1,7 +1,7 @@
 use super::args::{arg, float, string, vector};
 use crate::frame::FrameWorld;
 use crate::script::Namespace::{Function, Method};
-use crate::script::{NativeRegistry, Runtime, Value};
+use crate::script::{NativeRegistry, RoundScript, Value};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
 
@@ -23,7 +23,7 @@ fn usable<'a>(
     receiver: &Value,
 ) -> Result<&'a mut super::entities::Usable, String> {
     let object = object_of(world, receiver)?;
-    let runtime = world.resource_mut::<Runtime>().into_inner();
+    let runtime = world.resource_mut::<RoundScript>().into_inner();
     let entity = runtime.entities.get_mut(&object).unwrap();
     let enabled = matches!(&*entity.classname, "trigger_use" | "trigger_use_touch");
     Ok(entity
@@ -62,7 +62,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         }
         world.resource_scope::<super::mechanics::Mechanics, _>(|world, mut mechanics| {
             mechanics.explode(
-                &mut world.resource_mut::<Runtime>(),
+                &mut world.resource_mut::<RoundScript>(),
                 center,
                 outer,
                 inner,
@@ -91,7 +91,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             world
                 .resource_mut::<super::mechanics::Mechanics>()
                 .launch(object, force);
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             runtime.entities.get_mut(&object).unwrap().linked_to = None;
             Ok(Value::Undefined)
         });
@@ -138,7 +138,7 @@ pub(crate) fn select_usables(world: &mut World) {
         super::entities::Usable,
         super::triggers::TriggerPolicy,
     )> = {
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let candidates: Vec<(u64, super::entities::Usable, super::triggers::TriggerPolicy)> =
             runtime
                 .entities
@@ -162,7 +162,7 @@ pub(crate) fn select_usables(world: &mut World) {
             .collect()
     };
     let clients: Vec<u32> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .keys()
         .copied()
@@ -206,5 +206,5 @@ pub(crate) fn select_usables(world: &mut World) {
             ps.cursor_hint_string = usable.hint;
         }
     }
-    world.resource_mut::<Runtime>().use_selected = selected;
+    world.resource_mut::<RoundScript>().use_selected = selected;
 }

@@ -141,6 +141,53 @@ impl Default for ClassLoadoutCatalog {
 }
 
 impl ClassLoadoutCatalog {
+    pub fn progression_lock(&self, value: &str, data: &sim::LocalPlayerData) -> Option<String> {
+        if value.is_empty() || value == "specialty_null" {
+            return None;
+        }
+        let Some(registry) = self.resolver.0.as_deref() else {
+            return Some("Content is loading".into());
+        };
+        let (namespace, name) = asset_game::FamilyKey::parse(value)
+            .map(|family| (family.namespace, family.base))
+            .unwrap_or_else(|| {
+                (
+                    asset_core::AssetNamespace::Iw4,
+                    value.trim_end_matches("_mp").to_owned(),
+                )
+            });
+        let requirement = match registry.item_unlock_requirement(namespace, &name) {
+            Ok(requirement) => requirement,
+            Err(reason) => return Some(format!("{value}: {reason}")),
+        };
+        let Some(progression) = data.progression.as_ref() else {
+            return Some("Progression is loading".into());
+        };
+        if progression.rank < requirement.rank {
+            return Some(format!("Unlocks at level {}", requirement.rank + 1));
+        }
+        (!progression.unlocked(&requirement)).then(|| "Complete the required challenge".into())
+    }
+
+    pub fn validate_progression(
+        &self,
+        slot: &ClassSlotState,
+        data: &sim::LocalPlayerData,
+    ) -> Result<(), String> {
+        for row in ClassEditRow::ALL {
+            if let Some(reason) = self.progression_lock(slot.row_value(row), data) {
+                return Err(reason);
+            }
+        }
+        if slot.perk1 == "specialty_bling"
+            && slot.secondary_attachments.len() > 1
+            && let Some(reason) = self.progression_lock("specialty_secondarybling", data)
+        {
+            return Err(reason);
+        }
+        Ok(())
+    }
+
     pub fn from_editor_catalog(registry: std::sync::Arc<asset_game::EditorWeaponCatalog>) -> Self {
         let families = registry.weapon_families();
         let offered: std::collections::HashSet<_> =

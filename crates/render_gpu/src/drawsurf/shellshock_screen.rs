@@ -27,6 +27,7 @@ impl TemporalScreenPipeline {
                 },
                 fragment: Some(FragmentState {
                     shader_defs: Vec::new(),
+                    constants: Vec::new(),
                     shader: self.shader.clone(),
                     entry_point: Some("fragment".into()),
                     targets: vec![Some(ColorTargetState {

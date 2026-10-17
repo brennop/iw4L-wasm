@@ -83,7 +83,9 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-bevy = { version = "0.19", default-features = false, features = [
+bevy = { version = "0.20", default-features = false, features = [
+    "bevy_state",
+    "debug",
     "bevy_window",
     "bevy_winit",
     "bevy_ui",
@@ -104,7 +106,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_ui_widgets",
     "ui_picking",
 ] }
-bevy_ecs = "0.19"
+bevy_ecs = "0.20"
 miniz_oxide = "0.8"
 lzokay-native = "0.1"
 bcdec_rs = "0.2"
@@ -179,7 +181,7 @@ trace_iw4 = { path = "crates/trace_iw4" }
 ui = { path = "crates/ui" }
 weapon_iw4 = { path = "crates/weapon_iw4" }
 xmodel_runtime = { path = "crates/xmodel_runtime" }
-glam = "0.32.1"
+glam = "0.33.2"
 
 # Transcribing a retail constant at full precision is the requirement, not a
 # style slip. `clippy::excessive_precision` fired on

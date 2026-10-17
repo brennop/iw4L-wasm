@@ -1,6 +1,7 @@
 use bevy::app::{RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use frame::ScopeApp;
 use std::collections::HashMap;
 
 use crate::authority::inbox::{AuthorityClock, ClientActionInbox, ClientCommandInbox};
@@ -8,10 +9,10 @@ use crate::client::predict::CmdSeq;
 use crate::client::presentation::presented::LocalPresentClient;
 use crate::gaps::NetIdentityGaps;
 use crate::policy::seat::ActiveKillcams;
-use crate::schedule::{AuthoritySet, ClientSet};
+use crate::schedule::AuthoritySet;
 use crate::transport::archive::FrameArchive;
 use crate::transport::loopback_live::ListenLoopback;
-use frame::{ExitLevelCalled, MatchTornDown, RuntimeRole, register_script_notify};
+use frame::{ExitLevelCalled, RuntimeRole, register_script_notify};
 use sim::{ClientId, ClientLifecycle, DamageSource, SimEvent};
 
 #[derive(Resource)]
@@ -430,51 +431,19 @@ pub fn authority_should_tick(
         && hold.is_some_and(|h| !h.0)
 }
 
-fn reset_authority_on_match_torn_down(
-    mut torn: MessageReader<MatchTornDown>,
-    mut clock: ResMut<AuthorityClock>,
+fn release_authority(
     mut world: Option<ResMut<AuthorityWorld>>,
-    mut loopback: Option<ResMut<ListenLoopback>>,
-    mut archive: Option<ResMut<FrameArchive>>,
     mut inbox: ResMut<ClientCommandInbox>,
     mut transactions: ActionTransactionScope,
-    mut samples: ResMut<ClientShotSamples>,
     mut input_gate: ResMut<AuthorityInputGate>,
-    mut pending_input: ResMut<PendingAuthorityInput>,
-    mut pending_acks: ResMut<PendingAcks>,
-    mut pending_step: ResMut<PendingStepResult>,
-    mut server_tick: ResMut<ServerTick>,
 ) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    *clock = AuthorityClock::default();
-
     inbox.clear();
     transactions.open_new_scope();
-    samples.0.clear();
     *input_gate = AuthorityInputGate::default();
-    pending_input.0 = None;
-    pending_acks.0.clear();
-    pending_step.0 = None;
-    server_tick.0 = None;
-
     if let Some(world) = world.as_mut() {
         world.0.shutdown_game();
     }
-    if let Some(loopback) = loopback.as_mut() {
-        loopback.reset();
-    }
-    if let Some(archive) = archive.as_mut() {
-        archive.clear();
-    }
-    perf::sim_hold(
-        i64::from(world.as_ref().is_some_and(|world| world.0.is_running())),
-        world
-            .as_ref()
-            .map_or(0, |world| world.0.script_mover_count() as i64),
-        loopback.as_ref().map(|l| l.pending() as i64).unwrap_or(0),
-    );
+    perf::sim_hold(0, 0, 0);
 }
 
 #[derive(Resource, Debug, Default)]
@@ -1098,31 +1067,28 @@ pub fn authority_bookkeeping(
 }
 pub fn register_listen_runtime(app: &mut App) {
     register_script_notify(app);
-    if *app.world().resource::<RuntimeRole>() != RuntimeRole::Client {
-        app.init_resource::<AuthorityWorld>();
-    }
     app.init_resource::<AuthorityInputGate>()
         .init_resource::<AuthorityLoadHold>()
         .init_resource::<AuthorityPhaseTrace>()
-        .init_resource::<PendingAuthorityInput>()
-        .init_resource::<PendingAcks>()
-        .init_resource::<PendingStepResult>()
-        .init_resource::<ServerTick>()
-        .init_resource::<FrameArchive>()
-        .init_resource::<ActiveKillcams>()
+        .scoped::<PendingAuthorityInput>(frame::MatchScope::Live)
+        .scoped::<PendingAcks>(frame::MatchScope::Live)
+        .scoped::<PendingStepResult>(frame::MatchScope::Live)
+        .scoped::<ServerTick>(frame::MatchScope::Live)
+        .scoped::<FrameArchive>(frame::MatchScope::Live)
+        .scoped::<ActiveKillcams>(frame::MatchScope::Live)
         .init_resource::<NetDiagnostics>()
-        .init_resource::<ClientShotSamples>()
+        .scoped::<ClientShotSamples>(frame::MatchScope::Live)
         .init_resource::<NetIdentityGaps>()
-        .init_resource::<crate::PendingSvcSounds>()
-        .init_resource::<crate::PendingPlayerCard>()
-        .init_resource::<crate::PendingGameNotify>()
-        .init_resource::<crate::PendingScoreboard>()
+        .scoped::<crate::PendingSvcSounds>(frame::MatchScope::Live)
+        .scoped::<crate::PendingPlayerCard>(frame::MatchScope::Live)
+        .scoped::<crate::PendingGameNotify>(frame::MatchScope::Live)
+        .scoped::<crate::PendingScoreboard>(frame::MatchScope::Live)
         .init_resource::<FixedUpdateCensus>()
         .init_resource::<ListenFanoutCensus>()
         .init_resource::<DumpDeathLog>()
         .init_resource::<DumpGiveLog>()
         .init_resource::<DumpConfigurationChangeLog>()
-        .init_resource::<LastAuthorityRoster>()
+        .scoped::<LastAuthorityRoster>(frame::MatchScope::Live)
         .init_resource::<PendingConnectionFaults>();
     let role = *app.world().resource::<RuntimeRole>();
     if role != RuntimeRole::Dedicated {
@@ -1132,17 +1098,34 @@ pub fn register_listen_runtime(app: &mut App) {
                 begin_fixed_census
                     .before(AuthoritySet::Advance)
                     .before(frame::AuthorityEdge(0)),
-                advance_authority_clock.in_set(AuthoritySet::Advance),
-                ingress_authority.in_set(AuthoritySet::Ingress),
-                gather_authority_input.in_set(AuthoritySet::Gather),
-                step_authority.in_set(AuthoritySet::Step),
-                publish_server_tick.in_set(AuthoritySet::Snapshot),
-                fanout_loopback.in_set(AuthoritySet::Fanout),
+                advance_authority_clock
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Advance),
+                ingress_authority
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Ingress),
+                gather_authority_input
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Gather),
+                step_authority
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Step),
+                publish_server_tick
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Snapshot),
+                fanout_loopback
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Fanout),
                 apply_connection_faults
+                    .in_set(frame::InMatch)
                     .in_set(AuthoritySet::Bookkeeping)
                     .before(retire_departed_peers),
-                retire_departed_peers.in_set(AuthoritySet::Bookkeeping),
-                authority_bookkeeping.in_set(frame::AuthorityBookkeeping),
+                retire_departed_peers
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Bookkeeping),
+                authority_bookkeeping
+                    .in_set(frame::InMatch)
+                    .in_set(frame::AuthorityBookkeeping),
                 end_fixed_census.after(AuthoritySet::Bookkeeping),
             )
                 .run_if(authority_should_tick),
@@ -1154,19 +1137,35 @@ pub fn register_listen_runtime(app: &mut App) {
                 begin_fixed_census
                     .before(AuthoritySet::Advance)
                     .before(frame::AuthorityEdge(0)),
-                advance_authority_clock.in_set(AuthoritySet::Advance),
-                ingress_authority.in_set(AuthoritySet::Ingress),
-                gather_authority_input.in_set(AuthoritySet::Gather),
-                step_authority.in_set(AuthoritySet::Step),
-                publish_server_tick.in_set(AuthoritySet::Snapshot),
+                advance_authority_clock
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Advance),
+                ingress_authority
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Ingress),
+                gather_authority_input
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Gather),
+                step_authority
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Step),
+                publish_server_tick
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Snapshot),
                 fanout_loopback
+                    .in_set(frame::InMatch)
                     .in_set(AuthoritySet::Fanout)
                     .after(crate::client::presentation::entities::sync_authority_entities),
                 apply_connection_faults
+                    .in_set(frame::InMatch)
                     .in_set(AuthoritySet::Bookkeeping)
                     .before(retire_departed_peers),
-                retire_departed_peers.in_set(AuthoritySet::Bookkeeping),
-                authority_bookkeeping.in_set(frame::AuthorityBookkeeping),
+                retire_departed_peers
+                    .in_set(frame::InMatch)
+                    .in_set(AuthoritySet::Bookkeeping),
+                authority_bookkeeping
+                    .in_set(frame::InMatch)
+                    .in_set(frame::AuthorityBookkeeping),
                 end_fixed_census.after(AuthoritySet::Bookkeeping),
             )
                 .run_if(authority_should_tick),
@@ -1180,10 +1179,8 @@ pub fn register_listen_runtime(app: &mut App) {
             .in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
     );
     app.add_systems(
-        Update,
-        reset_authority_on_match_torn_down
-            .in_set(ClientSet::Load)
-            .after(frame::SessionSwapApplied),
+        OnExit(frame::MatchScope::Live),
+        release_authority.in_set(frame::ScopeSet::Release),
     );
     register_authority_phase_seams(app);
 }

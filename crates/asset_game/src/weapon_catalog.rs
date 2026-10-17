@@ -1569,6 +1569,8 @@ pub struct WeaponRegistry {
     world_catalog_identity: u64,
     fpv_catalog_identity: u64,
     family_tables: Arc<[(crate::AssetNamespace, crate::CapturedStringTable)]>,
+    shared_ranks: std::sync::OnceLock<Result<crate::CapturedStringTable, &'static str>>,
+    shared_icons: std::sync::OnceLock<Result<crate::CapturedStringTable, &'static str>>,
 
     iw5_attachments: HashMap<String, Iw5ScopeRow>,
 

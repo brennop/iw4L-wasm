@@ -463,6 +463,8 @@ impl WeaponBuild {
             world_catalog_identity: 0,
             fpv_catalog_identity: 0,
             family_tables: Arc::default(),
+            shared_ranks: Default::default(),
+            shared_icons: Default::default(),
             iw5_attachments,
             configurations: HashMap::new(),
             by_name: index_of,

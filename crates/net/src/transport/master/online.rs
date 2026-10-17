@@ -769,7 +769,7 @@ fn open_hosted_epoch_when_world_is_live(
     bridge: Option<Res<MasterBridge>>,
     intent: Res<MasterLaunchIntent>,
     admission: Res<crate::ClientAdmission>,
-    has_world: Option<Res<frame::HasWorld>>,
+    has_world: Option<Res<State<frame::MatchScope>>>,
     launch: Option<Res<frame::LaunchIdentity>>,
     hold: Option<Res<crate::AuthorityLoadHold>>,
     mut sent: Local<Option<(u64, frame::LocalLoadKey)>>,
@@ -781,7 +781,7 @@ fn open_hosted_epoch_when_world_is_live(
         return;
     };
     if !config.auto_start_map
-        || !has_world.is_some_and(|world| world.0)
+        || !has_world.is_some_and(|world| *world.get() == frame::MatchScope::Live)
         || hold.is_some_and(|hold| hold.0)
     {
         return;

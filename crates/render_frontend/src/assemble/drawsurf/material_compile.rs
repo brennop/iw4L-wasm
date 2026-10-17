@@ -86,6 +86,7 @@ fn compile_jobs_parallel(
                 pass.t5_custom_sampler_flags,
                 pass.color_space,
                 pass.hardware_shadow_compare,
+                pass.depth_to_colour,
                 pass.arguments.as_slice(),
                 job.vertex_type,
             );

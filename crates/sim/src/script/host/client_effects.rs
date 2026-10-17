@@ -2,7 +2,7 @@ use super::args::{float, optional, string};
 use super::natives::player::player;
 use crate::frame::FrameWorld;
 use crate::script::Namespace::{Function, Method};
-use crate::script::{NativeRegistry, Runtime, Value};
+use crate::script::{NativeRegistry, RoundScript, Value};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
 
@@ -29,7 +29,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 for client in frame.client_ids_sorted() {
                     frame.client_meta_mut(client).view_effects.$field = None;
                 }
-                world.resource_mut::<Runtime>().engine.$field = Some(vision);
+                world.resource_mut::<RoundScript>().engine.$field = Some(vision);
                 Ok(Value::Undefined)
             });
             registry.register(Method, $player, |world, receiver, args| {

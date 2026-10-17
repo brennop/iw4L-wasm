@@ -4,7 +4,7 @@
 use crate::frame::FrameWorld;
 use crate::identities::MatchPhase;
 use crate::script::runtime::{level_endon_armed, raise, return_from};
-use crate::script::{Runtime, Value};
+use crate::script::{RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 pub(crate) fn apply_level_notify(frame: &mut FrameWorld, name: &str) {
@@ -17,7 +17,7 @@ const WAIT_FOR_PLAYERS: &str = "maps/mp/gametypes/_gamelogic::waitforplayers";
 const START_TIMER_BEGINNING: &str = "match_start_timer_beginning";
 
 pub(crate) fn force_match_start(world: &mut World, tick: crate::Tick) -> bool {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if runtime.fault.is_some() || runtime.program.is_none() {
         return false;
     }
@@ -28,7 +28,7 @@ pub(crate) fn force_match_start(world: &mut World, tick: crate::Tick) -> bool {
         return false;
     }
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .set_object_field(0, "prematchperiodend", Value::Int(0));
     raise(world, Value::level(), START_TIMER_BEGINNING, Vec::new());
     true

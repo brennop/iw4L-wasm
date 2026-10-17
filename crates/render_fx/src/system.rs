@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use frame::{FxSoundPublished, MatchTornDown, SessionSwapApplied};
+use frame::FxSoundPublished;
 use fx::{FxGapCause, FxMsec, set_presentation_clock};
 use net::{
     ClientSet, FrameClock, GameActive, LastAdoptedSnapshot, advance_cg_frame_clock,
@@ -8,41 +8,40 @@ use net::{
 use render_anim::sync_camera_from_presented;
 use render_scene::{FlyCamera, WorldPresentFacts};
 
-use crate::{
-    EntityMarks, FxCameraOrigin, FxJournalCursor, HostFxDlights, HostFxPostLights, HostFxSystem,
-    PreparedFxCatalog, PreparedFxModels, PreparedImpactFx, PreparedTracers, PresentedVehicleFx,
-    TracerDrawGate, TracerWorld,
-};
+use crate::{FxCameraOrigin, HostFxSystem, PreparedFxCatalog, PresentedVehicleFx};
 
 pub fn register_fx_orchestration(app: &mut App) {
     app.add_systems(
         Update,
         (
-            kill_fx_on_match_torn_down
-                .in_set(ClientSet::Load)
-                .after(SessionSwapApplied),
             latch_cgame_active
+                .in_set(frame::InMatch)
                 .in_set(ClientSet::Reconcile)
                 .after(reconcile_prediction)
                 .before(advance_cg_frame_clock),
             stamp_presentation_clock
+                .in_set(frame::InMatch)
                 .in_set(ClientSet::Reconcile)
                 .after(advance_cg_frame_clock),
         ),
     )
     .add_systems(
         Update,
-        clear_presented_vehicle_fx.in_set(ClientSet::Receive),
+        clear_presented_vehicle_fx
+            .in_set(frame::InMatch)
+            .in_set(ClientSet::Receive),
     )
     .add_systems(
         Update,
         stamp_fx_camera_origin
+            .in_set(frame::InMatch)
             .after(sync_camera_from_presented)
             .in_set(ClientSet::Present),
     )
     .add_systems(
         Update,
         play_pending_fx_sounds
+            .in_set(frame::InMatch)
             .before(FxSoundPublished)
             .in_set(ClientSet::Effects),
     );
@@ -57,37 +56,6 @@ pub fn stamp_fx_camera_origin(
         .next()
         .map(|transform| transform.translation.to_array())
         .unwrap_or([0.0; 3]);
-}
-
-fn kill_fx_on_match_torn_down(
-    mut torn: MessageReader<MatchTornDown>,
-    mut host: ResMut<HostFxSystem>,
-    mut cursor: ResMut<FxJournalCursor>,
-    mut dlights: ResMut<HostFxDlights>,
-    mut post_lights: ResMut<HostFxPostLights>,
-    mut tracers: ResMut<TracerWorld>,
-    mut tracer_gate: ResMut<TracerDrawGate>,
-    mut entity_marks: ResMut<EntityMarks>,
-    mut commands: Commands,
-) {
-    if torn.read().count() == 0 {
-        return;
-    }
-    *host = HostFxSystem::default();
-    cursor.createfx_booted = false;
-    cursor.createfx_boot_msec = None;
-    *dlights = HostFxDlights::default();
-    *post_lights = HostFxPostLights::default();
-    *tracers = TracerWorld::default();
-    *tracer_gate = TracerDrawGate::default();
-    *entity_marks = EntityMarks::default();
-    commands.remove_resource::<PreparedFxCatalog>();
-    commands.remove_resource::<PreparedFxModels>();
-    commands.remove_resource::<crate::PreparedFxModelGeometry>();
-    commands.insert_resource(crate::FxModelDrawPlan::default());
-    commands.insert_resource(crate::FxModelStaging::default());
-    commands.remove_resource::<PreparedImpactFx>();
-    commands.remove_resource::<PreparedTracers>();
 }
 
 fn latch_cgame_active(

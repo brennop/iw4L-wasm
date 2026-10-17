@@ -72,4 +72,6 @@ pub struct PassLoweringAbi {
     pub samplers: Vec<SamplerSlot>,
 
     pub alpha_tests: Vec<AlphaTest>,
+
+    pub depth_to_colour: bool,
 }

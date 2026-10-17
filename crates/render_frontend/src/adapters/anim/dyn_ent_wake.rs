@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::collections::HashMap;
 use web_time::Instant;
 
@@ -862,9 +863,6 @@ pub(crate) fn wake_player_overlap(
     let maxs = origin + PLAYER_MAXS;
     let catalog = catalog.as_deref();
     for (entity, inst, transform) in &instances {
-        // Walking past moves clutter (cans, bottles, luggage) only: a breakable prop's sphere
-        // takes in a potted plant's leaves, so walking near one pushed the pot along at the
-        // player's speed. Bullets and explosions still move them.
         if inst.ty != asset_world::DynEntType::Clutter || world.is_awake(entity) {
             continue;
         }
@@ -918,18 +916,21 @@ fn on_physics_sphere(
 }
 
 pub fn register_dyn_ent_wake(app: &mut App) {
-    app.init_resource::<DynEntWakeBroadphase>()
+    app.scoped::<DynEntWakeBroadphase>(frame::MatchScope::Live)
         .add_observer(on_entity_explosion)
         .add_observer(on_physics_sphere)
         .add_observer(on_entity_bullet_hit)
         .add_observer(on_entity_event_sound)
         .add_systems(
             Update,
-            rebuild_dyn_ent_wake_broadphase.in_set(net::ClientSet::Receive),
+            rebuild_dyn_ent_wake_broadphase
+                .in_set(frame::InMatch)
+                .in_set(net::ClientSet::Receive),
         )
         .add_systems(
             Update,
             wake_player_overlap
+                .in_set(frame::InMatch)
                 .in_set(frame::WorkerCmdSet::Physics)
                 .before(render_anim::occupancy::dyn_ent_phys::step_phys_world0),
         );

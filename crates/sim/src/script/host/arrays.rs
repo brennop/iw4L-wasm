@@ -1,5 +1,5 @@
 use super::args::kind;
-use crate::script::{ArrayKey, Runtime, Value};
+use crate::script::{ArrayKey, RoundScript, Value};
 use bevy_ecs::prelude::World;
 
 pub(crate) fn array_values(world: &World, value: &Value) -> Result<Vec<Value>, String> {
@@ -7,7 +7,7 @@ pub(crate) fn array_values(world: &World, value: &Value) -> Result<Vec<Value>, S
         return Err(format!("{} is not an array", kind(value)));
     };
     Ok(world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .arrays
         .get(id)
         .ok_or("invalid array reference")?
@@ -17,7 +17,7 @@ pub(crate) fn array_values(world: &World, value: &Value) -> Result<Vec<Value>, S
 }
 
 pub(crate) fn new_array(world: &mut World, values: Vec<Value>) -> Result<Value, String> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let id = runtime.next_object;
     runtime.next_object = id.checked_add(1).ok_or("object identifier exhausted")?;
     runtime.arrays.insert(
@@ -39,7 +39,7 @@ pub(crate) fn iteration_key(
     let Value::Array(id) = value else {
         return Err(format!("{} is not an array", kind(value)));
     };
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     let array = runtime.arrays.get(id).ok_or("invalid array reference")?;
     let entry = if let Some(previous) = previous {
         let key = match previous {

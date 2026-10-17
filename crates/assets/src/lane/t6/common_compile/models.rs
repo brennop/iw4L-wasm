@@ -10,6 +10,7 @@ pub(super) fn bind_native_materials(
     refusals: &mut Vec<CommonDependencyRefusal>,
 ) -> std::collections::BTreeMap<String, usize> {
     let mut bound = std::collections::BTreeMap::new();
+    let mut linked_techsets = std::collections::BTreeSet::new();
     for (name, capture) in captures {
         let result = (|| {
             let native = capture
@@ -33,7 +34,9 @@ pub(super) fn bind_native_materials(
                 asset_material::t6_techset::T6Draw::Lit
             };
             let mut report = Vec::new();
-            materials.link_t6_technique_set(set, draw, &mut report);
+            if linked_techsets.insert(draw.technique_set_name(&set.name)) {
+                materials.link_t6_technique_set(set, draw, &mut report);
+            }
             let definition = super::super::native_material_definition(
                 path,
                 name,

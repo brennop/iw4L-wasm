@@ -683,11 +683,62 @@ pub fn finish(run_dir: &Path, manifest: &mut Value, phases: &[Phase], outcome: &
             png_ok,
             png_to.display().to_string(),
         );
+        let lifetime_text = std::fs::read_to_string(&dump_to).unwrap_or_default();
+        let lifetimes: BTreeMap<_, _> = lifetime_text
+            .lines()
+            .filter_map(|line| line.split_once(" = "))
+            .filter(|(key, _)| {
+                matches!(
+                    *key,
+                    "occupied_slots"
+                        | "event_holds"
+                        | "projectile_payloads"
+                        | "item_payloads"
+                        | "mover_payloads"
+                        | "script_objects"
+                        | "script_defined_entities"
+                        | "entity_consistency"
+                        | "retirement_serial"
+                        | "retired_resources"
+                        | "scope_resources_live"
+                        | "remote_tree_bindings"
+                        | "remote_tree_storage_bytes"
+                )
+            })
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect();
+        asserts.check(
+            &format!("lifetime.{capture}.consistent"),
+            lifetimes
+                .get("entity_consistency")
+                .is_some_and(|value| value == "Ok(())"),
+            json!(lifetimes),
+        );
+        if capture == "02_after_disconnect" {
+            for key in [
+                "occupied_slots",
+                "event_holds",
+                "projectile_payloads",
+                "item_payloads",
+                "mover_payloads",
+                "script_objects",
+                "remote_tree_bindings",
+                "scope_resources_live",
+            ] {
+                asserts.check(
+                    &format!("lifetime.teardown.{key}"),
+                    lifetimes.get(key).is_some_and(|value| value == "0"),
+                    json!(lifetimes.get(key)),
+                );
+            }
+        }
         captures.insert(
             capture.to_owned(),
             json!({
                 "screenshot": png_ok.then(|| png_to.display().to_string()),
                 "dump": dump_ok.then(|| dump_to.display().to_string()),
+                "lifetimes": lifetimes,
+                "scope_rows": lifetime_text.lines().filter(|line| line.starts_with("resource = ")).collect::<Vec<_>>(),
             }),
         );
     }

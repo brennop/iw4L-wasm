@@ -9,7 +9,7 @@ console/ui `map` → session::lifecycle   SessionSwapRequest, tear the previous
                      occupancy down, then MapLoadApproved{request_id}
   → assets::match_load    start_match_load onto load_pool() (MatchLoadBusy),
                           poll_match_load → PreparedMatchReady
-  → session::match_apply  apply_prepared_match → scene + SimWorld + MatchInstalled
+  → session::match_apply  prepare install → Staging → OnEnter(Live) → scene + SimWorld
 ```
 
 Cancellation is `MatchLoadAbort(request_id)`: the walk returns
@@ -17,6 +17,27 @@ Cancellation is `MatchLoadAbort(request_id)`: the walk returns
 Failure is `MapLoadFailed`, from discovery *and* install; a request ends once.
 Startup and later load failures return to the main menu with a map error dialog;
 OK or Escape dismisses it. The log keeps the full error.
+
+The main world has three match states: `Absent`, `Loading`, and `Live`.
+`ScopeControl` resolves requests once in `Last`, with teardown taking priority over
+install and install over begin-load. Forced transitions also retire a replaced
+`Loading` scope. Load tasks and sound-bank composition belong to `Loading`;
+prepared catalogs, simulation, animation, scene plans and replay buffers belong
+to `Live`. Fallible preparation completes before requesting `Live`.
+
+`OnEnter` installs resources in registration order, derives publications, then
+announces the installed identity. `WorldGeneration` is a nonzero scoped resource;
+`WorldStamp` is its copied value in diagnostics and render frames. On exit,
+release systems and entity removal hooks run while resources still exist. The
+transition schedule then removes registered resources in reverse order and hands
+them to `Retiring`. Match systems use `InMatch` on their main/fixed schedules;
+render extraction reads optional main-world resources and clears missing frames.
+
+`RoundPhase` exists only under `Live`. A changed server round serial forces a
+fresh `Playing` scope even when the phase stays `Playing`. Simulation separately
+owns `MatchScript` and `RoundScript`; only `RoundScript::new(&MatchScript)` creates
+round state. Frontend menu locals and menu stacks have app owners separate from
+their scoped in-match equivalents.
 
 ## The walk: `assets::session_load::load_prepared_match`
 

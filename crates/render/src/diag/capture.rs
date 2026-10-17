@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::tasks::IoTaskPool;
-use frame::{AppScreen, HasWorld};
+use frame::AppScreen;
 
 use render_frontend::prepare::scene::cull::DpvsFrameStats;
 
@@ -311,7 +311,7 @@ pub(crate) fn capture_frame(
     mut queue: ResMut<CaptureQueue>,
     screen: Option<Res<AppScreen>>,
     loading: Option<Res<LoadingScreen>>,
-    has_world: Option<Res<HasWorld>>,
+    has_world: Option<Res<State<frame::MatchScope>>>,
     stats: Option<Res<DpvsFrameStats>>,
     working: Option<Res<render_gpu::ColourWorkingSet>>,
     mut exit: MessageWriter<AppExit>,
@@ -324,7 +324,9 @@ pub(crate) fn capture_frame(
     let facts = CaptureFrameFacts {
         screen: screen.map(|s| *s).unwrap_or_default(),
         loading_overlay: loading.is_some(),
-        has_world: has_world.map(|w| w.0).unwrap_or(false),
+        has_world: has_world
+            .map(|w| *w.get() == frame::MatchScope::Live)
+            .unwrap_or(false),
         submitted_batches,
         g0_world,
     };

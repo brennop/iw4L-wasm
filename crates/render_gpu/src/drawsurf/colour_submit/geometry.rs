@@ -12,7 +12,7 @@ use render_material::MaterialGenerationId;
 #[derive(Resource, Default)]
 pub(super) struct ExactColourGeometry {
     pub(super) generation: MaterialGenerationId,
-    pub(super) world_generation: frame::WorldGeneration,
+    pub(super) world_generation: frame::WorldStamp,
     pub(super) world_products: frame::WorldProducts,
     pub(super) world_vertex: Option<Buffer>,
     pub(super) world_layer: Option<Buffer>,

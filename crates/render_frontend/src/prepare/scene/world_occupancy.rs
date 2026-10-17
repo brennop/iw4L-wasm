@@ -146,7 +146,12 @@ pub fn place(
                 sample_without_technique,
                 technique_without_sample,
             );
-            commands.insert_resource(lighting);
+            {
+                let value = lighting;
+                commands.queue(move |world: &mut World| {
+                    frame::scope::insert(world, value, frame::MatchScope::Live);
+                });
+            };
         } else if !scene.smodel_lighting_samples.is_empty() {
             let dims = lighting_iw4::model_lighting_atlas_dims(SMODEL_LIGHTING_MAX_CLIENT_VIEWS);
             diag::info!(
@@ -158,9 +163,13 @@ pub fn place(
             );
         }
 
-        commands.insert_resource(
-            crate::prepare::scene::smodel_geom_cache::WorldStaticModelCache::new(slot_count),
-        );
+        {
+            let value =
+                crate::prepare::scene::smodel_geom_cache::WorldStaticModelCache::new(slot_count);
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
 
         diag::info!(
             World,
@@ -247,27 +256,47 @@ pub fn place(
         dyn_ent_brush_n,
     );
 
-    commands.insert_resource(map_xmodel_scene_assets);
+    {
+        let value = map_xmodel_scene_assets;
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(world, value, frame::MatchScope::Live);
+        });
+    };
     if let Some(atlas) = model_lighting_atlas {
         let cache =
             crate::prepare::scene::model_lighting_cache::WorldModelLightingCache::new(atlas.dims);
 
         scene.model_lighting_image = Some(atlas.image.clone());
         scene.model_lighting_dims = Some(atlas.dims);
-        commands.insert_resource(crate::assemble::drawsurf::RuntimeImageHandles::from_pools(
-            scene.runtime_material_catalog.generation_id(),
-            exact_material_handles,
-            scene.exact_material_names.clone(),
-            reflection_probe_handles,
-            lightmap_handles,
-            Some(atlas.image.clone()),
-        ));
+        {
+            let value = crate::assemble::drawsurf::RuntimeImageHandles::from_pools(
+                scene.runtime_material_catalog.generation_id(),
+                exact_material_handles,
+                scene.exact_material_names.clone(),
+                reflection_probe_handles,
+                lightmap_handles,
+                Some(atlas.image.clone()),
+            );
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
         diag::info!(
             World,
             "drawsurf typed image registry: model_lighting=READY code_texture=3 sampler=0xe2 volume=D3"
         );
-        commands.insert_resource(cache);
-        commands.insert_resource(atlas);
+        {
+            let value = cache;
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
+        {
+            let value = atlas;
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, value, frame::MatchScope::Live);
+            });
+        };
     }
 
     let transform = if let Some(view) = scene.intermission_view {
@@ -313,8 +342,9 @@ pub fn place(
                 .into(),
             ..default()
         },
-        CompositingSpace::Srgb,
+        frame::DisplayEncodedCamera,
         Tonemapping::None,
+        bevy::render::view::DebandDither::Disabled,
         Msaa::Off,
         Transform::IDENTITY,
         Projection::Perspective(PerspectiveProjection {

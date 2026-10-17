@@ -123,11 +123,10 @@ fn vs_billboard(@builtin(vertex_index) vertex_index: u32) -> BillboardOut {
         vec2<f32>(-1.0, 1.0),
     );
     let o = corners[vertex_index];
-#ifdef SUN_FLARE
+    @if(SUN_FLARE)
     let size = params.viewport.w;
-#else
+    @else
     let size = params.viewport.z;
-#endif
     var clip = params.clip;
     clip.x = clip.x + o.x * clip.w * (size / 640.0);
     clip.y = clip.y + o.y * clip.w * (size / 480.0);

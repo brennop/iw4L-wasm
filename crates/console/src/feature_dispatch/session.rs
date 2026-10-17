@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use frame::HasWorld;
 
 use crate::{ConsoleCommand, ConsoleDispatch};
 
@@ -9,17 +8,33 @@ pub(crate) fn route_session_commands(
     mut events: MessageReader<ConsoleCommand>,
     mut echo: ConsoleEcho,
     mut transition: ResMut<::session::SessionSwapRequest>,
-    has_world: Res<HasWorld>,
+    has_world: Res<State<frame::MatchScope>>,
     playback: Option<Res<::replay::ReplayPlayback>>,
     bridge: Option<Res<net::MasterBridge>>,
     manifest: Option<Res<::session::SessionContentManifest>>,
     mut dispatch: ResMut<ConsoleDispatch>,
+    mut authority: Option<ResMut<net::AuthorityWorld>>,
 ) {
     for cmd in events.read() {
         match cmd.name.as_str() {
+            "round_restart" => {
+                let result = if !cmd.args.is_empty() {
+                    Err("usage: round_restart".into())
+                } else if let Some(authority) = authority.as_deref_mut() {
+                    authority.0.request_round_restart()
+                } else {
+                    Err("round restart needs the match host".into())
+                };
+                match result {
+                    Ok(()) => echo.write("round_restart: requested script round restart"),
+                    Err(error) => echo.write(format!("round_restart: {error}")),
+                }
+            }
             "map_restart" => {
                 let zone = manifest.as_ref().and_then(|manifest| match &manifest.map {
-                    ::session::ManifestFact::Known(map) if has_world.0 => {
+                    ::session::ManifestFact::Known(map)
+                        if (*has_world.get() == frame::MatchScope::Live) =>
+                    {
                         Some(format!("{}:{}", map.namespace.as_str(), map.name))
                     }
                     _ => None,
@@ -58,7 +73,7 @@ pub(crate) fn route_session_commands(
                 }
             },
             "disconnect" => {
-                let in_session = has_world.0
+                let in_session = (*has_world.get() == frame::MatchScope::Live)
                     || playback.is_some()
                     || transition.dump_id().is_some()
                     || bridge.is_some();

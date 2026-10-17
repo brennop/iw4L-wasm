@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::sync::Arc;
 
 use anim_iw4::{DOBJ_RADIUS_PARENT_ROOT, compute_bounds_radius};
@@ -306,6 +307,7 @@ pub fn spawn_pending_fpv(
         parent.spawn((
             FpvViewmodel,
             FpvPlacementRoot,
+            DespawnOnExit(frame::MatchScope::Live),
             Transform::IDENTITY,
             Visibility::Visible,
         ));
@@ -755,6 +757,7 @@ pub fn tick_fpv_viewmodel(
                         })
                         .unwrap_or(0),
                     perks0: ps.map(|p| p.perks[0]).unwrap_or(0),
+                    perks1: ps.map(|p| p.perks[1]).unwrap_or(0),
                     clip_ammo: clip_ammo(0),
                     left_clip_ammo: clip_ammo(1),
                 }),
@@ -782,7 +785,11 @@ pub fn tick_fpv_viewmodel(
         None
     };
     let weapon_id = session.weapon_id;
-    let held = if session.parent_weapon != 0 {
+    let held = if session.parent_weapon != 0
+        && table
+            .and_then(|table| table.facts_of(weapon_id))
+            .is_some_and(|facts| facts.is_alternate())
+    {
         session.parent_weapon
     } else {
         weapon_id
@@ -826,7 +833,7 @@ pub fn tick_fpv_viewmodel(
         && let Some(meta) = snapshot.meta.for_client(local.0)
     {
         pending_notes.batch = Some(notetracks.into_audio_batch(
-            *generation,
+            generation.stamp(),
             events.timeline(),
             local.0,
             meta.life_sequence,
@@ -1234,8 +1241,8 @@ pub fn apply_fpv_placement(
     *transform = placed;
 }
 
-fn fpv_spawn_queued(pending: Res<PendingFpvSpawn>) -> bool {
-    pending.0.is_some()
+fn fpv_spawn_queued(pending: Option<Res<PendingFpvSpawn>>) -> bool {
+    pending.is_some_and(|pending| pending.0.is_some())
 }
 
 fn flush_fpv_spawn(world: &mut World) {
@@ -1252,60 +1259,81 @@ fn publish_fpv_notetracks(
 }
 
 pub fn register_fpv_present_systems(app: &mut App) {
-    app.init_resource::<frame::ScreenEffectsView>()
-        .init_resource::<frame::ScreenEffectsDvars>()
+    app.scoped::<frame::ScreenEffectsView>(frame::MatchScope::Live)
+        .init_app::<frame::ScreenEffectsDvars>()
         .add_systems(
             Update,
-            super::screen_effects::update
+            (super::screen_effects::update
+                .in_set(frame::InMatch)
                 .in_set(frame::ScreenEffectsPublished)
                 .in_set(LifeFrontPublished)
-                .after(reset_view_kick_on_life_started),
+                .after(reset_view_kick_on_life_started))
+            .in_set(frame::InMatch),
         )
-        .init_resource::<SessionViewmodel>()
-        .init_resource::<PreparedFpv>()
-        .init_resource::<crate::anim::model_materials::PreparedModelMaterials>()
-        .init_resource::<SessionViewKick>()
-        .init_resource::<GunOffset>()
-        .init_resource::<ViewweaponAim>()
-        .init_resource::<PendingViewHurt>()
-        .init_resource::<FpvStatusGap>()
-        .init_resource::<RenderPresentationGaps>()
+        .scoped::<SessionViewmodel>(frame::MatchScope::Live)
+        .scoped::<PreparedFpv>(frame::MatchScope::Live)
+        .scoped::<crate::anim::model_materials::PreparedModelMaterials>(frame::MatchScope::Live)
+        .scoped::<SessionViewKick>(frame::MatchScope::Live)
+        .scoped::<GunOffset>(frame::MatchScope::Live)
+        .scoped::<ViewweaponAim>(frame::MatchScope::Live)
+        .scoped::<PendingViewHurt>(frame::MatchScope::Live)
+        .scoped::<FpvStatusGap>(frame::MatchScope::Live)
+        .init_app::<RenderPresentationGaps>()
         .add_systems(
             Update,
-            reset_view_kick_on_life_started.in_set(LifeFrontPublished),
+            (reset_view_kick_on_life_started
+                .in_set(frame::InMatch)
+                .in_set(LifeFrontPublished))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            occupy_fpv_scene
+            (occupy_fpv_scene
+                .in_set(frame::InMatch)
                 .after(PresentedPublished)
                 .in_set(render_scene::GfxSceneAdd)
-                .in_set(AnimSceneSubmit),
+                .in_set(AnimSceneSubmit))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            (
-                tick_session_view_kick.after(reset_view_kick_on_life_started),
-                sync_camera_from_presented.after(tick_session_view_kick),
+            ((
+                tick_session_view_kick
+                    .in_set(frame::InMatch)
+                    .after(reset_view_kick_on_life_started),
+                sync_camera_from_presented
+                    .in_set(frame::InMatch)
+                    .after(tick_session_view_kick),
                 spawn_pending_fpv
+                    .in_set(frame::InMatch)
                     .run_if(fpv_spawn_queued)
                     .after(sync_camera_from_presented),
                 flush_fpv_spawn.after(spawn_pending_fpv),
-                tick_fpv_viewmodel.after(flush_fpv_spawn),
+                tick_fpv_viewmodel
+                    .in_set(frame::InMatch)
+                    .after(flush_fpv_spawn),
                 skin_fpv_geometry
+                    .in_set(frame::InMatch)
                     .after(tick_fpv_viewmodel)
                     .in_set(FpvGeometrySet),
-                publish_fpv_notetracks.after(tick_fpv_viewmodel),
+                publish_fpv_notetracks
+                    .in_set(frame::InMatch)
+                    .after(tick_fpv_viewmodel),
                 apply_fpv_placement
+                    .in_set(frame::InMatch)
                     .after(tick_fpv_viewmodel)
                     .before(WorkerCmdSet::CellSceneEnt),
                 // Neither placement nor bone publication reads a vertex.
                 stamp_fpv_placement_matrix
+                    .in_set(frame::InMatch)
                     .after(apply_fpv_placement)
                     .in_set(FpvPlacementSet),
                 publish_fpv_dobj_pose
+                    .in_set(frame::InMatch)
                     .after(stamp_fpv_placement_matrix)
                     .after(crate::anim::dobj_pose::begin_dobj_pose_frame),
             )
-                .in_set(ClientSet::Present),
+                .in_set(ClientSet::Present))
+            .in_set(frame::InMatch),
         );
 }

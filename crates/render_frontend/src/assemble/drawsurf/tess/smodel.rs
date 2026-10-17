@@ -793,5 +793,6 @@ pub(crate) fn build_smodel_gpu_plan(
         plan.materials.len(),
     );
     plan.publish_extract_shares();
-    commands.insert_resource(plan);
+    commands
+        .queue(move |world: &mut World| frame::scope::insert(world, plan, frame::MatchScope::Live));
 }

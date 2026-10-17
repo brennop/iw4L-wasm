@@ -501,12 +501,14 @@ fn queue_postfx_pipeline(
         vertex: VertexState {
             shader: film.shader.clone(),
             shader_defs: Vec::new(),
+            constants: Vec::new(),
             entry_point: Some(PASS_VERTEX_ENTRY.into()),
             buffers: vertex_layouts,
         },
         fragment: Some(FragmentState {
             shader: film.shader.clone(),
             shader_defs: Vec::new(),
+            constants: Vec::new(),
             entry_point: Some(PASS_FRAGMENT_ENTRY.into()),
             targets: vec![Some(ColorTargetState {
                 format: if state.srgb_write_enable() {

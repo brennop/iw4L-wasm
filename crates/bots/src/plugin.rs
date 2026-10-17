@@ -1,6 +1,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::tasks::{Task, futures_lite::future};
+use frame::ScopeApp;
 use net::{
     AUTHORITY_MS, AuthorityClock, AuthorityWorld, ClientActionInbox, ClientCommandInbox,
     LocalPresentClient, ReliableEventHub, authority_should_tick, look_angles_from_degrees,
@@ -14,7 +15,7 @@ use crate::roster::{
     default_class_index,
 };
 use crate::sensor;
-use frame::{AuthoritySet, BotNavigationReady, ClientSet, HasWorld, MatchTornDown, RuntimeRole};
+use frame::{AuthoritySet, BotNavigationReady, ClientSet, RuntimeRole};
 
 const VIEW_PITCH_DOWN: f32 = 85.0;
 const TRACE_QUOTA: u32 = 96;
@@ -99,35 +100,39 @@ pub struct BotsPlugin;
 
 impl Plugin for BotsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BotRoster>()
+        app.scoped::<BotRoster>(frame::MatchScope::Live)
             .init_resource::<BotAddQueue>()
             .init_resource::<BotHold>()
             .init_resource::<BotTpQueue>()
             .init_resource::<BotFireQueue>()
-            .init_resource::<BotNav>()
-            .init_resource::<BotNavigationReady>()
-            .init_resource::<BotMeter>()
+            .scoped::<BotNav>(frame::MatchScope::Live)
+            .scoped::<BotNavigationReady>(frame::MatchScope::Live)
+            .scoped::<BotMeter>(frame::MatchScope::Live)
             .add_systems(
                 Update,
                 (
-                    fill_bots_from_rules,
-                    drain_bot_add_queue,
-                    evict_bots_claiming_local_client,
-                    boot_bots,
-                    apply_bot_tp,
+                    fill_bots_from_rules.in_set(frame::InMatch),
+                    drain_bot_add_queue.in_set(frame::InMatch),
+                    evict_bots_claiming_local_client.in_set(frame::InMatch),
+                    boot_bots.in_set(frame::InMatch),
+                    apply_bot_tp.in_set(frame::InMatch),
                 )
                     .chain()
-                    .after(ClientSet::Load),
+                    .after(ClientSet::Load)
+                    .before(ClientSet::Receive),
             )
             .add_systems(
                 Update,
-                (reset_roster_on_match_torn_down, prepare_navigation)
+                (prepare_navigation.in_set(frame::InMatch))
                     .chain()
                     .in_set(ClientSet::Load),
             )
             .add_systems(
                 FixedUpdate,
-                (evict_bots_claiming_local_client, think_bots)
+                (
+                    evict_bots_claiming_local_client.in_set(frame::InMatch),
+                    think_bots.in_set(frame::InMatch),
+                )
                     .chain()
                     .in_set(AuthoritySet::Ingress)
                     .run_if(authority_should_tick),
@@ -135,28 +140,16 @@ impl Plugin for BotsPlugin {
     }
 }
 
-fn reset_roster_on_match_torn_down(
-    mut torn: MessageReader<MatchTornDown>,
-    mut roster: ResMut<BotRoster>,
-    mut nav: ResMut<BotNav>,
-    mut ready: ResMut<BotNavigationReady>,
-) {
-    if torn.read().len() == 0 {
-        return;
-    }
-    *roster = BotRoster::default();
-    *nav = BotNav::default();
-    *ready = BotNavigationReady::default();
-}
-
 fn fill_bots_from_rules(
     mut roster: ResMut<BotRoster>,
     mut queue: ResMut<BotAddQueue>,
-    installed: Option<Res<HasWorld>>,
+    installed: Option<Res<State<frame::MatchScope>>>,
     rules: Option<Res<frame::HostMatchRules>>,
     world: Option<Res<AuthorityWorld>>,
 ) {
-    if roster.rules_filled || !installed.is_some_and(|installed| installed.0) {
+    if roster.rules_filled
+        || !installed.is_some_and(|installed| *installed.get() == frame::MatchScope::Live)
+    {
         return;
     }
     let Some(world) = world else {
@@ -246,14 +239,14 @@ fn boot_bots(
     mut roster: ResMut<BotRoster>,
     mut actions: ResMut<ClientActionInbox>,
     mut request_ids: ResMut<net::ActionRequestIds>,
-    installed: Option<Res<HasWorld>>,
+    installed: Option<Res<State<frame::MatchScope>>>,
     world: Option<ResMut<AuthorityWorld>>,
     local: Res<LocalPresentClient>,
 ) {
     let Some(mut world) = world else {
         return;
     };
-    if !installed.is_some_and(|installed| installed.0) {
+    if !installed.is_some_and(|installed| *installed.get() == frame::MatchScope::Live) {
         return;
     }
     let seed = roster.seed;
@@ -588,19 +581,19 @@ fn think_bots(mut p: ThinkBots) {
 
 fn prepare_navigation(
     world: Option<Res<AuthorityWorld>>,
-    installed: Option<Res<HasWorld>>,
+    installed: Option<Res<State<frame::MatchScope>>>,
     role: Res<RuntimeRole>,
     generation: Res<frame::WorldGeneration>,
     mut nav: ResMut<BotNav>,
     mut ready: ResMut<BotNavigationReady>,
     load: Option<Res<assets::MapLoadProcess>>,
 ) {
-    ready.0 = frame::WorldReadiness::new(*generation, frame::ReadinessState::Pending);
+    ready.0 = frame::WorldReadiness::new(generation.stamp(), frame::ReadinessState::Pending);
     if !matches!(*role, RuntimeRole::Listen | RuntimeRole::Dedicated) {
         ready.0.state = frame::ReadinessState::Ready;
         return;
     }
-    if !installed.is_some_and(|installed| installed.0) {
+    if !installed.is_some_and(|installed| *installed.get() == frame::MatchScope::Live) {
         return;
     }
     let Some(world) = world else {

@@ -89,6 +89,7 @@ pub fn trace_brush_and_mesh_with_census<B: BrushView>(
         return (best, winner, census);
     }
 
+    let has_leaf_aabbs = !no_mesh && leaves_have_coll_aabb(map.leaves);
     let frac = core::cell::Cell::new(1.0_f32);
     let mut scratch = Vec::new();
     let walk = walk_clip_tree(map, ext, &|| frac.get(), &mut |leaf| {
@@ -115,7 +116,7 @@ pub fn trace_brush_and_mesh_with_census<B: BrushView>(
                 mesh,
                 leaf,
                 ext,
-                map.leaves,
+                has_leaf_aabbs,
                 &mut best,
                 &mut census.mesh,
                 &mut scratch,
@@ -130,7 +131,7 @@ pub fn trace_brush_and_mesh_with_census<B: BrushView>(
     if !no_mesh {
         finish_mesh_forest_fallback(
             mesh,
-            map.leaves,
+            has_leaf_aabbs,
             ext,
             &mut best,
             &mut winner,
@@ -169,12 +170,12 @@ pub fn trace_leaf_mesh_into(
     mesh: &ClipMeshRef<'_>,
     leaf: &ClipLeaf,
     ext: &TraceExtents,
-    leaves: &[ClipLeaf],
+    has_leaf_aabbs: bool,
     best: &mut Trace,
     census: &mut MeshWalkCensus,
     scratch: &mut Vec<u16>,
 ) {
-    if !leaves_have_coll_aabb(leaves) {
+    if !has_leaf_aabbs {
         return;
     }
     scratch.clear();
@@ -197,13 +198,13 @@ pub fn trace_leaf_mesh_into(
 
 pub fn finish_mesh_forest_fallback(
     mesh: &ClipMeshRef<'_>,
-    leaves: &[ClipLeaf],
+    has_leaf_aabbs: bool,
     ext: &TraceExtents,
     best: &mut Trace,
     winner: &mut ClipWorldWinner,
     census: &mut MeshWalkCensus,
 ) {
-    if leaves_have_coll_aabb(leaves) {
+    if has_leaf_aabbs {
         return;
     }
     if mesh.tri_indices.len() < 3 {

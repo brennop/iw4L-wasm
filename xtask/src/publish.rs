@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::dotenv::Env;
 use crate::release::{file_sha256, release_dir, sha256_hex};
 use crate::server::{Descriptor, Remote, root_dir};
-use crate::shell::{Res, Ssh, capture, require_tools, run};
+use crate::shell::{Res, Ssh, Step, capture, require_tools, run};
 
 /// How long the restarted master gets to answer `status` with the protocol the
 /// release was built against, before its predecessor is put back.
@@ -150,11 +150,33 @@ fn preflight(servers: &[Descriptor]) -> Res<()> {
     require_tools(&["curl", "rsync", "ssh"])?;
     for server in servers {
         let ssh = server.ssh()?;
+        let step = Step::start(
+            "preflight.ssh",
+            &format!("server={} connecting to {}", server.name(), ssh.target()),
+        );
         ssh.run("true")
             .map_err(|error| format!("ssh {} is not usable: {error}", ssh.target()))?;
-        Remote::find(&ssh, server.port()?)?;
+        step.done(&format!("connected to {}", ssh.target()));
+        discover_service(&ssh, server.port()?)?;
     }
     Ok(())
+}
+
+fn discover_service(ssh: &Ssh, port: u16) -> Res<Remote> {
+    let step = Step::start(
+        "discover.service",
+        &format!("host={} port={port}", ssh.host()),
+    );
+    let remote = Remote::find(ssh, port)?;
+    step.done(&format!(
+        "found service={} host={} port={} bin={} updates={}",
+        remote.unit,
+        ssh.host(),
+        remote.port,
+        remote.bin,
+        remote.updates,
+    ));
+    Ok(remote)
 }
 
 pub fn run_cli(root: &Path, args: &[String]) -> Res<()> {
@@ -225,10 +247,14 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
     let release_id = str_field(&deployment, "id", &descriptor_path)?;
     let protocol = u64_field(&deployment, "protocol", &descriptor_path)?;
     let ssh = &server.ssh()?;
-    let remote = Remote::find(ssh, server.port()?)?;
+    let remote = discover_service(ssh, server.port()?)?;
     println!("publish: {} unit={}", server.summary(), remote.unit);
 
     let rows = rows_of(&deployment, &remote, &descriptor_path)?;
+    let step = Step::start(
+        "verify.local",
+        &format!("release={release_id} files={}", rows.len()),
+    );
     for row in &rows {
         let local = dir.join(&row.local);
         if !local.is_file() {
@@ -247,8 +273,13 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
     if u64::from(manifest.protocol) != protocol {
         return Err("client/master protocol mismatch inside the release".to_string());
     }
+    step.done(&format!("sha256 verified protocol={protocol}"));
 
     let lib = &remote.lib;
+    let step = Step::start(
+        "verify.ca",
+        &format!("host={} path={}", ssh.host(), remote.ca()),
+    );
     let installed_ca = ssh
         .capture(&format!("sha256sum '{}' | cut -d' ' -f1", remote.ca()))?
         .trim()
@@ -261,24 +292,36 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
             ssh.host(),
         ));
     }
+    step.done("installed CA matches community descriptor");
 
     let master_local = dir.join("server/iw4l-master");
     let master_sha = file_sha256(&master_local)?;
     let staging = format!("{lib}/staging/{release_id}");
     let lock_dir = format!("{lib}/publish.lock");
+    println!(
+        "publish.lock: acquiring host={} path={lock_dir}",
+        ssh.host()
+    );
     if !ssh.try_run(&format!("mkdir '{lock_dir}'"))? {
         return Err(format!("publish: {} already being published", remote.unit));
     }
     let _lock = Lock { ssh, dir: lock_dir };
+    println!("publish.lock: acquired");
 
     ssh.run(&format!(
         "install -d -m 0755 '{staging}' '{lib}/manifests' '{lib}/masters/{master_sha}' '{updates}'",
         updates = remote.updates,
     ))?;
+    println!("publish.staging: ready host={} path={staging}", ssh.host());
 
     let inventory_started = Instant::now();
     let finals: Vec<String> = rows.iter().map(|row| row.remote.clone()).collect();
+    let step = Step::start(
+        "inventory.remote",
+        &format!("host={} files={}", ssh.host(), finals.len()),
+    );
     let inventory = remote_inventory(ssh, &finals)?;
+    step.done("remote sha256 inventory collected");
 
     let mut need = Vec::new();
     let (mut upload_bytes, mut skipped) = (0_u64, 0_usize);
@@ -304,6 +347,12 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
     if !need.is_empty() {
         for row in &need {
             let remote = format!("{staging}/{}", row.local);
+            println!(
+                "upload.file: {} -> {}:{remote} bytes={}",
+                row.local,
+                ssh.host(),
+                row.size,
+            );
             let parent = remote.rsplit_once('/').map_or("", |(head, _)| head);
             ssh.run(&format!("install -d -m 0755 '{parent}'"))?;
             ssh.rsync(
@@ -316,12 +365,14 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
             .iter()
             .map(|row| format!("{staging}/{}", row.local))
             .collect();
+        let step = Step::start("verify.staged", &format!("files={}", staged.len()));
         let landed = remote_inventory(ssh, &staged)?;
         for (row, path) in need.iter().zip(&staged) {
             if lookup(&landed, path) != row.sha256 {
                 return Err(format!("staged sha256 mismatch: {path}"));
             }
         }
+        step.done("uploaded sha256 hashes match release");
     }
     println!(
         "upload: done elapsed={}s",
@@ -339,7 +390,15 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
         })
         .collect();
     if !promote.is_empty() {
+        let step = Step::start(
+            "promote.files",
+            &format!(
+                "files={}",
+                need.iter().filter(|row| !row.is_manifest()).count()
+            ),
+        );
         ssh.feed(REMOTE_PROMOTE, &promote)?;
+        step.done("staged files moved into place");
     }
 
     let master = MasterSwitch {
@@ -363,6 +422,7 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
     let previous = activate_manifest(ssh, &remote, dir, &staging, &release_id)?;
     let ca_pem = CaFile::write(server)?;
     let updates = dir.join("server/updates");
+    println!("verify.served: start release={release_id}");
     if let Err(error) = verify_served(server, &ca_pem.0, &updates, &manifest.file.path) {
         let restored = match &previous {
             Some(previous) => restore_manifest(ssh, &remote, previous).map_or_else(
@@ -385,7 +445,10 @@ fn publish(dir: &Path, server: &Descriptor) -> Res<()> {
         port = remote.port,
         url = server.community.updates.url,
     );
-    ssh.run(&format!("rm -rf '{staging}'"))
+    let step = Step::start("publish.cleanup", &format!("path={staging}"));
+    ssh.run(&format!("rm -rf '{staging}'"))?;
+    step.done("staging removed");
+    Ok(())
 }
 
 struct MasterSwitch<'a> {
@@ -573,10 +636,12 @@ fn verify_served(
     let result = (|| {
         for (name, timeout) in [("manifest.toml", "10"), (blob, "300")] {
             let got = scratch.join(name);
+            println!("verify.served: fetching {name} from {}", community.host());
             fetch(community, ca_pem, name, timeout, &got)?;
             if file_sha256(&got)? != file_sha256(&local_updates.join(name))? {
                 return Err(format!("served {name} does not match the prepared release"));
             }
+            println!("verify.served: sha256 verified {name}");
         }
         Ok(())
     })();

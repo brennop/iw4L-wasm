@@ -128,6 +128,8 @@ pub struct PreparedWorld {
 
     pub fx_glass: Option<asset_world::FxGlassReset>,
 
+    pub map_content: Arc<asset_core::MapContentDefinition>,
+
     pub impact_fx: Option<asset_game::OwnedFxImpactTable>,
     pub reflection_probe_images: Vec<Option<bevy::prelude::Image>>,
     pub intermission_view: Option<IntermissionView>,
@@ -213,6 +215,7 @@ impl PreparedWorld {
             fx: Default::default(),
             fx_models: Default::default(),
             fx_glass: Default::default(),
+            map_content: Default::default(),
             impact_fx: Default::default(),
             reflection_probe_images: Default::default(),
             intermission_view: Default::default(),

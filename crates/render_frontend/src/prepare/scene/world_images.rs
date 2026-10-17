@@ -235,6 +235,8 @@ pub struct WorldImageUpload {
     /// texture twice and keeps two copies of it resident, so the second slot
     /// takes a clone of the first one's handle and drops its own copy.
     exact_by_variant: std::collections::HashMap<asset_material::ImageVariantId, Handle<Image>>,
+    // Weak headers prevent pointer reuse without retaining pixel buffers.
+    exact_by_image: std::collections::HashMap<usize, (std::sync::Weak<Image>, Handle<Image>)>,
     /// Slots that took another slot's handle, and the bytes that saved.
     pub reused_handles: u32,
     pub reused_handle_bytes: u64,
@@ -333,6 +335,7 @@ impl WorldImageUpload {
         self.exact_variants = std::mem::take(&mut scene.exact_material_variants);
         self.exact_variants.resize(self.exact_images.len(), None);
         self.exact_by_variant.clear();
+        self.exact_by_image.clear();
         self.reused_handles = 0;
         self.reused_handle_bytes = 0;
         self.exact_handles = vec![None; self.exact_images.len()];
@@ -473,11 +476,28 @@ impl WorldImageUpload {
             let variant = self.exact_variants[self.exact_at];
             let common_owned = self.exact_common[self.exact_at];
             self.exact_handles[self.exact_at] = image.map(|image| {
+                let identity = Arc::as_ptr(&image) as usize;
+                if let Some((_, handle)) = self.exact_by_image.get(&identity) {
+                    let handle = handle.clone();
+                    if let Some(variant) = variant {
+                        self.exact_by_variant.insert(variant, handle.clone());
+                        if common_owned && self.common_profile_id != 0 {
+                            common.by_variant.insert(variant, handle.clone());
+                        }
+                    }
+                    self.reused_handles = self.reused_handles.saturating_add(1);
+                    self.reused_handle_bytes = self.reused_handle_bytes.saturating_add(bytes);
+                    handed = 0;
+                    return handle;
+                }
                 // A slot whose variant is already an asset takes that handle
                 // and lets its own copy go: the two are the same texels under
                 // the same sampler, and a second `add` is a second texture.
                 let Some(variant) = variant else {
-                    return images.add((*image).clone());
+                    let handle = images.add((*image).clone());
+                    self.exact_by_image
+                        .insert(identity, (Arc::downgrade(&image), handle.clone()));
+                    return handle;
                 };
                 if let Some(handle) = self.exact_by_variant.get(&variant) {
                     if common_owned && self.common_profile_id != 0 {
@@ -488,6 +508,8 @@ impl WorldImageUpload {
                     // Nothing was handed to the asset server: the slot took a
                     // handle that already existed.
                     handed = 0;
+                    self.exact_by_image
+                        .insert(identity, (Arc::downgrade(&image), handle.clone()));
                     return handle.clone();
                 }
                 if common_owned
@@ -500,9 +522,13 @@ impl WorldImageUpload {
                     self.reused_common_bytes = self.reused_common_bytes.saturating_add(bytes);
                     handed = 0;
                     self.exact_by_variant.insert(variant, handle.clone());
+                    self.exact_by_image
+                        .insert(identity, (Arc::downgrade(&image), handle.clone()));
                     return handle;
                 }
                 let handle = images.add((*image).clone());
+                self.exact_by_image
+                    .insert(identity, (Arc::downgrade(&image), handle.clone()));
                 if common_owned && self.common_profile_id != 0 {
                     common.by_variant.insert(variant, handle.clone());
                 }

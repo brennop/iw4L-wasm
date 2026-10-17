@@ -35,7 +35,7 @@ pub struct ColourWorkingSet {
 
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct WorldPipelineWarmup {
-    pub generation: frame::WorldGeneration,
+    pub generation: frame::WorldStamp,
     pub initialized: bool,
     pub total: u32,
     pub ready: u32,
@@ -43,7 +43,7 @@ pub struct WorldPipelineWarmup {
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct GpuSubmitReady {
-    pub world_generation: frame::WorldGeneration,
+    pub world_generation: frame::WorldStamp,
 
     pub warm_pipelines: bool,
 

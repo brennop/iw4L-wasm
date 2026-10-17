@@ -23,4 +23,5 @@ pub struct PublishedCellVis {
 }
 
 #[derive(Component)]
+#[require(bevy::prelude::DespawnOnExit<frame::MatchScope> = bevy::prelude::DespawnOnExit(frame::MatchScope::Live))]
 pub struct DynEntModelEntity;

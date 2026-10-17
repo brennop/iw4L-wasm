@@ -167,13 +167,17 @@ pub(crate) fn sync_script_fog(
         if let Some(map_fog) = map_fog.as_deref_mut() {
             *map_fog = target;
         } else {
-            commands.insert_resource(target);
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, target, frame::MatchScope::Live)
+            });
         }
     } else if let Some(baseline) = state.baseline.take() {
         if let Some(map_fog) = map_fog.as_deref_mut() {
             *map_fog = baseline;
         } else {
-            commands.insert_resource(baseline);
+            commands.queue(move |world: &mut World| {
+                frame::scope::insert(world, baseline, frame::MatchScope::Live)
+            });
         }
     } else {
         commands.remove_resource::<MapFrameFog>();

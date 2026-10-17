@@ -10,19 +10,19 @@ use bevy_ecs::prelude::{Resource, World};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub(crate) use lifecycle::{copy_state, install, install_level, reset};
-pub(crate) use state::Runtime;
+pub(crate) use lifecycle::{copy_state, install, install_level, reset, reset_round};
+pub(crate) use state::{MatchScript, RoundScript};
 
 /// Instructions one resumed thread may run before it is killed as a runaway loop.
 /// Level startup runs in one frame and needs over a million on the larger maps.
 pub(super) const INSTRUCTION_BUDGET: usize = 16 * 1_000_000;
 
 pub(crate) fn take_signals(world: &mut World) -> Vec<Arc<str>> {
-    std::mem::take(&mut world.resource_mut::<Runtime>().signals)
+    std::mem::take(&mut world.resource_mut::<RoundScript>().signals)
 }
 
 pub(super) fn level_endon_armed(world: &World, name: &str) -> bool {
-    world.resource::<Runtime>().waiters.iter().any(|w| {
+    world.resource::<RoundScript>().waiters.iter().any(|w| {
         w.receiver == Value::level()
             && &*w.name == name
             && matches!(w.kind, WaiterKind::Endon { .. })
@@ -31,7 +31,7 @@ pub(super) fn level_endon_armed(world: &World, name: &str) -> bool {
 
 pub(super) fn return_from(world: &mut World, function: &str, now: i64) -> usize {
     let Some(&function) = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .program
         .as_ref()
         .and_then(|program| program.names.get(function))
@@ -56,14 +56,14 @@ pub(super) fn return_from(world: &mut World, function: &str, now: i64) -> usize 
 
 pub(super) fn raise(world: &mut World, receiver: Value, name: &str, args: Vec<Value>) {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .pending_notifies
         .push((receiver, name.into(), args));
 }
 
 fn deliver_pending(world: &mut World, thread: &mut Thread, now: i64) -> Result<(), String> {
     loop {
-        let pending = std::mem::take(&mut world.resource_mut::<Runtime>().pending_notifies);
+        let pending = std::mem::take(&mut world.resource_mut::<RoundScript>().pending_notifies);
         if pending.is_empty() {
             return Ok(());
         }
@@ -80,12 +80,12 @@ fn deliver_external(world: &mut World, now: i64) {
         stack: Vec::new(),
         state: ThreadState::Complete,
     };
-    let pending = std::mem::take(&mut world.resource_mut::<Runtime>().pending_notifies);
-    let program = world.resource::<Runtime>().program.clone().unwrap();
+    let pending = std::mem::take(&mut world.resource_mut::<RoundScript>().pending_notifies);
+    let program = world.resource::<RoundScript>().program.clone().unwrap();
     for (receiver, name, args) in pending {
         let result = notify(world, &mut carrier, &receiver, &name, &args, now);
         if let Err(message) = result {
-            world.resource_mut::<Runtime>().fault = Some(Fault::at(
+            world.resource_mut::<RoundScript>().fault = Some(Fault::at(
                 &Location {
                     module: "<engine>".into(),
                     function: "notify".into(),
@@ -98,7 +98,7 @@ fn deliver_external(world: &mut World, now: i64) {
         }
         // A touch handler can wait again before the next toucher is notified.
         run_ready(world, &program, now);
-        if world.resource::<Runtime>().fault.is_some() {
+        if world.resource::<RoundScript>().fault.is_some() {
             break;
         }
     }
@@ -132,7 +132,7 @@ fn entry(world: &World, name: &str) -> Result<(Arc<Program>, usize, Location), F
         line: 0,
         column: 0,
     };
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if let Some(fault) = &runtime.fault {
         return Err(fault.clone());
     }
@@ -155,7 +155,7 @@ pub(crate) fn start(
     args: Vec<Value>,
 ) -> Result<u64, Fault> {
     let (program, function, location) = entry(world, name)?;
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     if runtime.last_tick.is_none()
         && receiver == Value::level()
         && args.is_empty()
@@ -178,17 +178,17 @@ pub(super) fn run_now(
         .map_err(|m| Fault::at(&location, m))?;
     thread.state = ThreadState::Runnable;
     let budget = std::mem::replace(
-        &mut world.resource_mut::<Runtime>().budget,
+        &mut world.resource_mut::<RoundScript>().budget,
         INSTRUCTION_BUDGET,
     );
     execute(world, &program, &mut thread, now);
-    world.resource_mut::<Runtime>().budget = budget;
+    world.resource_mut::<RoundScript>().budget = budget;
     if thread.state == ThreadState::Complete {
-        retire(&mut world.resource_mut::<Runtime>(), thread.serial);
+        retire(&mut world.resource_mut::<RoundScript>(), thread.serial);
     } else {
         world.spawn(thread);
     }
-    match world.resource::<Runtime>().fault.clone() {
+    match world.resource::<RoundScript>().fault.clone() {
         Some(fault) => Err(fault),
         None => Ok(()),
     }
@@ -203,7 +203,7 @@ fn spawn_thread(
 ) -> Result<u64, String> {
     let thread = new_thread(world, program, function, receiver, args)?;
     let serial = thread.serial;
-    world.resource_mut::<Runtime>().spawned.push(serial);
+    world.resource_mut::<RoundScript>().spawned.push(serial);
     world.spawn(thread);
     Ok(serial)
 }
@@ -219,7 +219,7 @@ pub(super) fn new_thread(
         .into_iter()
         .map(|value| copy_value(world, value))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.started = true;
     let serial = runtime.next_serial;
     runtime.next_serial = serial.checked_add(1).ok_or("thread identifier exhausted")?;
@@ -234,7 +234,7 @@ pub(super) fn new_thread(
 const MAX_FRAMES: usize = 31;
 
 fn frame_room(world: &World, thread: &Thread) -> Result<(), String> {
-    if world.resource::<Runtime>().suspended_frames + thread.frames.len() >= MAX_FRAMES {
+    if world.resource::<RoundScript>().suspended_frames + thread.frames.len() >= MAX_FRAMES {
         return Err("script stack overflow (too many embedded function calls)".into());
     }
     Ok(())
@@ -242,23 +242,23 @@ fn frame_room(world: &World, thread: &Thread) -> Result<(), String> {
 
 fn settle_owed_deaths(world: &mut World, parent: &mut Thread, now: i64) -> Result<(), String> {
     {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         if runtime.deaths.is_empty() || runtime.current_hit.is_some() {
             return Ok(());
         }
     }
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.suspended.push(parent.serial);
     runtime.suspended_frames += parent.frames.len();
     super::host::players::settle_deaths(world);
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.suspended.pop();
     runtime.suspended_frames -= parent.frames.len();
     resume_suspended(world, parent, now)
 }
 
 fn resume_suspended(world: &mut World, parent: &mut Thread, now: i64) -> Result<(), String> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     if runtime.fault.is_some() {
         return Err(String::new());
     }
@@ -284,12 +284,12 @@ fn run_inline(
     mut child: Thread,
     now: i64,
 ) -> Result<(), String> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.suspended.push(parent.serial);
     runtime.suspended_frames += parent.frames.len();
     child.state = ThreadState::Runnable;
     execute(world, program, &mut child, now);
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.suspended.pop();
     runtime.suspended_frames -= parent.frames.len();
     if child.state == ThreadState::Complete {
@@ -542,7 +542,7 @@ pub(super) fn binary(op: Binary, a: Value, b: Value) -> Result<Value, String> {
     }
 }
 
-fn object_key(runtime: &mut Runtime, key: ArrayKey) -> Result<u32, String> {
+fn object_key(runtime: &mut RoundScript, key: ArrayKey) -> Result<u32, String> {
     match key {
         ArrayKey::String(key) => Ok(runtime.symbol(&key.symbol_key())),
         ArrayKey::Integer(_) => Err("object index must be a string".into()),
@@ -600,7 +600,7 @@ fn instruction(
                 return Err("foreach requires an array".into());
             };
             let keys: Vec<_> = world
-                .resource::<Runtime>()
+                .resource::<RoundScript>()
                 .arrays
                 .get(&id)
                 .ok_or("invalid array reference")?
@@ -614,7 +614,7 @@ fn instruction(
             let Value::Array(id) = value else {
                 unreachable!()
             };
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             let array = runtime.arrays.get_mut(&id).unwrap();
             for (i, key) in keys.into_iter().enumerate() {
                 array.insert(ArrayKey::Integer(i as i32), key);
@@ -633,7 +633,7 @@ fn instruction(
                 return Err("array field requires an object".into());
             };
             let value = world
-                .resource::<Runtime>()
+                .resource::<RoundScript>()
                 .objects
                 .get(&id)
                 .ok_or("invalid object reference")?
@@ -643,7 +643,7 @@ fn instruction(
             let value = if value == Value::Undefined {
                 let value = allocate_array(world)?;
                 world
-                    .resource_mut::<Runtime>()
+                    .resource_mut::<RoundScript>()
                     .objects
                     .get_mut(&id)
                     .unwrap()
@@ -657,7 +657,7 @@ fn instruction(
         Op::EnsureIndexArray => {
             let key = array_key(pop(thread)?)?;
             let receiver = pop(thread)?;
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             let (value, field) = match &receiver {
                 Value::Array(id) => (
                     runtime
@@ -686,7 +686,7 @@ fn instruction(
                 Some(value) if value != Value::Undefined => value,
                 _ => {
                     let value = allocate_array(world)?;
-                    let mut runtime = world.resource_mut::<Runtime>();
+                    let mut runtime = world.resource_mut::<RoundScript>();
                     match receiver {
                         Value::Array(id) => {
                             runtime
@@ -715,7 +715,7 @@ fn instruction(
         Op::LoadIndex => {
             let key = array_key(pop(thread)?)?;
             let receiver = pop(thread)?;
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             let value = match receiver {
                 Value::Array(id) => runtime
                     .arrays
@@ -757,7 +757,7 @@ fn instruction(
             let value = copy_value(world, pop(thread)?)?;
             let key = array_key(pop(thread)?)?;
             let receiver = pop(thread)?;
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             match receiver {
                 Value::Array(id) => {
                     let values = runtime
@@ -863,7 +863,7 @@ fn instruction(
                     return Err("threading native calls is unsupported".into());
                 }
                 Callee::Native(index) => {
-                    let native = world.resource::<Runtime>().natives[index as usize];
+                    let native = world.resource::<RoundScript>().natives[index as usize];
                     let name = &program.natives[index as usize].name;
                     // A defect in one builtin costs its caller an undefined result, not the match.
                     let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -881,7 +881,7 @@ fn instruction(
         Op::FrameEnd => {
             thread.state = ThreadState::Queued;
             world
-                .resource_mut::<Runtime>()
+                .resource_mut::<RoundScript>()
                 .buckets
                 .entry(now)
                 .or_default()
@@ -909,7 +909,7 @@ fn instruction(
             let until = now + i64::from(frames) * i64::from(crate::MATCH_TICK_MS);
             thread.state = ThreadState::Queued;
             world
-                .resource_mut::<Runtime>()
+                .resource_mut::<RoundScript>()
                 .buckets
                 .entry(until)
                 .or_default()
@@ -919,7 +919,7 @@ fn instruction(
             let receiver = pop(thread)?;
             let size = match &receiver {
                 Value::Array(id) => world
-                    .resource::<Runtime>()
+                    .resource::<RoundScript>()
                     .arrays
                     .get(id)
                     .ok_or("invalid array reference")?
@@ -938,7 +938,7 @@ fn instruction(
                     type_name(&receiver)
                 ));
             };
-            if let Some(client) = world.resource::<Runtime>().player_client(id)
+            if let Some(client) = world.resource::<RoundScript>().player_client(id)
                 && let Some(value) = super::host::players::load_field(
                     world,
                     client,
@@ -956,7 +956,7 @@ fn instruction(
                 thread.stack.push(value);
                 return Ok(());
             }
-            let runtime = world.resource::<Runtime>();
+            let runtime = world.resource::<RoundScript>();
             let fields = runtime
                 .objects
                 .get(&id)
@@ -971,7 +971,7 @@ fn instruction(
             let Value::Object(id) = receiver else {
                 return Err("native entity fields are not bound".into());
             };
-            if let Some(client) = world.resource::<Runtime>().player_client(id)
+            if let Some(client) = world.resource::<RoundScript>().player_client(id)
                 && super::host::players::store_field(
                     world,
                     client,
@@ -990,7 +990,7 @@ fn instruction(
                 return Ok(());
             }
             super::host::hud::store_field(world, id, &program.symbols[field as usize], &value)?;
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             let fields = runtime
                 .objects
                 .get_mut(&id)
@@ -1038,7 +1038,7 @@ fn instruction(
             let name = event_name(pop(thread)?)?;
             let receiver = event_receiver(pop(thread)?)?;
             let frame = thread.frames.len() - 1;
-            world.resource_mut::<Runtime>().waiters.push(Waiter {
+            world.resource_mut::<RoundScript>().waiters.push(Waiter {
                 receiver,
                 name,
                 thread: thread.serial,
@@ -1049,7 +1049,7 @@ fn instruction(
             let value = pop(thread)?;
             let depth = thread.frames.len() - 1;
             let serial = thread.serial;
-            world.resource_mut::<Runtime>().waiters.retain(|w| {
+            world.resource_mut::<RoundScript>().waiters.retain(|w| {
                 w.thread != serial
                     || !matches!(w.kind, WaiterKind::Endon { frame } if frame >= depth)
             });
@@ -1092,7 +1092,7 @@ fn register(
     kind: WaiterKind,
 ) {
     thread.state = ThreadState::Awaiting;
-    world.resource_mut::<Runtime>().waiters.push(Waiter {
+    world.resource_mut::<RoundScript>().waiters.push(Waiter {
         receiver,
         name,
         thread: thread.serial,
@@ -1145,12 +1145,12 @@ fn with_thread<R>(
     Some(result)
 }
 
-fn retire(runtime: &mut Runtime, serial: u64) {
+fn retire(runtime: &mut RoundScript, serial: u64) {
     runtime.waiters.retain(|w| w.thread != serial);
     dequeue(runtime, serial);
 }
 
-fn dequeue(runtime: &mut Runtime, serial: u64) {
+fn dequeue(runtime: &mut RoundScript, serial: u64) {
     for bucket in runtime.buckets.values_mut() {
         bucket.retain(|s| *s != serial);
     }
@@ -1160,7 +1160,7 @@ fn dequeue(runtime: &mut Runtime, serial: u64) {
 fn resume_now(world: &mut World, thread: &mut Thread, now: i64) {
     thread.state = ThreadState::Queued;
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .buckets
         .entry(now)
         .or_default()
@@ -1169,7 +1169,7 @@ fn resume_now(world: &mut World, thread: &mut Thread, now: i64) {
 
 fn unwind(world: &mut World, thread: &mut Thread, depth: usize, now: i64, running: bool) {
     let serial = thread.serial;
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime.waiters.retain(|w| {
         w.thread != serial || matches!(w.kind, WaiterKind::Endon { frame } if frame < depth)
     });
@@ -1208,10 +1208,13 @@ fn notify(
     now: i64,
 ) -> Result<(), String> {
     if *receiver == Value::Object(0) {
-        world.resource_mut::<Runtime>().signals.push(name.clone());
+        world
+            .resource_mut::<RoundScript>()
+            .signals
+            .push(name.clone());
     }
     loop {
-        let runtime = world.resource::<Runtime>();
+        let runtime = world.resource::<RoundScript>();
         let Some(index) = runtime.waiters.iter().position(|w| {
             &w.receiver == receiver
                 && &w.name == name
@@ -1222,10 +1225,10 @@ fn notify(
         }) else {
             return Ok(());
         };
-        let waiter = world.resource_mut::<Runtime>().waiters.remove(index);
+        let waiter = world.resource_mut::<RoundScript>().waiters.remove(index);
         let result = match waiter.kind {
             WaiterKind::Endon { frame } => {
-                let mut runtime = world.resource_mut::<Runtime>();
+                let mut runtime = world.resource_mut::<RoundScript>();
                 if runtime.suspended.contains(&waiter.thread) {
                     runtime.pending_unwinds.push((waiter.thread, frame));
                     runtime.waiters.retain(|w| {
@@ -1265,7 +1268,7 @@ fn notify(
 
 fn kill(world: &mut World, entity: Entity, serial: u64) {
     world.despawn(entity);
-    retire(&mut world.resource_mut::<Runtime>(), serial);
+    retire(&mut world.resource_mut::<RoundScript>(), serial);
 }
 
 const HEAP_COLLECT_TICKS: u32 = 10;
@@ -1276,7 +1279,7 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         return;
     }
     let tick = request.tick;
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if runtime.fault.is_some() {
         return;
     }
@@ -1287,7 +1290,7 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         .last_tick
         .is_some_and(|previous| previous.0 >= tick.0)
     {
-        world.resource_mut::<Runtime>().fault = Some(Fault::at(
+        world.resource_mut::<RoundScript>().fault = Some(Fault::at(
             &Location {
                 module: "<scheduler>".into(),
                 function: String::new(),
@@ -1298,7 +1301,7 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         ));
         return;
     }
-    world.resource_mut::<Runtime>().last_tick = Some(tick);
+    world.resource_mut::<RoundScript>().last_tick = Some(tick);
     let now = i64::from(tick.0) * i64::from(crate::MATCH_TICK_MS);
     super::host::mechanics::deliver_finished(world);
     deliver_external(world, now);
@@ -1317,7 +1320,7 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         kill(world, entity, serial);
     }
     {
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         let due: Vec<_> = runtime.buckets.range(..=now).map(|(k, _)| *k).collect();
         let mut current = VecDeque::new();
         for key in due {
@@ -1329,11 +1332,30 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         runtime.buckets.insert(now, current);
     }
     run_ready(world, &program, now);
-    let deletes = std::mem::take(&mut world.resource_mut::<Runtime>().pending_deletes);
+    let deletes = world.resource_mut::<RoundScript>().take_finishing();
     for object in deletes {
-        world.resource_mut::<Runtime>().delete_entity(object);
+        // Map objects and HUD elements use script-local numbers. Model presence
+        // is retired by its stable identity, never by those synthetic numbers.
+        let missile = world
+            .resource::<RoundScript>()
+            .entities
+            .get(&object)
+            .and_then(|entity| match entity.kind {
+                super::host::entities::EntityKind::Missile(id) => Some((id, entity.number)),
+                _ => None,
+            });
+        if let Some((id, number)) = missile {
+            let mut frame = crate::frame::FrameWorld::from_world(world);
+            if frame
+                .projectile_by_number(number)
+                .is_some_and(|projectile| projectile.id == id)
+            {
+                frame.despawn_projectile(number);
+            }
+        }
+        world.resource_mut::<RoundScript>().delete_entity(object);
     }
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     for id in std::mem::take(&mut runtime.dying) {
         if let Some(fields) = runtime.objects.get_mut(&id) {
             fields.clear();
@@ -1351,7 +1373,7 @@ pub(crate) fn advance_scheduler(world: &mut World) {
 fn run_ready(world: &mut World, program: &Program, now: i64) {
     loop {
         let next = world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .buckets
             .get_mut(&now)
             .and_then(VecDeque::pop_front);
@@ -1368,14 +1390,14 @@ fn run_ready(world: &mut World, program: &Program, now: i64) {
         }
         let mut thread = world.entity_mut(entity).take::<Thread>().unwrap();
         thread.state = ThreadState::Runnable;
-        world.resource_mut::<Runtime>().budget = INSTRUCTION_BUDGET;
+        world.resource_mut::<RoundScript>().budget = INSTRUCTION_BUDGET;
         execute(world, program, &mut thread, now);
         if thread.state == ThreadState::Complete {
             kill(world, entity, serial);
         } else {
             world.entity_mut(entity).insert(thread);
         }
-        if world.resource::<Runtime>().fault.is_some() {
+        if world.resource::<RoundScript>().fault.is_some() {
             break;
         }
     }
@@ -1384,13 +1406,13 @@ fn run_ready(world: &mut World, program: &Program, now: i64) {
 pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread, now: i64) {
     // The runaway-loop budget lives here between instructions; the runtime's
     // copy is only current around instructions that can run other threads.
-    let mut budget = world.resource::<Runtime>().budget;
+    let mut budget = world.resource::<RoundScript>().budget;
     while thread.state == ThreadState::Runnable {
         let frame = thread.frames.last().unwrap();
         let function = &program.functions[frame.function];
         let (at_function, at_pc) = (frame.function, frame.pc);
         let Some(op) = function.code.get(frame.pc).map(|(_, op)| op.clone()) else {
-            world.resource_mut::<Runtime>().fault = Some(Fault::at(
+            world.resource_mut::<RoundScript>().fault = Some(Fault::at(
                 &function.location,
                 "invalid IR: instruction position out of range",
             ));
@@ -1410,11 +1432,11 @@ pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread,
                 Op::Call(..) | Op::Spawn(..) | Op::Indirect(..) | Op::Notify(_)
             );
             if nested {
-                world.resource_mut::<Runtime>().budget = budget;
+                world.resource_mut::<RoundScript>().budget = budget;
             }
             let result = instruction(world, program, thread, op, now);
             if nested {
-                budget = world.resource::<Runtime>().budget;
+                budget = world.resource::<RoundScript>().budget;
             }
             result
         };
@@ -1422,7 +1444,7 @@ pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread,
             continue;
         };
         let location = &program.functions[at_function].code[at_pc].0;
-        if world.resource::<Runtime>().fault.is_some() {
+        if world.resource::<RoundScript>().fault.is_some() {
             break;
         }
         let mut fault = Fault::at(location, message);
@@ -1439,13 +1461,13 @@ pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread,
             })
             .collect();
         if terminal(&fault.message) {
-            world.resource_mut::<Runtime>().fault = Some(fault);
+            world.resource_mut::<RoundScript>().fault = Some(fault);
             break;
         }
         report(world, &fault);
         if exhausted {
             let serial = thread.serial;
-            let mut runtime = world.resource_mut::<Runtime>();
+            let mut runtime = world.resource_mut::<RoundScript>();
             budget = INSTRUCTION_BUDGET;
             runtime.waiters.retain(|w| w.thread != serial);
             thread.frames.clear();
@@ -1457,7 +1479,7 @@ pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread,
         // its results and the thread carries on.
         let base = thread.frames.last().map_or(0, |f| f.stack_base);
         let Some(kept) = before.checked_sub(pops).filter(|kept| *kept >= base) else {
-            world.resource_mut::<Runtime>().fault =
+            world.resource_mut::<RoundScript>().fault =
                 Some(Fault::at(location, "invalid IR: stack underflow"));
             break;
         };
@@ -1469,13 +1491,13 @@ pub(super) fn execute(world: &mut World, program: &Program, thread: &mut Thread,
             match allocate_array(world) {
                 Ok(empty) => *thread.stack.last_mut().unwrap() = empty,
                 Err(message) => {
-                    world.resource_mut::<Runtime>().fault = Some(Fault::at(location, message));
+                    world.resource_mut::<RoundScript>().fault = Some(Fault::at(location, message));
                     break;
                 }
             }
         }
     }
-    world.resource_mut::<Runtime>().budget = budget;
+    world.resource_mut::<RoundScript>().budget = budget;
 }
 
 fn stack_effect(op: &Op) -> (usize, usize) {
@@ -1510,7 +1532,7 @@ fn report(world: &mut World, fault: &Fault) {
         "{}:{}:{}",
         fault.location.module, fault.location.line, fault.location.column
     );
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let hits = runtime
         .errors
         .entry((site.clone(), fault.message.clone()))
@@ -1529,7 +1551,7 @@ fn report(world: &mut World, fault: &Fault) {
     }
 }
 
-pub(crate) fn healthy(runtime: bevy_ecs::prelude::Res<Runtime>) -> bool {
+pub(crate) fn healthy(runtime: bevy_ecs::prelude::Res<RoundScript>) -> bool {
     runtime.fault.is_none()
 }
 
@@ -1538,7 +1560,7 @@ pub(crate) fn preflight(
     tick: crate::Tick,
     reason: crate::StepReason,
 ) -> Result<(), Fault> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     if let Some(fault) = &runtime.fault {
         return Err(fault.clone());
     }
@@ -1579,7 +1601,7 @@ fn array_key(value: Value) -> Result<ArrayKey, String> {
 }
 
 fn allocate_array(world: &mut World) -> Result<Value, String> {
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let id = runtime.next_object;
     runtime.next_object = id.checked_add(1).ok_or("object identifier exhausted")?;
     runtime.arrays.insert(id, BTreeMap::new());
@@ -1601,7 +1623,7 @@ fn copy_value(world: &mut World, value: Value) -> Result<Value, String> {
         }
         *remaining -= 1;
         let entries = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .arrays
             .get(&id)
             .ok_or("invalid array reference")?
@@ -1617,7 +1639,7 @@ fn copy_value(world: &mut World, value: Value) -> Result<Value, String> {
         for (key, value) in entries {
             let value = copy(world, value, depth + 1, remaining)?;
             world
-                .resource_mut::<Runtime>()
+                .resource_mut::<RoundScript>()
                 .arrays
                 .get_mut(&new_id)
                 .unwrap()
@@ -1631,7 +1653,7 @@ fn copy_value(world: &mut World, value: Value) -> Result<Value, String> {
 /// Deleting a waited-on object ends the thread; a thread whose self is deleted keeps running.
 fn entity_receivers(world: &World, thread: &Thread) -> Vec<Value> {
     world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .waiters
         .iter()
         .filter(|w| w.thread == thread.serial)
@@ -1642,7 +1664,7 @@ fn entity_receivers(world: &World, thread: &Thread) -> Vec<Value> {
 }
 
 fn threads_waiting_on_deleted(world: &World) -> std::collections::HashSet<u64> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     runtime
         .waiters
         .iter()
@@ -1654,13 +1676,13 @@ fn threads_waiting_on_deleted(world: &World) -> std::collections::HashSet<u64> {
 }
 
 fn any_deleted(world: &World, receivers: &[Value]) -> bool {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     receivers.iter().any(|value| {
         matches!(value, Value::Object(id) if runtime.dead.contains(id) || !runtime.objects.contains_key(id))
     })
 }
 
-impl Runtime {
+impl RoundScript {
     /// Values held outside script objects by the engine side: they keep what
     /// they reference alive exactly like a script variable would.
     fn native_roots(&self, pending: &mut Vec<Value>) {
@@ -1715,7 +1737,7 @@ fn collect_heap(world: &mut World) {
     for id in [0, 1, 2] {
         marks.reach(&Value::Object(id));
     }
-    for id in world.resource::<Runtime>().entities.keys() {
+    for id in world.resource::<RoundScript>().entities.keys() {
         marks.reach(&Value::Object(*id));
     }
     for thread in world.query::<&Thread>().iter(world) {
@@ -1725,7 +1747,7 @@ fn collect_heap(world: &mut World) {
             frame.locals.iter().for_each(|value| marks.reach(value));
         }
     }
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     let mut native = Vec::new();
     runtime.native_roots(&mut native);
     native.iter().for_each(|value| marks.reach(value));

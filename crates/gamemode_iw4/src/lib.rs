@@ -18,6 +18,7 @@ pub mod perks;
 pub mod phase;
 pub mod playerlogic;
 pub mod prematch;
+pub mod progression;
 pub mod radius_damage;
 mod score;
 pub mod stuck_in_client;

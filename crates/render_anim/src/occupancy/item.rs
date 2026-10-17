@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 
 use crate::anim::scene_submission::{AnimDObjSceneSkels, AnimDObjSceneSubmission, AnimSceneSubmit};
 use crate::anim::xmodel_pose::PosedModelSurface;
@@ -74,26 +75,32 @@ fn item_scene_slot(scene: &render_scene::GfxScene, entnum: u32) -> ItemSceneSlot
 }
 
 pub fn register_item_systems(app: &mut App) {
-    app.init_resource::<ItemDrawPlan>()
-        .init_resource::<ItemOccupancy>()
-        .init_resource::<PreparedItemCompositions>()
-        .init_resource::<ItemPoseProduct>()
+    app.scoped::<ItemDrawPlan>(frame::MatchScope::Live)
+        .scoped::<ItemOccupancy>(frame::MatchScope::Live)
+        .scoped::<PreparedItemCompositions>(frame::MatchScope::Live)
+        .scoped::<ItemPoseProduct>(frame::MatchScope::Live)
         .add_systems(
             Update,
-            occupy_item_scene_ents
+            (occupy_item_scene_ents
+                .in_set(frame::InMatch)
                 .in_set(frame::RenderSet::Anim)
                 .before(frame::WorkerCmdSet::CellDynModel)
                 .in_set(render_scene::GfxSceneAdd)
-                .in_set(AnimSceneSubmit),
+                .in_set(AnimSceneSubmit))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            (pose_items, append_item_draws)
+            ((
+                pose_items.in_set(frame::InMatch),
+                append_item_draws.in_set(frame::InMatch),
+            )
                 .chain()
                 .after(frame::WorkerCmdSet::CellSceneEnt)
                 .after(frame::WorkerCmdSet::DpvsEnt)
                 .before(frame::WorkerCmdSet::CellDynModel)
-                .in_set(frame::WorkerCmdSet::SkinModel),
+                .in_set(frame::WorkerCmdSet::SkinModel))
+            .in_set(frame::InMatch),
         );
 }
 

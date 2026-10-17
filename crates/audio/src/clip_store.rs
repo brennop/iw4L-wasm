@@ -673,9 +673,6 @@ impl CueFeedback {
         }
         self.cues.push(CueFeedbackEntry { handle });
     }
-    pub fn clear(&mut self) {
-        self.cues.clear();
-    }
 }
 
 pub(crate) fn clip_keys_for_alias(

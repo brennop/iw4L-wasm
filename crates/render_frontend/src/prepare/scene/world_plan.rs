@@ -380,7 +380,12 @@ pub fn install(
     fx_catalog: Option<&PreparedFxCatalog>,
 ) {
     let fx_images = world_color_images(scene, &exact_material_handles, tracers, fx_catalog);
-    commands.insert_resource(fx_images);
+    {
+        let value = fx_images;
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(world, value, frame::MatchScope::Live);
+        });
+    };
     let exact_material_views = exact_material_handles.iter().flatten().count();
     let exact_probe_views = reflection_probe_handles.iter().flatten().count();
     let exact_lightmap_views = lightmap_handles
@@ -388,14 +393,19 @@ pub fn install(
         .flatten()
         .filter(|page| page.primary.is_some() && page.secondary.is_some())
         .count();
-    commands.insert_resource(RuntimeImageHandles::from_pools(
-        scene.runtime_material_catalog.generation_id(),
-        exact_material_handles.clone(),
-        scene.exact_material_names.clone(),
-        reflection_probe_handles.clone(),
-        lightmap_handles.clone(),
-        None,
-    ));
+    {
+        let value = RuntimeImageHandles::from_pools(
+            scene.runtime_material_catalog.generation_id(),
+            exact_material_handles.clone(),
+            scene.exact_material_names.clone(),
+            reflection_probe_handles.clone(),
+            lightmap_handles.clone(),
+            None,
+        );
+        commands.queue(move |world: &mut World| {
+            frame::scope::insert(world, value, frame::MatchScope::Live);
+        });
+    };
     log_image_asset_memory(images);
     diag::info!(
         World,

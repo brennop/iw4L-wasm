@@ -1,5 +1,5 @@
 use bevy::prelude::Resource;
-use frame::{LocalLoadKey, RuntimeRole, WorldGeneration, WorldReadiness};
+use frame::{LocalLoadKey, RuntimeRole, WorldReadiness, WorldStamp};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReadinessDecision {
@@ -34,7 +34,7 @@ impl ReadinessDecision {
 pub fn decide_readiness(
     role: RuntimeRole,
     headless: bool,
-    generation: WorldGeneration,
+    generation: WorldStamp,
     installed: bool,
     navigation: Option<WorldReadiness>,
     rendering: Option<WorldReadiness>,
@@ -74,7 +74,7 @@ pub fn decide_readiness(
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SessionReadinessPolicy {
     pub load_key: Option<LocalLoadKey>,
-    pub generation: WorldGeneration,
+    pub generation: WorldStamp,
     pub advancement_allowed: bool,
     pub presentation_allowed: bool,
     pub admission_allowed: bool,
@@ -82,12 +82,7 @@ pub struct SessionReadinessPolicy {
 }
 
 impl SessionReadinessPolicy {
-    pub fn local_input_allowed(
-        self,
-        generation: WorldGeneration,
-        armed: bool,
-        failed: bool,
-    ) -> bool {
+    pub fn local_input_allowed(self, generation: WorldStamp, armed: bool, failed: bool) -> bool {
         self.input_allowed
             && self.generation == generation
             && generation.0.is_some()

@@ -711,6 +711,7 @@ pub struct WeaponCmd {
     pub offhand: crate::offhand::OffhandCmd,
 
     pub perks0: u32,
+    pub perks1: u32,
 
     pub perk_weap_reload_multiplier: f32,
 }
@@ -747,6 +748,7 @@ impl Default for WeaponCmd {
             switch_first_raise_time_ms: 0,
             offhand: crate::offhand::OffhandCmd::default(),
             perks0: 0,
+            perks1: 0,
             perk_weap_reload_multiplier: PERK_WEAP_RELOAD_MULTIPLIER_DEFAULT,
         }
     }

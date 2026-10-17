@@ -167,12 +167,7 @@ struct ActiveRumble {
 
 #[derive(Default)]
 struct RumblePlayback {
-    owner: Option<(
-        frame::WorldGeneration,
-        sim::ClientId,
-        sim::LifeSequence,
-        u64,
-    )>,
+    owner: Option<(frame::WorldStamp, sim::ClientId, sim::LifeSequence, u64)>,
     last_time: i32,
     active: Vec<ActiveRumble>,
     output: Option<(Entity, GamepadRumbleIntensity)>,
@@ -298,6 +293,7 @@ pub(crate) fn register(app: &mut App) {
         .add_systems(
             Update,
             update
+                .in_set(frame::InMatch)
                 .in_set(net::ClientSet::Effects)
                 .after(crate::entity_events::play_viewmodel_notetrack_messages),
         );
@@ -345,7 +341,7 @@ fn update(
     let owner = bank.as_ref().and_then(|bank| {
         let meta = presented.snapshot()?.meta.for_client(local.0)?;
         (meta.lifecycle == sim::ClientLifecycle::Alive).then_some((
-            *generation,
+            generation.stamp(),
             local.0,
             meta.life_sequence,
             bank.0.revision(),

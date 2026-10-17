@@ -1254,7 +1254,11 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             *row = projectile;
         }
     } else {
-        let _ = world.remove_projectile_by_number(entnum);
+        let terminal = detonated
+            .iter()
+            .find(|info| info.splash)
+            .map(|info| (tick, info.projectile));
+        let _ = world.finish_projectile(entnum, terminal);
     }
     for info in &detonated {
         impacts.push(ProjectileImpact {
@@ -1272,11 +1276,6 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
         });
     }
     world.record_projectile_impacts(tick, &impacts);
-    for info in &detonated {
-        if info.splash {
-            world.note_dying_missile(tick, info.projectile);
-        }
-    }
     let resolves_damage = world.publishes_snapshot();
     if resolves_damage {
         for (projectile, target) in direct_hits {

@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -92,34 +93,42 @@ pub struct MissileBoltRow {
 }
 
 pub fn register_missile_systems(app: &mut App) {
-    app.init_resource::<MissileDrawPlan>()
-        .init_resource::<MissileOccupancy>()
-        .init_resource::<MissilePoseProduct>()
-        .init_resource::<MissileBoltState>()
+    app.scoped::<MissileDrawPlan>(frame::MatchScope::Live)
+        .scoped::<MissileOccupancy>(frame::MatchScope::Live)
+        .scoped::<MissilePoseProduct>(frame::MatchScope::Live)
+        .scoped::<MissileBoltState>(frame::MatchScope::Live)
         .add_systems(
             Update,
-            occupy_missile_scene_ents
+            (occupy_missile_scene_ents
+                .in_set(frame::InMatch)
                 .in_set(frame::RenderSet::Anim)
                 .before(frame::WorkerCmdSet::CellDynModel)
                 .in_set(render_scene::GfxSceneAdd)
-                .in_set(AnimSceneSubmit),
+                .in_set(AnimSceneSubmit))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            publish_missile_dobj_poses
+            (publish_missile_dobj_poses
+                .in_set(frame::InMatch)
                 .after(occupy_missile_scene_ents)
                 .after(frame::WorkerCmdSet::SkinModel)
                 .before(frame::WorkerCmdSet::FxRemaining)
-                .in_set(frame::ClientSet::Present),
+                .in_set(frame::ClientSet::Present))
+            .in_set(frame::InMatch),
         )
         .add_systems(
             Update,
-            (pose_missiles, append_missile_draws)
+            ((
+                pose_missiles.in_set(frame::InMatch),
+                append_missile_draws.in_set(frame::InMatch),
+            )
                 .chain()
                 .after(frame::WorkerCmdSet::CellSceneEnt)
                 .after(frame::WorkerCmdSet::DpvsEnt)
                 .before(frame::WorkerCmdSet::CellDynModel)
-                .in_set(frame::WorkerCmdSet::SkinModel),
+                .in_set(frame::WorkerCmdSet::SkinModel))
+            .in_set(frame::InMatch),
         );
 }
 

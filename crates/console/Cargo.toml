@@ -24,6 +24,7 @@ input_iw4.workspace = true
 net = { path = "../net" }
 render = { path = "../render" }
 render_frontend.workspace = true
+render_anim.workspace = true
 session = { path = "../session" }
 render_fx.workspace = true
 replay = { path = "../replay" }

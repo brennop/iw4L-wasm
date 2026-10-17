@@ -15,7 +15,6 @@ iw4l.community.*.tmp
 # the agent clones and the RE tooling and its bases all stay on this machine.
 /context/
 
-# Nix / direnv
 .direnv/
 result
 result-*

@@ -1,7 +1,7 @@
 use super::args::{arg, int, string, vector};
 use crate::frame::FrameWorld;
 use crate::script::runtime::type_name;
-use crate::script::{Namespace, NativeRegistry, Runtime, Value};
+use crate::script::{Namespace, NativeRegistry, RoundScript, Value};
 use crate::{CompassObjective, ObjectiveMatch, ObjectiveState, ScriptEffect};
 use bevy_ecs::prelude::World;
 use gamemode_iw4::Team;
@@ -40,7 +40,7 @@ fn state(args: &[Value], at: usize) -> Result<ObjectiveState, String> {
 
 fn objective(world: &mut World, index: u8) -> bevy_ecs::world::Mut<'_, ScriptObjective> {
     world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .map_unchanged(|runtime| runtime.engine.objectives.entry(index).or_default())
 }
 
@@ -77,7 +77,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     registry.register(Function, "objective_delete", |world, _, args| {
         let index = index(args)?;
         world
-            .resource_mut::<Runtime>()
+            .resource_mut::<RoundScript>()
             .engine
             .objectives
             .remove(&index);
@@ -110,7 +110,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Function, "objective_team", |world, _, args| {
         let index = index(args)?;
-        if let Some(client) = world.resource::<Runtime>().player_client_of(arg(args, 1)?) {
+        if let Some(client) = world
+            .resource::<RoundScript>()
+            .player_client_of(arg(args, 1)?)
+        {
             let mut objective = objective(world, index);
             objective.team = Team::Free;
             objective.viewer = Some(client);
@@ -133,7 +136,7 @@ pub(crate) fn publish(world: &mut World) {
     let vehicles = super::vehicles::compass_rows(world);
     let vehicle_targets = super::vehicles::hud_targets(world);
     let rows: Vec<(u8, ScriptObjective)> = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .engine
         .objectives
         .iter()
@@ -142,7 +145,7 @@ pub(crate) fn publish(world: &mut World) {
     let mut compass = Vec::with_capacity(rows.len());
     for (index, row) in rows {
         let origin = match &row.entity {
-            Some(Value::Object(id)) if world.resource::<Runtime>().live(id) => {
+            Some(Value::Object(id)) if world.resource::<RoundScript>().live(id) => {
                 match super::players::entity_field(world, *id, "origin") {
                     Value::Vector(origin) => origin,
                     _ => row.origin,
@@ -159,23 +162,24 @@ pub(crate) fn publish(world: &mut World) {
             viewer: row.viewer,
         });
     }
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
+    let match_script = world.resource::<crate::script::MatchScript>();
     let score = |team: &str| runtime.engine.team_scores.get(team).copied().unwrap_or(0);
     let scores = [0, score("axis"), score("allies")];
     let engine = ENGINE_SERVER_INFO
         .iter()
         .filter(|name| !runtime.server_info.contains(**name))
-        .filter_map(|name| Some((name.to_string(), runtime.dvars.get(*name)?.clone())));
+        .filter_map(|name| Some((name.to_string(), match_script.dvars.get(*name)?.clone())));
     let server_info = runtime
         .server_info
         .iter()
         .map(|name| {
-            let value = runtime.dvars.get(name).cloned().unwrap_or_default();
+            let value = match_script.dvars.get(name).cloned().unwrap_or_default();
             (name.clone(), value)
         })
         .chain(engine)
         .chain(
-            runtime
+            match_script
                 .dvars
                 .iter()
                 .filter(|(name, _)| {
@@ -194,7 +198,7 @@ pub(crate) fn publish(world: &mut World) {
         .program
         .is_some()
         .then(|| runtime.engine.ac130_ambient.clone().unwrap_or_default());
-    let rumble_aliases = runtime
+    let rumble_aliases = match_script
         .precached
         .iter()
         .filter(|((kind, _), _)| *kind == "rumble")
@@ -225,7 +229,7 @@ pub(crate) fn publish(world: &mut World) {
             Some((*id, fx.clone(), viewers))
         })
         .collect();
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     runtime
         .engine
         .effects

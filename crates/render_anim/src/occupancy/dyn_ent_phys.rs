@@ -1,3 +1,4 @@
+use frame::ScopeApp;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -60,9 +61,9 @@ struct DynEntPhysBody {
 }
 
 pub(crate) fn register_dyn_ent_phys(app: &mut App) {
-    app.init_resource::<DynEntPhysClip>()
-        .init_resource::<DynEntPhysWorld>()
-        .add_message::<DynEntPhysImpulse>();
+    app.staged::<DynEntPhysClip>(frame::MatchScope::Live)
+        .staged::<DynEntPhysWorld>(frame::MatchScope::Live)
+        .scoped_message::<DynEntPhysImpulse>(frame::MatchScope::Live);
 }
 
 pub fn step_phys_world0(
@@ -202,10 +203,6 @@ fn integrate_body(body: &mut DynEntPhysBody, clip: &ClipCollision, dt: f32) {
         CONTENTS_SOLID,
     );
     if hit.allsolid || hit.startsolid {
-        // The hull is the model's whole bounds (a potted plant's leaves with it), so a prop where
-        // the map placed it can already overlap a wall, pillar or shelf. Lifting it out a unit a
-        // step floated such props up until the hull cleared the obstacle, where they fell asleep
-        // in the air; the map's placement stands instead and the prop settles where it is.
         body.vel = Vec3::ZERO;
         body.on_ground = true;
         return;

@@ -226,6 +226,10 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
             "clip — save last ≤45s available to this client as iw4l-artifacts/clips/<ULID>/{clip.iw4ldemo, dump.txt} (always-on ring)",
         ),
         (
+            "round_restart",
+            "round_restart — restart the host's script round and retain match content (needs cheats)",
+        ),
+        (
             "map_restart",
             "map_restart — a new match on the current map, on what the last one prepared",
         ),
@@ -299,7 +303,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         (
             "wait",
-            "wait [seconds|<n>t|world|spawn|torn|ambient] — pause the console FIFO; <n>t = n authority ticks; world = scene.spawned; spawn = AppScreen::InGame; torn = HasWorld false and scene.spawned false (hold after MatchTornDown); ambient = MapAmbientBooted (overlay finished, CreateFX sources published)",
+            "wait [seconds|<n>t|world|spawn|torn|ambient|progression] — pause the console FIFO; <n>t = n authority ticks; world = scene.spawned; spawn = AppScreen::InGame; torn = match scope absent and scene.spawned false (after match retirement); ambient = MapAmbientBooted; progression = native account content ready",
         ),
     ] {
         if registry.resolve(name).is_none() {

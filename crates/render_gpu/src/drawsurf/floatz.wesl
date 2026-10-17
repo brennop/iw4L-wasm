@@ -14,11 +14,10 @@ fn vs_fullscreen(@builtin(vertex_index) vertex_index: u32) -> VsOut {
     return out;
 }
 
-#ifdef MULTISAMPLED
+@if(MULTISAMPLED)
 @group(0) @binding(0) var depth_tex: texture_depth_multisampled_2d;
-#else
+@else
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
-#endif
 @group(0) @binding(1) var<uniform> params: Params;
 
 @fragment

@@ -169,12 +169,7 @@ pub enum GlassApplyAction {
     Delete,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GlassPaneBasis {
-    pub origin: [f32; 3],
-    pub axis_s: [f32; 3],
-    pub axis_t: [f32; 3],
-}
+pub use asset_core::GlassPaneBasis;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]

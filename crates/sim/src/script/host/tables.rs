@@ -1,11 +1,11 @@
 use super::args::{int, string};
 use super::entities::table_key;
-use crate::script::{Runtime, StringTable, Value};
+use crate::script::{RoundScript, StringTable, Value};
 use bevy_ecs::prelude::World;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub(super) fn table<'a>(
+pub(crate) fn table<'a>(
     tables: &'a BTreeMap<String, StringTable>,
     name: &str,
 ) -> Option<&'a StringTable> {
@@ -13,7 +13,7 @@ pub(super) fn table<'a>(
 }
 
 pub(super) fn perk_slot_code(world: &World, name: &str) -> Option<(usize, u32)> {
-    let tables = &world.resource::<Runtime>().tables;
+    let tables = &world.resource::<RoundScript>().tables;
     let table = table(tables, "mp/perkTable.csv")?;
     let row = table_search(table, 1, name)?;
     let slot = hud_iw4::get_perk_slot_index(table.cell(row, 5)?)?;
@@ -21,7 +21,7 @@ pub(super) fn perk_slot_code(world: &World, name: &str) -> Option<(usize, u32)> 
     Some((slot, code))
 }
 
-pub(super) fn table_search(table: &StringTable, column: usize, value: &str) -> Option<usize> {
+pub(crate) fn table_search(table: &StringTable, column: usize, value: &str) -> Option<usize> {
     (0..table.rows).find(|&row| {
         table
             .cell(row, column)
@@ -33,7 +33,7 @@ pub(crate) fn table_lookup(world: &World, args: &[Value]) -> Result<String, Stri
     if args.len() != 4 {
         return Err("wrong number of parameters".into());
     }
-    let tables = world.resource::<Runtime>().tables.clone();
+    let tables = world.resource::<RoundScript>().tables.clone();
     let name = string(args, 0)?;
     let column = int(args, 1)?;
     let value = string(args, 2)?;
@@ -51,7 +51,7 @@ pub(crate) fn table_lookup(world: &World, args: &[Value]) -> Result<String, Stri
 }
 
 pub(crate) fn table_lookup_by_row(world: &World, args: &[Value]) -> Result<Arc<str>, String> {
-    let tables = world.resource::<Runtime>().tables.clone();
+    let tables = world.resource::<RoundScript>().tables.clone();
     let name = string(args, 0)?;
     let (row, column) = (int(args, 1)?, int(args, 2)?);
     Ok(table(&tables, &name)

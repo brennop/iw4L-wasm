@@ -10,6 +10,7 @@ pub struct WorldCameraPose {
 pub struct FpvLens;
 
 #[derive(Component)]
+#[require(bevy::prelude::DespawnOnExit<frame::MatchScope> = bevy::prelude::DespawnOnExit(frame::MatchScope::Live))]
 pub struct FlyCamera {
     pub yaw: f32,
     pub pitch: f32,

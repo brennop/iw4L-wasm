@@ -6,6 +6,7 @@ license.workspace = true
 description = "Retail IW4 entity taxonomy: entityState/centity, eType, eFlags, event enums."
 
 [dependencies]
+asset_core.workspace = true
 math_iw4.workspace = true
 libm = { version = "0.2.16", default-features = false }
 

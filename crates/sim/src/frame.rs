@@ -76,17 +76,21 @@ impl DerefMut for FrameWorld<'_> {
 impl FrameWorld<'_> {
     pub(crate) fn missile_collision_models(&self, id: crate::ProjectileId) -> Vec<ScriptModelId> {
         self.ecs
-            .get_resource::<crate::script::Runtime>()
+            .get_resource::<crate::script::RoundScript>()
             .map(|runtime| runtime.missile_collision_models(id))
             .unwrap_or_default()
     }
 
     pub(crate) fn emit_script_entity_trace(&self) {
         if perf::enabled()
-            && let Some(runtime) = self.ecs.get_resource::<crate::script::Runtime>()
+            && let Some(runtime) = self.ecs.get_resource::<crate::script::RoundScript>()
         {
             crate::script::host::trace::entities(runtime, self.entity_collision_capabilities());
         }
+    }
+
+    pub(crate) fn ecs_ref(&self) -> &World {
+        self.ecs
     }
 
     pub(crate) fn ecs(&mut self) -> &mut World {
@@ -103,22 +107,84 @@ impl FrameWorld<'_> {
         Some(&mut self.ecs.get_mut::<ProjectileRow>(entity)?.into_inner().0)
     }
 
-    /// Not for detonations: `note_dying_missile` keeps their slot until the event expires.
-    pub(crate) fn despawn_projectile(&mut self, entnum: i32) -> Option<ProjectileState> {
-        let projectile = self.remove_projectile_by_number(entnum)?;
-        self.free_dynamic_entity_number(projectile.entnum);
+    pub(crate) fn finish_projectile(
+        &mut self,
+        number: i32,
+        terminal: Option<(Tick, ProjectileState)>,
+    ) -> Option<ProjectileState> {
+        let projectile = self.projectile_by_number(number)?;
+        let entity = self
+            .entity_kernel()
+            .current_ref(number)
+            .expect("live projectile slot");
+        self.finish_entity(entity, terminal);
         Some(projectile)
     }
 
-    pub(crate) fn remove_projectile_by_number(&mut self, entnum: i32) -> Option<ProjectileState> {
-        let entity = entity_by_number(self.ecs, entnum)?;
-        let projectile = self.ecs.get::<ProjectileRow>(entity)?.0;
-        unbind_number(self.ecs, entnum);
+    pub(crate) fn despawn_projectile(&mut self, number: i32) -> Option<ProjectileState> {
+        self.finish_projectile(number, None)
+    }
+
+    pub(crate) fn despawn_dynamic_entity(&mut self, number: i32) -> bool {
+        let Ok(reference) = self.entity_kernel().current_ref(number) else {
+            return false;
+        };
+        if self.projectile_by_number(number).is_none()
+            && self.dropped_item_by_number(number).is_none()
+            && self.script_mover_by_number(number).is_none()
+        {
+            return false;
+        }
+        self.finish_entity(reference, None);
+        true
+    }
+
+    fn finish_entity(
+        &mut self,
+        reference: crate::gentity::EntityRef,
+        terminal: Option<(Tick, ProjectileState)>,
+    ) {
+        let slot = self
+            .entity_kernel()
+            .resolve(reference)
+            .expect("live entity generation");
+        let number = reference.number();
+        let entity = entity_by_number(self.ecs, number).expect("live entity payload");
+        let mover = self.ecs.get::<ScriptMoverRow>(entity).map(|row| row.0.id);
+        assert!(
+            match slot.kind {
+                EntityRunKind::Missile => self.ecs.get::<ProjectileRow>(entity).is_some(),
+                EntityRunKind::Item => self.ecs.get::<DroppedItemRow>(entity).is_some(),
+                EntityRunKind::ScriptMover => mover.is_some(),
+                _ => false,
+            },
+            "entity payload does not match its slot"
+        );
+        if slot.kind == EntityRunKind::Item
+            && let Some(mut runtime) = self.ecs.get_resource_mut::<crate::script::RoundScript>()
+        {
+            runtime.retire_item_payload(number);
+        }
+        unbind_number(self.ecs, number);
         assert!(
             self.ecs.despawn(entity),
-            "projectile component vanished before removal"
+            "entity payload vanished before retirement"
         );
-        Some(projectile)
+        if let Some(id) = mover {
+            self.remove_collision_owner(id);
+        }
+        match terminal {
+            Some((tick, projectile)) => {
+                assert_eq!(slot.kind, EntityRunKind::Missile);
+                assert_eq!(projectile.entnum, number);
+                self.note_dying_missile(tick, projectile);
+            }
+            None => self.free_dynamic_entity_number(number),
+        }
+    }
+
+    pub(crate) fn validate_entity_payloads(&self) -> Result<(), String> {
+        validate_entity_payloads(self.ecs)
     }
 
     pub(crate) fn push_projectile(&mut self, projectile: ProjectileState) {
@@ -139,18 +205,14 @@ impl FrameWorld<'_> {
     }
 
     pub(crate) fn remove_script_mover_by_number(&mut self, number: i32) -> bool {
-        let Some(entity) = entity_by_number(self.ecs, number) else {
-            return false;
-        };
-        if self.ecs.get::<ScriptMoverRow>(entity).is_none() {
+        if self.script_mover_by_number(number).is_none() {
             return false;
         }
-        unbind_number(self.ecs, number);
-        assert!(
-            self.ecs.despawn(entity),
-            "script mover vanished before removal"
-        );
-        self.free_dynamic_entity_number(number);
+        let entity = self
+            .entity_kernel()
+            .current_ref(number)
+            .expect("live mover slot");
+        self.finish_entity(entity, None);
         true
     }
 
@@ -276,20 +338,13 @@ impl FrameWorld<'_> {
         spawn_dropped_item(self.ecs, item);
     }
 
-    pub(crate) fn remove_dropped_item_by_number(&mut self, number: i32) -> Option<DroppedItem> {
-        let entity = entity_by_number(self.ecs, number)?;
-        let item = self.ecs.get::<DroppedItemRow>(entity)?.0;
-        unbind_number(self.ecs, number);
-        assert!(
-            self.ecs.despawn(entity),
-            "dropped item component vanished before removal"
-        );
-        Some(item)
-    }
-
     pub(crate) fn despawn_dropped_item(&mut self, number: i32) -> Option<DroppedItem> {
-        let item = self.remove_dropped_item_by_number(number)?;
-        self.free_dynamic_entity_number(item.state.number);
+        let item = self.dropped_item_by_number(number)?;
+        let entity = self
+            .entity_kernel()
+            .current_ref(number)
+            .expect("live item slot");
+        self.finish_entity(entity, None);
         Some(item)
     }
 
@@ -1049,4 +1104,104 @@ fn begin_script_movers_rotate_velocity_supplied(
         }
     }
     n
+}
+
+fn numbered_payload_numbers(world: &World) -> Vec<i32> {
+    world
+        .get::<PayloadIndex>(state_entity(world))
+        .expect("payload index")
+        .by_number
+        .iter()
+        .enumerate()
+        .filter_map(|(number, entity)| entity.map(|_| number as i32))
+        .collect()
+}
+
+pub(crate) fn validate_entity_payloads(world: &World) -> Result<(), String> {
+    let live_kernel = kernel(world);
+    let kernel = live_kernel.to_snapshot();
+    kernel
+        .validate()
+        .map_err(|error| format!("entity kernel: {error:?}"))?;
+    let events = world
+        .get::<SimState>(state_entity(world))
+        .expect("simulation state")
+        .retained_missile_events();
+    for (index, slot) in kernel.slots.iter().enumerate() {
+        let Some(occupied) = slot.occupied else {
+            continue;
+        };
+        let number = crate::gentity::GENTITY_RESERVED_COUNT + index as i32;
+        if occupied.transient_event_time_ms.is_some()
+            && (occupied.kind != EntityRunKind::Missile
+                || events.iter().filter(|event| event.number == number).count() != 1)
+        {
+            return Err(format!(
+                "entity {number}: event hold lacks one terminal missile event"
+            ));
+        }
+        let entity = entity_by_number(world, number);
+        let payload = entity.is_some_and(|entity| match occupied.kind {
+            EntityRunKind::Missile => world.get::<ProjectileRow>(entity).is_some(),
+            EntityRunKind::Item => world.get::<DroppedItemRow>(entity).is_some(),
+            EntityRunKind::ScriptMover => world.get::<ScriptMoverRow>(entity).is_some(),
+            _ => true,
+        });
+        if matches!(
+            occupied.kind,
+            EntityRunKind::Missile | EntityRunKind::Item | EntityRunKind::ScriptMover
+        ) && payload == occupied.transient_event_time_ms.is_some()
+        {
+            return Err(format!(
+                "entity {number}: expected payload or event hold, kind={:?}",
+                occupied.kind
+            ));
+        }
+    }
+    for event in events {
+        if event
+            .number
+            .checked_sub(crate::gentity::GENTITY_RESERVED_COUNT)
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| kernel.slots.get(index))
+            .and_then(|slot| slot.occupied)
+            .is_none_or(|slot| {
+                slot.kind != EntityRunKind::Missile || slot.transient_event_time_ms.is_none()
+            })
+        {
+            return Err(format!(
+                "terminal event {} has no missile hold",
+                event.number
+            ));
+        }
+    }
+    for number in numbered_payload_numbers(world) {
+        let kind = kernel
+            .occupied_kind(number)
+            .ok_or_else(|| format!("payload {number} has no occupied slot"))?;
+        let entity = entity_by_number(world, number).expect("numbered payload index");
+        let expected = if world.get::<ProjectileRow>(entity).is_some() {
+            EntityRunKind::Missile
+        } else if world.get::<DroppedItemRow>(entity).is_some() {
+            EntityRunKind::Item
+        } else {
+            EntityRunKind::ScriptMover
+        };
+        let row_number = if let Some(row) = world.get::<ProjectileRow>(entity) {
+            row.0.entnum
+        } else if let Some(row) = world.get::<DroppedItemRow>(entity) {
+            row.0.state.number
+        } else if let Some(row) = world.get::<ScriptMoverRow>(entity) {
+            row.0.state.number
+        } else {
+            return Err(format!("index {number} has no typed payload"));
+        };
+        if row_number != number {
+            return Err(format!("index {number} points to payload {row_number}"));
+        }
+        if kind != expected {
+            return Err(format!("payload {number}: {kind:?} != {expected:?}"));
+        }
+    }
+    Ok(())
 }

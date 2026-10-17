@@ -22,7 +22,7 @@ pub use content_manifest::{
 pub use life_front::{LifeFrontCensus, LifeNotifyCensus};
 pub use lifecycle::{
     LiveWorldIdentity, SessionSwapCompletion, SessionSwapRequest, SessionSwapResult,
-    SessionSwapTarget, TeardownGaps, TeardownRequest,
+    SessionSwapTarget, TeardownRequest,
 };
 pub use loadout::{
     AuthoritativeClassProjection, ClassRow, perk_catalog_id, project_class, resolve_class_weapon,
@@ -34,3 +34,6 @@ pub use local_arm::{
 pub use match_apply::{apply_prepared_match, install_script_model_id};
 pub use plugin::SessionPlugin;
 pub use startup::{PendingConsoleLines, StartupCommands};
+
+mod scope_control;
+pub use scope_control::ScopeControl;

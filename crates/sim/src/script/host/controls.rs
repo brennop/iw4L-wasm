@@ -2,7 +2,7 @@ use super::args::{float, int, optional, string, vector};
 use super::natives::player::player;
 use crate::frame::FrameWorld;
 use crate::script::Namespace::{Function, Method};
-use crate::script::{Arc, NativeRegistry, Runtime, Value};
+use crate::script::{Arc, NativeRegistry, RoundScript, Value};
 use crate::world::ClientId;
 use bevy_ecs::prelude::World;
 use playerstate_iw4::{PlayerState, buttons, weap_flags};
@@ -293,7 +293,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let upper_left = [float(args, 1)?, float(args, 2)?];
         let lower_right = [float(args, 3)?, float(args, 4)?];
         let north_yaw = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .engine
             .worldspawn
             .get("northyaw")
@@ -303,7 +303,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             hud_iw4::compass_map_bounds_from_minimap_corners(upper_left, lower_right, north_yaw)
                 .ok_or("setminimap: the corners enclose no area")?;
         let (upper_left, north, size) = (bounds.upper_left, bounds.north, bounds.world_size);
-        world.resource_mut::<Runtime>().engine.minimap = Some(MiniMap {
+        world.resource_mut::<RoundScript>().engine.minimap = Some(MiniMap {
             upper_left,
             north,
             size,
@@ -383,13 +383,13 @@ pub(crate) fn select_location(
         .reason
         .advances_authority_world();
     let receiver = world
-        .resource::<Runtime>()
+        .resource::<RoundScript>()
         .players
         .get(&client)
         .map(|slot| Value::Object(slot.object));
     if let (true, Some(receiver)) = (authority, receiver) {
         if pressed & buttons::LOCATION_SELECT != 0 {
-            let map = world.resource::<Runtime>().engine.minimap;
+            let map = world.resource::<RoundScript>().engine.minimap;
             let loc = |byte: u8| (f32::from(byte as i8) + 128.0) / 255.0;
             let location = map.map_or([0.0; 3], |map| {
                 let x = loc(cmd.selected_location[0]) * map.size[0];
@@ -437,19 +437,20 @@ fn raise_commands(world: &mut World, client: u32, fired: impl Fn(&str) -> bool) 
     {
         return;
     }
-    let Some((receiver, notifies)) = world
-        .resource::<Runtime>()
-        .players
-        .get(&client)
-        .map(|slot| {
-            let notifies: Vec<Arc<str>> = slot
-                .commands
-                .iter()
-                .filter(|(command, _)| fired(command))
-                .map(|(_, notify)| notify.clone())
-                .collect();
-            (Value::Object(slot.object), notifies)
-        })
+    let Some((receiver, notifies)) =
+        world
+            .resource::<RoundScript>()
+            .players
+            .get(&client)
+            .map(|slot| {
+                let notifies: Vec<Arc<str>> = slot
+                    .commands
+                    .iter()
+                    .filter(|(command, _)| fired(command))
+                    .map(|(_, notify)| notify.clone())
+                    .collect();
+                (Value::Object(slot.object), notifies)
+            })
     else {
         return;
     };

@@ -4,23 +4,26 @@ use frame::ClientSet;
 pub(crate) use crate::render_core::AudioScope;
 use crate::runtime::AudioRuntime;
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MatchEpoch(pub u64);
-
-impl MatchEpoch {
-    pub fn bump(&mut self) {
-        self.0 = self.0.wrapping_add(1);
-    }
-}
+use frame::{MatchScope, ScopeEpoch};
 
 pub(crate) fn register(app: &mut App) {
+    app.add_systems(
+        StateTransition,
+        sync_scope_epoch
+            .in_set(bevy::state::state::StateTransitionSystems::TransitionSchedules)
+            .after(frame::scope::ScopeRetired),
+    );
+    app.add_systems(
+        OnExit(MatchScope::Live),
+        release_audio.in_set(frame::ScopeSet::Release),
+    );
     app.init_resource::<net::FireVerdictState>();
     let verdicts = app.world().resource::<net::FireVerdictState>().clone();
     app.init_resource::<AudioRuntime>();
     app.world()
         .resource::<AudioRuntime>()
         .set_fire_verdicts(verdicts);
-    app.init_resource::<MatchEpoch>()
+    app.init_resource::<ScopeEpoch<MatchScope>>()
         .add_systems(
             Update,
             publish_audio_context
@@ -37,10 +40,11 @@ pub(crate) fn register(app: &mut App) {
 }
 
 pub(crate) fn publish_audio_context(
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
     runtime: Res<AudioRuntime>,
     verdicts: Option<Res<net::FireVerdictState>>,
     clips: Option<Res<crate::ClipStore>>,
+    frontend: Option<Res<crate::frontend::FrontendAudio>>,
     mut mix: Option<ResMut<crate::script_mix::ScriptAudioMix>>,
     mut channels: Option<ResMut<crate::script_mix::ChannelAudioMix>>,
     listeners: Query<&Transform, With<crate::AmbientListener>>,
@@ -98,7 +102,12 @@ pub(crate) fn publish_audio_context(
                     .map(|latest| latest.tick.0),
             }),
     );
-    runtime.set_media_service(clips.as_ref().map(|clips| clips.service()));
+    runtime.set_media_service(
+        clips
+            .as_ref()
+            .map(|clips| clips.service())
+            .or_else(|| frontend.as_ref().map(|frontend| frontend.clips.service())),
+    );
     if let Some(mix) = mix.as_mut() {
         mix.reset_epoch(epoch.0);
     }
@@ -159,7 +168,7 @@ fn cancel_audio_on_exit(mut exit: MessageReader<AppExit>, runtime: Res<AudioRunt
 
 fn submit_presented_audio(
     mut runtime: ResMut<AudioRuntime>,
-    epoch: Res<MatchEpoch>,
+    epoch: Res<ScopeEpoch<MatchScope>>,
     settings: Option<Res<frame::GameSettings>>,
     listeners: Query<&Transform, With<crate::AmbientListener>>,
     destructibles: Option<Res<crate::destructible_loops::DestructibleSources>>,
@@ -196,4 +205,15 @@ fn submit_presented_audio(
         desired.extend(breath.source.iter().cloned());
     }
     runtime.set_sources(desired);
+}
+
+fn sync_scope_epoch(epoch: Res<ScopeEpoch<MatchScope>>, runtime: Res<AudioRuntime>) {
+    runtime.set_match_epoch(epoch.0);
+}
+
+fn release_audio(mut runtime: ResMut<AudioRuntime>) {
+    runtime.set_media_service(None);
+    runtime.set_event_context(None);
+    runtime.set_cue_mix(None);
+    runtime.set_sources(Vec::new());
 }

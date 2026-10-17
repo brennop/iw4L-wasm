@@ -6,14 +6,12 @@ use asset_transport::{LoadProgress, find_runtime_common_mp, find_zone_file, list
 use assets::{
     LoadingPreviewSource, LoadingScreen, MatchLoadRequest, NamespaceSoundIwd, NamespaceTrees,
 };
-use audio::{SoundBank, SoundIwd};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use render::diag::acceptance::{
     ACCEPTANCE_HEIGHT, ACCEPTANCE_PRESENT_MODE, ACCEPTANCE_WIDTH, AcceptanceRun,
 };
 use render::diag::capture::{CaptureQueue, CaptureRequest};
-use render_frontend::prepare::scene::world::WorldScene;
 use replay::{Playback, ReplayPlayback};
 use session::StartupCommands;
 use ui::{
@@ -90,6 +88,8 @@ fn install_class_catalog(
     shell: Option<ResMut<ShellCommonTask>>,
     mut strings: ResMut<asset_game::LocalizeCatalog>,
     menus: Res<asset_game::MenuCatalog>,
+    account: Option<Res<net::LocalAccount>>,
+    mut player_data: ResMut<sim::LocalPlayerData>,
 ) {
     use bevy::tasks::futures_lite::future;
     let Some(mut shell) = shell else {
@@ -100,6 +100,63 @@ fn install_class_catalog(
     };
     for line in &common.report {
         diag::info!(Launch, "{line}");
+    }
+    match (
+        common.player_schemas.get("mp/playerdata.def"),
+        common.weapons.rank_progression(),
+    ) {
+        (Some(definitions), Ok(ranks)) => {
+            if let Err(error) = player_data.install(
+                definitions,
+                ranks,
+                account
+                    .as_ref()
+                    .and_then(|account| account.snapshot.as_ref()),
+            ) {
+                diag::warn!(Launch, "progression: cannot read account: {error:?}");
+            }
+        }
+        (None, _) => diag::warn!(Launch, "progression: shell player data schema is missing"),
+        (_, Err(error)) => diag::warn!(Launch, "progression: shell ranks unavailable: {error}"),
+    }
+    player_data.install_unlock_data(
+        common
+            .player_defaults_config
+            .as_ref()
+            .map(|config| sim::PlayerDataDefaults {
+                config: config.clone(),
+                class_names: std::array::from_fn(|index| {
+                    let key = format!("CLASS_SLOT{}", index + 1);
+                    common
+                        .strings
+                        .raw_text(&key)
+                        .filter(|bytes| bytes.first().is_some_and(|byte| *byte != 0))
+                        .map_or_else(|| key.into_bytes(), <[u8]>::to_vec)
+                }),
+            }),
+        common
+            .challenges
+            .as_ref()
+            .map(|table| sim::script::StringTable {
+                columns: table.columns,
+                rows: table.rows,
+                cells: table.cells.clone(),
+            }),
+    );
+    for (name, table) in [
+        ("mp/ranktable.csv", common.weapons.shared_rank_table()),
+        ("mp/rankicontable.csv", common.weapons.shared_rank_icons()),
+    ] {
+        if let Ok(table) = table {
+            player_data.install_rank_table(
+                name,
+                sim::script::StringTable {
+                    columns: table.columns,
+                    rows: table.rows,
+                    cells: table.cells.clone(),
+                },
+            );
+        }
     }
     commands.insert_resource(ui::frontend::maps::MapPresentation::from_tables(
         &common.tables,
@@ -405,7 +462,6 @@ fn run_menu(
                 diag::warn!(Launch, "menu: {line}");
             }
             let bank = std::sync::Arc::new(loaded.catalog);
-            app.insert_resource(SoundBank(std::sync::Arc::clone(&bank)));
             Some(bank)
         }
         Err(error) => {
@@ -419,16 +475,9 @@ fn run_menu(
         diag::info!(Launch, "menu: {line}");
     }
     let menu_iwd = std::sync::Arc::new(menu_iwd);
-    app.insert_resource(SoundIwd(std::sync::Arc::clone(&menu_iwd)));
     if let Some(bank) = menu_bank {
-        app.insert_resource(audio::ClipStore::start(
-            std::sync::Arc::clone(&bank),
-            Some(std::sync::Arc::clone(&menu_iwd)),
-        ));
-        app.insert_resource(audio::FrontendAudio {
-            bank,
-            iwd: menu_iwd,
-        });
+        let clips = audio::ClipStore::start(std::sync::Arc::clone(&bank), Some(menu_iwd));
+        app.insert_resource(audio::FrontendAudio { bank, clips });
     }
     app.insert_resource(launch_identity(&config))
         .insert_resource(cheats)
@@ -438,7 +487,6 @@ fn run_menu(
         .insert_resource(StartupCommands {
             lines: console::startup_commands(),
         })
-        .insert_resource(WorldScene::default())
         .insert_resource(ClearColor(Color::srgb(0.04, 0.045, 0.06)))
         .insert_resource({
             let mut layers = UiLayers::default();
@@ -455,8 +503,22 @@ fn run_menu(
             },
         );
     }
+    bench::announce_runtime(&mut app);
+    if bench::enabled() {
+        bench::insert(
+            &mut app,
+            "menu-session",
+            None,
+            "menu",
+            &config.artifacts,
+            asset_transport::LoadProgress::default(),
+        );
+    }
     app.run();
-    let _ = flush_perf();
+    let trace = flush_perf();
+    if bench::enabled() {
+        bench::finish(&config.artifacts, trace);
+    }
 }
 
 fn run_play(
@@ -640,7 +702,6 @@ fn run_map(
         .insert_resource(StartupCommands {
             lines: console::startup_commands(),
         })
-        .insert_resource(WorldScene::default())
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(AppScreen::Loading)
         .insert_resource({
@@ -667,6 +728,9 @@ fn run_map(
         Role::Listen | Role::Dedicated => add_runtime_plugins(&mut app),
         Role::Client => add_runtime_plugins_with_role(&mut app, frame::RuntimeRole::Client),
     }
+    app.world_mut()
+        .resource_mut::<session::ScopeControl>()
+        .begin_load();
     // The demo, before the playback moves into the world: it names the workload
     // in the bench manifest, and "same demo" is what makes two runs comparable
     // at all. The whole path, not a stem — a clip is `clips/<id>/clip.iw4ldemo`,

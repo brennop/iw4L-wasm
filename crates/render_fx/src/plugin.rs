@@ -1,32 +1,29 @@
 use bevy::prelude::*;
+use frame::ScopeApp;
 
 pub struct RenderFxPlugin;
 
 impl Plugin for RenderFxPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<crate::FxCodeMeshPlan>()
-            .init_resource::<crate::FxParticleCloudPlan>()
-            .init_resource::<crate::GfxMarkMeshPlan>()
-            .init_resource::<crate::FxJournalCursor>()
-            .init_resource::<crate::CombatFxDump>()
-            .init_resource::<crate::PreparedFxCatalog>()
-            .init_resource::<crate::PreparedFxModels>()
-            .init_resource::<crate::PreparedFxElemInfos>()
-            .init_resource::<crate::FxCameraOrigin>()
-            .init_resource::<crate::PreparedImpactFx>()
-            .init_resource::<crate::HostFxSystem>()
+        app.scoped::<crate::FxCodeMeshPlan>(frame::MatchScope::Live)
+            .scoped::<crate::FxParticleCloudPlan>(frame::MatchScope::Live)
+            .scoped::<crate::GfxMarkMeshPlan>(frame::MatchScope::Live)
+            .scoped::<crate::FxJournalCursor>(frame::MatchScope::Live)
+            .scoped::<crate::CombatFxDump>(frame::MatchScope::Live)
+            .scoped::<crate::PreparedFxElemInfos>(frame::MatchScope::Live)
+            .scoped::<crate::FxCameraOrigin>(frame::MatchScope::Live)
+            .scoped::<crate::HostFxSystem>(frame::MatchScope::Live)
             .init_resource::<crate::FxMarkDvars>()
             .init_resource::<crate::LaserDvars>()
-            .init_resource::<crate::HostFxDlights>()
-            .init_resource::<crate::HostFxPostLights>()
-            .init_resource::<crate::FxWorldColorImages>()
-            .init_resource::<crate::FxDumpRequest>()
-            .init_resource::<crate::PresentedVehicleFx>()
-            .init_resource::<crate::PreparedTracers>()
-            .init_resource::<crate::TracerDrawGate>()
-            .init_resource::<crate::TracerWorld>()
-            .init_resource::<crate::EntityMarks>()
-            .init_resource::<crate::FxModelDrawPlan>();
+            .scoped::<crate::HostFxDlights>(frame::MatchScope::Live)
+            .scoped::<crate::HostFxPostLights>(frame::MatchScope::Live)
+            .scoped::<crate::FxWorldColorImages>(frame::MatchScope::Live)
+            .scoped::<crate::FxDumpRequest>(frame::MatchScope::Live)
+            .scoped::<crate::PresentedVehicleFx>(frame::MatchScope::Live)
+            .scoped::<crate::TracerDrawGate>(frame::MatchScope::Live)
+            .scoped::<crate::TracerWorld>(frame::MatchScope::Live)
+            .scoped::<crate::EntityMarks>(frame::MatchScope::Live)
+            .scoped::<crate::FxModelDrawPlan>(frame::MatchScope::Live);
         crate::system::register_fx_orchestration(app);
     }
 }

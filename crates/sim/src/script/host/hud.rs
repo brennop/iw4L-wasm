@@ -1,7 +1,7 @@
 use super::args::{arg, float, int, optional, string};
 use super::entities::{EntityKind, HudAudience};
 use crate::frame::FrameWorld;
-use crate::script::{Namespace, NativeRegistry, Runtime, Value};
+use crate::script::{Namespace, NativeRegistry, RoundScript, Value};
 use bevy_ecs::prelude::World;
 use hud_iw4::{
     HE_TYPE_CLOCK_DOWN, HE_TYPE_CLOCK_UP, HE_TYPE_MATERIAL, HE_TYPE_PLAYERNAME,
@@ -110,17 +110,17 @@ pub(crate) fn new_hud_elem(world: &mut World, audience: HudAudience) -> Result<V
         HudAudience::Client(client) => (*client as i32, 0),
     };
     let id = world
-        .resource_mut::<Runtime>()
+        .resource_mut::<RoundScript>()
         .create_entity(EntityKind::HudElem, "hudelem")?;
     let Some(slot) = crate::hudelem::alloc_hud_elem(
         FrameWorld::from_world(world).hud_elem_slots_mut(),
         client_num,
         team,
     ) else {
-        world.resource_mut::<Runtime>().delete_entity(id);
+        world.resource_mut::<RoundScript>().delete_entity(id);
         return Err("no free hud elems".into());
     };
-    let mut runtime = world.resource_mut::<Runtime>();
+    let mut runtime = world.resource_mut::<RoundScript>();
     for (name, value) in DEFAULTS {
         runtime.set_object_field(id, name, value());
     }
@@ -130,15 +130,15 @@ pub(crate) fn new_hud_elem(world: &mut World, audience: HudAudience) -> Result<V
 }
 
 pub(crate) fn destroy(world: &mut World, id: u64) {
-    let slot = world.resource_mut::<Runtime>().hud_slots.remove(&id);
+    let slot = world.resource_mut::<RoundScript>().hud_slots.remove(&id);
     if let Some(slot) = slot {
         crate::hudelem::free_hud_elem(FrameWorld::from_world(world).hud_elem_slots_mut(), slot);
     }
-    world.resource_mut::<Runtime>().delete_entity(id);
+    world.resource_mut::<RoundScript>().delete_entity(id);
 }
 
 fn slot_of(world: &World, receiver: &Value) -> Result<(u64, usize), String> {
-    let runtime = world.resource::<Runtime>();
+    let runtime = world.resource::<RoundScript>();
     match runtime.entity(receiver) {
         Some((id, e)) if e.kind == EntityKind::HudElem => runtime
             .hud_slots
@@ -249,7 +249,7 @@ pub(crate) fn store_field(
     name: &str,
     value: &Value,
 ) -> Result<(), String> {
-    let Some(&slot) = world.resource::<Runtime>().hud_slots.get(&id) else {
+    let Some(&slot) = world.resource::<RoundScript>().hud_slots.get(&id) else {
         return Ok(());
     };
     let label = if name == "label" {
@@ -351,7 +351,7 @@ fn clock(world: &mut World, receiver: &Value, args: &[Value], kind: i32) -> Resu
 
 fn plain_text(world: &mut World, value: &Value) -> String {
     let player = match value {
-        Value::Object(id) => world.resource::<Runtime>().player_client(*id),
+        Value::Object(id) => world.resource::<RoundScript>().player_client(*id),
         _ => None,
     };
     let name = player.and_then(|client| super::players::load_field(world, client, "name"));
@@ -427,7 +427,7 @@ pub(crate) fn chat(
     );
     let recipients = if team_only {
         let clients: Vec<u32> = world
-            .resource::<Runtime>()
+            .resource::<RoundScript>()
             .players
             .keys()
             .copied()
@@ -522,7 +522,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             s.elem = crate::hudelem::default_hud_elem();
             s.archived = 1;
         });
-        let mut runtime = world.resource_mut::<Runtime>();
+        let mut runtime = world.resource_mut::<RoundScript>();
         for (name, value) in DEFAULTS {
             runtime.set_object_field(id, name, value());
         }
@@ -616,7 +616,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "settargetent", |world, receiver, args| {
         let (_, slot) = slot_of(world, receiver)?;
-        let number = match world.resource::<Runtime>().entity(arg(args, 0)?) {
+        let number = match world.resource::<RoundScript>().entity(arg(args, 0)?) {
             Some((_, e)) if e.kind != EntityKind::HudElem && e.number >= 0 => e.number,
             _ => return Err("setTargetEnt needs an entity".into()),
         };

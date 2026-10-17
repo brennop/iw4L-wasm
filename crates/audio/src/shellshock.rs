@@ -1,6 +1,6 @@
 use asset_core::AssetNamespace;
 use bevy::prelude::*;
-use frame::{AppScreen, LifeEnded, MatchTornDown};
+use frame::{AppScreen, LifeEnded};
 use hud_iw4::shellshock_remaining_ms;
 use net::{FrameClock, LocalPresentClient, PresentedSnapshot};
 
@@ -16,7 +16,6 @@ pub(crate) struct ShellshockSources {
 }
 
 pub(crate) fn update_shellshock_tinnitus(
-    mut torn: MessageReader<MatchTornDown>,
     mut died: MessageReader<LifeEnded>,
     screen: Option<Res<AppScreen>>,
     cg_clock: Option<Res<FrameClock>>,
@@ -26,9 +25,8 @@ pub(crate) fn update_shellshock_tinnitus(
     runtime: Res<crate::AudioRuntime>,
     mut sources: ResMut<ShellshockSources>,
     mut play: MessageWriter<crate::AliasCommand>,
-    epoch: Res<crate::backend::MatchEpoch>,
+    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
 ) {
-    let torn = torn.read().next().is_some();
     let local_id = local.as_ref().map(|l| l.0.0);
     let life = local.as_ref().and_then(|local| {
         presented
@@ -41,7 +39,7 @@ pub(crate) fn update_shellshock_tinnitus(
     let died = died
         .read()
         .any(|ev| local_id == Some(ev.client) && life == Some(ev.life));
-    if torn || !screen.is_some_and(|s| matches!(*s, AppScreen::InGame)) {
+    if !screen.is_some_and(|s| matches!(*s, AppScreen::InGame)) {
         sources.source = None;
         sources.context = None;
         sources.was_active = false;

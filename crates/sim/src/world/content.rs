@@ -97,6 +97,10 @@ pub struct SimContent {
 }
 
 impl SimContent {
+    pub fn map(&self) -> &Arc<asset_core::MapContentDefinition> {
+        &self.data.map
+    }
+
     pub fn clip_brushes(&self) -> &[SimBrush] {
         &self.data.clip_brushes
     }
@@ -113,6 +117,7 @@ impl SimContent {
 
 #[derive(Debug)]
 struct ContentData {
+    map: Arc<asset_core::MapContentDefinition>,
     weapons: Arc<crate::SimWeaponContent>,
     script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
     clip_brushes: Vec<SimBrush>,
@@ -143,6 +148,14 @@ pub struct SimContentBuilder {
 }
 
 impl SimContentBuilder {
+    pub fn set_map(&mut self, map: Arc<asset_core::MapContentDefinition>) -> Result<(), String> {
+        if let asset_core::GlassContent::Invalid(error) = &map.glass {
+            return Err(error.clone());
+        }
+        self.data.map = map;
+        Ok(())
+    }
+
     pub fn bootstrap() -> Self {
         Self::for_match(Arc::new(crate::SimWeaponContent::bootstrap()))
     }
@@ -150,6 +163,7 @@ impl SimContentBuilder {
     pub fn for_match(weapons: Arc<crate::SimWeaponContent>) -> Self {
         Self {
             data: ContentData {
+                map: Default::default(),
                 weapons,
                 script_sound_aliases: Default::default(),
                 clip_brushes: Default::default(),

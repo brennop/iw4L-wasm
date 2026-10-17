@@ -1,4 +1,4 @@
-use crate::script::{Arc, ArrayKey, BTreeMap, Runtime, Value};
+use crate::script::{Arc, ArrayKey, BTreeMap, RoundScript, Value};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StringTable {
@@ -119,7 +119,6 @@ pub(crate) struct EngineState {
     pub team_scores: BTreeMap<String, i32>,
     pub team_radar: BTreeMap<String, i32>,
     pub team_radar_blocked: std::collections::BTreeSet<String>,
-    pub match_data: super::match_data::MatchData,
     pub game_end_time: i32,
     pub slow_motion: Option<crate::ScriptSlowMotion>,
     pub ambient: Option<crate::ScriptAmbient>,
@@ -233,7 +232,7 @@ fn vector(text: &str) -> [f32; 3] {
     std::array::from_fn(|_| parts.next().unwrap_or(0.0))
 }
 
-impl Runtime {
+impl RoundScript {
     pub(crate) fn object_field(&mut self, id: u64, name: &str) -> Value {
         let field = self.symbol(name);
         self.objects
@@ -400,6 +399,12 @@ impl Runtime {
             ));
         }
         self.shown.remove(&id);
+        self.missiles.retain(|_, object| *object != id);
+        self.vehicles.remove(&id);
+        self.planes.remove(&id);
+        self.fired_once.remove(&id);
+        self.require_look_at.remove(&id);
+        self.lingering.retain(|(_, object)| *object != id);
         for slot in &mut self.engine.attractors {
             if slot.is_some_and(|a| a.anchor == super::guidance::Anchor::Entity(id)) {
                 *slot = None;

@@ -39,4 +39,7 @@ impl MaterialCompiler for T5Compiler {
     fn hardware_shadow_compare(&self) -> bool {
         true
     }
+    fn depth_to_colour(&self, slot: u8) -> bool {
+        slot == 3
+    }
 }

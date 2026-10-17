@@ -78,11 +78,11 @@ pub(crate) fn collect(
         demo: None,
         role: None,
         adapter: adapter.map(|adapter| AdapterFacts {
-            name: adapter.0.name.clone(),
-            backend: format!("{:?}", adapter.0.backend),
-            device_type: format!("{:?}", adapter.0.device_type),
-            driver: adapter.0.driver.clone(),
-            driver_info: adapter.0.driver_info.clone(),
+            name: adapter.name.clone(),
+            backend: format!("{:?}", adapter.backend),
+            device_type: format!("{:?}", adapter.device_type),
+            driver: adapter.driver.clone(),
+            driver_info: adapter.driver_info.clone(),
             // Whether the *device* was created with the feature, not whether
             // the adapter could have offered it: a pass can only be timed if
             // the device we actually hold can resolve the query.
@@ -153,8 +153,8 @@ pub(crate) fn announce(
         "runtime: backend={} adapter={:?} window={} target={}x{} present={}",
         adapter
             .as_ref()
-            .map_or_else(|| "unknown".to_owned(), |a| format!("{:?}", a.0.backend)),
-        adapter.as_ref().map_or("unknown", |a| a.0.name.as_str()),
+            .map_or_else(|| "unknown".to_owned(), |a| format!("{:?}", a.backend)),
+        adapter.as_ref().map_or("unknown", |a| a.name.as_str()),
         window.map_or_else(
             || "unknown".to_owned(),
             |w| format!(
