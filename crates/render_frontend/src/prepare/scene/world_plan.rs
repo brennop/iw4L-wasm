@@ -236,24 +236,39 @@ pub(crate) fn world_color_images(
     }
 }
 
+pub(crate) fn empty_fx_model_geometry(scene: &WorldScene) -> render_fx::PreparedFxModelGeometry {
+    let mut plan = render_fx::FxModelDrawPlan::default();
+    plan.generation = scene.runtime_material_catalog.generation_id().get();
+    render_fx::PreparedFxModelGeometry(plan)
+}
+
 pub(crate) fn prepare_fx_model_geometry(
     scene: &WorldScene,
     models: Option<&render_fx::PreparedFxModels>,
 ) -> render_fx::PreparedFxModelGeometry {
-    let mut plan = render_fx::FxModelDrawPlan::default();
-    plan.generation = scene.runtime_material_catalog.generation_id().get();
+    let render_fx::PreparedFxModelGeometry(mut plan) = empty_fx_model_geometry(scene);
     let Some(models) = models else {
+        diag::info!(
+            World,
+            "FX model geometry: no effect model catalog, nothing prepared"
+        );
         return render_fx::PreparedFxModelGeometry(plan);
     };
+    let models = &models.0;
     let Some((image, dims)) = scene
         .model_lighting_image
         .clone()
         .zip(scene.model_lighting_dims)
     else {
+        diag::warn!(
+            World,
+            "FX model geometry refused: no model lighting atlas ({} models; the map has no light grid, or this ran before world occupancy); effect model pieces will not draw",
+            models.len()
+        );
         return render_fx::PreparedFxModelGeometry(plan);
     };
     let atlas = super::model_lighting_atlas::WorldModelLightingAtlas { image, dims };
-    let models = &models.0;
+    let (mut prepared, mut refused, mut lods_prepared, mut lods_refused) = (0u32, 0u32, 0u32, 0u32);
     for index in 0..models.len() {
         let Some(entry) = models.get_at(index) else {
             continue;
@@ -270,8 +285,10 @@ pub(crate) fn prepare_fx_model_geometry(
         })();
         let Some((dobj, request, skin)) = binding else {
             diag::warn!(World, "FX model `{name}` refused: bind pose unavailable");
+            refused += 1;
             continue;
         };
+        let lods_before = lods_prepared;
         for lod in 0..entry
             .skel
             .lod
@@ -303,8 +320,19 @@ pub(crate) fn prepare_fx_model_geometry(
                     World,
                     "FX model `{name}` LOD {lod} refused: geometry unavailable"
                 );
+                lods_refused += 1;
                 continue;
             };
+            if let Some((surface, packed, decoded)) =
+                render_fx::fx_model_packed_mismatch(&lod_surfaces)
+            {
+                diag::warn!(
+                    World,
+                    "FX model `{name}` LOD {lod} refused: surface {surface} has {packed} packed vertices for {decoded} decoded"
+                );
+                lods_refused += 1;
+                continue;
+            }
             let materials: Vec<_> = lod_surfaces
                 .iter()
                 .map(|surface| {
@@ -320,11 +348,24 @@ pub(crate) fn prepare_fx_model_geometry(
                     World,
                     "FX model `{name}` LOD {lod} refused: material binding unavailable"
                 );
+                lods_refused += 1;
                 continue;
             }
             render_fx::append_fx_model_asset(&mut plan, index, lod, &lod_surfaces, &materials);
+            lods_prepared += 1;
+        }
+        if lods_prepared > lods_before {
+            prepared += 1;
+        } else {
+            refused += 1;
         }
     }
+    diag::info!(
+        World,
+        "FX model geometry: models prepared={prepared} refused={refused} (LODs prepared={lods_prepared} refused={lods_refused}) vertices={} packed_exact={}",
+        plan.vertices().len(),
+        plan.packed_exact()
+    );
     render_fx::PreparedFxModelGeometry(plan)
 }
 

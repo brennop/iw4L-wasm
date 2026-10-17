@@ -879,6 +879,14 @@ fn capture_weapon_icons(
                         weapon.variant_asset_name(fastfile_t6::weapon::variant::OVERLAY_MATERIAL),
                     );
                 wanted.extend(overlays.map(str::to_ascii_lowercase));
+                for slot in [
+                    fastfile_t6::weapon::def::RETICLE_CENTER,
+                    fastfile_t6::weapon::def::RETICLE_SIDE,
+                ] {
+                    if let Some(reticle) = weapon.def_loaded_asset_name(slot) {
+                        wanted.insert(asset_game::t6_model_name(reticle).to_ascii_lowercase());
+                    }
+                }
                 if let Some(icon) = weapon.def_loaded_asset_name(fastfile_t6::weapon::def::HUD_ICON)
                 {
                     wanted.insert(asset_game::t6_model_name(icon).to_ascii_lowercase());
@@ -1134,6 +1142,15 @@ fn capture_content(
             }
         }
     }
+    for allies in ["seals", "fbi", "isa"] {
+        for axis in ["pla", "pmc", "cd"] {
+            for name in asset_game::ObjectiveVisuals::t6(Some(allies), Some(axis)).model_names() {
+                if models.contains_key(name) {
+                    wanted.entry(name.to_owned()).or_insert((false, false));
+                }
+            }
+        }
+    }
     if !wanted.is_empty() {
         wanted.insert(HANDS_MODEL.to_owned(), (true, true));
         if let Some(knife) = melee_weapon(load).map(|melee| melee.knife) {
@@ -1255,6 +1272,7 @@ fn capture_effects(
         .iter()
         .map(|&name| name.to_owned())
         .collect();
+    wanted.insert("maps/mp_maps/fx_mp_exp_bomb".to_owned());
     loop {
         let before = content.fx.len();
         for &load in zones {
@@ -1693,6 +1711,7 @@ fn map_teams(
             losing: Some("mus_time_running_out".into()),
         };
         if index == 0 {
+            settings.allies_charset = Some(faction.to_owned());
             settings.allies = icon;
             settings.allies_name = name;
             settings.allies_color = color;
@@ -1700,6 +1719,7 @@ fn map_teams(
             settings.allies_voice = value("voice");
             settings.allies_music = music;
         } else {
+            settings.axis_charset = Some(faction.to_owned());
             settings.axis = icon;
             settings.axis_name = name;
             settings.axis_color = color;
@@ -1772,7 +1792,7 @@ impl ZoneLane for T6Lane {
         progress: &LoadProgress,
         _shared_surfaces: asset_model::SharedXModelSurfaces,
         material_seed: asset_material::MaterialCatalog,
-        _common_film_visions: &super::FilmVisionCatalog,
+        common_film_visions: &super::FilmVisionCatalog,
     ) -> LoadedWorld {
         let stage = progress.begin_scoped(StageId::MapAssets, "t6_world", None);
         let result = (|| -> Result<LoadedWorld, String> {
@@ -2228,9 +2248,10 @@ impl ZoneLane for T6Lane {
                 collision.mesh.tri_indices.len() / 3
             ));
             let entities = entity_string(&load)?;
-            let spawns = asset_world::dm_spawn_points_treyarch(entities);
+            let entities = asset_world::t6_entities_for_iw4_rules(entities);
+            let spawns = asset_world::dm_spawn_points_treyarch(&entities);
             let mut scripts = crate::ScriptSources::default();
-            scripts.set_entities(asset_world::t5_entities_for_iw4_rules(entities));
+            scripts.set_entities(entities.clone());
             let light_grid = asset_world::world_t6::light_grid(&load, world_asset)
                 .map_err(|e| report.push(format!("T6 light grid: {e}")))
                 .ok();
@@ -2277,38 +2298,66 @@ impl ZoneLane for T6Lane {
                             header_u32(&a.header, 4)? as usize,
                         )
                         .ok()?;
-                    asset_world::t6_set_vol_fog(data)
+                    asset_world::t6_createart_fog(data)
                 });
             report.push(format!(
                 "T6 createart fog: {}",
                 if exp_fog.is_some() { "ready" } else { "none" }
             ));
-            let vision_name = path
-                .file_stem()
-                .map(|stem| format!("vision/{}.vision", stem.to_string_lossy()));
-            let t6_film_grade = load
-                .assets
+            let vision_name = path.file_stem().map(|stem| {
+                format!(
+                    "vision/{}.vision",
+                    stem.to_string_lossy().to_ascii_lowercase()
+                )
+            });
+            let t6_visions: std::collections::BTreeMap<_, _> = shared_loads
                 .iter()
-                .filter(|a| a.ty == fastfile_t6::AssetType::RawFile)
-                .find(|a| header_str(&load, &a.header, 0) == vision_name.as_deref())
-                .and_then(|a| {
-                    let data = load
-                        .blocks
-                        .bytes(
-                            decode_ptr(header_u32(&a.header, 8)?)?,
-                            header_u32(&a.header, 4)? as usize,
-                        )
-                        .ok()?;
-                    asset_world::parse_t6_film_grade(std::str::from_utf8(data).ok()?)
-                });
-            report.push(format!(
-                "T6 vision film grade: {}",
-                if t6_film_grade.is_some() {
-                    "ready"
-                } else {
-                    "none"
+                .chain(std::iter::once(&load))
+                .flat_map(|zone| zone.assets.iter().map(move |asset| (zone, asset)))
+                .filter(|(_, a)| a.ty == fastfile_t6::AssetType::RawFile)
+                .filter_map(|(zone, a)| {
+                    let name = header_str(zone, &a.header, 0)?
+                        .replace('\\', "/")
+                        .to_ascii_lowercase();
+                    if !name.starts_with("vision/") || !name.ends_with(".vision") {
+                        return None;
+                    }
+                    let grade = (|| {
+                        let length = header_u32(&a.header, 4)
+                            .ok_or(asset_world::T6FilmGradeParseError::InvalidSpan)?
+                            as usize;
+                        let pointer = header_u32(&a.header, 8)
+                            .and_then(decode_ptr)
+                            .ok_or(asset_world::T6FilmGradeParseError::InvalidSpan)?;
+                        let data = zone
+                            .blocks
+                            .bytes(pointer, length)
+                            .map_err(|_| asset_world::T6FilmGradeParseError::InvalidSpan)?;
+                        let text = std::str::from_utf8(data)
+                            .map_err(|_| asset_world::T6FilmGradeParseError::InvalidText)?;
+                        asset_world::parse_t6_vision(text)
+                    })();
+                    Some((name, grade))
+                })
+                .collect();
+            let t6_vision = match vision_name.as_ref().and_then(|name| t6_visions.get(name)) {
+                Some(Ok(vision)) => {
+                    report.push(format!(
+                        "T6 vision: ready film={} bloom={}",
+                        vision.film.is_some(),
+                        vision.bloom.is_some()
+                    ));
+                    Some(*vision)
                 }
-            ));
+                Some(Err(error)) => {
+                    report.push(format!("T6 vision: refused {error:?}"));
+                    None
+                }
+                None => {
+                    report.push("T6 vision: missing map preset".into());
+                    None
+                }
+            };
             let world = crate::session_load::PreparedWorld {
                 min: draw.stats.min,
                 max: draw.stats.max,
@@ -2322,9 +2371,11 @@ impl ZoneLane for T6Lane {
                 script_model_instances,
                 smodel_lighting_samples,
                 policy: WorldDrawPolicy::t6(),
-                intermission_view: asset_world::parse_intermission_view(entities),
+                intermission_view: asset_world::parse_intermission_view(&entities),
                 exp_fog,
-                t6_film_grade,
+                t6_vision,
+                t6_visions,
+                film_visions: common_film_visions.clone(),
                 ..crate::PreparedWorld::empty(WorldDrawPolicy::t6())
             };
             Ok(LoadedWorld {
@@ -2427,7 +2478,7 @@ impl ZoneLane for T6Lane {
         capture_xanims(&load, &others, &mut content);
         let icon_loads: Vec<_> = others.iter().chain(std::iter::once(&load)).collect();
         let icons = capture_weapon_icons(path, &icon_loads, &ipaks, &mut report);
-        asset_material::store_zone_ui_images(asset_core::AssetNamespace::T6, icons);
+
         capture_sounds(path, &load, sound_claim, &mut content);
         content_stage.done();
         report.extend(content.report.iter().cloned());
@@ -2437,6 +2488,7 @@ impl ZoneLane for T6Lane {
             load.assets.len()
         ));
         CommonCensus {
+            ui_images: icons,
             weapons,
             material_population: material_seed,
             report,

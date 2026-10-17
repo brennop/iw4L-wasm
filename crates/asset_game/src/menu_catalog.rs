@@ -162,6 +162,7 @@ pub struct MenuItem {
     pub action: Vec<String>,
     pub mouse_enter: Vec<String>,
     pub on_focus: Vec<String>,
+    pub cover: bool,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -1048,7 +1049,7 @@ impl MenuSink {
                 );
                 return;
             };
-            match crate::decode_ui_image(root, &image.name) {
+            match asset_material::decode_ui_archive_image(root, &image.name) {
                 Ok(Some(rgba)) => Some((rgba, "iwd")),
                 Ok(None) => {
                     diag::warn!(

@@ -16,6 +16,7 @@ pub struct UiAssetRoot(pub Option<PathBuf>);
 
 #[derive(Resource, Default)]
 pub struct ClassSelectIconCache {
+    publication: Option<u64>,
     pub images: HashMap<String, Handle<Image>>,
 
     pub warmed: bool,
@@ -31,14 +32,24 @@ type DecodedClassIcons = Vec<(String, Image)>;
 
 pub fn warm_class_select_icons(
     root: Res<UiAssetRoot>,
+    publication: Option<Res<asset_material::UiImagePublication>>,
     mut cache: ResMut<ClassSelectIconCache>,
     mut images: ResMut<Assets<Image>>,
-    mut pending: Local<Option<Task<DecodedClassIcons>>>,
+    mut pending: Local<Option<(u64, Task<DecodedClassIcons>)>>,
 ) {
+    let Some(publication) = publication else {
+        return;
+    };
+    if cache.publication != Some(publication.id()) {
+        cache.publication = Some(publication.id());
+        cache.images.clear();
+        cache.warmed = false;
+        *pending = None;
+    }
     if cache.warmed {
         return;
     }
-    if let Some(task) = pending.as_mut() {
+    if let Some((_, task)) = pending.as_mut() {
         if let Some(decoded) = future::block_on(future::poll_once(task)) {
             for (stem, image) in decoded {
                 cache.images.insert(stem, images.add(image));
@@ -53,11 +64,19 @@ pub fn warm_class_select_icons(
         return;
     };
     // Archive discovery and decoding must not hold up window event processing.
-    *pending =
-        Some(AsyncComputeTaskPool::get().spawn(async move { decode_class_select_icons(&games) }));
+    let publication = publication.clone();
+    let id = publication.id();
+    *pending = Some((
+        id,
+        AsyncComputeTaskPool::get()
+            .spawn(async move { decode_class_select_icons(&publication, &games) }),
+    ));
 }
 
-fn decode_class_select_icons(games: &std::path::Path) -> DecodedClassIcons {
+fn decode_class_select_icons(
+    publication: &asset_material::UiImagePublication,
+    games: &std::path::Path,
+) -> DecodedClassIcons {
     let started = web_time::Instant::now();
     let mut stems = Vec::new();
     for preset in showcase_classes() {
@@ -103,7 +122,7 @@ fn decode_class_select_icons(games: &std::path::Path) -> DecodedClassIcons {
     let mut decoded = Vec::new();
     let mut missing = 0usize;
     for stem in stems {
-        match asset_material::decode_ui_image(games, &stem) {
+        match asset_material::decode_ui_image(publication, games, &stem) {
             Ok(Some((width, height, pixels))) => {
                 decoded.push((stem.to_owned(), rgba_ui_image(width, height, pixels)));
             }

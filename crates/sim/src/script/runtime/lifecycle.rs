@@ -43,6 +43,7 @@ pub(crate) fn install(
     level: LevelData,
 ) -> Result<(), Fault> {
     let plan = host::restart::RestartPlan {
+        absent_effects: level.absent_effects,
         natives: natives.clone(),
         entities: Arc::new(level.entities),
         tables: Arc::new(level.tables),

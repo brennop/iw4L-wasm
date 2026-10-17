@@ -19,6 +19,7 @@ impl StringTable {
 
 #[derive(Clone, Debug, Default)]
 pub struct LevelData {
+    pub absent_effects: std::collections::BTreeSet<String>,
     pub entities: Vec<Vec<(String, String)>>,
     pub tables: BTreeMap<String, StringTable>,
     pub keys: BTreeMap<String, KeyType>,

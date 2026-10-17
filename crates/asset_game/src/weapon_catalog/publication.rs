@@ -11,14 +11,14 @@ impl WeaponCatalog {
 }
 
 impl WeaponBuild {
-    pub fn publish_for_loadout(mut self) -> WeaponRegistry {
-        self.registry.loadout_only = true;
-        self.publish()
+    pub fn publish_for_editor(self) -> EditorWeaponCatalog {
+        Arc::new(self.publish()).editor_catalog()
     }
 
     pub fn publish(self) -> WeaponRegistry {
         let mut registry = self.registry;
         registry.revision = mint_weapon_revision();
+        registry.family_tables = self.family_tables.clone().into();
         registry.families = crate::WeaponFamilies::build(&self.family_tables, &registry);
         let t5_knife = registry
             .rows
@@ -37,12 +37,18 @@ impl WeaponBuild {
                     .camo_models
                     .view
                     .iter()
-                    .filter_map(|(slot, _)| {
+                    .chain(row.camo_models.world.iter())
+                    .map(|(slot, _)| *slot)
+                    .chain(row.camo_models.invalid_view.iter().copied())
+                    .chain(row.camo_models.invalid_world.iter().copied())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .filter_map(|slot| {
                         let name = weapon_iw4::IW4_CAMOS
-                            .get(usize::from(*slot))
-                            .filter(|_| *slot != 0)?;
+                            .get(usize::from(slot))
+                            .filter(|_| slot != 0)?;
                         Some(WeaponCamouflageChoice {
-                            slot: *slot,
+                            slot,
                             name: (*name).to_owned(),
                             caption_key: String::new(),
                             preview: format!("iw4:material/weapon_camo_menu_{name}"),
@@ -456,7 +462,7 @@ impl WeaponBuild {
             rows,
             world_catalog_identity: 0,
             fpv_catalog_identity: 0,
-            loadout_only: false,
+            family_tables: Arc::default(),
             iw5_attachments,
             configurations: HashMap::new(),
             by_name: index_of,

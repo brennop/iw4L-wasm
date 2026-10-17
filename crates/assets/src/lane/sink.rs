@@ -372,6 +372,14 @@ impl fastfile_iw5::AssetSink for ZoneWalkSink {
 }
 
 impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
+    fn capture_fx(
+        &mut self,
+        stream: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::FxEffectDefGeometry,
+    ) -> fastfile_iw5::Result<()> {
+        self.fx.capture_iw5(stream, geometry, &self.materials)
+    }
+
     fn remember_xmodel_surfaces(
         &mut self,
         slot: fastfile_iw5::Ptr,
@@ -478,6 +486,7 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
         if let Some(sound) = self.sound.as_mut() {
             sound.raw_file(name, data, zlib_compressed);
         }
+        capture_film_vision(&mut self.film_visions, name, data, zlib_compressed);
         self.compass.capture(name, data, zlib_compressed);
         if asset_world::is_createart_source(name) {
             self.createart_name = Some(name.to_owned());
@@ -558,7 +567,7 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
             .name
             .and_then(|ptr| stream.cstr(ptr).ok())
             .map(str::to_owned);
-        Ok(())
+        self.fx.capture_iw5(stream, geometry, &self.materials)
     }
 
     fn capture_attachment(
@@ -724,6 +733,7 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
         if let Some(sound) = self.sound.as_mut() {
             sound.raw_file(name, data, zlib_compressed);
         }
+        capture_film_vision(&mut self.film_visions, name, data, zlib_compressed);
         Ok(())
     }
 
@@ -2107,4 +2117,18 @@ fn t5_iw4_ptr(p: fastfile_t5::Ptr) -> Ptr {
         block: p.block,
         offset: p.offset,
     }
+}
+
+fn capture_film_vision(
+    catalog: &mut super::FilmVisionCatalog,
+    name: &str,
+    data: &[u8],
+    compressed: bool,
+) {
+    let result = match asset_world::parse_film_vision_rawfile(name, data, compressed) {
+        Ok(Some(vision)) => Ok(vision),
+        Ok(None) => return,
+        Err(error) => Err(error),
+    };
+    catalog.insert(name.replace('\\', "/").to_ascii_lowercase(), result);
 }

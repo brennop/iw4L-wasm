@@ -726,7 +726,6 @@ pub fn extract_postfx(
     film: Extract<Res<render_frontend::assemble::drawsurf::FilmVisionView>>,
     glow_dvars: Extract<Res<render_frontend::assemble::drawsurf::dof::GlowDvars>>,
     draw_method: Extract<Res<render_frontend::assemble::drawsurf::ColourDrawMethod>>,
-    scene: Extract<Option<Res<render_frontend::prepare::scene::world::WorldScene>>>,
     mut extracted: ResMut<render_gpu::ExtractedPostFx>,
 ) {
     use render_frontend::assemble::drawsurf::postfx_plan::RuntimePostFxResources;
@@ -779,7 +778,7 @@ pub fn extract_postfx(
         });
     }
     extracted.vision = film.current;
-    extracted.t6_film_grade = scene.as_ref().and_then(|scene| scene.t6_film_grade);
+    extracted.t6_vision = film.native_vision;
     extracted.frame = render_gpu::DofFrame {
         dof: render_gpu::DepthOfField {
             view_model_start: frame.dof.view_model_start,

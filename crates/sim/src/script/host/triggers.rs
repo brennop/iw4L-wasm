@@ -930,6 +930,7 @@ pub(crate) fn dispatch_triggers(world: &mut World) {
         for (client, player) in &pressed {
             if let Some(usable) = runtime.use_selected.get(client)
                 && eligible(&runtime, &frame, *usable, *client, true)
+                && fires(&runtime.entities[usable].classname) != Some(Fires::Use)
             {
                 raised.push((*usable, *player));
             }

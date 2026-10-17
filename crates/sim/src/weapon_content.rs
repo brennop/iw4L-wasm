@@ -25,6 +25,7 @@ pub struct SimWeaponRow {
     pub scales: (f32, f32, f32),
     pub execution: Result<WeaponCombatFacts, String>,
     pub transition_group: u32,
+    pub camouflage_slots: Vec<u8>,
     pub penetration: weapon_iw4::BulletPenFacts,
     pub script_name: String,
     pub setup: Option<WeaponSetup>,
@@ -43,6 +44,7 @@ pub struct SimWeaponContent {
     pub(crate) weapon_runnable: Vec<bool>,
     execution_refusals: Vec<Option<String>>,
     pub(crate) weapon_transition_groups: Vec<u32>,
+    pub(crate) weapon_camouflage_slots: Vec<Vec<u8>>,
     pub(crate) bullet_pen: Vec<weapon_iw4::BulletPenFacts>,
     pub(crate) pen_table: weapon_iw4::PenetrationDepthTable,
     pub(crate) pen_table_loaded: bool,
@@ -72,6 +74,7 @@ impl SimWeaponContent {
             weapon_runnable: Default::default(),
             execution_refusals: Default::default(),
             weapon_transition_groups: Default::default(),
+            weapon_camouflage_slots: Default::default(),
             bullet_pen: Default::default(),
             pen_table: Default::default(),
             pen_table_loaded: Default::default(),
@@ -114,6 +117,7 @@ impl SimWeaponContent {
             result.weapon_combat.push(combat);
             result.execution_refusals.push(refusal);
             result.weapon_transition_groups.push(row.transition_group);
+            result.weapon_camouflage_slots.push(row.camouflage_slots);
             result.bullet_pen.push(row.penetration);
             result.weapon_world_models.push(row.world_model);
             result.shield_models.push(row.shield_model);

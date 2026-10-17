@@ -163,6 +163,8 @@ pub struct EntityEventCursor {
     seen_through: u32,
 
     archived_through: Option<(EventSequence, Tick)>,
+    archive_tick: Option<Tick>,
+    archive_start_tick: Option<Tick>,
     in_killcam: bool,
     timeline: u64,
     predicted_shots: u32,
@@ -253,25 +255,10 @@ impl EntityEventCursor {
         if !record.audience.projects_to(local) {
             return false;
         }
-        // Each snapshot re-carries the records of the last temp-event lifetime,
-        // so only a tick further back than that window marks a rewind.
-        if let Some((sequence, tick)) = self.archived_through
-            && tick
-                .0
-                .saturating_sub(record.tick.0)
-                .saturating_mul(sim::MATCH_TICK_MS)
-                <= sim::GENTITY_TEMP_EVENT_LIFETIME_MS as u32
+        if let Some((sequence, _)) = self.archived_through
             && !record.sequence.is_newer_than(sequence)
         {
             return false;
-        }
-        if self.archived_through.is_some_and(|(_, tick)| {
-            tick.0
-                .saturating_sub(record.tick.0)
-                .saturating_mul(sim::MATCH_TICK_MS)
-                > sim::GENTITY_TEMP_EVENT_LIFETIME_MS as u32
-        }) {
-            self.timeline = self.timeline.wrapping_add(1);
         }
         self.archived_through = Some((record.sequence, record.tick));
         true
@@ -311,14 +298,21 @@ fn dispatch_entity_events(
     }
     let tick = adopted
         .next()
-        .map(|snapshot| snapshot.tick)
+        .map(|snapshot| snapshot.view_tick(local.0))
         .unwrap_or(Tick(0));
     let local_number = i32::try_from(local.0.0).unwrap_or(-1);
-    let killcam_transition = pending.in_killcam != cursor.in_killcam;
+    let killcam_transition = pending.in_killcam != cursor.in_killcam
+        || pending
+            .archive_tick
+            .zip(cursor.archive_tick)
+            .is_some_and(|(next, old)| next.0 < old.0);
+    cursor.archive_tick = pending.archive_tick;
     if killcam_transition {
         cursor.timeline = cursor.timeline.wrapping_add(1);
         cursor.in_killcam = pending.in_killcam;
         cursor.archived_through = None;
+        cursor.archive_start_tick = pending.archive_tick;
+        cursor.deferred.clear();
         commands.trigger(KillcamFxTransition {
             entering: pending.in_killcam,
         });
@@ -371,6 +365,7 @@ fn dispatch_entity_events(
         });
         runtime.previous_event_sequence = cursor;
     }
+    let in_killcam = pending.in_killcam;
     let pending = &mut *pending;
     let count = cursor.deferred.len().min(TARGET_RETRY_WORK);
     let remaining = cursor.deferred.split_off(count);
@@ -387,6 +382,14 @@ fn dispatch_entity_events(
         );
     let now = Instant::now();
     for (archived, record, retry) in records {
+        if archived != in_killcam
+            || archived
+                && cursor
+                    .archive_start_tick
+                    .is_some_and(|start| record.tick.0 < start.0)
+        {
+            continue;
+        }
         walk.walked = walk.walked.saturating_add(1);
         if let Some(target) = retry {
             if !record.audience.projects_to(local.0) {

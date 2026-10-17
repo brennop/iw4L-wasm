@@ -438,6 +438,7 @@ impl ResidentShadowStaticDraws {
 struct SunCodeSite {
     index: u16,
     byte_off: usize,
+    first_row: usize,
     rows: usize,
 }
 
@@ -568,9 +569,8 @@ impl ResidentSunCommands {
 
     fn patch_sun_registers(&mut self, partition: &SunShadowPartition, view_origin: Vec3) {
         let projection = crate::drawsurf::code_transpose_matrix_row4(partition.projection);
-        // T6 depth casters split WVP into viewProjectionMatrix * worldMatrix, and
-        // worldMatrix stays camera-relative; the camera's own VP would rasterize them
-        // from the eye into the atlas.
+        // Retained banks outlive eye translation, so both sides of the
+        // camera-relative matrix product must use the current eye.
         let view_projection = crate::drawsurf::code_transpose_matrix_row4(
             render_frame::code_math::camera_relative_view_projection(
                 partition.clip_from_world,
@@ -585,7 +585,13 @@ impl ResidentSunCommands {
                 partition.clip_from_world * *world_from_local,
             )
         }));
+        let camera_from_world = Mat4::from_translation(-view_origin);
         for slot in &self.slots {
+            let Some(world_from_local) = self.placements.get(slot.placement as usize) else {
+                continue;
+            };
+            let world =
+                crate::drawsurf::code_transpose_matrix_row4(camera_from_world * *world_from_local);
             let Some(placement_wvp) = wvp.get(slot.placement as usize) else {
                 continue;
             };
@@ -594,11 +600,12 @@ impl ResidentSunCommands {
                     crate::drawsurf::CODE_TRANSPOSE_WORLD_VIEW_PROJECTION0 => &placement_wvp[..],
                     render_backend::overlay::CODE_TRANSPOSE_PROJECTION => &projection,
                     render_backend::overlay::CODE_TRANSPOSE_VIEW_PROJECTION => &view_projection,
+                    render_backend::overlay::CODE_TRANSPOSE_WORLD0 => &world,
                     crate::drawsurf::CODE_SHADOWMAP_POLYGON_OFFSET => &polygon_offset,
                     _ => continue,
                 };
                 let end = site.byte_off + site.rows * 16;
-                let bytes = bytemuck::cast_slice(&rows[..site.rows]);
+                let bytes = bytemuck::cast_slice(&rows[site.first_row..site.first_row + site.rows]);
                 if self.bytes[site.byte_off..end] != *bytes {
                     self.bytes[site.byte_off..end].copy_from_slice(bytes);
                     self.dirty.push(ArenaDirty::Identity {
@@ -620,13 +627,19 @@ fn sun_code_sites(
 ) -> Option<Vec<SunCodeSite>> {
     let mut sites = Vec::new();
     for lane in &code.lanes {
-        let rows = match lane.index {
+        let available_rows = match lane.index {
             crate::drawsurf::CODE_TRANSPOSE_WORLD_VIEW_PROJECTION0
             | render_backend::overlay::CODE_TRANSPOSE_PROJECTION
-            | render_backend::overlay::CODE_TRANSPOSE_VIEW_PROJECTION => 4usize,
+            | render_backend::overlay::CODE_TRANSPOSE_VIEW_PROJECTION
+            | render_backend::overlay::CODE_TRANSPOSE_WORLD0 => 4usize,
             crate::drawsurf::CODE_SHADOWMAP_POLYGON_OFFSET => 1usize,
             _ => continue,
         };
+        let first_row = usize::from(lane.first_row);
+        let rows = usize::from(lane.row_count);
+        if first_row.checked_add(rows)? > available_rows {
+            return None;
+        }
         let (bank_len, base) = match lane.stage {
             RuntimeShaderStage::Vertex => (constants.vertex.len(), vertex_off),
             RuntimeShaderStage::Pixel => (constants.pixel.len(), pixel_off),
@@ -638,6 +651,7 @@ fn sun_code_sites(
         sites.push(SunCodeSite {
             index: lane.index,
             byte_off: base + first * 16,
+            first_row,
             rows,
         });
     }

@@ -656,7 +656,8 @@ impl ZoneLane for Iw4Lane {
                         reflection_probe_images,
                         intermission_view,
                         exp_fog,
-                        t6_film_grade: None,
+                        t6_vision: None,
+                        t6_visions: Default::default(),
                         film_vision,
                         film_visions,
                         createart_name,
@@ -1077,6 +1078,7 @@ impl ZoneLane for Iw4Lane {
             moved.total_bytes() as f64 / (1024.0 * 1024.0),
         ));
             CommonCensus {
+                ui_images: Vec::new(),
                 pending_images,
                 scene_models: sink.scene_models,
                 shared_surfaces: sink.shared_surfaces,
@@ -1114,6 +1116,7 @@ impl ZoneLane for Iw4Lane {
                 memory.payload_bytes,
             ));
             CommonCensus {
+                ui_images: Vec::new(),
                 pending_images: None,
                 scene_models: sink.scene_models,
                 shared_surfaces: sink.shared_surfaces,

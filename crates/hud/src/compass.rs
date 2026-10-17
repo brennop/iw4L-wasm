@@ -133,6 +133,21 @@ pub(crate) fn update_compass(
         hide(&mut pass);
         return;
     };
+    if presented.snapshot().is_some_and(|snapshot| {
+        snapshot
+            .meta
+            .script_dvars(local.0)
+            .int("g_hardcore")
+            .unwrap_or(0)
+            != 0
+            && snapshot
+                .meta
+                .for_client(local.0)
+                .is_none_or(|meta| meta.radar == sim::RadarMode::Off)
+    }) {
+        hide(&mut pass);
+        return;
+    }
     let Some(items) = catalog.as_ref().and_then(|c| catalog_compass(c)) else {
         if catalog.is_none() {
             gaps.raise(GapCause::CompassNoCatalog);

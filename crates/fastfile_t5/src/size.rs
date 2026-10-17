@@ -494,6 +494,8 @@ pub const WEAPON_TYPE_OFF: usize = 0x1c;
 
 pub const WEAPON_CLASS_OFF: usize = 0x20;
 
+pub const WEAPON_INVENTORY_TYPE_OFF: usize = 0x2c;
+
 pub const WEAPON_FIRE_TYPE_OFF: usize = 0x30;
 
 pub const WEAPON_FIRE_TIME_OFF: usize = 0x3ac;

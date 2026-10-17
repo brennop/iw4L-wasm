@@ -44,8 +44,17 @@ pub enum FxPackedLightingSrc {
     Missing = 2,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FxSpawnProducts {
+    #[default]
+    All,
+    Transient,
+    Marks,
+}
+
 #[derive(Clone, Debug)]
 pub struct FxEffectSlot {
+    pub products: FxSpawnProducts,
     pub def_name: String,
 
     pub catalog_index: u16,
@@ -103,6 +112,7 @@ pub struct FxEffectSlot {
 impl Default for FxEffectSlot {
     fn default() -> Self {
         Self {
+            products: FxSpawnProducts::All,
             def_name: String::new(),
             catalog_index: FX_CATALOG_INDEX_NONE,
             status: 0,
@@ -171,6 +181,7 @@ pub enum SpawnFail {
 
 #[derive(Clone, Debug)]
 pub struct PendingRunnerSpawn {
+    pub products: FxSpawnProducts,
     pub mark_entity: Option<u16>,
     pub parent_name: String,
     pub catalog_index: u16,
@@ -211,6 +222,8 @@ pub struct PendingDecalSpawn {
 
 #[derive(Clone, Debug)]
 pub struct PendingTrailImpact {
+    pub mark_entity: Option<u16>,
+    pub products: FxSpawnProducts,
     pub parent_def_name: String,
     pub catalog_index: u16,
     pub def_index: u8,
@@ -221,6 +234,7 @@ pub struct PendingTrailImpact {
 
 pub struct FxSystemHost {
     pub spawn_mark_entity: Option<u16>,
+    pub spawn_products: FxSpawnProducts,
     pub last_decal_mark_entity: Option<u16>,
     effects: Vec<FxEffectSlot>,
 
@@ -567,6 +581,7 @@ impl FxSystemHost {
             last_decal_axis: None,
             last_decal_bolt: None,
             spawn_mark_entity: None,
+            spawn_products: FxSpawnProducts::All,
             last_decal_mark_entity: None,
             last_decal_against_world: None,
             last_decal_against_models: None,
@@ -880,6 +895,7 @@ impl FxSystemHost {
         let effect = &mut self.effects[slot];
         let (bolt_parent_quat, bolt_parent_origin) = fx_iw4::bolt_init_parent_orientation();
         *effect = FxEffectSlot {
+            products: self.spawn_products,
             def_name: def_name.to_owned(),
             catalog_index,
 

@@ -13,6 +13,9 @@ pub fn cached_iwd_main_dirs() -> Vec<PathBuf> {
 }
 
 impl IwdIndex {
+    pub(super) fn from_owned(index: Arc<asset_transport::IwdIndex>) -> Self {
+        Self(index)
+    }
     pub(super) fn empty() -> Self {
         Self(Arc::new(asset_transport::IwdIndex::default()))
     }

@@ -10,6 +10,9 @@ use fx_iw4::{
     elem_def_view,
 };
 
+mod iw5;
+use iw5::FxRead;
+
 use crate::asset_graph::AssetEdgeFromPtrs;
 use crate::graph_support::AuthoredRef;
 use asset_core::{AssetEdge, AssetEdgeCensus, AssetEdgeReason, ZoneOwner};
@@ -366,6 +369,7 @@ pub struct OwnedFxEffectDef {
 /// answers, and a consumer holding this cannot resolve one more pointer.
 #[derive(Clone, Debug, Default)]
 pub struct FxDefinitions {
+    mark_capabilities: std::sync::OnceLock<Vec<bool>>,
     by_key: HashMap<(crate::AssetNamespace, String), usize>,
 
     defs: Vec<OwnedFxEffectDef>,
@@ -421,6 +425,9 @@ impl FxCatalog {
     /// Ends the build: the effect definitions travel on, the zone pointer map
     /// that produced them does not.
     pub fn publish(self) -> FxDefinitions {
+        if let Some(effect) = self.published.defs.first() {
+            self.published.can_emit_marks(effect);
+        }
         self.published
     }
 
@@ -717,6 +724,7 @@ impl FxDefinitions {
     }
 
     pub fn insert_owned(&mut self, def: OwnedFxEffectDef) {
+        self.mark_capabilities.take();
         let key = (def.namespace, ascii_lower(&def.name));
         if let Some(index) = self.by_key.get(&key).copied() {
             self.zones[index] = self.capture_zone;
@@ -727,6 +735,62 @@ impl FxDefinitions {
             self.zones.push(self.capture_zone);
             self.defs.push(def);
         }
+    }
+
+    pub fn can_emit_marks(&self, effect: &OwnedFxEffectDef) -> bool {
+        let flags = self.mark_capabilities.get_or_init(|| {
+            let edges = |elem: &OwnedFxElemDef| {
+                [
+                    elem.effect_on_impact,
+                    elem.effect_on_death,
+                    elem.effect_emitted,
+                ]
+                .into_iter()
+                .chain(elem.visuals.iter().filter_map(|visual| match visual {
+                    OwnedFxVisual::Runner { edge, .. } => Some(*edge),
+                    _ => None,
+                }))
+                .collect::<Vec<_>>()
+            };
+            let children: Vec<Vec<FxChildEdge>> = self
+                .defs
+                .iter()
+                .map(|effect| effect.elems.iter().flat_map(edges).collect())
+                .collect();
+            let mut flags: Vec<bool> = self
+                .defs
+                .iter()
+                .zip(&children)
+                .map(|(effect, children)| {
+                    effect.elems.iter().any(|elem| {
+                        fx_iw4::FxElemType::from_u8(elem.view.elem_type)
+                            == Some(fx_iw4::FxElemType::Decal)
+                    }) || children.iter().any(|edge| edge.is_unresolved())
+                })
+                .collect();
+            loop {
+                let mut changed = false;
+                for (index, children) in children.iter().enumerate() {
+                    if !flags[index]
+                        && children
+                            .iter()
+                            .filter_map(|edge| edge.bound_index())
+                            .any(|child| flags.get(child).copied().unwrap_or(true))
+                    {
+                        flags[index] = true;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            flags
+        });
+        self.index_of(effect)
+            .and_then(|index| flags.get(index))
+            .copied()
+            .unwrap_or(true)
     }
 
     pub fn def_at(&self, index: usize) -> Option<&OwnedFxEffectDef> {
@@ -844,6 +908,7 @@ impl FxDefinitions {
     }
 
     pub fn resolve_nested_edges(&mut self) {
+        self.mark_capabilities.take();
         let playable: HashMap<(crate::AssetNamespace, String), (usize, ZoneOwner)> = self
             .by_key
             .iter()
@@ -1316,16 +1381,13 @@ impl AssetLinkSink for FxCatalog {
 }
 
 fn capture_elem(
-    s: &ZoneStream<'_>,
+    s: &impl FxRead,
     p: Ptr,
     materials: &MaterialCatalog,
     xmodel_names: &HashMap<Ptr, Ptr>,
 ) -> Option<OwnedFxElemDef> {
-    let raw = s
-        .slice_at(p, 0, s.layout(FX_ELEM_DEF_STRIDE, 288))
-        .ok()?
-        .to_vec();
-    let view = if s.wire_format() == fastfile_iw4::Iw4WireFormat::X64 {
+    let raw = s.slice_at(p, 0, s.elem_stride()).ok()?.to_vec();
+    let view = if s.is_x64() {
         fx_iw4::elem_def_view_x64(&raw)?
     } else {
         elem_def_view(&raw)?
@@ -1386,7 +1448,7 @@ fn capture_elem(
     })
 }
 
-fn capture_trail_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxTrailDef> {
+fn capture_trail_def(s: &impl FxRead, elem: Ptr) -> Option<OwnedFxTrailDef> {
     let ZonePtr::Offset(trail) = s.ptr_at(elem, s.layout(0xf4, 272)).ok()? else {
         return None;
     };
@@ -1439,7 +1501,7 @@ fn capture_trail_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxTrailDef> {
     })
 }
 
-fn capture_spark_fountain_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxSparkFountainDef> {
+fn capture_spark_fountain_def(s: &impl FxRead, elem: Ptr) -> Option<OwnedFxSparkFountainDef> {
     let ZonePtr::Offset(def) = s.ptr_at(elem, s.layout(0xf4, 272)).ok()? else {
         return None;
     };
@@ -1474,7 +1536,7 @@ fn capture_spark_fountain_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxSp
 }
 
 fn capture_visuals(
-    s: &ZoneStream<'_>,
+    s: &impl FxRead,
     p: Ptr,
     view: &FxElemDefView,
     materials: &MaterialCatalog,
@@ -1608,7 +1670,8 @@ fn sound_visual(name: String) -> OwnedFxVisual {
 }
 
 fn model_visual(name: Option<String>) -> OwnedFxVisual {
-    match name.filter(|n| !n.is_empty()) {
+    let hint = name.map(|name| crate::AssetRef::bare_name(&name).to_owned());
+    match hint.filter(|n| !n.is_empty()) {
         Some(hint) => OwnedFxVisual::Model {
             edge: AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss),
             hint: Some(hint),
@@ -1632,7 +1695,7 @@ fn model_hint_edge(
 }
 
 fn resolve_material_visual(
-    s: &ZoneStream<'_>,
+    s: &impl FxRead,
     materials: &MaterialCatalog,
     slot: Ptr,
 ) -> OwnedFxVisual {
@@ -1730,7 +1793,7 @@ pub fn color_decoded_in_catalog(materials: &MaterialDefinitions, material: usize
 }
 
 fn read_xmodel_name(
-    s: &ZoneStream<'_>,
+    s: &impl FxRead,
     slot: Ptr,
     xmodel_names: &HashMap<Ptr, Ptr>,
 ) -> Option<String> {
@@ -1815,7 +1878,7 @@ impl std::fmt::Display for FxName<'_> {
     }
 }
 
-fn read_name_field(s: &ZoneStream<'_>, p: Ptr, field: usize) -> String {
+fn read_name_field(s: &impl FxRead, p: Ptr, field: usize) -> String {
     match s.ptr_at(p, field) {
         Ok(ZonePtr::Offset(name)) => s.cstr(s.resolve_alias(name)).ok().unwrap_or("").to_owned(),
         _ => String::new(),
@@ -1823,7 +1886,7 @@ fn read_name_field(s: &ZoneStream<'_>, p: Ptr, field: usize) -> String {
 }
 
 fn copy_ptr_array(
-    s: &ZoneStream<'_>,
+    s: &impl FxRead,
     parent: Ptr,
     field: usize,
     count: usize,

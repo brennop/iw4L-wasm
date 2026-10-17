@@ -518,15 +518,15 @@ pub(super) fn leftover_t5_zoom_fov(
 ) -> f32 {
     use fastfile_t5::size as sz;
     leftover_t5_first_positive_fov(
-        f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV1_OFF),
-        f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV2_OFF),
         f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV3_OFF),
+        f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV2_OFF),
+        f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV1_OFF),
     )
 }
 
 pub(super) fn leftover_t5_first_positive_fov(fov1: f32, fov2: f32, fov3: f32) -> f32 {
     for fov in [fov1, fov2, fov3] {
-        if fov > 0.0 {
+        if fov.is_finite() && fov > 0.0 && fov < 180.0 {
             return fov;
         }
     }
@@ -720,6 +720,17 @@ pub(super) fn capture_t5_body_facts(
         facts.ads_in_rate = leftover_t5_ads_rate(ads_in_ms, stored_in);
         facts.ads_out_rate = leftover_t5_ads_rate(ads_out_ms, stored_out);
         facts.ads_zoom_fov = leftover_t5_zoom_fov(stream, variant);
+        if geometry
+            .name
+            .and_then(|p| stream.cstr(p).ok())
+            .is_some_and(|name| name.split('_').any(|part| part == "vzoom"))
+        {
+            facts.scope_zoom = weapon_iw4::ScopeZoom::from_fovs([
+                facts.ads_zoom_fov,
+                f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV2_OFF),
+                f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_FOV1_OFF),
+            ]);
+        }
         facts.ads_zoom_in_frac =
             f32_at_t5(stream, variant, sz::WEAPON_VARIANT_ADS_ZOOM_IN_FRAC_OFF);
         facts.ads_zoom_out_frac =
@@ -728,6 +739,7 @@ pub(super) fn capture_t5_body_facts(
     let Some(body) = geometry.weap_def else {
         return facts;
     };
+    facts.inventory_type = i32_at_t5(stream, body, sz::WEAPON_INVENTORY_TYPE_OFF);
     facts.dual_wield = u8_at_t5(stream, body, sz::WEAPON_DEF_DUAL_WIELD_OFF) != 0;
     facts.impact_type = i32_at_t5(stream, body, sz::WEAPON_DEF_IMPACT_TYPE_OFF);
     facts.ammo_counter_clip = i32_at_t5(stream, body, sz::WEAPON_DEF_AMMO_COUNTER_CLIP_OFF);

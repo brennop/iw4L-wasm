@@ -236,7 +236,14 @@ fn flush_flash_tess(
     }
 }
 
-fn sync_games_root(mut hud_images: ResMut<HudImages>, identity: Option<Res<LaunchIdentity>>) {
+fn sync_games_root(
+    mut hud_images: ResMut<HudImages>,
+    identity: Option<Res<LaunchIdentity>>,
+    publication: Option<Res<asset_material::UiImagePublication>>,
+) {
+    if let Some(publication) = publication {
+        hud_images.adopt_ui_images(&publication);
+    }
     let Some(identity) = identity else {
         return;
     };
@@ -260,13 +267,13 @@ fn sync_zone_atlases(
     catalog: Option<Res<asset_game::MenuCatalog>>,
     mut hud_images: ResMut<HudImages>,
 ) {
-    if hud_images.zone_installed() {
-        return;
+    match catalog {
+        Some(catalog) if !hud_images.zone_installed() || catalog.is_changed() => {
+            hud_images.install_zone_catalog(&catalog)
+        }
+        None if hud_images.zone_installed() => hud_images.clear_zone_catalog(),
+        _ => {}
     }
-    let Some(catalog) = catalog else {
-        return;
-    };
-    hud_images.install_zone_catalog(&catalog);
 }
 
 fn warm_hud_images(

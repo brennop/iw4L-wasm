@@ -199,11 +199,11 @@ pub fn live_zone_images() -> Vec<(std::path::PathBuf, usize)> {
 static SHARED_HIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SHARED_MISS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-type ZoneSourceKey = (std::path::PathBuf, u64, Option<std::time::Duration>);
+type ZoneSourceKey = (std::path::PathBuf, u64);
 
 fn source_key(path: &Path) -> Option<ZoneSourceKey> {
-    let meta = gamefs::metadata(path).ok()?;
-    Some((path.to_owned(), meta.len, meta.modified))
+    gamefs::metadata(path).ok()?;
+    Some((path.to_owned(), crate::iwd::file_revision(path)))
 }
 
 fn shared_map() -> &'static Mutex<HashMap<ZoneSourceKey, Weak<ZoneImage>>> {

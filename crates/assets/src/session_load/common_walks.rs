@@ -541,6 +541,7 @@ pub(super) enum ForeignCommonWork {
 
 #[derive(Default)]
 pub(super) struct Iw5WeaponBundle {
+    pub(super) fx: FxCatalog,
     pub(super) weapons: WeaponBuild,
     pub(super) fpv: FpvMeshBuild,
     pub(super) world_guns: WorldWeaponBuild,
@@ -610,6 +611,7 @@ pub(super) fn walk_iw5_weapon_bundle(
     ));
     (
         Iw5WeaponBundle {
+            fx: census.fx,
             weapons: census.weapons,
             fpv: census.fpv,
             world_guns: census.world_weapons,
@@ -671,6 +673,7 @@ pub(super) fn walk_shared_iw5_common(
     (
         materials,
         Iw5WeaponBundle {
+            fx: census.fx,
             weapons: census.weapons,
             fpv: census.fpv,
             world_guns: census.world_weapons,
@@ -896,20 +899,21 @@ pub(super) fn walk_t6_weapon_bundle(
     Option<Box<dyn crate::lane::CommonFamilyCompiler>>,
     Vec<asset_game::CapturedStringTable>,
     Vec<String>,
+    Vec<(String, asset_material::material_images::ZoneUiImage)>,
 ) {
     let mut report = Vec::new();
     let root = match games_root_from_env() {
         Ok(root) => root,
         Err(error) => {
             report.push(format!("t6 weapons: {error}"));
-            return (WeaponBuild::default(), None, Vec::new(), report);
+            return (WeaponBuild::default(), None, Vec::new(), report, Vec::new());
         }
     };
     let donor = match find_common_mp_for_envelope(&root, fastfile_t6::ZONE_VERSION_PC) {
         Ok(donor) => donor,
         Err(error) => {
             report.push(format!("t6 weapons: {error}"));
-            return (WeaponBuild::default(), None, Vec::new(), report);
+            return (WeaponBuild::default(), None, Vec::new(), report, Vec::new());
         }
     };
     let stage = progress.begin_scoped(StageId::CommonAssets, "t6_weapons", None);
@@ -922,7 +926,7 @@ pub(super) fn walk_t6_weapon_bundle(
                 "t6 weapons: open {}: {error}",
                 donor.path.display()
             ));
-            return (WeaponBuild::default(), None, Vec::new(), report);
+            return (WeaponBuild::default(), None, Vec::new(), report, Vec::new());
         }
     };
     let tables = t6_class_tables(&root, &mut report);
@@ -936,7 +940,13 @@ pub(super) fn walk_t6_weapon_bundle(
     report.extend(census.report);
     let mut weapons = census.weapons;
     weapons.apply_stats_tables(&tables);
-    (weapons, census.preparation, tables, report)
+    (
+        weapons,
+        census.preparation,
+        tables,
+        report,
+        census.ui_images,
+    )
 }
 
 pub(super) async fn walk_startup_material_zones(

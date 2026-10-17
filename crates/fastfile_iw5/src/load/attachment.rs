@@ -1,5 +1,5 @@
 use super::snd::follow_snd_alias_custom;
-use super::{AssetLinkSink, asset_ptr_at, follow_name};
+use super::{AssetLinkSink, asset_ptr_at, follow_name, material_name_at};
 use crate::asset_type::AssetType;
 use crate::attachment::read_attachment_facts;
 use crate::size as sz;
@@ -111,6 +111,7 @@ pub(super) fn load_attachment(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkS
         _ => None,
     };
     s.set_latest_attachment_name(name);
+    let facts = read_attachment_facts(s, p);
     let geometry = AttachmentGeometry {
         header: p,
         name,
@@ -125,12 +126,20 @@ pub(super) fn load_attachment(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkS
         reticle_model_names: core::array::from_fn(|i| {
             model_name_at(s, links, p, s.layout(sz::ATTACH_RETICLE_OFF, 48), i)
         }),
+        reticle_center_name: facts
+            .general
+            .and_then(|general| general.body)
+            .and_then(|body| material_name_at(s, links, body.at(8))),
+        reticle_side_name: facts
+            .general
+            .and_then(|general| general.body)
+            .and_then(|body| material_name_at(s, links, body.at(s.layout(12, 16)))),
         overlay_names,
         overlay_width,
         overlay_height,
         overlay_reticle,
         thermal,
-        facts: read_attachment_facts(s, p),
+        facts,
     };
     links.capture_attachment(s, &geometry)?;
     s.pop()

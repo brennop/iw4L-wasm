@@ -114,11 +114,7 @@ pub const EV_DISPATCH_REGISTRY: &[EntityEventRow] = &[
     EntityEventRow {
         name: "EV_RELOAD_ADDAMMO",
         event: EntityEventKind::RELOAD_ADDAMMO,
-        dispatch: EntityEventDispatch::Unsupported(
-            "applying the reload top-up here would double-count: clip and stock already arrive authoritatively in \
-             ClientSnapshotMeta.ammo_clip / ammo_stock, so a client that also applied this event \
-             would add the magazine twice",
-        ),
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::None),
     },
     EntityEventRow {
         name: "EV_RAISE_WEAPON",
@@ -206,6 +202,11 @@ pub const EV_DISPATCH_REGISTRY: &[EntityEventRow] = &[
     EntityEventRow {
         name: "EV_USE_OFFHAND",
         event: EntityEventKind::USE_OFFHAND,
+        dispatch: EntityEventDispatch::Observer(EntityEventAction::Sound),
+    },
+    EntityEventRow {
+        name: "EV_DETONATE",
+        event: EntityEventKind::DETONATE,
         dispatch: EntityEventDispatch::Observer(EntityEventAction::Sound),
     },
     EntityEventRow {

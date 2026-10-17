@@ -27,7 +27,11 @@ pub(crate) fn play_script_seats(
         }
         let started_at_ms = seats
             .get(*viewer)
-            .filter(|s| s.focus_client == focus_client && s.killcamoffset_ms == seat.archive_ms)
+            .filter(|s| {
+                s.focus_client == focus_client
+                    && (s.killcamoffset_ms == seat.archive_ms
+                        || s.archivetime_ms == seat.archive_ms)
+            })
             .map_or(now_ms, |s| s.started_at_ms);
         if started_at_ms == now_ms {
             diag::info!(
@@ -40,9 +44,46 @@ pub(crate) fn play_script_seats(
                 seat.length_ms
             );
         }
+        let focus_life = seats
+            .get(*viewer)
+            .filter(|s| s.started_at_ms == started_at_ms)
+            .and_then(|s| s.focus_life)
+            .or_else(|| {
+                let snapshot = &archive.newest()?.snapshot;
+                snapshot
+                    .meta
+                    .journal
+                    .iter()
+                    .rev()
+                    .find_map(|record| match record.event {
+                        sim::SimEvent::Died {
+                            victim,
+                            attacker,
+                            attacker_life,
+                            life_sequence,
+                            ..
+                        } if victim == *viewer
+                            && attacker == Some(focus_client)
+                            && snapshot
+                                .meta
+                                .for_client(*viewer)
+                                .is_some_and(|meta| meta.life_sequence == life_sequence) =>
+                        {
+                            attacker_life
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        snapshot
+                            .meta
+                            .for_client(focus_client)
+                            .map(|m| m.life_sequence)
+                    })
+            });
         let mut session = KillcamSession {
             archivetime_ms: seat.archive_ms,
             focus_client,
+            focus_life,
             focus,
             ends_at_ms: i32::MAX,
             final_kill: false,
@@ -69,7 +110,15 @@ pub(crate) fn follow_archived_focus(archive: &FrameArchive, session: &mut Killca
         } else {
             0
         };
-        if found.is_some_and(|f| f.player_state_exists(session.focus_client)) {
+        if found.is_some_and(|f| {
+            f.player_state_exists(session.focus_client)
+                && session.focus_life.is_none_or(|life| {
+                    f.snapshot
+                        .meta
+                        .for_client(session.focus_client)
+                        .is_some_and(|meta| meta.life_sequence == life)
+                })
+        }) {
             return;
         }
         if session.archivetime_ms <= 0 {

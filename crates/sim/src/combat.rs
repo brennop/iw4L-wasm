@@ -291,7 +291,12 @@ pub(crate) fn advance_weapon_command(
                 stock,
                 shot_count: meta.weapon_shot_count,
                 burst_latch: meta.burst_latch,
-                rechamber_pending: meta.rechamber_pending,
+                rechamber_pending: weapon_iw4::weapon_rechamber_pending(
+                    &ps.weapons,
+                    &ps.weapon_data,
+                    started_weapon,
+                    0,
+                ),
                 delayed_rechamber: false,
                 weapon_restrict_kick_time: ps.weapon_restrict_kick_time,
                 quick_reload,
@@ -307,7 +312,12 @@ pub(crate) fn advance_weapon_command(
                 stock,
                 shot_count: ps.weapon_shot_count_secondary as u8,
                 burst_latch: meta.burst_latch_secondary,
-                rechamber_pending: meta.rechamber_pending_secondary,
+                rechamber_pending: weapon_iw4::weapon_rechamber_pending(
+                    &ps.weapons,
+                    &ps.weapon_data,
+                    started_weapon,
+                    1,
+                ),
                 delayed_rechamber: false,
                 weapon_restrict_kick_time: ps.weapon_restrict_kick_time_secondary,
                 quick_reload,
@@ -549,8 +559,19 @@ pub(crate) fn advance_weapon_command(
         }
 
         if let Some(ps_mut) = world.player_mut(*id) {
+            for (index, hand) in hands.iter().enumerate().take(last_hand as usize + 1) {
+                weapon_iw4::set_weapon_rechamber_pending(
+                    &ps_mut.weapons,
+                    &mut ps_mut.weapon_data,
+                    started_weapon,
+                    index,
+                    hand.rechamber_pending,
+                );
+            }
+            weapon_iw4::update_scope_zoom(ps_mut, cmd.buttons, old_buttons, facts.scope_zoom);
             ps_mut.weapon = hand0.weapon;
             if hand0.weapon != started_weapon {
+                ps_mut.scope_zoom_level = 0;
                 if hand0.weaponstate == weapon_iw4::WeaponState::RaisingAltswitch as i32 {
                     ps_mut.aim_spread_scale = ps_mut.aim_spread_scale.max(128.0);
                 }
@@ -587,6 +608,11 @@ pub(crate) fn advance_weapon_command(
             .client_meta(*id)
             .map(|m| m.life_sequence)
             .unwrap_or_default();
+        let held_rechamber_pending = world.player(*id).map_or([false; 2], |ps| {
+            std::array::from_fn(|hand| {
+                weapon_iw4::weapon_rechamber_pending(&ps.weapons, &ps.weapon_data, ps.weapon, hand)
+            })
+        });
         let meta = world.client_meta_mut(*id);
         if hand0.weapon != started_weapon {
             if started_weapon != 0 {
@@ -600,9 +626,9 @@ pub(crate) fn advance_weapon_command(
         }
         meta.weapon_shot_count = hand0.shot_count;
         meta.burst_latch = hand0.burst_latch;
-        meta.rechamber_pending = hand0.rechamber_pending;
+        meta.rechamber_pending = held_rechamber_pending[0];
         meta.burst_latch_secondary = last_hand >= 1 && hands[1].burst_latch;
-        meta.rechamber_pending_secondary = last_hand >= 1 && hands[1].rechamber_pending;
+        meta.rechamber_pending_secondary = held_rechamber_pending[1];
         if facts.dual_mag.is_some() && started_weapon != 0 {
             meta.set_quick_reload_ready(started_weapon, hand0.quick_reload);
         }

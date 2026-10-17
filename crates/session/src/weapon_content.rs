@@ -65,6 +65,14 @@ pub(crate) fn compile(
             scales: weapon.movement_scales(),
             execution,
             transition_group: groups[id as usize],
+            camouflage_slots: std::iter::once(0)
+                .chain(
+                    weapons
+                        .camouflage_choices(id)
+                        .into_iter()
+                        .map(|(slot, _)| slot),
+                )
+                .collect(),
             penetration: weapons
                 .penetration_facts_of(id)
                 .unwrap_or(weapon_iw4::BulletPenFacts::default()),
@@ -118,27 +126,20 @@ fn compile_combat(
 }
 
 pub struct ClassWeaponAdmission<'a> {
-    registry: &'a WeaponRegistry,
-    compiled: PreparedSimWeapons,
+    catalog: &'a asset_game::EditorWeaponCatalog,
 }
 
 impl<'a> ClassWeaponAdmission<'a> {
-    pub fn prepare(registry: &'a WeaponRegistry) -> Self {
-        let compiled = compile(
-            registry,
-            &asset_model::WorldWeaponCatalog::default(),
-            None,
-            Vec::new(),
-            weapon_iw4::PenetrationDepthTable::default(),
-            false,
-        )
-        .expect("published weapon registry has dense rows and a sentinel");
-        Self { registry, compiled }
+    pub fn prepare(catalog: &'a asset_game::EditorWeaponCatalog) -> Self {
+        Self { catalog }
     }
-
     pub fn allows(&self, row: &crate::ClassRow) -> bool {
-        !crate::project_class(0, row, self.registry, &self.compiled)
-            .def
-            .locked
+        crate::loadout::resolve_editor_class(row, self.catalog).is_ok_and(|loadout| {
+            loadout
+                .weapons
+                .iter()
+                .enumerate()
+                .all(|(slot, &id)| self.catalog.class_slot_admission(id, slot))
+        })
     }
 }

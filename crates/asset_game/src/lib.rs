@@ -1,7 +1,7 @@
 use asset_anim::{ClipScheduler, ClipSchedulerError, XAnimCatalog};
 use asset_audio::{SoundCatalog, game_nested_string_assignment};
 use asset_core::*;
-use asset_material::{MaterialCatalog, MaterialDefinitions, decode_ui_image};
+use asset_material::{MaterialCatalog, MaterialDefinitions};
 use asset_model::{
     FpvMeshCatalog, ModelSkel, ProjectileMeshCatalog, WorldWeaponCatalog, WorldWeaponEntry,
     capture_xmodel_skel,

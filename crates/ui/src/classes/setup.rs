@@ -141,7 +141,7 @@ impl Default for ClassLoadoutCatalog {
 }
 
 impl ClassLoadoutCatalog {
-    pub fn from_weapon_registry(registry: std::sync::Arc<asset_game::WeaponRegistry>) -> Self {
+    pub fn from_editor_catalog(registry: std::sync::Arc<asset_game::EditorWeaponCatalog>) -> Self {
         let families = registry.weapon_families();
         let offered: std::collections::HashSet<_> =
             families.offered().map(|family| &family.key).collect();
@@ -369,7 +369,17 @@ impl ClassLoadoutCatalog {
             .as_deref()
             .ok_or("Weapon catalog is not ready")?;
         let row = session::ClassRow::from(&frame::HostClassSlot::from(slot));
-        session::loadout::resolve_personal_class(&row, registry).map(|_| ())
+        let loadout = session::loadout::resolve_editor_class(&row, registry)?;
+        if loadout
+            .weapons
+            .iter()
+            .enumerate()
+            .all(|(slot, &id)| registry.class_slot_admission(id, slot))
+        {
+            Ok(())
+        } else {
+            Err("Weapon is unavailable for this class slot".into())
+        }
     }
 
     pub fn validate_edit(&self, slot: &ClassSlotState, row: ClassEditRow) -> Result<(), String> {
@@ -384,7 +394,7 @@ impl ClassLoadoutCatalog {
             _ => &[],
         };
         if Self::uses_categories(row) {
-            session::resolve_class_weapon(
+            session::resolve_editor_class_weapon(
                 registry,
                 slot.row_value(row),
                 attachments,
@@ -425,7 +435,7 @@ pub fn attachment_preview_key(weapon: &str, attachment: &str) -> String {
 }
 
 #[derive(Clone, Default)]
-pub struct CatalogResolver(pub Option<std::sync::Arc<asset_game::WeaponRegistry>>);
+pub struct CatalogResolver(pub Option<std::sync::Arc<asset_game::EditorWeaponCatalog>>);
 
 impl PartialEq for CatalogResolver {
     fn eq(&self, other: &Self) -> bool {

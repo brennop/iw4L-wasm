@@ -512,6 +512,91 @@ const VOL_FOG_LOCALS: [&str; 18] = [
     "max_fog_opacity",
 ];
 
+pub fn t6_createart_fog(bytes: &[u8]) -> Option<ExpFog> {
+    t6_set_vol_fog(bytes).or_else(|| t6_fog_dvars(bytes))
+}
+
+fn t6_fog_dvars(bytes: &[u8]) -> Option<ExpFog> {
+    if bytes.get(..8)? != b"\x80GSC\r\n\0\x06" {
+        return None;
+    }
+    let word = |at| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let half = |at| Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
+    let text = |at: usize| {
+        let tail = bytes.get(at..)?;
+        std::str::from_utf8(tail.get(..tail.iter().position(|&b| b == 0)?)?).ok()
+    };
+    let mut strings = HashMap::new();
+    let mut at = word(24)? as usize;
+    for _ in 0..half(50)? {
+        let name = text(usize::from(half(at)?))?;
+        let count = usize::from(*bytes.get(at + 2)?);
+        if *bytes.get(at + 3)? == 0 {
+            for i in 0..count {
+                strings.insert(word(at + 4 + i * 4)? as usize, name);
+            }
+        }
+        at = at.checked_add(4 + count * 4)?;
+    }
+    let mut fields = HashMap::new();
+    at = word(32)? as usize;
+    for _ in 0..half(54)? {
+        let name = text(usize::from(half(at)?))?;
+        let count = usize::from(half(at + 4)?);
+        if name == "setdvar" && bytes.get(at + 6..at + 8)? == [2, 2] {
+            for i in 0..count {
+                let call = word(at + 8 + i * 4)? as usize;
+                let start = call.checked_sub(9)?;
+                let code = bytes.get(start..call + 1)?;
+                if code[0] != 0x2d || code[1] != 0x0a || code[5] != 0x0a || code[9] != 0x2e {
+                    continue;
+                }
+                let Some(&key) = strings.get(&(call - 2)) else {
+                    continue;
+                };
+                if !key.starts_with("scr_fog_") {
+                    continue;
+                }
+                let value = strings.get(&(call - 6))?.parse::<f32>().ok()?;
+                if !value.is_finite() || fields.insert(key, value).is_some() {
+                    return None;
+                }
+            }
+        }
+        at = at.checked_add(8 + count * 4)?;
+    }
+    let scalar = |name| fields.get(name).copied();
+    let start_dist = scalar("scr_fog_nearplane")?;
+    let halfway_dist = scalar("scr_fog_exp_halfplane")?;
+    let halfway_height = scalar("scr_fog_exp_halfheight")?;
+    let base_height = scalar("scr_fog_baseheight")?;
+    let color_rgb = [
+        scalar("scr_fog_red")?,
+        scalar("scr_fog_green")?,
+        scalar("scr_fog_blue")?,
+    ];
+    if start_dist < 0.0
+        || halfway_dist <= 0.0
+        || halfway_height <= 0.0
+        || color_rgb.iter().any(|v| !(0.0..=1.0).contains(v))
+    {
+        return None;
+    }
+    Some(ExpFog {
+        start_dist,
+        halfway_dist,
+        color_rgb,
+        max_opacity: 1.0,
+        transition_time: 0.0,
+        sun: None,
+        volumetric: Some(VolFog {
+            halfway_height,
+            base_height,
+            color_scale: 1.0,
+        }),
+    })
+}
+
 pub fn t6_set_vol_fog(bytes: &[u8]) -> Option<ExpFog> {
     if bytes.get(..8)? != b"\x80GSC\r\n\0\x06" {
         return None;

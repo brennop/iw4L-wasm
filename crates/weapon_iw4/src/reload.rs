@@ -2,6 +2,13 @@ use crate::tick::{WeaponCombatFacts, WeaponHandState};
 use crate::weaponstate::WeaponState;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EmptyReloadPolicy {
+    Ordinary,
+    #[default]
+    Authored,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DualMagTimes {
     pub reload_ms: i32,
     pub reload_empty_ms: i32,
@@ -22,8 +29,10 @@ pub fn reload_segment(
     let (ms, anim) = match (quick_reload(hand, facts), empty) {
         (Some(q), false) => (q.reload_ms, ev::RELOAD_QUICK),
         (Some(q), true) => (q.reload_empty_ms, ev::RELOAD_QUICK_EMPTY),
-        (None, false) => (facts.reload_duration_ms(false), ev::RELOAD),
-        (None, true) => (facts.reload_duration_ms(true), ev::RELOAD_EMPTY),
+        (None, true) if facts.uses_empty_reload(true) => {
+            (facts.reload_duration_ms(true), ev::RELOAD_EMPTY)
+        }
+        (None, _) => (facts.reload_duration_ms(false), ev::RELOAD),
     };
     (ms.max(1), anim)
 }
@@ -106,7 +115,9 @@ pub fn weapon_arm_reload_add_delay(
             let quick = quick_reload(hand, facts);
             let add = match quick {
                 Some(q) if empty && q.empty_add_ms > 0 => q.empty_add_ms,
-                _ if empty && facts.reload_empty_add_time_ms > 0 => facts.reload_empty_add_time_ms,
+                _ if facts.uses_empty_reload(empty) && facts.reload_empty_add_time_ms > 0 => {
+                    facts.reload_empty_add_time_ms
+                }
                 Some(q) => q.add_ms,
                 None => facts.reload_add_time_ms,
             };
@@ -256,12 +267,8 @@ fn bolt_reload_segment_ms(hand: &WeaponHandState, facts: &WeaponCombatFacts, sta
         if start_t <= add { start_t } else { add }
     } else {
         let empty = hand.clip <= 0 && facts.weap_type == 0;
-        let mut reload_time = if empty {
-            facts.reload_empty_time_ms
-        } else {
-            facts.reload_time_ms
-        };
-        let add = if empty && facts.reload_empty_add_time_ms > 0 {
+        let mut reload_time = facts.reload_duration_ms(empty);
+        let add = if facts.uses_empty_reload(empty) && facts.reload_empty_add_time_ms > 0 {
             facts.reload_empty_add_time_ms
         } else {
             facts.reload_add_time_ms

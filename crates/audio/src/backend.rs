@@ -62,7 +62,10 @@ pub(crate) fn publish_audio_context(
             .zip(presented.as_ref().and_then(|presented| {
                 presented.snapshot().map(|snapshot| {
                     if view.as_ref().is_some_and(|view| view.in_killcam()) {
-                        snapshot.tick.0
+                        local
+                            .as_ref()
+                            .map_or(snapshot.tick, |local| snapshot.view_tick(local.0))
+                            .0
                     } else {
                         adopted
                             .as_ref()

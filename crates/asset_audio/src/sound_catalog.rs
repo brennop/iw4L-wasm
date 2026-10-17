@@ -86,7 +86,7 @@ pub struct SoundCatalog {
 
     file_to_streamed: HashMap<(u8, u32), (String, String)>,
 
-    loaded_by_insert: HashMap<(u8, u32), String>,
+    loaded_by_ptr: HashMap<(u8, u32), String>,
 
     curve_by_ptr: HashMap<(u8, u32), String>,
     last_loaded_name: Option<String>,
@@ -159,8 +159,8 @@ impl SoundCatalog {
                 Some(_) => {}
             }
         }
-        for (k, v) in other.loaded_by_insert {
-            self.loaded_by_insert.entry(k).or_insert(v);
+        for (k, v) in other.loaded_by_ptr {
+            self.loaded_by_ptr.entry(k).or_insert(v);
         }
         for (k, v) in other.curve_by_ptr {
             self.curve_by_ptr.entry(k).or_insert(v);
@@ -623,14 +623,11 @@ impl SoundCatalog {
     }
 
     fn loaded_name_for_offset(&self, s: &ZoneStream<'_>, p: Ptr) -> Option<String> {
-        self.loaded_by_insert
-            .get(&file_key(p))
-            .cloned()
-            .or_else(|| {
-                self.loaded_by_insert
-                    .get(&file_key(s.resolve_alias(p)))
-                    .cloned()
-            })
+        self.loaded_by_ptr.get(&file_key(p)).cloned().or_else(|| {
+            self.loaded_by_ptr
+                .get(&file_key(s.resolve_alias(p)))
+                .cloned()
+        })
     }
 
     fn curve_with_knots(&self, namespace: AssetNamespace, key: &str) -> Option<&CapturedSndCurve> {
@@ -921,6 +918,12 @@ impl SoundCatalog {
 
     pub fn rawfile_text(&self, name: &str) -> Option<&str> {
         std::str::from_utf8(self.rawfile_bytes(name)?).ok()
+    }
+
+    pub fn rawfiles_in(&self, namespace: AssetNamespace) -> impl Iterator<Item = (&str, &[u8])> {
+        self.rawfiles.iter().filter_map(move |((ns, name), bytes)| {
+            (*ns == namespace).then_some((name.as_str(), bytes.as_slice()))
+        })
     }
 
     pub fn rawfile_bytes_in(&self, namespace: AssetNamespace, name: &str) -> Option<&[u8]> {

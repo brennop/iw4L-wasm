@@ -133,7 +133,8 @@ pub struct PreparedWorld {
     pub intermission_view: Option<IntermissionView>,
 
     pub exp_fog: Option<asset_world::ExpFog>,
-    pub t6_film_grade: Option<asset_world::T6FilmGrade>,
+    pub t6_vision: Option<asset_world::T6Vision>,
+    pub t6_visions: asset_world::T6VisionCatalog,
 
     pub film_vision: Option<asset_world::FilmVision>,
     pub film_visions: std::collections::BTreeMap<
@@ -151,6 +152,7 @@ pub struct PreparedWorld {
 
 #[derive(Clone)]
 pub struct PreparedMatch {
+    pub ui_images: asset_material::UiImagePublication,
     pub scripts: crate::ScriptSources,
     pub world: PreparedWorld,
 
@@ -215,7 +217,8 @@ impl PreparedWorld {
             reflection_probe_images: Default::default(),
             intermission_view: Default::default(),
             exp_fog: Default::default(),
-            t6_film_grade: Default::default(),
+            t6_vision: Default::default(),
+            t6_visions: Default::default(),
             film_vision: Default::default(),
             film_visions: Default::default(),
             createart_name: Default::default(),

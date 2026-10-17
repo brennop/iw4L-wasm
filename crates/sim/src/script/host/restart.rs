@@ -8,6 +8,7 @@ use bevy_ecs::prelude::World;
 
 #[derive(Clone)]
 pub(crate) struct RestartPlan {
+    pub absent_effects: std::collections::BTreeSet<String>,
     pub natives: NativeRegistry,
     pub entities: Arc<Vec<Vec<(String, String)>>>,
     pub tables: Arc<BTreeMap<String, StringTable>>,
@@ -147,10 +148,10 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
             }
         }
         for projectile in crate::frame::collect_projectiles(frame.ecs()) {
-            frame.remove_projectile_by_number(projectile.entnum);
+            frame.despawn_projectile(projectile.entnum);
         }
         for number in frame.dropped_item_numbers_sorted() {
-            frame.remove_dropped_item_by_number(number);
+            frame.despawn_dropped_item(number);
         }
         crate::t5_destructible::restart(&mut frame);
         frame.restart_level_phase();

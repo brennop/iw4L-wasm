@@ -235,7 +235,7 @@ impl WeaponRegistry {
             .collect()
     }
 
-    pub fn dependency_gaps_of(&self, id: u32) -> Vec<WeaponDependencyGap> {
+    pub(super) fn native_dependency_gaps_of(&self, id: u32) -> Vec<WeaponDependencyGap> {
         let Some(row) = self.rows.get(id as usize).filter(|_| id != 0) else {
             return Vec::new();
         };
@@ -287,40 +287,6 @@ impl WeaponRegistry {
                 name: name.clone().unwrap_or_default(),
             })
             .collect();
-        if let Some(Err(error)) = &row.fpv_mount_plan {
-            gaps.push(WeaponDependencyGap {
-                id,
-                kind: "FPV mount",
-                name: error.to_string(),
-            });
-        }
-        for (side, assembly) in row.fpv_assemblies.iter().enumerate() {
-            if let Some(Err(error)) = assembly {
-                gaps.push(WeaponDependencyGap {
-                    id,
-                    kind: "FPV skeleton",
-                    name: format!("{}: {error}", if side == 0 { "allies" } else { "axis" }),
-                });
-            }
-        }
-        if !self.loadout_only && row.gun_xmodel_edge.is_bound() {
-            for (side, hands) in row.fpv_soldiers.iter().enumerate() {
-                if hands.as_ref().is_none_or(|hands| hands.is_err()) {
-                    gaps.push(WeaponDependencyGap {
-                        id,
-                        kind: "FPV hands layout",
-                        name: format!(
-                            "{}: {}",
-                            if side == 0 { "allies" } else { "axis" },
-                            hands
-                                .as_ref()
-                                .and_then(|hands| hands.as_ref().err())
-                                .map_or("soldier presentation not prepared", String::as_str)
-                        ),
-                    });
-                }
-            }
-        }
         for (name, edge) in row
             .attachment_view_models
             .iter()
@@ -384,6 +350,68 @@ impl WeaponRegistry {
             });
         }
         gaps
+    }
+
+    pub fn dependency_gaps_of(&self, id: u32) -> Vec<WeaponDependencyGap> {
+        let mut gaps = self.native_dependency_gaps_of(id);
+        let Some(row) = self.rows.get(id as usize).filter(|_| id != 0) else {
+            return gaps;
+        };
+        if let Some(Err(error)) = &row.fpv_mount_plan {
+            gaps.push(WeaponDependencyGap {
+                id,
+                kind: "FPV mount",
+                name: error.to_string(),
+            });
+        }
+        for (side, assembly) in row.fpv_assemblies.iter().enumerate() {
+            if let Some(Err(error)) = assembly {
+                gaps.push(WeaponDependencyGap {
+                    id,
+                    kind: "FPV skeleton",
+                    name: format!("{}: {error}", if side == 0 { "allies" } else { "axis" }),
+                });
+            }
+        }
+        if row.gun_xmodel_edge.is_bound() {
+            for (side, hands) in row.fpv_soldiers.iter().enumerate() {
+                if hands.as_ref().is_none_or(|hands| hands.is_err()) {
+                    gaps.push(WeaponDependencyGap {
+                        id,
+                        kind: "FPV hands layout",
+                        name: format!(
+                            "{}: {}",
+                            if side == 0 { "allies" } else { "axis" },
+                            hands
+                                .as_ref()
+                                .and_then(|hands| hands.as_ref().err())
+                                .map_or("soldier presentation not prepared", String::as_str)
+                        ),
+                    });
+                }
+            }
+        }
+        gaps
+    }
+
+    pub(super) fn native_configuration_admission(
+        &self,
+        id: u32,
+    ) -> Result<(), crate::ConfigurationRefusal> {
+        if !self.configuration_supported(id) {
+            return Err(crate::ConfigurationRefusal::Unsupported(format!(
+                "`{}` needs a runtime mechanism IW4L lacks",
+                self.name_of(id)
+            )));
+        }
+        match self.native_dependency_gaps_of(id).first() {
+            Some(gap) => Err(crate::ConfigurationRefusal::MissingDependency {
+                weapon: self.name_of(id).to_owned(),
+                kind: gap.kind,
+                name: gap.name.clone(),
+            }),
+            None => Ok(()),
+        }
     }
 
     pub fn configuration_admission(&self, id: u32) -> Result<(), crate::ConfigurationRefusal> {

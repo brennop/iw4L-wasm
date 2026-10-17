@@ -226,6 +226,7 @@ pub(super) fn wrap_payload(payload: &PreparedPayload, wrap: WrapRecipe) -> Arc<I
 
 pub(super) fn texture_format(storage: MipStorage, linear: bool) -> TextureFormat {
     match (storage, linear) {
+        (MipStorage::R32Float, _) => TextureFormat::R32Float,
         (MipStorage::Rgba8, true) => TextureFormat::Rgba8Unorm,
         (MipStorage::Rgba8, false) => TextureFormat::Rgba8UnormSrgb,
         (MipStorage::Bc1, true) => TextureFormat::Bc1RgbaUnorm,

@@ -119,7 +119,6 @@ pub fn begin_weapon_change(
     hand.weapon_restrict_kick_time = 0;
     hand.shot_count = 0;
     hand.burst_latch = false;
-    hand.rechamber_pending = false;
 
     if hand.weapon == 0 {
         hand.weaponstate = if quick {
@@ -174,7 +173,6 @@ pub fn finish_putaway_while_holstered(hand: &mut WeaponHandState) {
     hand.weapon_delay = 0;
     hand.shot_count = 0;
     hand.burst_latch = false;
-    hand.rechamber_pending = false;
     crate::weap_anim::start_weapon_anim(&mut hand.weap_anim, 0);
 }
 
@@ -191,7 +189,6 @@ pub fn finish_putaway_to_cmd(hand: &mut WeaponHandState, cmd: &WeaponCmd) {
     hand.weapon_delay = 0;
     hand.shot_count = 0;
     hand.burst_latch = false;
-    hand.rechamber_pending = false;
     hand.weaponstate = if alternate {
         WeaponState::RaisingAltswitch
     } else {

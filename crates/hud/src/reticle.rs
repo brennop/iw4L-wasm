@@ -170,7 +170,14 @@ pub(crate) fn update_reticle(
                 .map_or(SCREEN_BLEND_BLURRED, |shock| shock.screen_type),
         ) != 0,
         draw_hud: true,
-        dvars_allow: true,
+        dvars_allow: presented.snapshot().is_none_or(|snapshot| {
+            snapshot
+                .meta
+                .script_dvars(local.0)
+                .int("cg_drawCrosshair")
+                .unwrap_or(1)
+                != 0
+        }),
         f_weapon_pos_frac: ps.f_weapon_pos_frac,
         cg_draw_gun: true,
 

@@ -1,10 +1,86 @@
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppearanceRefusalReason {
+    InvalidName,
+    CatalogMiss,
+    TempFieldNotAliasable,
+    Absent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppearanceModelStatus {
+    NativeReady,
+    BaseByPolicy,
+    DeclaredUnavailable {
+        source: String,
+        reason: AppearanceRefusalReason,
+    },
+}
+
+fn model_status<S: asset_core::IndexSpace>(
+    edge: AssetEdge<S>,
+    source: Option<&str>,
+    base: bool,
+) -> AppearanceModelStatus {
+    let reason = match edge {
+        AssetEdge::Bound(_) => {
+            return if base {
+                AppearanceModelStatus::BaseByPolicy
+            } else {
+                AppearanceModelStatus::NativeReady
+            };
+        }
+        AssetEdge::Absent => AppearanceRefusalReason::Absent,
+        AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss) => AppearanceRefusalReason::CatalogMiss,
+        AssetEdge::Unresolved(AssetEdgeReason::TempFieldNotAliasable) => {
+            AppearanceRefusalReason::TempFieldNotAliasable
+        }
+    };
+    AppearanceModelStatus::DeclaredUnavailable {
+        source: source.unwrap_or("base_model").to_owned(),
+        reason,
+    }
+}
+
+fn resolve_model<S: asset_core::IndexSpace>(
+    edges: &[(u8, AssetEdge<S>)],
+    models: &[(u8, String)],
+    invalid: &[u8],
+    choice: &WeaponCamouflageChoice,
+    base: AssetEdge<S>,
+    base_name: Option<&str>,
+) -> (AssetEdge<S>, AppearanceModelStatus) {
+    if invalid.contains(&choice.slot) {
+        return (
+            AssetEdge::Absent,
+            AppearanceModelStatus::DeclaredUnavailable {
+                source: choice.name.clone(),
+                reason: AppearanceRefusalReason::InvalidName,
+            },
+        );
+    }
+    if let Some((_, edge)) = edges.iter().find(|(slot, _)| *slot == choice.slot) {
+        let name = models
+            .iter()
+            .find(|(slot, _)| *slot == choice.slot)
+            .map(|(_, name)| name.as_str());
+        (*edge, model_status(*edge, name, false))
+    } else if let Some((_, name)) = models.iter().find(|(slot, _)| *slot == choice.slot) {
+        let edge = AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss);
+        (edge, model_status(edge, Some(name), false))
+    } else {
+        (base, model_status(base, base_name, true))
+    }
+}
+
 #[derive(Clone, Debug)]
 enum AppearanceRepresentation {
     Models {
         view: AssetEdge<FpvMeshSpace>,
         world: AssetEdge<WorldWeaponSpace>,
+        view_status: AppearanceModelStatus,
+        world_status: AppearanceModelStatus,
     },
     Materials(usize),
 }
@@ -28,6 +104,8 @@ impl PreparedWeaponAppearance {
             representation: AppearanceRepresentation::Models {
                 view: row.gun_xmodel_edge,
                 world: row.world_model_edge,
+                view_status: model_status(row.gun_xmodel_edge, row.gun_xmodel.as_deref(), false),
+                world_status: model_status(row.world_model_edge, row.world_model.as_deref(), false),
             },
         }];
         let optional = |value: &str| (!value.is_empty()).then(|| value.to_owned());
@@ -39,22 +117,33 @@ impl PreparedWeaponAppearance {
                         .iter()
                         .filter(|choice| choice.slot != 0)
                         .map(|choice| {
-                            let view = row
-                                .camo_view_edges
-                                .iter()
-                                .find(|(slot, edge)| *slot == choice.slot && edge.is_bound())
-                                .map_or(row.gun_xmodel_edge, |(_, edge)| *edge);
-                            let world = row
-                                .camo_world_edges
-                                .iter()
-                                .find(|(slot, edge)| *slot == choice.slot && edge.is_bound())
-                                .map_or(row.world_model_edge, |(_, edge)| *edge);
+                            let (view, view_status) = resolve_model(
+                                &row.camo_view_edges,
+                                &row.camo_models.view,
+                                &row.camo_models.invalid_view,
+                                choice,
+                                row.gun_xmodel_edge,
+                                row.gun_xmodel.as_deref(),
+                            );
+                            let (world, world_status) = resolve_model(
+                                &row.camo_world_edges,
+                                &row.camo_models.world,
+                                &row.camo_models.invalid_world,
+                                choice,
+                                row.world_model_edge,
+                                row.world_model.as_deref(),
+                            );
                             Self {
                                 slot: choice.slot,
                                 name: choice.name.clone(),
                                 caption: optional(&choice.caption_key),
                                 preview: optional(&choice.preview),
-                                representation: AppearanceRepresentation::Models { view, world },
+                                representation: AppearanceRepresentation::Models {
+                                    view,
+                                    world,
+                                    view_status,
+                                    world_status,
+                                },
                             }
                         }),
                 );
@@ -99,11 +188,29 @@ impl<'a> SelectedWeaponAppearance<'a> {
         self.appearance.preview.as_deref()
     }
     pub fn material_camouflage(&self) -> Option<&'a crate::WeaponCamouflage> {
-        match self.appearance.representation {
+        match &self.appearance.representation {
             AppearanceRepresentation::Models { .. } => None,
             AppearanceRepresentation::Materials(index) => self.registry.rows[self.weapon as usize]
                 .material_camos
-                .get(index),
+                .get(*index),
+        }
+    }
+    pub fn view_status(&self) -> AppearanceModelStatus {
+        match &self.appearance.representation {
+            AppearanceRepresentation::Models { view_status, .. } => view_status.clone(),
+            AppearanceRepresentation::Materials(_) => {
+                let row = &self.registry.rows[self.weapon as usize];
+                model_status(row.gun_xmodel_edge, row.gun_xmodel.as_deref(), false)
+            }
+        }
+    }
+    pub fn world_status(&self) -> AppearanceModelStatus {
+        match &self.appearance.representation {
+            AppearanceRepresentation::Models { world_status, .. } => world_status.clone(),
+            AppearanceRepresentation::Materials(_) => {
+                let row = &self.registry.rows[self.weapon as usize];
+                model_status(row.world_model_edge, row.world_model.as_deref(), false)
+            }
         }
     }
     pub fn view_model<'b>(
@@ -113,8 +220,8 @@ impl<'a> SelectedWeaponAppearance<'a> {
         if self.registry.fpv_catalog_identity != catalog.identity() {
             return None;
         }
-        let view = match self.appearance.representation {
-            AppearanceRepresentation::Models { view, .. } => view,
+        let view = match &self.appearance.representation {
+            AppearanceRepresentation::Models { view, .. } => *view,
             AppearanceRepresentation::Materials(_) => {
                 self.registry.rows[self.weapon as usize].gun_xmodel_edge
             }
@@ -133,8 +240,8 @@ impl<'a> SelectedWeaponAppearance<'a> {
         if self.registry.world_catalog_identity != catalog.identity() {
             return None;
         }
-        let world = match self.appearance.representation {
-            AppearanceRepresentation::Models { world, .. } => world,
+        let world = match &self.appearance.representation {
+            AppearanceRepresentation::Models { world, .. } => *world,
             AppearanceRepresentation::Materials(_) => {
                 self.registry.rows[self.weapon as usize].world_model_edge
             }

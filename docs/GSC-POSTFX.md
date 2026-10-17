@@ -2,7 +2,7 @@
 
 GSC owns the presented post effects. Script presets and dvars pass through
 snapshot metadata to the GPU; user brightness, DoF, bloom and debug tweak
-settings do not suppress explicit script effects. State resets with the match.
+settings do not suppress explicit script effects. State resets with the match. Native grading keeps disabled presets and parse refusals distinct; enable/disable transitions blend the grade with ungraded color.
 
 * `VisionSetNaked/Night/Pain/Thermal/MissileCam(name, seconds)` and the
   `self ...ForPlayer(name, seconds)` methods select `vision/<name>.vision`.
@@ -35,16 +35,16 @@ self SetClientDvars("r_filmBrightness", 0.1, "r_hue", 90, "r_gamma", 1.2);
 self SetClientDvar("r_filmLightTint", (1, 0.5, 0.25));
 self SetBlurForPlayer(6, 0.5);
 ```
-
 The render chain grades color, blurs the scene, then applies film, DoF and bloom.
 HUD remains readable. Bloom preserves the material's authored sRGB writes.
 Blurred shellshock accumulates successive scene frames using the profile's
 `bg_shock_screenBlurBlendTime` and `bg_shock_screenBlurBlendFadeTime`.
 It desaturates the saved image; stop, respawn and map changes reset history.
-Thermal selection uses the scoped weapon and view gates.
+Thermal selection uses the scoped weapon and view gates. Scoped thermal vision
+switches instantly with the scope overlay for every weapon family.
 `SetThermalBodyMaterial(name)` selects the global body camera material. An empty first
 token selects `thermalbody_default`; Cold-Blooded bodies keep their material.
-`thermalBlurFactorScope` and `thermalBlurFactorNoScope` set accumulation time
-in milliseconds (default 250, range 0–10000). `cg_drawShellshock` controls profile
-screen effects; thermal accumulation can still run while it is off.
+`thermalBlurFactorNoScope` sets unscoped thermal accumulation time in milliseconds
+(default 250, range 0–10000). Scopes bypass `thermalBlurFactorScope`.
+`cg_drawShellshock` controls profile effects; thermal accumulation works while it is off.
 Snapshots use protocol 99; host and client must share that protocol.

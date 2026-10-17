@@ -74,6 +74,13 @@ impl FxModelDrawPlan {
         &self.geometry.packed_vertices
     }
 
+    pub fn packed_exact(&self) -> bool {
+        matches!(
+            &self.geometry.packed_vertices,
+            asset_world::PackedVertexPayload::Iw4(rows) if rows.len() == self.geometry.vertices.len()
+        )
+    }
+
     pub fn clear(&mut self) {
         self.draws.clear();
         self.generated = 0;

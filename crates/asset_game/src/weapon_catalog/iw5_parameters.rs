@@ -104,6 +104,11 @@ pub(super) fn apply_iw5_parameter_blocks(facts: &mut WeaponBodyFacts, assets: &[
     if let Some(sight) = iw5_first_block(assets, |a| a.sight) {
         facts.aim_down_sight = sight.aim_down_sight;
         facts.can_hold_breath = sight.can_hold_breath;
+        facts.scope_zoom = if sight.can_variable_zoom {
+            weapon_iw4::ScopeZoom::from_fovs([25.0, 15.0, 8.0])
+        } else {
+            weapon_iw4::ScopeZoom::default()
+        };
         facts.ads_fire_only = sight.ads_fire;
         facts.rechamber_while_ads = sight.rechamber_while_ads;
         facts.no_ads_when_mag_empty = sight.no_ads_when_mag_empty;

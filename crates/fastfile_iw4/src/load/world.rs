@@ -239,7 +239,7 @@ pub(super) fn load_gameworld_sp(s: &mut ZoneStream<'_>) -> Result<()> {
 
     load_path_data(s, p.at(s.layout(4, 8)))?;
     load_vehicle_track(s, p.at(s.layout(44, 88)))?;
-    load_glass_ptr(s, p, s.layout(48, 104))?;
+    load_glass_ptr(s, p, s.layout(52, 104))?;
 
     s.pop()
 }
@@ -262,13 +262,13 @@ fn load_path_data(s: &mut ZoneStream<'_>, path: Ptr) -> Result<()> {
     // basenodes live in the runtime block: zero-filled, no stream bytes.
     runtime_array(s, path, s.layout(8, 16), 16, sz::PATH_BASENODE, node_count)?;
 
-    s.plain_array(path, s.layout(12, 32), 2, 2, node_count)?;
-    s.plain_array(path, s.layout(16, 40), 2, 2, node_count)?;
-    s.plain_array(path, s.layout(20, 56), 1, 1, vis_bytes)?;
+    s.plain_array(path, s.layout(16, 32), 2, 2, node_count)?;
+    s.plain_array(path, s.layout(20, 40), 2, 2, node_count)?;
+    s.plain_array(path, s.layout(28, 56), 1, 1, vis_bytes)?;
 
     if let Some(tree) = s.follow_array(
         path,
-        s.layout(28, 72),
+        s.layout(36, 72),
         4,
         s.layout(sz::PATHNODE_TREE, 24),
         tree_count,

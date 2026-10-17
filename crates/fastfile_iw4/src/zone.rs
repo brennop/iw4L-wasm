@@ -986,6 +986,10 @@ pub struct WeaponGeometry {
 
     pub ammo_pickup_sound_player_name: Option<Ptr>,
 
+    pub detonate_sound_name: Option<Ptr>,
+
+    pub detonate_sound_player_name: Option<Ptr>,
+
     pub pullback_sound_name: Option<Ptr>,
 
     pub pullback_sound_player_name: Option<Ptr>,

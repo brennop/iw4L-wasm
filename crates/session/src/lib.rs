@@ -26,6 +26,7 @@ pub use lifecycle::{
 };
 pub use loadout::{
     AuthoritativeClassProjection, ClassRow, perk_catalog_id, project_class, resolve_class_weapon,
+    resolve_editor_class_weapon,
 };
 pub use local_arm::{
     arm_local_from_presented, join_local_on_class_select, sync_prediction_metrics_to_probe,

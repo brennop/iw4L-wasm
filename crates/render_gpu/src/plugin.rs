@@ -8,7 +8,7 @@ impl Plugin for RenderGpuPlugin {
             Ok(table) => {
                 let adapted = table.host_adapted_rows();
                 if !adapted.is_empty() {
-                    diag::warn!(
+                    diag::info!(
                         World,
                         "drawsurf sampler host adaptation: {} of 24 table rows lift mip filter to linear for anisotropy (rows={adapted:?})",
                         adapted.len()

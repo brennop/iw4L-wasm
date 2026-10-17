@@ -81,6 +81,10 @@ fn vertex_input(attribute: &VertexAttribute, register: u32, vertex_type: u8) -> 
             {
                 format!("vec4<f32>(unpack2x16float({packed}).yx, 0.0, 1.0)")
             } else {
+                // T6 decodes UNORM components >= 0.5 as negative. Repacked
+                // IW4 vectors can reach or exceed +1, so keep the positive
+                // endpoint below that boundary and the negative endpoint at -1.
+                let unit = format!("clamp({unit}, vec3<f32>(-1.0), vec3<f32>(1022.0 / 1023.0))");
                 format!(
                     "vec4<f32>(select({unit} * 0.5 + vec3<f32>(1.0), {unit} * 0.5, {unit} >= vec3<f32>(0.0)), 0.0)"
                 )

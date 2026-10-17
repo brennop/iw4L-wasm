@@ -19,6 +19,6 @@ pub(super) fn compile_authored(
         .get(&(family.key.namespace, name.clone()))
         .copied()
         .ok_or_else(|| ConfigurationRefusal::MissingContent(format!("{name}_mp")))?;
-    registry.configuration_admission(id)?;
+    registry.native_configuration_admission(id)?;
     Ok(id)
 }

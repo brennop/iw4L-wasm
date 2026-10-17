@@ -136,6 +136,22 @@ impl ScriptModelPoseProduct {
         self.surface_material_unbound = 0;
         self.surface_material_first = None;
     }
+
+    fn refresh_material_gaps(&mut self) {
+        self.surface_material_unbound = 0;
+        self.surface_material_first = None;
+        for asset in &self.assets {
+            for (surface, authored) in asset.surfaces.iter().zip(&asset.authored) {
+                if authored.is_none() {
+                    self.surface_material_unbound += 1;
+                    if self.surface_material_first.is_none() {
+                        self.surface_material_first =
+                            Some(format!("{} surface={}", asset.key.0, surface.surface_index));
+                    }
+                }
+            }
+        }
+    }
 }
 
 struct ScriptSceneSlot<'a> {
@@ -680,17 +696,6 @@ fn pose_script_models(
                 ) else {
                     continue;
                 };
-                for (surface, authored) in surfaces.iter().zip(surface_materials.iter()) {
-                    if authored.is_none() {
-                        product.surface_material_unbound += 1;
-                        if product.surface_material_first.is_none() {
-                            product.surface_material_first = Some(format!(
-                                "{} surface={}",
-                                owner.current_model.0, surface.surface_index
-                            ));
-                        }
-                    }
-                }
                 append_or_overwrite_script_pose(
                     &mut product,
                     &live_assets,
@@ -766,6 +771,7 @@ fn pose_script_models(
         }
     }
     product.assets = next;
+    product.refresh_material_gaps();
     for row in &mut product.rows {
         if let Some(index) = remap.get(row.asset_index).copied().flatten() {
             row.asset_index = index;
@@ -858,13 +864,17 @@ fn commit_script_model_draw_plan(
     }
     if product.surface_material_unbound != *last_unbound_materials {
         *last_unbound_materials = product.surface_material_unbound;
-        diag::warn!(
-            World,
-            "script model surfaces without a bound material: {} (first {});              MapXModelSceneCatalog resolved={}",
-            product.surface_material_unbound,
-            product.surface_material_first.as_deref().unwrap_or("-"),
-            u8::from(assets.materials_resolved()),
-        );
+        if product.surface_material_unbound == 0 {
+            diag::info!(World, "script model surface materials: READY");
+        } else {
+            diag::warn!(
+                World,
+                "script model surfaces without a bound material: {} (first {});              MapXModelSceneCatalog resolved={}",
+                product.surface_material_unbound,
+                product.surface_material_first.as_deref().unwrap_or("-"),
+                u8::from(assets.materials_resolved()),
+            );
+        }
     }
     keep.clear();
     keep.resize(plan.assets.len(), false);

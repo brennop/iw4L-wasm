@@ -125,21 +125,9 @@ pub(super) fn update(
     } else {
         0
     };
-    let instant_thermal = thermal
-        && scoped
-        && weapons.as_ref().is_some_and(|w| {
-            w.registry()
-                .identity_namespace_of(get_viewmodel_weapon_index(ps))
-                == Some(asset_core::AssetNamespace::T5)
-        });
-    let thermal_blend = if thermal && !instant_thermal {
-        if scoped {
-            dvars.thermal_scope_ms
-        } else if ps.other_flags & 8 != 0 {
-            dvars.thermal_no_scope_ms
-        } else {
-            0
-        }
+    let instant_thermal = thermal && scoped;
+    let thermal_blend = if thermal && !scoped && ps.other_flags & 8 != 0 {
+        dvars.thermal_no_scope_ms
     } else {
         0
     };

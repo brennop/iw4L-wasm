@@ -46,8 +46,8 @@ pub use spark::{FxSparkCloudInstance, FxSparkFillVisual};
 pub use spawn::{sort_effect_elems, spawn_looping_partial};
 pub use system::{
     FX_CATALOG_INDEX_NONE, FxBoltOrientation, FxBoltTarget, FxEffectSlot, FxPackedLightingSrc,
-    FxResolvedBoltPose, FxSystemHost, PendingDecalSpawn, PendingRunnerSpawn, PendingSoundSpawn,
-    PendingTrailImpact, SpawnFail,
+    FxResolvedBoltPose, FxSpawnProducts, FxSystemHost, PendingDecalSpawn, PendingRunnerSpawn,
+    PendingSoundSpawn, PendingTrailImpact, SpawnFail,
 };
 pub use trail::{
     FxTrailCollideHit, FxTrailElemSlot, FxTrailSlot, alloc_trail, alloc_trail_elem,

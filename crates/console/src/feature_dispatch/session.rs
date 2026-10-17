@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use frame::{HasWorld, LaunchIdentity};
+use frame::HasWorld;
 
 use crate::{ConsoleCommand, ConsoleDispatch};
 
@@ -12,16 +12,18 @@ pub(crate) fn route_session_commands(
     has_world: Res<HasWorld>,
     playback: Option<Res<::replay::ReplayPlayback>>,
     bridge: Option<Res<net::MasterBridge>>,
-    identity: Option<Res<LaunchIdentity>>,
+    manifest: Option<Res<::session::SessionContentManifest>>,
     mut dispatch: ResMut<ConsoleDispatch>,
 ) {
     for cmd in events.read() {
         match cmd.name.as_str() {
             "map_restart" => {
-                let zone = identity
-                    .as_ref()
-                    .map(|identity| identity.zone.clone())
-                    .filter(|zone| has_world.0 && !zone.is_empty());
+                let zone = manifest.as_ref().and_then(|manifest| match &manifest.map {
+                    ::session::ManifestFact::Known(map) if has_world.0 => {
+                        Some(format!("{}:{}", map.namespace.as_str(), map.name))
+                    }
+                    _ => None,
+                });
                 match (cmd.args.is_empty(), zone) {
                     (false, _) => {
                         dispatch.release();

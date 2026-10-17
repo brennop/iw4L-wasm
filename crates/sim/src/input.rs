@@ -31,6 +31,12 @@ pub enum ClientAction {
         model: u8,
     },
 
+    ChangeWeaponCamo {
+        request_id: ActionRequestId,
+        weapon: u32,
+        model: u8,
+    },
+
     ChangeWeaponConfiguration {
         request_id: ActionRequestId,
         from: u32,
@@ -212,6 +218,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::LeaveMatch { request_id }
         | ClientAction::SelectClass { request_id, .. }
         | ClientAction::GiveWeapon { request_id, .. }
+        | ClientAction::ChangeWeaponCamo { request_id, .. }
         | ClientAction::ChangeWeaponConfiguration { request_id, .. }
         | ClientAction::ForceDeath { request_id }
         | ClientAction::SpawnClient { request_id }

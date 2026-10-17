@@ -14,7 +14,7 @@ use crate::load_table::{RowState, format_elapsed, project, total_elapsed};
 pub(crate) struct LoadingRoot;
 
 #[derive(Component)]
-pub(crate) struct LoadingOverlayTitle(String);
+pub(crate) struct LoadingOverlayTitle(String, u64);
 
 #[derive(Component)]
 pub(crate) struct LoadingCamera;
@@ -86,6 +86,7 @@ pub(crate) struct LoadingPreviewTask {
 
 #[derive(Clone, PartialEq, Eq)]
 struct PreviewIdentity {
+    publication_id: u64,
     request_id: u64,
     map_name: String,
 }
@@ -131,6 +132,7 @@ pub(crate) fn spawn_loading_screen(
     cameras: Query<Entity, With<LoadingCamera>>,
     leftover_overlay: Query<Entity, With<OverlayUiCamera>>,
     inflight_preview: Option<Res<LoadingPreviewTask>>,
+    ui_images: Option<Res<asset_material::UiImagePublication>>,
 ) {
     let Some(screen) = screen else {
         return;
@@ -139,7 +141,11 @@ pub(crate) fn spawn_loading_screen(
     let title_ok = existing
         .iter()
         .any(|(_, spawned)| spawned.is_some_and(|s| s.0 == title));
-    if title_ok && leftover_overlay.is_empty() {
+    let publication_id = ui_images.as_ref().map_or(0, |publication| publication.id());
+    let owner_ok = existing
+        .iter()
+        .any(|(_, spawned)| spawned.is_some_and(|s| s.1 == publication_id));
+    if title_ok && owner_ok && leftover_overlay.is_empty() {
         return;
     }
     let Some(font) = font else {
@@ -186,7 +192,7 @@ pub(crate) fn spawn_loading_screen(
             UiLayerVisibility,
             Visibility::Inherited,
             LoadingRoot,
-            LoadingOverlayTitle(title.to_owned()),
+            LoadingOverlayTitle(title.to_owned(), publication_id),
         ))
         .with_children(|root| {
             root.spawn(Node {
@@ -263,10 +269,12 @@ pub(crate) fn spawn_loading_screen(
         screen.title(),
         screen.mode_label()
     );
-    if let Some(source) = zone_ff {
-        let same = inflight_preview
-            .as_deref()
-            .is_some_and(|task| task.identity.matches(&source));
+    if let Some(source) = zone_ff
+        && let Some(publication) = ui_images
+    {
+        let same = inflight_preview.as_deref().is_some_and(|task| {
+            task.identity.matches(&source) && task.identity.publication_id == publication.id()
+        });
         if !same {
             begin_loading_preview_decode(
                 &mut commands,
@@ -274,6 +282,7 @@ pub(crate) fn spawn_loading_screen(
                 source.map_name.clone(),
                 source.request_id,
                 screen.progress.clone(),
+                publication.clone(),
             );
         }
     }
@@ -285,15 +294,17 @@ fn begin_loading_preview_decode(
     map_name: String,
     request_id: u64,
     progress: LoadProgress,
+    publication: asset_material::UiImagePublication,
 ) {
     let identity = PreviewIdentity {
+        publication_id: publication.id(),
         request_id,
         map_name: map_name.clone(),
     };
 
     let task = AsyncComputeTaskPool::get().spawn(async move {
         let stage = progress.begin(asset_transport::StageId::Preview, None);
-        let decoded = match asset_material::decode_map_preview(&zone_ff, &map_name) {
+        let decoded = match asset_material::decode_map_preview(&publication, &zone_ff, &map_name) {
             Ok(decoded) => decoded,
             Err(error) => {
                 diag::warn!(Ui, "loading: preview index: {error}");
@@ -317,6 +328,7 @@ pub(crate) fn poll_loading_preview(
     mut task: Option<ResMut<LoadingPreviewTask>>,
     mut loading: Option<ResMut<LoadingScreen>>,
     source: Option<Res<LoadingPreviewSource>>,
+    publication: Option<Res<asset_material::UiImagePublication>>,
     mut images: ResMut<Assets<Image>>,
     loading_root: Query<Entity, With<LoadingRoot>>,
 ) {
@@ -331,7 +343,11 @@ pub(crate) fn poll_loading_preview(
     let Some(source) = source.as_deref() else {
         return;
     };
-    if !identity.matches(source) {
+    if !identity.matches(source)
+        || publication
+            .as_ref()
+            .is_none_or(|publication| publication.id() != identity.publication_id)
+    {
         return;
     }
     let Some(loading) = loading.as_deref_mut() else {

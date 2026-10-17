@@ -42,7 +42,77 @@ pub(crate) struct SoundBankCompose {
     common_profile_id: u64,
     products_id: u64,
     started: web_time::Instant,
-    stall_reported: bool,
+    wait: Option<SoundBankWait>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SoundBankWaitStage {
+    Archives,
+    MapSound,
+    Composition,
+}
+
+struct SoundBankWait {
+    stage: SoundBankWaitStage,
+    started: web_time::Instant,
+    reported: bool,
+    progress: Option<Vec<asset_transport::StageSnapshot>>,
+    sampled_at: Option<web_time::Instant>,
+}
+
+impl SoundBankWait {
+    fn update(
+        wait: &mut Option<Self>,
+        stage: SoundBankWaitStage,
+        now: web_time::Instant,
+        progress: Option<&asset_transport::LoadProgress>,
+    ) -> Option<std::time::Duration> {
+        if wait.as_ref().is_none_or(|wait| wait.stage != stage) {
+            *wait = Some(Self {
+                stage,
+                started: now,
+                reported: false,
+                progress: None,
+                sampled_at: None,
+            });
+        }
+        let wait = wait.as_mut()?;
+        if stage == SoundBankWaitStage::MapSound
+            && let Some(progress) = progress
+            && wait.sampled_at.is_none_or(|sampled| {
+                now.saturating_duration_since(sampled) >= std::time::Duration::from_secs(1)
+            })
+        {
+            let stages: Vec<_> = progress
+                .snapshot()
+                .stages
+                .into_iter()
+                .filter(|stage| {
+                    use asset_transport::StageId;
+                    matches!(
+                        stage.key.id,
+                        StageId::MapAssets
+                            | StageId::CommonAssets
+                            | StageId::Localization
+                            | StageId::Images
+                    )
+                })
+                .collect();
+            if wait.progress.as_ref() != Some(&stages) {
+                wait.started = now;
+                wait.reported = false;
+                wait.progress = Some(stages);
+            }
+            wait.sampled_at = Some(now);
+        }
+        let elapsed = now.saturating_duration_since(wait.started);
+        if !wait.reported && elapsed >= SOUND_BANK_COMPOSE_STALL {
+            wait.reported = true;
+            Some(elapsed)
+        } else {
+            None
+        }
+    }
 }
 
 enum IwdOpen {
@@ -186,7 +256,7 @@ pub(crate) fn start_sound_bank_compose(
         common_profile_id: 0,
         products_id: 0,
         started: web_time::Instant::now(),
-        stall_reported: false,
+        wait: None,
     });
 }
 
@@ -196,6 +266,7 @@ pub(crate) fn install_sound_bank(
     accepted: Option<Res<assets::MatchLoadAccepted>>,
     abort: Option<Res<assets::MatchLoadAbort>>,
     mut map_sound: Option<ResMut<assets::PreparedMatchSound>>,
+    process: Option<Res<assets::MapLoadProcess>>,
     mut epoch: ResMut<MatchEpoch>,
     resident_clips: Res<crate::clip_store::ResidentClipCache>,
     mut resident: ResMut<ResidentSoundBank>,
@@ -277,23 +348,26 @@ pub(crate) fn install_sound_bank(
         _ => None,
     };
     let Some(composed) = composed else {
-        if !compose.stall_reported && compose.started.elapsed() >= SOUND_BANK_COMPOSE_STALL {
-            compose.stall_reported = true;
+        let stage = match (&compose.iwd, &compose.bank) {
+            (IwdOpen::Opening(_), _) => SoundBankWaitStage::Archives,
+            (IwdOpen::Open(_), None) => SoundBankWaitStage::MapSound,
+            (IwdOpen::Open(_), Some(_)) => SoundBankWaitStage::Composition,
+        };
+        let progress = process
+            .as_ref()
+            .filter(|process| process.load_key == compose.load_key)
+            .map(|process| &process.progress);
+        if let Some(elapsed) = SoundBankWait::update(
+            &mut compose.wait,
+            stage,
+            web_time::Instant::now(),
+            progress,
+        ) {
             diag::warn!(
                 Audio,
-                "audio: sound bank for `{}` still not composed after {:.0}s (archives {}, map sound {}) — AudioReady, the world spawn and host admission all wait on it",
+                "audio: sound bank for `{}` waiting on {stage:?} with no preparation progress for {:.0}s; audio readiness is pending",
                 compose.zone,
-                compose.started.elapsed().as_secs_f32(),
-                if matches!(compose.iwd, IwdOpen::Open(_)) {
-                    "open"
-                } else {
-                    "opening"
-                },
-                if compose.bank.is_some() {
-                    "arrived"
-                } else {
-                    "pending"
-                },
+                elapsed.as_secs_f32()
             );
         }
         return;

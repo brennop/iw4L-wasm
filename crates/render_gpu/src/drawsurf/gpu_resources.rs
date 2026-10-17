@@ -846,7 +846,7 @@ fn log_uploaded_probe_once(
     let Some(gpu) = gpu_images.get(handle) else {
         return;
     };
-    diag::warn!(
+    diag::info!(
         World,
         "probe cube[{index}] uploaded {}x{} layers={} mips={} format={:?} had_data={} view_dim={:?} view_mips={:?}",
         gpu.texture_descriptor.size.width,

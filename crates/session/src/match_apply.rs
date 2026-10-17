@@ -238,6 +238,7 @@ pub fn apply_prepared_match(
     let prepared_install = (|| -> Result<bevy::ecs::world::CommandQueue, InstallRefusal> {
         let mut install = bevy::ecs::world::CommandQueue::default();
         let MatchInstallPlan {
+            ui_images,
             scripts,
             script_level,
             script_entries,
@@ -277,6 +278,7 @@ pub fn apply_prepared_match(
 
         let facts = std::mem::take(&mut prepared_map.facts);
         let airstrike_height = facts.airstrike_height;
+        stage_resource(&mut install, ui_images);
         stage_resource(
             &mut install,
             assets::SessionCompass {
@@ -518,6 +520,18 @@ pub fn apply_prepared_match(
                 })
                 .collect();
             sim.world_objects_mut().install_glass_panes(panes);
+            sim.set_glass_names(
+                glass
+                    .names
+                    .iter()
+                    .map(|(name, pieces)| {
+                        (
+                            name.clone(),
+                            pieces.iter().copied().map(u32::from).collect(),
+                        )
+                    })
+                    .collect(),
+            );
         }
         sim.world_objects_mut()
             .set_map_round_epoch(load_key.match_key.match_epoch);
@@ -687,6 +701,7 @@ pub fn apply_prepared_match(
 /// commit half of `apply_prepared_match` has nothing to install until preflight
 /// hands one over.
 struct MatchInstallPlan {
+    ui_images: asset_material::UiImagePublication,
     scripts: sim::script::Program,
     script_level: sim::script::LevelData,
     script_entries: Vec<String>,
@@ -882,8 +897,12 @@ fn preflight_match_install(
         }
     };
     let mut objective_weapons = Vec::new();
-    if let Some(namespace @ (asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::Iw5)) =
-        prepared_map.namespace
+    let mut absent_effects = std::collections::BTreeSet::new();
+    if let Some(
+        namespace @ (asset_core::AssetNamespace::T5
+        | asset_core::AssetNamespace::Iw5
+        | asset_core::AssetNamespace::T6),
+    ) = prepared_map.namespace
         && !matches!(
             kind,
             gamemode_iw4::GameModeKind::FreeForAll | gamemode_iw4::GameModeKind::TeamDeathmatch
@@ -901,17 +920,14 @@ fn preflight_match_install(
         let iw4 =
             asset_game::ObjectiveVisuals::from_faction_table(table, Some(&allies), Some(&axis));
         let realm = &prepared_map.facts.objective_visuals;
-        if !iw4.is_complete() || !realm.is_complete() {
-            return Err(InstallRefusal::new(
-                "incomplete objective bindings for the map's game".to_owned(),
-            ));
-        }
+        let bindings = objective_bindings(&iw4, realm, kind, namespace)?;
+        absent_effects.extend(bindings.absent_effects);
         let scene = &mut prepared.world.map_xmodel_scene_assets;
         let mut served = Vec::new();
         let mut missing = Vec::new();
-        for (from, to) in iw4.model_pairs(realm) {
-            let native = matches!(
-                (prepared_map.namespace, scene.get_name(to)),
+        let native_model = |asset: Option<&asset_world::MapXModelSceneAsset>| {
+            matches!(
+                (prepared_map.namespace, asset),
                 (
                     Some(asset_core::AssetNamespace::Iw5),
                     Some(asset_world::MapXModelSceneAsset::Iw5(_))
@@ -922,20 +938,28 @@ fn preflight_match_install(
                     Some(asset_core::AssetNamespace::T6),
                     Some(asset_world::MapXModelSceneAsset::T6(_))
                 )
-            );
+            )
+        };
+        for (from, to) in bindings.models {
+            let native = native_model(scene.get_name(to));
             if !native || !scene.alias(from, to) {
                 missing.push(to);
             } else {
                 served.push(format!("{from}->{to}"));
             }
         }
-        for (from, to) in iw4.fx_pairs(realm) {
+        for (from, to) in bindings.optional_models {
+            if native_model(scene.get_name(to)) && scene.alias(from, to) {
+                served.push(format!("{from}->{to}"));
+            }
+        }
+        for (from, to) in bindings.effects {
             match prepared.fx.alias_for_map(from, to) {
                 true => served.push(format!("{from}->{to}")),
                 false => missing.push(to),
             }
         }
-        for (from, to) in iw4.weapon_pairs(realm) {
+        for (from, to) in bindings.weapons {
             let weapon = objective_weapon_binding(weapons.registry(), namespace, to);
             match weapon {
                 Some(id) => {
@@ -1015,6 +1039,7 @@ fn preflight_match_install(
         }
     };
     let script_level = sim::script::LevelData {
+        absent_effects,
         player_data_defaults: account_defaults.clone(),
         schemas: sources.0.schemas().clone(),
         entities: sim::script::parse_entity_string(sources.0.entities().unwrap_or("")),
@@ -1120,6 +1145,7 @@ fn preflight_match_install(
         ));
     }
     Ok(MatchInstallPlan {
+        ui_images: prepared.ui_images,
         script_sound_aliases: prepared.script_sound_aliases,
         scripts,
         script_level,
@@ -1159,6 +1185,88 @@ fn preflight_match_install(
 
 pub fn install_script_model_id(content: asset_world::ScriptModelId) -> sim::ScriptModelId {
     sim::ScriptModelId::from_authored_source_ordinal(content.source_ordinal())
+}
+
+struct ObjectiveBindings<'a> {
+    models: Vec<(&'a str, &'a str)>,
+    optional_models: Vec<(&'a str, &'a str)>,
+    effects: Vec<(&'a str, &'a str)>,
+    weapons: Vec<(&'a str, &'a str)>,
+    absent_effects: Vec<String>,
+}
+
+fn objective_bindings<'a>(
+    host: &'a asset_game::ObjectiveVisuals,
+    native: &'a asset_game::ObjectiveVisuals,
+    kind: gamemode_iw4::GameModeKind,
+    family: asset_core::FamilyId,
+) -> Result<ObjectiveBindings<'a>, InstallRefusal> {
+    use gamemode_iw4::GameModeKind;
+    let pair = |from: &'a Option<String>, to: &'a Option<String>| {
+        from.as_deref()
+            .filter(|name| !name.is_empty())
+            .zip(to.as_deref().filter(|name| !name.is_empty()))
+            .ok_or_else(|| {
+                InstallRefusal::new("required objective binding missing for the map's game")
+            })
+    };
+    let mut bindings = ObjectiveBindings {
+        models: Vec::new(),
+        optional_models: host
+            .crate_model
+            .iter()
+            .chain(&host.crate_overlay)
+            .zip(native.crate_model.iter().chain(&native.crate_overlay))
+            .filter_map(|(from, to)| Some((from.as_deref()?, to.as_deref()?)))
+            .collect(),
+        effects: Vec::new(),
+        weapons: Vec::new(),
+        absent_effects: Vec::new(),
+    };
+    match kind {
+        GameModeKind::SearchAndDestroy | GameModeKind::Sabotage | GameModeKind::Demolition => {
+            bindings.models.push(pair(&host.bomb, &native.bomb)?);
+            bindings
+                .effects
+                .push(pair(&host.bomb_explosion_fx, &native.bomb_explosion_fx)?);
+            bindings
+                .weapons
+                .push(pair(&host.plant_weapon, &native.plant_weapon)?);
+            bindings
+                .weapons
+                .push(pair(&host.defuse_weapon, &native.defuse_weapon)?);
+        }
+        GameModeKind::Domination | GameModeKind::CaptureTheFlag => {
+            if kind == GameModeKind::Domination {
+                bindings
+                    .models
+                    .push(pair(&host.neutral_flag, &native.neutral_flag)?);
+            }
+            for index in 0..2 {
+                bindings
+                    .models
+                    .push(pair(&host.flag[index], &native.flag[index])?);
+                if kind == GameModeKind::CaptureTheFlag {
+                    bindings
+                        .models
+                        .push(pair(&host.flag_carry[index], &native.flag_carry[index])?);
+                }
+                if family == asset_core::FamilyId::T6 && native.flag_base_fx[index].is_none() {
+                    let from = host.flag_base_fx[index]
+                        .as_ref()
+                        .ok_or_else(|| InstallRefusal::new("host flag effect binding missing"))?;
+                    bindings.absent_effects.push(from.clone());
+                } else {
+                    bindings.effects.push(pair(
+                        &host.flag_base_fx[index],
+                        &native.flag_base_fx[index],
+                    )?);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(bindings)
 }
 
 fn objective_weapon_binding(

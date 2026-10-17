@@ -36,3 +36,4 @@ policy explicitly accepts RIFF/WAVE as compatibility input. Loaded media retains
 its existing codec descriptors and binding provenance. Namespace is still the
 source/archive identity; decoder availability and budgets do not become cue
 semantics. PCM preparation, pinning and readiness remain the media service's job.
+Direct notetrack rumbles bind definitions and graphs when installing the bank/weapon table; playback performs only prepared lookup under those owners.

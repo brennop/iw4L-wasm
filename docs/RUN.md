@@ -63,6 +63,7 @@ received plus its own presented state; `demo LATEST` plays it back.
 * ADS is `hold +speed_throw`, not `+speed`;
 * Hold Shift (`+breath_sprint`) or bind `+holdbreath` to steady eligible sights
   at full ADS. Breath lasts 4.5 seconds; releasing or exhausting it requires recovery.
+* Variable scopes: at full ADS, press `+changezoom` to cycle magnification. Fresh defaults bind Q; `bind Q +changezoom` adds it to existing settings. Options → Controls → Actions also exposes Change zoom. `+melee_zoom` changes zoom while scoped and melees otherwise; controller layouts use the melee button.
 * Aim binding: `bind MOUSE2 +speed_throw` aims only while held;
   `bind MOUSE2 +toggleads_throw` toggles aim on each press. Both are available
   under Options → Controls → Actions, and the chosen bind is saved in settings.
@@ -73,6 +74,7 @@ received plus its own presented state; `demo LATEST` plays it back.
   deployable gadgets when there is room in their equipment ammo slot.
 * `give` searches one completion list: `give ammo`, `give killstreak/uav`, or `give weapon/iw5:msr [attachment...]`. Search by any part of the name, then accept the suggested item.
 * `give killstreak/care_package` and `give killstreak/pave_low` acquire rewards without activating them. Available familiar names appear alongside script names in autocomplete.
+* `give camo <name>` changes the held weapon’s camouflage without changing its attachments or ammo. Autocomplete offers its catalog camos; `give camo none` clears it.
 * `give ammo` refills carried reserves and equipment; reload magazines normally. Supply commands require a live player and a host allowing debug actions.
 * `bot` hints follow the subcommand: counts, on/off, current bot IDs, weapons, and `tp … above`.
 * custom classes live in `iw4l-artifacts/profile/classes.txt` (one tab-separated

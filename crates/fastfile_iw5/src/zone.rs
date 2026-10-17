@@ -317,6 +317,8 @@ pub struct AttachmentGeometry {
     pub view_model_names: [Option<Ptr>; crate::size::ATTACH_MODEL_COUNT],
     pub world_model_names: [Option<Ptr>; crate::size::ATTACH_MODEL_COUNT],
     pub reticle_model_names: [Option<Ptr>; crate::size::ATTACH_RETICLE_COUNT],
+    pub reticle_center_name: Option<Ptr>,
+    pub reticle_side_name: Option<Ptr>,
     pub overlay_names: [Option<Ptr>; 4],
     pub overlay_width: f32,
     pub overlay_height: f32,

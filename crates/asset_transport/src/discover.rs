@@ -317,6 +317,7 @@ pub fn find_zone_file_under(search_root: &Path, zone: &str) -> Result<ZoneFile, 
     let mut iw4: Option<PathBuf> = None;
     let mut t5: Option<PathBuf> = None;
     let mut iw5: Option<PathBuf> = None;
+    let mut t6: Option<PathBuf> = None;
     let mut other: Option<(PathBuf, u32)> = None;
     let mut errors = Vec::new();
     for entry in game_files(search_root) {
@@ -337,6 +338,7 @@ pub fn find_zone_file_under(search_root: &Path, zone: &str) -> Result<ZoneFile, 
             Some(IW4_ZONE_VERSION) if iw4.is_none() => iw4 = Some(path),
             Some(T5_ZONE_VERSION) if t5.is_none() => t5 = Some(path),
             Some(IW5_ZONE_VERSION) if iw5.is_none() => iw5 = Some(path),
+            Some(T6_ZONE_VERSION) if t6.is_none() => t6 = Some(path),
             Some(v) if other.is_none() => other = Some((path, v)),
             None if other.is_none() => other = Some((path, 0)),
             _ => {}
@@ -363,17 +365,24 @@ pub fn find_zone_file_under(search_root: &Path, zone: &str) -> Result<ZoneFile, 
             alias_note: None,
         });
     }
+    if let Some(path) = t6 {
+        return Ok(ZoneFile {
+            path,
+            zone_name: zone.to_owned(),
+            alias_note: None,
+        });
+    }
     if let Some((path, version)) = other {
         if version == 0 {
             return Err(format!(
                 "zone `{file_name}` at {} is not a readable IWff envelope \
-                 (need IW4 0x114, T5 0x1d9, or IW5 0x1)",
+                 (need IW4 0x114, T5 0x1d9, IW5 0x1 or T6 0x93)",
                 path.display()
             ));
         }
         return Err(format!(
             "zone `{file_name}` found at {} but version is {version:#x} \
-             (want IW4 0x114, T5 0x1d9, or IW5 0x1)",
+             (want IW4 0x114, T5 0x1d9, IW5 0x1 or T6 0x93)",
             path.display()
         ));
     }

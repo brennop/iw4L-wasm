@@ -20,9 +20,9 @@ mod space;
 mod start;
 
 pub use aliases::{
-    StepGait, footstep_aliases, gear_alias, gear_rattle_alias, land_aliases, quiet_surface_alias,
-    select_cg_fire_alias, select_fire_alias, step_prefix, surface_alias_candidates,
-    world_surface_alias,
+    StepGait, explosion_surface_aliases, footstep_aliases, gear_alias, gear_rattle_alias,
+    land_aliases, quiet_surface_alias, select_cg_fire_alias, select_fire_alias, step_prefix,
+    surface_alias_candidates, world_surface_alias,
 };
 pub use ambient::{MapAmbientBooted, SoundIwd};
 pub use clip_store::{ClipPath, ClipPathCost, ClipPrepCost, ClipStore, clip_prep_cost};

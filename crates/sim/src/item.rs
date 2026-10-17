@@ -1,6 +1,8 @@
 use crate::frame::FrameWorld;
 use anim_iw4::random;
-use entity_iw4::{TR_GRAVITY, TR_STATIONARY, Trajectory, evaluate_trajectory};
+use entity_iw4::{
+    TR_GRAVITY, TR_STATIONARY, Trajectory, evaluate_trajectory, evaluate_trajectory_delta,
+};
 use math_iw4::angle_vectors;
 use playerstate_iw4::{ENTITYNUM_NONE, PERK_SCAVENGER, PM_TYPE_DEAD, PlayerState};
 use weapon_iw4::{
@@ -31,6 +33,8 @@ pub const ITEM_USE_HOLD_MS: i32 = 250;
 
 pub const PLAYER_DROP_Z: f32 = (PLAYER_MAXS[2] - PLAYER_MINS[2]) * 0.5;
 
+const SHIELD_DROP_PITCH: f32 = -90.0;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DroppedItem {
     pub state: entity_iw4::EntityState,
@@ -40,6 +44,7 @@ pub struct DroppedItem {
     pub clip_l: i32,
     pub stock: i32,
     pub scavenger: bool,
+    pub drop_seq: u32,
 }
 
 pub fn random_unit(seed: &mut u32) -> f32 {
@@ -105,6 +110,7 @@ fn take_player_weapon(ps: &mut PlayerState, weapon: u32) {
     }
     if ps.weapon == weapon || ps.weapon_primary == weapon {
         ps.weapon = 0;
+        ps.scope_zoom_level = 0;
         ps.weapon_primary = 0;
     }
 }
@@ -245,16 +251,26 @@ fn push_dropped_item(
     falling: bool,
     scavenger: bool,
 ) -> i32 {
+    let live: Vec<(i32, u32)> = world
+        .dropped_item_numbers_sorted()
+        .into_iter()
+        .filter_map(|number| {
+            world
+                .dropped_item_by_number(number)
+                .map(|item| (number, item.drop_seq))
+        })
+        .collect();
+    let drop_seq = live
+        .iter()
+        .map(|&(_, seq)| seq)
+        .max()
+        .map_or(0, |seq| seq.wrapping_add(1));
     if world.dropped_item_count() >= G_MAX_DROPPED_WEAPONS {
-        let evicted_number = world
-            .dropped_item_numbers_sorted()
-            .into_iter()
-            .next()
-            .expect("cap eviction requires an occupied dropped item");
-        let evicted = world
-            .remove_dropped_item_by_number(evicted_number)
+        let evicted_number =
+            oldest_dropped_number(&live).expect("cap eviction requires an occupied dropped item");
+        world
+            .despawn_dropped_item(evicted_number)
             .expect("cap eviction number vanished");
-        world.free_dynamic_entity_number(evicted.state.number);
     }
     let entnum = match world.allocate_dynamic_entity(crate::gentity::EntityRunKind::Item) {
         Ok(entity) => entity.number(),
@@ -272,8 +288,15 @@ fn push_dropped_item(
         clip_l,
         stock,
         scavenger,
+        drop_seq,
     });
     entnum
+}
+
+fn oldest_dropped_number(live: &[(i32, u32)]) -> Option<i32> {
+    live.iter()
+        .min_by_key(|&&(number, seq)| (seq, number))
+        .map(|&(number, _)| number)
 }
 
 fn launch_dropped_from_ps(
@@ -305,11 +328,19 @@ fn launch_dropped_from_ps(
         tr_time: 0,
         tr_duration: 0,
         tr_delta: [0.0; 3],
-        tr_base: [0.0, ps.viewangles[1], 0.0],
+        tr_base: dropped_angles(world, weapon, ps.viewangles[1]),
     };
     push_dropped_item(
         world, weapon, origin, pos, apos, owner, clip_r, clip_l, stock, true, scavenger,
     )
+}
+
+fn dropped_angles(world: &FrameWorld, weapon: u32, yaw: f32) -> [f32; 3] {
+    let shield = world
+        .combat_facts_for(weapon)
+        .is_some_and(|facts| facts.weap_type == weapon_iw4::WEAPTYPE_SHIELD);
+    let pitch = if shield { SHIELD_DROP_PITCH } else { 0.0 };
+    [pitch, yaw, 0.0]
 }
 
 pub(crate) fn drop_weapon(
@@ -354,6 +385,48 @@ pub(crate) fn drop_scavenger_item(
     (number != ENTITYNUM_NONE).then_some(number)
 }
 
+enum BlockedFall {
+    Rest([f32; 3]),
+    Deflect(Trajectory),
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn slide_along(vel: &mut [f32; 3], normal: [f32; 3]) {
+    let into = dot(*vel, normal);
+    if into < 0.0 {
+        for (v, n) in vel.iter_mut().zip(normal) {
+            *v -= n * into;
+        }
+    }
+}
+
+fn blocked_fall(
+    traj: &Trajectory,
+    time_ms: i32,
+    start: [f32; 3],
+    hit: &trace_iw4::Trace,
+) -> BlockedFall {
+    if hit.startsolid != 0 || hit.allsolid != 0 {
+        return BlockedFall::Rest(start);
+    }
+    let n = hit.normal;
+    if n[2] > 0.0 || dot(n, n) < 0.25 {
+        return BlockedFall::Rest(hit.endpos);
+    }
+    let mut vel = evaluate_trajectory_delta(traj, time_ms);
+    slide_along(&mut vel, n);
+    BlockedFall::Deflect(Trajectory {
+        tr_type: TR_GRAVITY,
+        tr_time: time_ms,
+        tr_duration: 0,
+        tr_delta: vel,
+        tr_base: std::array::from_fn(|i| hit.endpos[i] + n[i]),
+    })
+}
+
 pub(crate) fn think_item_move(world: &mut FrameWorld, time_ms: i32, number: i32) {
     if let Ok(entity) = world.entity_kernel().current_ref(number) {
         if world
@@ -377,33 +450,57 @@ pub(crate) fn think_item_move(world: &mut FrameWorld, time_ms: i32, number: i32)
         tr_delta: item.state.tr_delta,
         tr_base: item.state.tr_base,
     };
+    let start = item.origin;
     let desired = evaluate_trajectory(&traj, time_ms);
-    let hit = world.trace_clip(
-        item.origin,
-        desired,
-        ITEM_MINS,
-        ITEM_MAXS,
-        MASK_PLAYER_SOLID,
-    );
-    let mut fraction = hit.fraction;
-    if hit.startsolid != 0 {
-        fraction = 0.0;
+    let hit = world.trace_clip(start, desired, ITEM_MINS, ITEM_MAXS, MASK_PLAYER_SOLID);
+    let blocked = hit.startsolid != 0 || hit.fraction < 1.0;
+    let mut outcome = blocked.then(|| blocked_fall(&traj, time_ms, start, &hit));
+    if let Some(BlockedFall::Deflect(fall)) = &mut outcome {
+        let off = world.trace_clip(
+            hit.endpos,
+            fall.tr_base,
+            ITEM_MINS,
+            ITEM_MAXS,
+            MASK_PLAYER_SOLID,
+        );
+        if off.startsolid != 0 || off.fraction <= 0.0 {
+            outcome = Some(BlockedFall::Rest(hit.endpos));
+        } else {
+            fall.tr_base = off.endpos;
+            if off.fraction < 1.0 {
+                slide_along(&mut fall.tr_delta, off.normal);
+                if dot(fall.tr_delta, hit.normal) < 0.0 {
+                    fall.tr_delta[0] = 0.0;
+                    fall.tr_delta[1] = 0.0;
+                }
+            }
+        }
     }
-    let endpos = if fraction >= 1.0 { desired } else { hit.endpos };
     let Some(item) = world.dropped_item_mut_by_number(number) else {
         return;
     };
-    item.origin = endpos;
-    if fraction >= 1.0 {
+    let Some(outcome) = outcome else {
+        item.origin = desired;
         return;
-    }
-    if hit.allsolid != 0 || hit.normal[2] > 0.0 {
-        item.falling = false;
-        item.state.tr_type = TR_STATIONARY;
-        item.state.tr_base = endpos;
-        item.state.tr_delta = [0.0; 3];
-        item.state.tr_time = 0;
-        item.state.tr_duration = 0;
+    };
+    match outcome {
+        BlockedFall::Rest(at) => {
+            item.origin = at;
+            item.falling = false;
+            item.state.tr_type = TR_STATIONARY;
+            item.state.tr_base = at;
+            item.state.tr_delta = [0.0; 3];
+            item.state.tr_time = 0;
+            item.state.tr_duration = 0;
+        }
+        BlockedFall::Deflect(fall) => {
+            item.origin = fall.tr_base;
+            item.state.tr_type = fall.tr_type;
+            item.state.tr_base = fall.tr_base;
+            item.state.tr_delta = fall.tr_delta;
+            item.state.tr_time = fall.tr_time;
+            item.state.tr_duration = fall.tr_duration;
+        }
     }
 }
 
@@ -484,6 +581,19 @@ fn record_rejected_touches(world: &FrameWorld, walker: ClientId, ps: &PlayerStat
     }
 }
 
+fn split_item_ammo(room: i32, clip_r: i32, clip_l: i32, stock: i32) -> (i32, [i32; 3]) {
+    let mut room = room.max(0);
+    let mut take = |have: i32| {
+        let from = have.max(0).min(room);
+        room -= from;
+        (from, have - from)
+    };
+    let (from_stock, stock) = take(stock);
+    let (from_r, clip_r) = take(clip_r);
+    let (from_l, clip_l) = take(clip_l);
+    (from_stock + from_r + from_l, [clip_r, clip_l, stock])
+}
+
 fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     let Some(item) = world.dropped_item_by_number(number) else {
         return;
@@ -501,8 +611,24 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     };
     let picker_pm_type = ps.pm_type;
     let already_has = player_weapons_find_slot(&ps.weapons, weapon as i32) >= 0;
-    world.remove_dropped_item_by_number(number);
-    world.free_dynamic_entity_number(item.state.number);
+    let (taken, left) = if already_has {
+        let (_, _, have_stock) = ammo_from_ps(world, &ps, weapon);
+        let room = world
+            .combat_facts_for(weapon)
+            .map_or(0, |facts| facts.max_ammo.saturating_sub(have_stock));
+        split_item_ammo(room, item.clip_r, item.clip_l, item.stock)
+    } else {
+        (0, [0; 3])
+    };
+    let stays = already_has && left.iter().any(|&ammo| ammo > 0);
+    if stays {
+        let row = world
+            .dropped_item_mut_by_number(number)
+            .expect("touched item vanished");
+        [row.clip_r, row.clip_l, row.stock] = left;
+    } else {
+        world.despawn_dropped_item(number);
+    }
     let mut swapped_entnum = ENTITYNUM_NONE;
     let akimbo = world
         .combat_facts_for(weapon)
@@ -515,14 +641,7 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
             next.last_weapon_hand =
                 weapon_iw4::num_hands_for_held(&next.weapons, &next.weapon_data, weapon);
         }
-        add_ammo_on_ps(
-            world,
-            &mut next,
-            weapon,
-            item.clip_r,
-            item.clip_l,
-            item.stock,
-        );
+        add_ammo_on_ps(world, &mut next, weapon, 0, 0, taken);
         if let Some(slot) = world.player_mut(walker) {
             *slot = next;
         }
@@ -590,9 +709,9 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
         picker: walker.0 as i32,
         weapon,
         from_entnum: item.state.number,
-        clip_r: item.clip_r,
-        clip_l: item.clip_l,
-        stock: item.stock,
+        clip_r: if already_has { 0 } else { item.clip_r },
+        clip_l: if already_has { 0 } else { item.clip_l },
+        stock: if already_has { taken } else { item.stock },
         swapped_entnum,
         picker_pm_type,
     });
@@ -662,7 +781,7 @@ fn drop_current_primary_at(
         tr_time: 0,
         tr_duration: 0,
         tr_delta: [0.0; 3],
-        tr_base: angles,
+        tr_base: dropped_angles(world, weapon, angles[1]),
     };
     let entnum = push_dropped_item(
         world,

@@ -48,10 +48,7 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
         .get(usize::from(hit.hitloc))
         .copied()
         .unwrap_or("none");
-    let inflictor = hit
-        .inflictor
-        .and_then(|id| projectile_entity(world, id, hit))
-        .unwrap_or_else(|| attacker.clone());
+    let inflictor = damage_inflictor(world, hit).unwrap_or_else(|| attacker.clone());
     let args = vec![
         inflictor,
         attacker,
@@ -122,6 +119,16 @@ pub(crate) fn damage_entity(world: &World, value: Option<&Value>) -> Value {
             Value::Object(*object)
         }
         _ => world_entity(world),
+    }
+}
+
+fn damage_inflictor(world: &mut World, hit: &crate::script_player::Hit) -> Option<Value> {
+    match hit.inflictor? {
+        crate::script_player::HitInflictor::Projectile(id) => projectile_entity(world, id, hit),
+        crate::script_player::HitInflictor::ScriptModel(presence) => world
+            .resource::<Runtime>()
+            .presented_by(presence)
+            .map(Value::Object),
     }
 }
 

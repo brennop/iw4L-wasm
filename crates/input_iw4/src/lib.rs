@@ -135,6 +135,7 @@ pub struct KbuttonSet {
     pub lookdown: Kbutton,
     pub strafe: Kbutton,
     pub holdbreath: Kbutton,
+    pub changezoom: Kbutton,
     pub activate: Kbutton,
     pub reload: Kbutton,
     pub prone: Kbutton,
@@ -153,6 +154,9 @@ impl KbuttonSet {
         }
         if self.melee.active || self.melee.was_pressed {
             f("+melee");
+        }
+        if self.changezoom.active || self.changezoom.was_pressed {
+            f("+changezoom");
         }
         if self.frag.active || self.frag.was_pressed {
             f("+frag");
@@ -230,6 +234,7 @@ impl KbuttonSet {
         self.lookdown.was_pressed = false;
         self.strafe.was_pressed = false;
         self.holdbreath.was_pressed = false;
+        self.changezoom.was_pressed = false;
         self.activate.was_pressed = false;
         self.reload.was_pressed = false;
         self.prone.was_pressed = false;
@@ -282,7 +287,7 @@ pub fn set_ads(client: &mut ClientInput, ads: bool) {
 }
 
 fn pair_down(cmd_id: u32) -> bool {
-    cmd_id < HOLD_PAIR_LIMIT && cmd_id % 2 == 1
+    key_up_command_id(cmd_id).is_some()
 }
 
 fn apply_pair(btn: &mut Kbutton, cmd_id: u32, key: i32, now_msec: i32, frame_msec: u32) {
@@ -336,6 +341,11 @@ pub fn input_cmd(client: &mut ClientInput, cmd_id: u32, key: i32, now_msec: i32,
         41 | 42 => apply_pair(&mut client.kb.lookup, cmd_id, key, now_msec, frame_msec),
         43 | 44 => apply_pair(&mut client.kb.lookdown, cmd_id, key, now_msec, frame_msec),
         45 | 46 => apply_pair(&mut client.kb.strafe, cmd_id, key, now_msec, frame_msec),
+        79 | 80 => apply_pair(&mut client.kb.changezoom, cmd_id, key, now_msec, frame_msec),
+        81 | 82 => {
+            apply_pair(&mut client.kb.changezoom, cmd_id, key, now_msec, frame_msec);
+            apply_pair(&mut client.kb.melee, cmd_id, key, now_msec, frame_msec);
+        }
         47 | 48 => apply_pair(&mut client.kb.holdbreath, cmd_id, key, now_msec, frame_msec),
         49 | 50 => apply_pair(&mut client.kb.activate, cmd_id, key, now_msec, frame_msec),
         51 | 52 => apply_pair(&mut client.kb.reload, cmd_id, key, now_msec, frame_msec),
@@ -463,6 +473,7 @@ pub fn cmd_buttons(state: &KbuttonSet) -> u32 {
     let mut bits = 0u32;
     update_cmd_button(&state.attack, buttons::ATTACK, &mut bits);
     update_cmd_button(&state.holdbreath, buttons::BREATH, &mut bits);
+    update_cmd_button(&state.changezoom, buttons::CHANGE_ZOOM, &mut bits);
     update_cmd_button(&state.frag, buttons::FRAG, &mut bits);
     update_cmd_button(&state.smoke, buttons::SMOKE, &mut bits);
     update_cmd_button(&state.melee, buttons::MELEE_CHARGE, &mut bits);

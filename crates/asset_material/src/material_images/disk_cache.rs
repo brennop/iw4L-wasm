@@ -22,6 +22,7 @@ fn encode_cache(mips: &DecodedMips) -> Vec<u8> {
     out.extend_from_slice(&mips.layout().width.to_le_bytes());
     out.extend_from_slice(&mips.layout().height.to_le_bytes());
     out.push(match mips.layout().storage {
+        MipStorage::R32Float => 6,
         MipStorage::Rgba8 => 0,
         MipStorage::Bc1 => 1,
         MipStorage::Bc2 => 2,
@@ -50,6 +51,7 @@ fn decode_cache(bytes: &[u8]) -> Option<DecodedMips> {
     let width = word(12)?;
     let height = word(16)?;
     let storage = match bytes[20] {
+        6 => MipStorage::R32Float,
         0 => MipStorage::Rgba8,
         1 => MipStorage::Bc1,
         2 => MipStorage::Bc2,
@@ -75,9 +77,7 @@ fn decode_cache(bytes: &[u8]) -> Option<DecodedMips> {
     if at != bytes.len() {
         return None;
     }
-    Some(DecodedMips::from_packed(
-        width, height, storage, packed, sizes,
-    ))
+    DecodedMips::from_packed(width, height, storage, packed, sizes)
 }
 
 fn read_cached_mips(key: &str, io_at: web_time::Instant) -> Option<DecodedMips> {

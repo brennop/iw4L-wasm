@@ -431,6 +431,14 @@ pub fn dm_spawn_points_treyarch(text: &str) -> Vec<SpawnPoint> {
 }
 
 pub fn t5_entities_for_iw4_rules(text: &str) -> String {
+    native_entities_for_iw4_rules(text, asset_core::FamilyId::T5)
+}
+
+pub fn t6_entities_for_iw4_rules(text: &str) -> String {
+    native_entities_for_iw4_rules(text, asset_core::FamilyId::T6)
+}
+
+fn native_entities_for_iw4_rules(text: &str, family: asset_core::FamilyId) -> String {
     type Block = Vec<(String, String)>;
     fn get<'a>(block: &'a Block, key: &str) -> Option<&'a str> {
         block
@@ -470,6 +478,20 @@ pub fn t5_entities_for_iw4_rules(text: &str) -> String {
             set(block, "classname", format!("mp_dd_spawn_{suffix}"));
         }
         match (get(block, "targetname"), team.as_deref()) {
+            (Some("dd_bombzone"), _)
+                if family == asset_core::FamilyId::Iw5
+                    && get(block, "script_label") == Some("_c") =>
+            {
+                set(block, "targetname", "dd_overtime_bombzone".to_owned());
+                set(block, "script_gameobjectname", "dd_overtime".to_owned());
+            }
+            (Some("bombzone_dem"), _)
+                if family == asset_core::FamilyId::T6
+                    && get(block, "script_label") == Some("_overtime") =>
+            {
+                set(block, "targetname", "dem_overtime_bombzone".to_owned());
+                set(block, "script_gameobjectname", "dem_overtime".to_owned());
+            }
             (Some("bombzone_dem"), _) => set(block, "targetname", "dd_bombzone".to_owned()),
             (Some("ctf_flag_zone_trig"), Some(team)) => {
                 set(block, "targetname", format!("ctf_zone_{team}"));
@@ -505,7 +527,7 @@ pub fn t5_entities_for_iw4_rules(text: &str) -> String {
                 tokens.extend(match token {
                     "dem" => Some("dd"),
                     "tdm" => Some("war"),
-                    "koth" => Some("hq"),
+                    "koth" if family == asset_core::FamilyId::T5 => Some("hq"),
                     _ => None,
                 });
             }
@@ -521,6 +543,72 @@ pub fn t5_entities_for_iw4_rules(text: &str) -> String {
         {
             let name = name.clone();
             set(block, "targetname", name);
+        }
+    }
+    if family == asset_core::FamilyId::T6 {
+        let source = blocks.clone();
+        let has = |key: &str, name: &str| source.iter().any(|block| get(block, key) == Some(name));
+        let authored = |block: &Block, classname: &str, targetname: &str| {
+            let mut copy = block.clone();
+            set(&mut copy, "classname", classname.to_owned());
+            set(&mut copy, "targetname", targetname.to_owned());
+            set(&mut copy, "script_gameobjectname", "sab".to_owned());
+            copy
+        };
+        if !has("targetname", "sab_bomb_pickup_trig")
+            && let Some(trigger) = source
+                .iter()
+                .find(|block| get(block, "targetname") == Some("bombtrigger"))
+                .or_else(|| {
+                    source
+                        .iter()
+                        .find(|block| get(block, "targetname") == Some("sd_bomb_pickup_trig"))
+                })
+        {
+            spawned.push(authored(
+                trigger,
+                "trigger_multiple",
+                "sab_bomb_pickup_trig",
+            ));
+            if !has("targetname", "sab_bomb") {
+                let mut bomb = trigger.clone();
+                set(&mut bomb, "model", "prop_suitcase_bomb".to_owned());
+                spawned.push(authored(&bomb, "script_model", "sab_bomb"));
+            }
+        }
+        for team in ["allies", "axis"] {
+            let site = format!("sab_bomb_{team}");
+            if !has("targetname", &site)
+                && let Some(trigger) = source
+                    .iter()
+                    .find(|block| get(block, "targetname") == Some(&format!("ctf_zone_{team}")))
+            {
+                let mut copy = trigger.clone();
+                let visual = format!("iw4l_sab_site_{team}");
+                set(&mut copy, "target", visual.clone());
+                spawned.push(authored(&copy, "trigger_use_touch", &site));
+                set(&mut copy, "model", "prop_suitcase_bomb".to_owned());
+                spawned.push(authored(&copy, "script_model", &visual));
+            }
+            for suffix in ["", "_start", "_planted"] {
+                let classname = format!("mp_sab_spawn_{team}{suffix}");
+                if has("classname", &classname) {
+                    continue;
+                }
+                let native = format!(
+                    "mp_ctf_spawn_{team}{}",
+                    if suffix == "_planted" { "" } else { suffix }
+                );
+                for block in source
+                    .iter()
+                    .filter(|block| get(block, "classname") == Some(&native))
+                {
+                    let mut copy = block.clone();
+                    set(&mut copy, "classname", classname.clone());
+                    set(&mut copy, "script_gameobjectname", "sab".to_owned());
+                    spawned.push(copy);
+                }
+            }
         }
     }
     blocks.extend(spawned);
@@ -1081,7 +1169,7 @@ pub fn iw5_entity_string_named(text: &str) -> String {
         }
         out.push('\n');
     }
-    out
+    native_entities_for_iw4_rules(&out, asset_core::FamilyId::Iw5)
 }
 
 fn entity_pair(line: &str) -> Option<(EntityKey, &str)> {

@@ -11,6 +11,7 @@ pub(crate) enum WorldCompositionRefusal {
     ForeignOwner,
     Configuration(asset_game::ConfigurationRefusal),
     RequiredModel,
+    Appearance(asset_game::AppearanceModelStatus),
     RequiredPose,
     Topology(String),
 }
@@ -164,6 +165,11 @@ fn compose_item(
     let appearance = registry
         .select_appearance(id, camo)
         .ok_or(WorldCompositionRefusal::RequiredModel)?;
+    if let status @ asset_game::AppearanceModelStatus::DeclaredUnavailable { .. } =
+        appearance.world_status()
+    {
+        return Err(WorldCompositionRefusal::Appearance(status));
+    }
     let entry = appearance
         .world_model(catalog)
         .ok_or(WorldCompositionRefusal::RequiredModel)?;

@@ -308,9 +308,9 @@ fn queue_match_clips(
     }
     if !set.missing.is_empty() {
         let names: Vec<&str> = set.missing.iter().map(String::as_str).collect();
-        diag::warn!(
+        diag::info!(
             Audio,
-            "audio: match-set gap: {} aliases name no loaded sound: {}",
+            "audio: prefetch catalog gaps: {} aliases name no loaded sound: {}",
             names.len(),
             names.join(" ")
         );

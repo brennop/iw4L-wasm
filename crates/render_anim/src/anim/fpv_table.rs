@@ -63,15 +63,22 @@ pub struct FpvWeaponView {
     pub idle_name: Option<String>,
     pub rigs: FpvRigSet,
     pub census: FpvViewCensus,
-    pub camos: Vec<(u8, Arc<HashMap<usize, SmodelPassMaterial>>)>,
+    pub camos: Vec<(u8, Result<Arc<HashMap<usize, SmodelPassMaterial>>, String>)>,
 }
 
 impl FpvWeaponView {
-    pub fn camo(&self, slot: u8) -> Option<&Arc<HashMap<usize, SmodelPassMaterial>>> {
+    pub fn camo(&self, slot: u8) -> Result<Option<&Arc<HashMap<usize, SmodelPassMaterial>>>, &str> {
+        if slot == 0 {
+            return Ok(None);
+        }
         self.camos
             .iter()
             .find(|(own, _)| *own == slot)
-            .map(|(_, swaps)| swaps)
+            .ok_or("appearance slot unavailable")?
+            .1
+            .as_ref()
+            .map(Some)
+            .map_err(String::as_str)
     }
 }
 

@@ -29,6 +29,7 @@ render_scene.workspace = true
 sim.workspace = true
 weapon_iw4.workspace = true
 bevy.workspace = true
+web-time = { workspace = true }
 
 [lints]
 workspace = true

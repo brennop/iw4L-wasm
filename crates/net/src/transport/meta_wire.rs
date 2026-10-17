@@ -78,6 +78,16 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u32(weapon);
             out.put_u8(model);
         }
+        ClientAction::ChangeWeaponCamo {
+            request_id,
+            weapon,
+            model,
+        } => {
+            out.put_u8(23);
+            out.put_u32(request_id);
+            out.put_u32(weapon);
+            out.put_u8(model);
+        }
         ClientAction::ChangeWeaponConfiguration {
             request_id,
             from,
@@ -242,6 +252,11 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
             phase: phase_from_tag(input.get_u8()?)?,
         }),
         6 => Ok(ClientAction::GiveWeapon {
+            request_id: input.get_u32()?,
+            weapon: input.get_u32()?,
+            model: input.get_u8()?,
+        }),
+        23 => Ok(ClientAction::ChangeWeaponCamo {
             request_id: input.get_u32()?,
             weapon: input.get_u32()?,
             model: input.get_u8()?,
@@ -2308,6 +2323,7 @@ fn encode_script_movers(out: &mut WireWriter, movers: &[sim::ScriptMoverGentity]
     for mover in movers {
         out.put_u32(mover.id.to_wire());
         out.put_u8(u8::from(mover.nonsolid));
+        out.put_u8(mover.killcam_camera.map_or(0, |mode| mode.as_u8()));
         encode_entity_state(out, &mover.state);
     }
 }
@@ -2320,9 +2336,16 @@ fn decode_script_movers(
     for _ in 0..count {
         let id = ScriptModelId::from_wire(input.get_u32()?);
         let nonsolid = input.get_u8()? != 0;
+        let killcam_camera = match input.get_u8()? {
+            0 => None,
+            1 => Some(playerstate_iw4::KillCamMode::Mode1Heli),
+            6 => Some(playerstate_iw4::KillCamMode::Mode6Turret),
+            _ => return Err(WireError::Malformed("script mover camera")),
+        };
         movers.push(sim::ScriptMoverGentity {
             id,
             state: decode_entity_state(input)?,
+            killcam_camera,
             nonsolid,
             ..Default::default()
         });

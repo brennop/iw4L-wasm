@@ -16,6 +16,7 @@ use crate::{
 pub struct WeaponArgCompletions {
     pub give: Arc<RwLock<Vec<String>>>,
     pub attach: Arc<RwLock<Vec<String>>>,
+    pub camos: Arc<RwLock<Vec<String>>>,
     pub killstreaks: Arc<RwLock<Vec<String>>>,
     pub bots: Arc<RwLock<Vec<String>>>,
 }
@@ -25,6 +26,7 @@ impl Default for WeaponArgCompletions {
         Self {
             give: Arc::new(RwLock::new(Vec::new())),
             attach: Arc::new(RwLock::new(Vec::new())),
+            camos: Arc::new(RwLock::new(Vec::new())),
             killstreaks: Arc::new(RwLock::new(Vec::new())),
             bots: Arc::new(RwLock::new(Vec::new())),
         }
@@ -43,6 +45,9 @@ pub(crate) fn clear_weapon_args_on_torn_down(
     }
     if let Ok(mut attach) = completions.attach.write() {
         attach.clear();
+    }
+    if let Ok(mut values) = completions.camos.write() {
+        values.clear();
     }
     if let Ok(mut values) = completions.killstreaks.write() {
         values.clear();
@@ -71,6 +76,7 @@ pub(crate) fn register_weapon_commands(
         registry.register(
             crate::CommandSpec::new("give")
                 .usage(GIVE_USAGE)
+                .arg(GiveCompleter(completions.clone()))
                 .arg(GiveCompleter(completions.clone())),
         );
     }
@@ -127,6 +133,21 @@ pub(crate) fn refresh_weapon_arg_completions(
     *last_held = Some(held);
     if let Ok(mut give) = completions.give.write() {
         *give = weapon_completions(weapons);
+    }
+    if let Ok(mut camos) = completions.camos.write() {
+        *camos = if held == 0 {
+            Vec::new()
+        } else {
+            std::iter::once("none".to_owned())
+                .chain(
+                    weapons
+                        .registry()
+                        .camouflage_choices(held)
+                        .into_iter()
+                        .map(|(_, name)| name.to_owned()),
+                )
+                .collect()
+        };
     }
     if let Ok(mut attach) = completions.attach.write() {
         *attach = if held == 0 {
@@ -192,6 +213,18 @@ pub(crate) fn route_weapon_commands(
                         grant_killstreak(
                             name,
                             &completions,
+                            &presented,
+                            &local,
+                            &mut inbox,
+                            &mut seq,
+                            |msg| echo(msg, &mut console, &mut line),
+                        );
+                        continue;
+                    }
+                    GiveTarget::Camo(name) => {
+                        change_camo(
+                            name,
+                            weapons.as_deref(),
                             &presented,
                             &local,
                             &mut inbox,
@@ -325,7 +358,7 @@ pub(crate) fn route_weapon_commands(
     }
 }
 
-const GIVE_USAGE: &str = "give ammo | give killstreak/<name> | give weapon/<game:weapon> [attachment...] [camo=<name|slot>] — resupply ammo, acquire a reward, or equip a weapon";
+const GIVE_USAGE: &str = "give camo <name|slot|none> | give ammo | give killstreak/<name> | give weapon/<game:weapon> [attachment...] [camo=<name|slot>] — resupply ammo, acquire a reward, or equip a weapon";
 
 pub(crate) fn split_camo(args: &[String]) -> (Option<&str>, Vec<String>) {
     let mut camo = None;
@@ -368,6 +401,7 @@ pub(crate) fn camo_slot(
 #[derive(Debug, PartialEq)]
 enum GiveTarget<'a> {
     Ammo,
+    Camo(&'a str),
     Killstreak(&'a str),
     Weapon(&'a str),
 }
@@ -376,6 +410,9 @@ fn parse_give_target(args: &[String]) -> Result<GiveTarget<'_>, &'static str> {
     let Some(item) = args.first() else {
         return Err(GIVE_USAGE);
     };
+    if item == "camo" && args.len() == 2 {
+        return Ok(GiveTarget::Camo(&args[1]));
+    }
     if item == "ammo" && args.len() == 1 {
         return Ok(GiveTarget::Ammo);
     }
@@ -390,6 +427,52 @@ fn parse_give_target(args: &[String]) -> Result<GiveTarget<'_>, &'static str> {
         return Ok(GiveTarget::Weapon(name));
     }
     Err(GIVE_USAGE)
+}
+
+fn change_camo(
+    name: &str,
+    weapons: Option<&PreparedWeapons>,
+    presented: &PresentedSnapshot,
+    local: &LocalPresentClient,
+    inbox: &mut ClientActionInbox,
+    seq: &mut net::ActionRequestIds,
+    mut echo: impl FnMut(String),
+) {
+    let Some(weapons) = weapons else {
+        echo("give camo: weapon catalog not loaded".into());
+        return;
+    };
+    let Some(ps) = presented.alive_player(local.0) else {
+        echo("give camo: not Alive — spawn a class first".into());
+        return;
+    };
+    let weapon = ps.weapon;
+    if weapon == 0 {
+        echo("give camo: no weapon in hands".into());
+        return;
+    }
+    let model = match camo_slot(weapons.registry(), weapon, name) {
+        Ok(model) => model,
+        Err(error) => {
+            echo(format!("give camo: {error}"));
+            return;
+        }
+    };
+    let request_id = seq.allocate();
+    match inbox.push(
+        local.0,
+        ClientAction::ChangeWeaponCamo {
+            request_id,
+            weapon,
+            model,
+        },
+    ) {
+        Ok(()) => echo(format!(
+            "give camo: queued {name} for {} request_id={request_id}",
+            weapons.registry().configuration_label(weapon)
+        )),
+        Err(error) => echo(format!("give camo: {error}")),
+    }
 }
 
 fn grant_killstreak(
@@ -487,7 +570,7 @@ struct GiveCompleter(WeaponArgCompletions);
 
 impl ArgCompleter for GiveCompleter {
     fn complete(&self, prefix: &str) -> Vec<String> {
-        let mut items = vec!["ammo".to_owned()];
+        let mut items = vec!["ammo".to_owned(), "camo".to_owned()];
         if let Ok(weapons) = self.0.give.read() {
             items.extend(weapons.iter().map(|name| format!("weapon/{name}")));
         }
@@ -498,6 +581,14 @@ impl ArgCompleter for GiveCompleter {
                 .map(|name| format!("killstreak/{name}")),
         );
         StaticCompleter::new(items).complete(prefix)
+    }
+
+    fn complete_with_context(&self, prefix: &str, args: &[&str]) -> Vec<String> {
+        match args {
+            [] => self.complete(prefix),
+            ["camo"] => LiveListCompleter(Arc::clone(&self.0.camos)).complete(prefix),
+            _ => Vec::new(),
+        }
     }
 }
 

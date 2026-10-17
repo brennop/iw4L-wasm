@@ -360,6 +360,10 @@ fn xmodel_merge_stamp(
     for draw in items.draws() {
         scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
     }
+    // The concat patch cannot add or drop a source, so a source starting or
+    // stopping to draw changes the topology.
+    (!fx_models.draws().is_empty()).hash(&mut occupancy);
+    (!dynents.draws().is_empty()).hash(&mut occupancy);
     let sky_eye = sky.map(|(_, eye)| [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()]);
     let keys = producer_keys(
         fpv,
@@ -620,17 +624,24 @@ pub fn merge_xmodel_draw_plan(
             .copied()
             .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
     );
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        fx_models.vertices().len(),
-        fx_models.indices(),
-        fx_models.surface_ranges(),
-        fx_models.materials(),
-        fx_models.packed_vertices(),
-        fx_draws,
-    );
+    // Whole, not compacted: compacting drops the concat layout, so every frame
+    // with a live piece would re-merge and re-upload.
+    if !fx_draws.is_empty() {
+        append_source_plan(
+            merged,
+            fx_models.vertices().len(),
+            fx_models.indices(),
+            fx_models.surface_ranges(),
+            fx_models.materials(),
+            fx_draws.into_iter(),
+        );
+        append_packed_source(
+            &mut packed,
+            &mut packed_ok,
+            fx_models.packed_vertices(),
+            fx_models.vertices().len(),
+        );
+    }
     append_admitted_source(
         merged,
         &mut packed,
@@ -1108,7 +1119,7 @@ fn admitted_mask(
     if !dynents.draws().is_empty() {
         admitted |= ADMIT_DYNENT;
     }
-    if sky.is_some() {
+    if sky.is_some_and(|(sky, _)| !sky.draws.is_empty()) {
         admitted |= ADMIT_SKY;
     }
     admitted

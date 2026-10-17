@@ -176,6 +176,15 @@ impl SimWorld {
         crate::script::set_dvar(&mut self.ecs, name, value);
     }
 
+    pub fn set_glass_names(&mut self, names: Vec<(String, Vec<u32>)>) {
+        if !names.is_empty() {
+            let pieces: usize = names.iter().map(|(_, pieces)| pieces.len()).sum();
+            diag::info!(Sim, "glass: {} named sets, {pieces} pieces", names.len());
+        }
+        self.ecs
+            .insert_resource(crate::script::GlassNames(names.into_iter().collect()));
+    }
+
     pub fn gsc_realm(&self) -> Option<crate::script::Realm> {
         self.ecs
             .resource::<crate::script::Runtime>()
@@ -188,6 +197,20 @@ impl SimWorld {
         self.ecs
             .resource::<crate::script::Runtime>()
             .program_fingerprint()
+    }
+
+    pub fn set_script_archive_time(
+        &mut self,
+        client: ClientId,
+        requested_ms: i32,
+        attained_ms: i32,
+    ) {
+        let mut runtime = self.ecs.resource_mut::<crate::script::Runtime>();
+        if let Some(slot) = runtime.players.get_mut(&client.0)
+            && slot.seat.archive_ms == requested_ms
+        {
+            slot.seat.archive_ms = attained_ms;
+        }
     }
 
     pub fn script_seats(&self) -> Vec<(ClientId, crate::ScriptSeat)> {

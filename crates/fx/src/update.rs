@@ -122,6 +122,8 @@ pub enum FxChildKind {
 
 #[derive(Clone, Copy, Debug)]
 pub struct FxChildSpawnRequest<'a> {
+    pub mark_entity: Option<u16>,
+    pub products: crate::FxSpawnProducts,
     pub kind: FxChildKind,
     pub parent_def_name: &'a str,
     pub catalog_index: u16,
@@ -617,15 +619,18 @@ fn update_element(
     let elem_type = elem.elem_type;
     let spark_handle = elem.spark_cloud_handle;
     let at_rest_fraction = elem.at_rest_fraction;
-    let (def_name, catalog_index, now, alt) = match host.effect_at(effect_slot) {
-        Some(e) => (
-            slot_def_name(e),
-            e.catalog_index,
-            e.frame_now(),
-            e.frame_when_played(),
-        ),
-        None => return true,
-    };
+    let (def_name, catalog_index, now, alt, products, mark_entity) =
+        match host.effect_at(effect_slot) {
+            Some(e) => (
+                slot_def_name(e),
+                e.catalog_index,
+                e.frame_now(),
+                e.frame_when_played(),
+                e.products,
+                e.mark_entity,
+            ),
+            None => return true,
+        };
     let spawn = host
         .elems
         .get(slot)
@@ -645,6 +650,8 @@ fn update_element(
             &alt,
             spawn,
             msec_now,
+            products,
+            mark_entity,
         );
         return false;
     }
@@ -722,6 +729,8 @@ fn update_element(
                     let played = on_child(
                         host,
                         FxChildSpawnRequest {
+                            products,
+                            mark_entity,
                             kind: FxChildKind::Emitted,
                             parent_def_name: def_name.as_str(),
                             catalog_index,
@@ -743,6 +752,8 @@ fn update_element(
                 let played = on_child(
                     host,
                     FxChildSpawnRequest {
+                        products,
+                        mark_entity,
                         kind: FxChildKind::Impact,
                         parent_def_name: def_name.as_str(),
                         catalog_index,
@@ -776,6 +787,8 @@ fn update_element(
                     &alt,
                     spawn,
                     msec_now,
+                    products,
+                    mark_entity,
                 );
                 return false;
             }
@@ -842,6 +855,8 @@ fn drain_pending_trail_impacts(
         let played = on_child(
             host,
             FxChildSpawnRequest {
+                products: imp.products,
+                mark_entity: imp.mark_entity,
                 kind: FxChildKind::Impact,
                 parent_def_name: imp.parent_def_name.as_str(),
                 catalog_index: imp.catalog_index,
@@ -872,12 +887,16 @@ fn spawn_death_child(
     effect_alt: &FxOrientFrame,
     spawn: Option<fx_iw4::FxOrientSpawnParams>,
     msec: i32,
+    products: crate::FxSpawnProducts,
+    mark_entity: Option<u16>,
 ) {
     let orient = get_orientation(flags, effect_now, effect_alt, spawn);
     let world = fx_iw4::orientation_pos_to_world(orient.origin, orient.axis, elem_origin);
     let played = on_child(
         host,
         FxChildSpawnRequest {
+            products,
+            mark_entity,
             kind: FxChildKind::Death,
             parent_def_name,
             catalog_index,

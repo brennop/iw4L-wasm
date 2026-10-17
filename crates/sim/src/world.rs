@@ -942,6 +942,7 @@ impl SimState {
             &self.content.weapons().bullet_pen,
             &self.content.weapons().weapon_runnable,
             &self.content.weapons().weapon_transition_groups,
+            &self.content.weapons().weapon_camouflage_slots,
             &self.content.weapons().equipment_runtime,
             &self.bootstrap,
             self.content.clip_brushes(),
@@ -952,6 +953,7 @@ impl SimState {
             &self.content.weapons().bullet_pen,
             &self.content.weapons().weapon_runnable,
             &self.content.weapons().weapon_transition_groups,
+            &self.content.weapons().weapon_camouflage_slots,
             &self.content.weapons().equipment_runtime,
             &self.bootstrap,
             self.content.clip_brushes(),
@@ -983,6 +985,14 @@ impl SimState {
             return false;
         };
         group != 0 && groups.get(to as usize) == Some(&group)
+    }
+
+    pub(crate) fn weapon_camouflage_allowed(&self, weapon: u32, model: u8) -> bool {
+        self.content
+            .weapons()
+            .weapon_camouflage_slots
+            .get(weapon as usize)
+            .is_some_and(|slots| slots.contains(&model))
     }
 
     pub(crate) fn weapon_runnable(&self, id: u32) -> bool {
@@ -2545,6 +2555,7 @@ impl SimState {
                     clip_l: ammo.clip_l,
                     stock: ammo.stock,
                     scavenger: ammo.scavenger != 0,
+                    drop_seq: 0,
                 }
             })
             .collect();
@@ -3277,6 +3288,7 @@ pub(crate) fn gsc_give_weapon_is_akimbo(script_name: &str) -> bool {
 pub(crate) fn give_weapon_to_ps_akimbo(ps: &mut PlayerState, weapon: u32, akimbo: bool) {
     if weapon == 0 {
         ps.weapon = 0;
+        ps.scope_zoom_level = 0;
         ps.weapon_primary = 0;
         ps.last_weapon_hand = 0;
         return;
@@ -3289,6 +3301,7 @@ pub(crate) fn give_weapon_to_ps_akimbo(ps: &mut PlayerState, weapon: u32, akimbo
         }
     }
     ps.weapon = weapon;
+    ps.scope_zoom_level = 0;
     ps.weapon_primary = weapon;
     ps.last_weapon_hand = weapon_iw4::num_hands_for_held(&ps.weapons, &ps.weapon_data, weapon);
 }

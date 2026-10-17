@@ -50,6 +50,7 @@ pub(crate) fn schedule() -> Schedule {
                 crate::script::sync_players,
                 crate::script::sync_presence,
                 run_players_system,
+                crate::script::publish_projectile_launches,
                 record_collision_state_system,
                 run_entity_types_system,
                 dispatch_touches_system,
@@ -401,6 +402,12 @@ fn run_players_system(ecs: &mut World) {
                 cmd.forwardmove = 0;
                 cmd.rightmove = 0;
                 cmd.buttons &= playerstate_iw4::buttons::CROUCH | playerstate_iw4::buttons::PRONE;
+            }
+            if facts.is_some_and(|f| f.scope_zoom.is_variable())
+                && ps.f_weapon_pos_frac == 1.0
+                && cmd.buttons & playerstate_iw4::buttons::CHANGE_ZOOM != 0
+            {
+                cmd.buttons &= !playerstate_iw4::buttons::MELEE_CHARGE;
             }
             let commanded_move = cmd.forwardmove != 0 || cmd.rightmove != 0;
             world.set_anim_command_buttons(*id, cmd.buttons);
@@ -1011,6 +1018,24 @@ fn apply_action(
                 );
             }
 
+            ActionOutcome::Applied
+        }
+        ClientAction::ChangeWeaponCamo { weapon, model, .. } => {
+            if !world.bootstrap_ref().allow_debug_actions
+                || !world
+                    .client_meta(id)
+                    .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+                || !world.weapon_camouflage_allowed(weapon, model)
+            {
+                return ActionOutcome::Refused;
+            }
+            let Some(ps) = world.player_mut(id) else {
+                return ActionOutcome::Refused;
+            };
+            if weapon == 0 || ps.weapon != weapon || !ps.weapons.contains(&(weapon as i32)) {
+                return ActionOutcome::Refused;
+            }
+            weapon_iw4::set_weapon_model_for_held(&ps.weapons, &mut ps.weapon_data, weapon, model);
             ActionOutcome::Applied
         }
         ClientAction::ChangeWeaponConfiguration {

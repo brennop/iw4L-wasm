@@ -77,7 +77,7 @@ fn play_with_bolt(
         req.pose.axis,
         req.pose.msec,
         bolt,
-        req.wants_spotlight,
+        req.wants_spotlight && host.spawn_products != crate::FxSpawnProducts::Marks,
         req.catalog_index,
     ) {
         Err(e) => PlayResult::Failed(e),

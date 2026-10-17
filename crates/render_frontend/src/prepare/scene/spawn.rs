@@ -185,10 +185,9 @@ pub(crate) fn spawn_world(
     prepared: (
         Res<render_anim::PreparedFpv>,
         Res<render_anim::PreparedModelMaterials>,
-        Option<Res<render_fx::PreparedFxModels>>,
     ),
 ) {
-    let (fpv, model_materials, fx_models) = prepared;
+    let (fpv, model_materials) = prepared;
     if scene.readiness.generation != job.spawn || job.spawn.0.is_none() {
         return;
     }
@@ -523,9 +522,9 @@ pub(crate) fn spawn_world(
                 f32::from_bits(scene.outdoor_lookup[0]),
                 f32::from_bits(scene.outdoor_lookup[12])
             ),
-            None => diag::warn!(
+            None => diag::info!(
                 World,
-                "drawsurf outdoor: RED no $outdoor / GfxWorld outdoorImage — code texture 14 stays unproduced (lookup_m00={:.6e} lookup_m30={:.4})",
+                "drawsurf outdoor: no authored image; code texture 14 is unavailable (lookup_m00={:.6e} lookup_m30={:.4})",
                 f32::from_bits(scene.outdoor_lookup[0]),
                 f32::from_bits(scene.outdoor_lookup[12])
             ),
@@ -698,8 +697,7 @@ pub(crate) fn spawn_world(
             tracers.as_deref(),
             fx_catalog.as_deref(),
         );
-        let fx_geometry =
-            super::world_plan::prepare_fx_model_geometry(&scene, fx_models.as_deref());
+        let fx_geometry = super::world_plan::empty_fx_model_geometry(&scene);
         commands.insert_resource(fx_geometry.0.clone());
         commands.insert_resource(fx_geometry);
         tess.material_images = std::sync::Arc::new(job.images.exact_handles().to_vec());
@@ -727,6 +725,7 @@ pub(crate) fn spawn_world_finish(
     mut images: ResMut<Assets<Image>>,
     mut job: ResMut<WorldSpawnJob>,
     mut tess: ResMut<render_scene::TessMaterials>,
+    fx_models: Option<Res<render_fx::PreparedFxModels>>,
 ) {
     if scene.readiness.generation != job.spawn
         || job.spawn.0.is_none()
@@ -748,6 +747,10 @@ pub(crate) fn spawn_world_finish(
         job.images.probe_handles().to_vec(),
         job.images.lightmap_handles().to_vec(),
     );
+    // Needs the model lighting atlas, which world_occupancy::place builds.
+    let fx_geometry = super::world_plan::prepare_fx_model_geometry(&scene, fx_models.as_deref());
+    commands.insert_resource(fx_geometry.0.clone());
+    commands.insert_resource(fx_geometry);
     tess.material_images = std::sync::Arc::new(job.images.exact_handles().to_vec());
     job.last_work_ms = frame_started.elapsed().as_secs_f32() * 1000.0;
     if paced {
@@ -910,6 +913,7 @@ pub(crate) fn reset_world_spawn_on_teardown(
     commands.queue(|world: &mut World| {
         frame::retire::retire_resources(world, |batch| {
             batch
+                .reset::<super::cull::DpvsFrameStats>()
                 .resource::<crate::assemble::drawsurf::WorldDrawGpuPlan>()
                 .resource::<crate::assemble::drawsurf::SmodelGpuPlan>()
                 .resource::<crate::assemble::drawsurf::tess::sky::SkyModelDrawPlan>()

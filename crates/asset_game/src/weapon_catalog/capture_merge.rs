@@ -181,6 +181,8 @@ pub(super) fn merge_sound_aliases(dst: &mut WeaponSoundAliases, src: &WeaponSoun
         (&mut dst.pickup_player, &src.pickup_player),
         (&mut dst.ammo_pickup, &src.ammo_pickup),
         (&mut dst.ammo_pickup_player, &src.ammo_pickup_player),
+        (&mut dst.detonate, &src.detonate),
+        (&mut dst.detonate_player, &src.detonate_player),
         (&mut dst.pullback, &src.pullback),
         (&mut dst.pullback_player, &src.pullback_player),
         (&mut dst.reload, &src.reload),
@@ -427,12 +429,14 @@ pub(super) fn merge_body_facts(dst: &mut WeaponBodyFacts, src: WeaponBodyFacts) 
     if !dst.body_resolved && src.body_resolved {
         let fire_time_ms = dst.fire_time_ms;
         let ads_zoom_fov = dst.ads_zoom_fov;
+        let scope_zoom = dst.scope_zoom;
         let ads_dof = dst.ads_dof;
         let ads_cs = dst.kick.f_ads_view_kick_center_speed;
         let hip_cs = dst.kick.f_hip_view_kick_center_speed;
         *dst = src;
         dst.fire_time_ms = fire_time_ms;
         dst.ads_zoom_fov = ads_zoom_fov;
+        dst.scope_zoom = scope_zoom;
         dst.ads_dof = ads_dof;
 
         dst.kick.f_ads_view_kick_center_speed = ads_cs;

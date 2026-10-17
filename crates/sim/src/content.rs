@@ -2,7 +2,7 @@ use crate::spawn::{AuthoredSpawnPoint, MatchBootstrap};
 use crate::world::SimBrush;
 use weapon_iw4::WeaponCombatFacts;
 
-pub const CONTENT_DIGEST_SCHEME: u64 = 17;
+pub const CONTENT_DIGEST_SCHEME: u64 = 19;
 
 #[derive(Clone, Copy)]
 struct Digest(u64);
@@ -88,6 +88,10 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         });
         h.i32(row.reload_time_ms);
         h.i32(row.reload_empty_time_ms);
+        h.byte(match row.empty_reload {
+            weapon_iw4::EmptyReloadPolicy::Ordinary => 0,
+            weapon_iw4::EmptyReloadPolicy::Authored => 1,
+        });
         h.i32(row.clip_size);
         h.i32(row.start_ammo);
         h.i32(row.max_ammo);
@@ -143,6 +147,14 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         h.bool(row.no_ads_when_mag_empty);
         h.i32(row.ads_reload_trans_time_ms);
         h.bool(row.can_hold_breath);
+        h.byte(row.scope_zoom.levels());
+        for level in 0..row.scope_zoom.levels() {
+            h.f32(
+                row.scope_zoom
+                    .fov(u32::from(level))
+                    .expect("captured zoom level"),
+            );
+        }
         h.f32(row.ads_in_rate);
         h.f32(row.ads_out_rate);
         h.bool(row.rechamber_while_ads);
@@ -338,11 +350,19 @@ fn hash_penetration(h: &mut Digest, penetration: &[weapon_iw4::BulletPenFacts]) 
     }
 }
 
+fn hash_camouflage_slots(h: &mut Digest, slots: &[Vec<u8>]) {
+    h.u64(slots.len() as u64);
+    for row in slots {
+        h.bytes(row);
+    }
+}
+
 pub fn content_digest(
     combat: &[WeaponCombatFacts],
     penetration: &[weapon_iw4::BulletPenFacts],
     runnable: &[bool],
     transition_groups: &[u32],
+    camouflage_slots: &[Vec<u8>],
     equipment: &[crate::EquipmentRuntimeFacts],
     bootstrap: &MatchBootstrap,
     clip_brushes: &[SimBrush],
@@ -353,6 +373,7 @@ pub fn content_digest(
     hash_combat(&mut h, combat);
     hash_penetration(&mut h, penetration);
     hash_weapon_admission(&mut h, runnable, transition_groups);
+    hash_camouflage_slots(&mut h, camouflage_slots);
     hash_equipment(&mut h, equipment);
     hash_class_catalog(&mut h);
     hash_spawns(&mut h, &bootstrap.spawns);
@@ -377,6 +398,7 @@ pub fn content_components(
     penetration: &[weapon_iw4::BulletPenFacts],
     runnable: &[bool],
     transition_groups: &[u32],
+    camouflage_slots: &[Vec<u8>],
     equipment: &[crate::EquipmentRuntimeFacts],
     bootstrap: &MatchBootstrap,
     clip_brushes: &[SimBrush],
@@ -400,6 +422,7 @@ pub fn content_components(
     hash_combat(&mut weapons, combat);
     hash_penetration(&mut weapons, penetration);
     hash_weapon_admission(&mut weapons, runnable, transition_groups);
+    hash_camouflage_slots(&mut weapons, camouflage_slots);
     hash_equipment(&mut weapons, equipment);
 
     let mut classes = component(b'C');

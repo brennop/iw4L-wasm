@@ -36,8 +36,8 @@ pub(crate) fn authored_attachments(key: &FamilyKey, name: &str) -> Option<Vec<St
     Some(rest.split('_').map(str::to_owned).collect())
 }
 
-impl WeaponConfigurationCompiler for WeaponRegistry {
-    fn compile(
+impl WeaponRegistry {
+    pub(super) fn compile_native_configuration(
         &self,
         family: &WeaponFamily,
         selection: &WeaponSelection,
@@ -49,6 +49,18 @@ impl WeaponConfigurationCompiler for WeaponRegistry {
             AssetNamespace::T6 => &t6::T6Configuration(self),
         };
         compiler.compile(family, selection)
+    }
+}
+
+impl WeaponConfigurationCompiler for WeaponRegistry {
+    fn compile(
+        &self,
+        family: &WeaponFamily,
+        selection: &WeaponSelection,
+    ) -> Result<u32, ConfigurationRefusal> {
+        let id = self.compile_native_configuration(family, selection)?;
+        self.configuration_admission(id)?;
+        Ok(id)
     }
 }
 

@@ -1,5 +1,7 @@
 mod catalog_linking;
+mod editor;
 mod model_linking;
+pub use editor::{EditorWeaponCatalog, EditorWeaponSelection};
 mod publication;
 use catalog_linking::{material_hint_edge, stamp_combat_fx};
 mod capture_merge;
@@ -20,7 +22,7 @@ mod native_t6;
 use iw5_parameters::*;
 mod appearance;
 mod registry;
-pub use appearance::SelectedWeaponAppearance;
+pub use appearance::{AppearanceModelStatus, AppearanceRefusalReason, SelectedWeaponAppearance};
 pub use capture_t6::{
     t6_attachment_ads_model, t6_attachment_models, t6_attachment_sound_names,
     t6_attachment_xanim_names, t6_model_name, t6_weapon_sound_names, t6_weapon_xanim_names,
@@ -152,6 +154,7 @@ pub(crate) struct WeaponBodyFacts {
     pub silenced: bool,
 
     pub ads_zoom_fov: f32,
+    pub scope_zoom: weapon_iw4::ScopeZoom,
 
     pub ads_dof: Option<[f32; 2]>,
 
@@ -510,6 +513,8 @@ pub struct WeaponCamoModels {
     pub view: Vec<(u8, String)>,
     pub world: Vec<(u8, String)>,
     pub choices: Vec<WeaponCamouflageChoice>,
+    pub invalid_view: Vec<u8>,
+    pub invalid_world: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -522,7 +527,10 @@ pub struct WeaponCamouflageChoice {
 
 impl WeaponCamoModels {
     pub fn is_empty(&self) -> bool {
-        self.view.is_empty() && self.world.is_empty()
+        self.view.is_empty()
+            && self.world.is_empty()
+            && self.invalid_view.is_empty()
+            && self.invalid_world.is_empty()
     }
 }
 
@@ -792,6 +800,8 @@ pub struct WeaponSoundAliases {
     pub pickup_player: Option<String>,
     pub ammo_pickup: Option<String>,
     pub ammo_pickup_player: Option<String>,
+    pub detonate: Option<String>,
+    pub detonate_player: Option<String>,
     pub pullback: Option<String>,
     pub pullback_player: Option<String>,
     pub reload: Option<String>,
@@ -886,6 +896,8 @@ weapon_sound_slots! {
     PickupPlayer => pickup_player,
     AmmoPickup => ammo_pickup,
     AmmoPickupPlayer => ammo_pickup_player,
+    Detonate => detonate,
+    DetonatePlayer => detonate_player,
     Pullback => pullback,
     PullbackPlayer => pullback_player,
     Reload => reload,
@@ -929,6 +941,8 @@ impl WeaponSoundAliases {
             self.pickup_player.as_deref(),
             self.ammo_pickup.as_deref(),
             self.ammo_pickup_player.as_deref(),
+            self.detonate.as_deref(),
+            self.detonate_player.as_deref(),
             self.pullback.as_deref(),
             self.pullback_player.as_deref(),
             self.reload.as_deref(),
@@ -1286,7 +1300,8 @@ struct T6AttachmentStats {
     pub reload_time_scales: [f32; 5],
     pub ads_in_time_scale: f32,
     pub ads_out_time_scale: f32,
-    pub ads_zoom_fov: Option<f32>,
+    pub ads_zoom_fovs: [Option<f32>; 3],
+    pub variable_zoom: bool,
     pub ads_zoom_in_frac: Option<f32>,
     pub ads_zoom_out_frac: Option<f32>,
     pub damage_range_scale: f32,
@@ -1553,7 +1568,7 @@ pub struct WeaponRegistry {
 
     world_catalog_identity: u64,
     fpv_catalog_identity: u64,
-    loadout_only: bool,
+    family_tables: Arc<[(crate::AssetNamespace, crate::CapturedStringTable)]>,
 
     iw5_attachments: HashMap<String, Iw5ScopeRow>,
 
@@ -1891,6 +1906,19 @@ impl WeaponBuild {
         alt.hide_tags = config.hide_tags.clone();
         alt.t6_attachments = Vec::new();
         for slot in 0..WEAPON_ANIM_SLOTS {
+            if !shared
+                && matches!(
+                    slot,
+                    weap_anim::RELOAD
+                        | weap_anim::RELOAD_EMPTY
+                        | weap_anim::RELOAD_START
+                        | weap_anim::RELOAD_END
+                        | weap_anim_extra::RELOAD_QUICK
+                        | weap_anim_extra::RELOAD_QUICK_EMPTY
+                )
+            {
+                continue;
+            }
             if alt.sz_xanims[slot] == base.sz_xanims[slot] {
                 alt.sz_xanims[slot] = config.sz_xanims[slot].clone();
             }
@@ -2105,6 +2133,16 @@ impl WeaponBuild {
                 row.reticle.side_authored,
                 materials,
             );
+            for (edge, image) in [
+                (row.reticle.center_edge, &mut row.reticle.center_image),
+                (row.reticle.side_edge, &mut row.reticle.side_image),
+            ] {
+                if let Some(index) = edge.bound()
+                    && let Some(material) = materials.materials.get(index.order())
+                {
+                    *image = materials.hud_image_name(material).map(str::to_owned);
+                }
+            }
             row.hud_material_edges = WeaponHudMaterialEdges {
                 overlay,
                 hud_icon: row.preparation.bind_material(

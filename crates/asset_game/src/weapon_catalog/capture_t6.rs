@@ -20,7 +20,26 @@ impl WeaponCatalog {
                 .variant_str(v::DISPLAY_NAME)
                 .filter(|name| !name.is_empty())
                 .map(str::to_owned),
-            reticle: WeaponReticleAssets::default(),
+            reticle: {
+                use fastfile_t6::weapon::def as d;
+                let center = weapon
+                    .def_loaded_asset_name(d::RETICLE_CENTER)
+                    .map(t6_model_name);
+                let side = weapon
+                    .def_loaded_asset_name(d::RETICLE_SIDE)
+                    .map(t6_model_name);
+                WeaponReticleAssets {
+                    center_authored: center.is_some(),
+                    side_authored: side.is_some(),
+                    center_image: center.clone(),
+                    side_image: side.clone(),
+                    center_material: center,
+                    side_material: side,
+                    center_size: weapon.def_i32(d::RETICLE_CENTER_SIZE),
+                    side_size: weapon.def_i32(d::RETICLE_SIDE_SIZE),
+                    ..Default::default()
+                }
+            },
             hud_material_edges: WeaponHudMaterialEdges::default(),
             reticle_center_slot: None,
             reticle_side_slot: None,
@@ -66,7 +85,9 @@ impl WeaponCatalog {
             dpad_icon_image: None,
             dpad_icon_atlas: None,
             dpad_icon_ratio: 0,
-            kill_icon: None,
+            kill_icon: weapon
+                .def_loaded_asset_name(fastfile_t6::weapon::def::KILL_ICON)
+                .map(t6_model_name),
             kill_icon_slot: None,
             kill_icon_image: None,
             proj_trail: None,
@@ -327,6 +348,8 @@ pub(super) fn capture_t6_body_facts(w: fastfile_t6::weapon::WeaponView<'_>) -> W
         ads_overlay_width: w.def_f32(d::OVERLAY_WIDTH),
         ads_overlay_height: w.def_f32(d::OVERLAY_HEIGHT),
         hip_reticle_side_pos: w.def_f32(d::HIP_RETICLE_SIDE_POS),
+        i_reticle_min_ofs: w.def_i32(d::RETICLE_MIN_OFS),
+        i_reticle_side_size: w.def_i32(d::RETICLE_SIDE_SIZE),
         no_ads_when_mag_empty: w.def_bool(d::NO_ADS_WHEN_MAG_EMPTY),
         aim_down_sight: w.def_bool(d::AIM_DOWN_SIGHT),
         rechamber_while_ads: w.def_bool(d::RECHAMBER_WHILE_ADS),
@@ -425,7 +448,11 @@ pub(super) fn capture_t6_attachment_stats(
         reload_time_scales: std::array::from_fn(|i| scale(at::RELOAD_TIME_SCALES + 4 * i as u32)),
         ads_in_time_scale: scale(at::ADS_TRANS_IN_TIME_SCALE),
         ads_out_time_scale: scale(at::ADS_TRANS_OUT_TIME_SCALE),
-        ads_zoom_fov: set(at::ADS_ZOOM_FOV).filter(|fov| *fov > 1.0),
+        ads_zoom_fovs: [at::ADS_ZOOM_FOV, at::ADS_ZOOM_FOV2, at::ADS_ZOOM_FOV3]
+            .map(|off| set(off).filter(|fov| fov.is_finite() && *fov > 1.0 && *fov < 180.0)),
+        variable_zoom: a
+            .name()
+            .is_some_and(|name| name.split('_').any(|part| part == "vzoom")),
         ads_zoom_in_frac: set(at::ADS_ZOOM_IN_FRAC),
         ads_zoom_out_frac: set(at::ADS_ZOOM_OUT_FRAC),
         damage_range_scale: scale(at::DAMAGE_RANGE_SCALE),
@@ -455,8 +482,13 @@ pub(super) fn apply_t6_attachment_stats(facts: &mut WeaponBodyFacts, stats: &T6A
     facts.reload_end_time_ms = ms(facts.reload_end_time_ms, reload);
     facts.ads_in_rate /= stats.ads_in_time_scale;
     facts.ads_out_rate /= stats.ads_out_time_scale;
-    if let Some(fov) = stats.ads_zoom_fov {
+    if stats.variable_zoom {
+        let [high, middle, low] = stats.ads_zoom_fovs.map(|fov| fov.unwrap_or(0.0));
+        facts.scope_zoom = weapon_iw4::ScopeZoom::from_fovs([low, middle, high]);
+        facts.ads_zoom_fov = facts.scope_zoom.fov(0).unwrap_or(facts.ads_zoom_fov);
+    } else if let Some(fov) = stats.ads_zoom_fovs[0] {
         facts.ads_zoom_fov = fov;
+        facts.scope_zoom = weapon_iw4::ScopeZoom::default();
     }
     if let Some(frac) = stats.ads_zoom_in_frac {
         facts.ads_zoom_in_frac = frac;

@@ -205,8 +205,9 @@ impl AssetLinkSink for SoundCatalog {
                 let Some(name) = self.last_loaded_name.clone() else {
                     return Ok(());
                 };
+                self.loaded_by_ptr.insert(file_key(slot), name.clone());
                 if let Some(ins) = insert_slot {
-                    self.loaded_by_insert.insert(file_key(ins), name);
+                    self.loaded_by_ptr.insert(file_key(ins), name);
                 }
             }
             AssetType::SoundCurve => {
@@ -224,10 +225,18 @@ impl AssetLinkSink for SoundCatalog {
     }
 
     fn alias(&mut self, ty: AssetType, slot: Ptr, target: Ptr) -> Result<()> {
-        if ty == AssetType::SoundCurve
-            && let Some(name) = self.curve_by_ptr.get(&file_key(target)).cloned()
-        {
-            self.curve_by_ptr.insert(file_key(slot), name);
+        match ty {
+            AssetType::LoadedSound => {
+                if let Some(name) = self.loaded_by_ptr.get(&file_key(target)).cloned() {
+                    self.loaded_by_ptr.insert(file_key(slot), name);
+                }
+            }
+            AssetType::SoundCurve => {
+                if let Some(name) = self.curve_by_ptr.get(&file_key(target)).cloned() {
+                    self.curve_by_ptr.insert(file_key(slot), name);
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

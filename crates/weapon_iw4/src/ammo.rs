@@ -260,6 +260,37 @@ pub fn set_weapon_model_for_held(
     }
 }
 
+pub fn weapon_rechamber_pending(
+    weapons: &[i32; 15],
+    weapon_data: &[u8],
+    weapon: u32,
+    hand: usize,
+) -> bool {
+    let slot = player_weapons_find_slot(weapons, weapon as i32);
+    if slot < 0 || hand > 1 {
+        return false;
+    }
+    weapon_data
+        .get(slot as usize * 5 + 3 + hand)
+        .is_some_and(|&byte| byte != 0)
+}
+
+pub fn set_weapon_rechamber_pending(
+    weapons: &[i32; 15],
+    weapon_data: &mut [u8],
+    weapon: u32,
+    hand: usize,
+    pending: bool,
+) {
+    let slot = player_weapons_find_slot(weapons, weapon as i32);
+    if slot < 0 || hand > 1 {
+        return;
+    }
+    if let Some(byte) = weapon_data.get_mut(slot as usize * 5 + 3 + hand) {
+        *byte = u8::from(pending);
+    }
+}
+
 pub fn num_hands(dual_wield_byte: u8) -> i32 {
     if dual_wield_byte != 0 { 1 } else { 0 }
 }

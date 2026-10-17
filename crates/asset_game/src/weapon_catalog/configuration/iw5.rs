@@ -37,7 +37,7 @@ impl WeaponConfigurationCompiler for Iw5Configuration<'_> {
                     selection.attachments.join(" ")
                 ))
             })?;
-        self.0.configuration_admission(id)?;
+        self.0.native_configuration_admission(id)?;
         Ok(id)
     }
 }

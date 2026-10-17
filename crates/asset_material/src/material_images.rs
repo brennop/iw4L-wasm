@@ -765,98 +765,46 @@ pub struct ZoneUiImage {
     pub state: Option<render_material::CompiledPassState>,
 }
 
-static ZONE_UI_IMAGES: RwLock<Vec<(ZoneUiKey, ZoneUiImage)>> = RwLock::new(Vec::new());
-
-type ZoneUiKey = (asset_core::AssetNamespace, String);
-
-pub fn store_zone_ui_images(
-    namespace: asset_core::AssetNamespace,
-    images: impl IntoIterator<Item = (String, ZoneUiImage)>,
-) {
-    let mut store = ZONE_UI_IMAGES
-        .write()
-        .unwrap_or_else(|poison| poison.into_inner());
-    store.retain(|((ns, _), _)| *ns != namespace);
-    store.extend(
-        images
-            .into_iter()
-            .map(|(name, image)| ((namespace, name.to_ascii_lowercase()), image)),
-    );
-}
-
-fn zone_ui_iwi(namespace: asset_core::AssetNamespace, material: &str) -> Option<Arc<[u8]>> {
-    let name = crate::AssetRef::bare_name(material).to_ascii_lowercase();
-    ZONE_UI_IMAGES
-        .read()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .iter()
-        .find(|((ns, stored), _)| *ns == namespace && *stored == name)
-        .map(|(_, image)| Arc::clone(&image.iwi))
-}
-
-pub fn zone_ui_material_state(
-    namespace: asset_core::AssetNamespace,
-    material: &str,
-) -> Option<render_material::CompiledPassState> {
-    let name = crate::AssetRef::bare_name(material).to_ascii_lowercase();
-    ZONE_UI_IMAGES
-        .read()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .iter()
-        .find(|((ns, stored), _)| *ns == namespace && *stored == name)
-        .and_then(|(_, image)| image.state)
-}
-
-pub fn has_zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> bool {
-    zone_ui_iwi(namespace, material).is_some()
-}
-
-pub fn zone_ui_image(namespace: asset_core::AssetNamespace, material: &str) -> Option<ZoneUiRgba> {
-    let iwi = zone_ui_iwi(namespace, material)?;
-    match decode_iwi_rgba(&iwi) {
-        Ok((width, height, rgba)) => Some((width, height, Arc::new(rgba))),
-        Err(error) => {
-            diag::warn!(Zone, "zone UI image {material}: {error}");
-            None
-        }
-    }
-}
-
 pub fn decode_iwi_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     expand_top_level(decode_iwi_mips(bytes))
 }
 
 pub fn decode_ui_image(
+    publication: &crate::UiImagePublication,
+    _games_root: &Path,
+    image_name: &str,
+) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
+    let key = asset_core::AssetKey::parse(image_name).map_err(|e| e.to_string())?;
+    if key.kind != asset_core::AssetKind::Material {
+        return Err("UI image key must name a material".into());
+    }
+    if publication.has_zone_image(key.namespace, &key.name) {
+        return Ok(publication
+            .zone_image(key.namespace, &key.name)
+            .map(|(width, height, rgba)| (width, height, rgba.as_ref().clone())));
+    }
+    let Some(index) = publication.archive(key.namespace) else {
+        return Ok(None);
+    };
+    let index = IwdIndex::from_owned(index.clone());
+    let mapped = publication.material_image(key.namespace, &key.name);
+    let fallback = publication.preview_fallback(key.namespace, &key.name);
+    for candidate in mapped
+        .into_iter()
+        .chain(std::iter::once(key.name.as_str()))
+        .chain(fallback)
+    {
+        if let Some(image) = index.decode(candidate) {
+            return expand_top_level(image).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+pub fn decode_ui_archive_image(
     games_root: &Path,
     image_name: &str,
 ) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
-    if image_name.contains(':') {
-        let key = asset_core::AssetKey::parse(image_name).map_err(|e| e.to_string())?;
-        if key.kind != asset_core::AssetKind::Material {
-            return Err("UI image key must name a material".into());
-        }
-        if let Some((width, height, rgba)) = zone_ui_image(key.namespace, &key.name) {
-            return Ok(Some((width, height, rgba.as_ref().clone())));
-        }
-        let trees = asset_transport::NamespaceTrees::discover(&asset_transport::GamesRoot(
-            games_root.to_owned(),
-        ));
-        let Some(main) = trees.main_for(key.namespace) else {
-            return Ok(None);
-        };
-        if let Some(image) = crate::ui_material_image(key.namespace, &key.name)
-            && let Some(decoded) = decode_ui_image_from_main(main, &image)?
-        {
-            return Ok(Some(decoded));
-        }
-        if let Some(decoded) = decode_ui_image_from_main(main, &key.name)? {
-            return Ok(Some(decoded));
-        }
-        if let Some(image) = crate::ui_preview_fallback(key.namespace, &key.name) {
-            return decode_ui_image_from_main(main, &image);
-        }
-        return Ok(None);
-    }
     let name = crate::AssetRef::bare_name(image_name);
     for main in ui_decode_mains(games_root) {
         match decode_ui_image_from_main(&main, name)? {
@@ -911,24 +859,29 @@ fn ui_decode_mains(games_root: &Path) -> Vec<PathBuf> {
 }
 
 pub fn decode_map_preview(
+    publication: &crate::UiImagePublication,
     zone_ff: &Path,
     map_name: &str,
 ) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
     if asset_transport::zone_game_for_path(zone_ff) == Some(asset_core::ZoneGame::T6) {
-        return Ok(zone_ui_image(
-            asset_core::AssetNamespace::T6,
-            &format!("loadscreen_{map_name}"),
-        )
-        .or_else(|| {
-            zone_ui_image(
+        return Ok(publication
+            .zone_image(
                 asset_core::AssetNamespace::T6,
-                &format!("menu_{map_name}_map_select_final"),
+                &format!("loadscreen_{map_name}"),
             )
-        })
-        .map(|(width, height, rgba)| (width, height, rgba.as_ref().clone())));
+            .or_else(|| {
+                publication.zone_image(
+                    asset_core::AssetNamespace::T6,
+                    &format!("menu_{map_name}_map_select_final"),
+                )
+            })
+            .map(|(width, height, rgba)| (width, height, rgba.as_ref().clone())));
     }
     let main = game_main_for_zone(zone_ff)?;
-    let index = IwdIndex::open(&main)?;
+    let Some(index) = publication.archive_at(&main) else {
+        return Ok(None);
+    };
+    let index = IwdIndex::from_owned(index.clone());
     for stem in [
         format!("loadscreen_{map_name}"),
         format!("preview_{map_name}"),

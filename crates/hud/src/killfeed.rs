@@ -133,29 +133,32 @@ fn pick_kill_icon(
         };
     }
     let weapon = payload.event_parm as u32;
-    let (ratio, flip) =
-        match weapons.and_then(|reg| reg.row(weapon).and_then(|weapon| weapon.hud_facts())) {
-            Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
-            None => (0, false),
-        };
-    let (stem, namespace) = if let Some(reg) = weapons {
-        let ns = reg
-            .registry()
-            .component_namespace_of(weapon, asset_game::WeaponComponent::Material)
-            .unwrap_or(chrome);
-        if let Some(image) = reg.registry().kill_icon_image_of(weapon) {
-            (image.to_owned(), ns)
-        } else if let Some(name) = reg.registry().kill_icon_of(weapon) {
-            (name.to_owned(), ns)
-        } else {
-            (KILLICON_DIED.to_owned(), chrome)
-        }
-    } else {
-        (KILLICON_DIED.to_owned(), chrome)
+    let fallback = KillIconPick {
+        stem: KILLICON_DIED.to_owned(),
+        namespace: chrome,
+        ratio: 0,
+        flip: false,
+    };
+    let Some(reg) = weapons else {
+        return fallback;
+    };
+    let Some(stem) = reg
+        .registry()
+        .kill_icon_image_of(weapon)
+        .or_else(|| reg.registry().kill_icon_of(weapon))
+    else {
+        return fallback;
+    };
+    let (ratio, flip) = match reg.row(weapon).and_then(|weapon| weapon.hud_facts()) {
+        Some(facts) => (facts.kill_icon_ratio, facts.flip_kill_icon),
+        None => (0, false),
     };
     KillIconPick {
-        stem,
-        namespace,
+        stem: stem.to_owned(),
+        namespace: reg
+            .registry()
+            .component_namespace_of(weapon, asset_game::WeaponComponent::Material)
+            .unwrap_or(chrome),
         ratio,
         flip,
     }

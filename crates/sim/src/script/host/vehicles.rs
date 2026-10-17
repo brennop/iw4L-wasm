@@ -268,8 +268,10 @@ fn spawn_vehicle(
         None
     };
     let presence = super::presence::spawn_presence(world, origin)?;
+    let birthtime = super::players::now_ms(world) as i32;
     let mut runtime = world.resource_mut::<Runtime>();
     let id = runtime.create_entity(EntityKind::Vehicle, classname)?;
+    runtime.set_object_field(id, "birthtime", Value::Int(birthtime));
     runtime.set_object_field(id, "origin", Value::Vector(origin));
     runtime.set_object_field(id, "angles", Value::Vector(angles));
     runtime.set_object_field(id, "model", Value::string(model));

@@ -11,8 +11,9 @@ use crate::present::{
     FxElemInfoCache, FxScene, play_named_bolted_in_world, play_named_oriented_in_world,
 };
 use crate::{
-    CombatFxDump, FxJournalCursor, HostFxSystem, PreparedFxCatalog, PreparedImpactFx,
-    PreparedTracers, TracerDrawGate, TracerSpawnSkip, TracerWorld, try_spawn_tracer,
+    CombatFxDump, FireFxOccurrence, FireFxOutcome, FireFxRequest, FireFxResult, FxJournalCursor,
+    HostFxSystem, PreparedFxCatalog, PreparedImpactFx, PreparedTracers, PresentedFireFx,
+    TracerDrawGate, TracerSpawnSkip, TracerWorld, try_spawn_tracer,
 };
 
 pub const IDENTITY_AXIS: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -40,6 +41,32 @@ pub fn try_play_weapon_fx_at_origin(
     }
 }
 
+pub fn present_weapon_fx_bolted(
+    host: &mut FxSystemHost,
+    catalog: &asset_game::FxDefinitions,
+    cache: &mut FxElemInfoCache,
+    name: Option<asset_game::FxName<'_>>,
+    target: Option<fx::FxBoltTarget>,
+    played: &mut u32,
+    scene: Option<&dyn FxScene>,
+) -> FireFxOutcome {
+    let Some(name) = name else {
+        return FireFxOutcome::DependencyRefused("weapon_fx_definition");
+    };
+    let Some(target) = target else {
+        return FireFxOutcome::DependencyRefused("weapon_fx_bolt");
+    };
+    cache.sync(catalog);
+    match play_named_bolted_in_world(host, catalog, cache, name, target, scene) {
+        Some(PlayResult::PlayedReleased { .. } | PlayResult::Held { .. }) => {
+            *played = played.saturating_add(1);
+            FireFxOutcome::Created(1)
+        }
+        Some(PlayResult::Failed(reason)) => FireFxOutcome::RetryableFailure(reason),
+        None => FireFxOutcome::DependencyRefused("weapon_fx_catalog"),
+    }
+}
+
 pub fn try_play_weapon_fx_bolted(
     host: &mut FxSystemHost,
     catalog: &asset_game::FxDefinitions,
@@ -49,17 +76,10 @@ pub fn try_play_weapon_fx_bolted(
     played: &mut u32,
     scene: Option<&dyn FxScene>,
 ) -> bool {
-    let (Some(name), Some(target)) = (name, target) else {
-        return false;
-    };
-    cache.sync(catalog);
-    match play_named_bolted_in_world(host, catalog, cache, name, target, scene) {
-        Some(PlayResult::PlayedReleased { .. } | PlayResult::Held { .. }) => {
-            *played = played.saturating_add(1);
-            true
-        }
-        Some(PlayResult::Failed(_)) | None => false,
-    }
+    matches!(
+        present_weapon_fx_bolted(host, catalog, cache, name, target, played, scene),
+        FireFxOutcome::Created(_)
+    )
 }
 
 pub fn play_shell_eject(
@@ -73,7 +93,7 @@ pub fn play_shell_eject(
     cursor: &mut FxJournalCursor,
     combat: &mut CombatFxDump,
     scene: Option<&dyn FxScene>,
-) {
+) -> FireFxOutcome {
     combat.last_brass_lastshot = Some(i64::from(
         last_shot && combat_fx.is_some_and(|fx| fx.last_shot_eject_pair_authored()),
     ));
@@ -86,7 +106,7 @@ pub fn play_shell_eject(
     if let Some(name) = name {
         combat.last_brass_name = Some(name.name.to_owned());
     }
-    if !try_play_weapon_fx_bolted(
+    let outcome = present_weapon_fx_bolted(
         host,
         catalog,
         cache,
@@ -94,9 +114,11 @@ pub fn play_shell_eject(
         target,
         &mut cursor.brass_played,
         scene,
-    ) {
+    );
+    if !matches!(outcome, FireFxOutcome::Created(_)) {
         cursor.brass_gap = cursor.brass_gap.saturating_add(1);
     }
+    outcome
 }
 
 pub fn missile_bolt_target(
@@ -150,8 +172,23 @@ pub fn explosion_fx_names<'a>(
     ExplosionFxNames { table, slot, row }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PelletFxReport {
+    pub tracer: FireFxOutcome,
+    pub impact: FireFxOutcome,
+    pub glass: FireFxOutcome,
+    pub marks: FireFxOutcome,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn play_pellet_segment(
+pub fn present_pellet_segment(
+    generation: frame::WorldGeneration,
+    timeline: u64,
+    request: FireFxRequest,
+    segment: u16,
+    target: Option<u16>,
+    occurrences: &mut PresentedFireFx,
+    verdicts: &net::FireVerdictState,
     attacker_entity_num: i32,
     weapon: u32,
     correlation: u32,
@@ -178,108 +215,179 @@ pub fn play_pellet_segment(
     cursor: &mut FxJournalCursor,
     combat: &mut CombatFxDump,
     scene: Option<&dyn FxScene>,
-) {
-    host.0.glass.hit_segment(
-        seg_start,
-        seg_end,
-        (u64::from(correlation) << 32)
-            ^ (u64::from(attacker_entity_num as u32) << 16)
-            ^ u64::from(pellet),
-    );
-    combat.last_surf = Some(i64::from(surf_type));
-    combat.last_surf_flags = Some(i64::from(surface_flags));
-    combat.last_surf_name = SURFACE_TYPE_NAMES
-        .get(surf_type as usize)
-        .map(|name| (*name).to_owned());
-    let tracer_edge = weapons
-        .and_then(|weapons| weapons.registry().combat_fx_of(weapon))
-        .map(|fx| fx.tracer)
-        .unwrap_or(assets::AssetEdge::Absent);
-    let own_shot = attacker_entity_num == local_number;
-    let source_id = attacker_entity_num.max(0) as u32;
-
-    let tag_start = gate
-        .first_segment_of_pellet(source_id, correlation, pellet)
-        .then(|| {
-            if own_shot {
-                fpv_bolts.flash[usize::from(hand).min(fpv_bolts.flash.len() - 1)]
-            } else {
-                u16::try_from(attacker_entity_num)
-                    .ok()
-                    .and_then(|number| slots.entity_for_number(number))
-                    .and_then(|entity| world_bolts.get(entity).ok())
-                    .and_then(|bolts| bolts.flash)
-            }
-        })
-        .flatten()
-        .map(|target| target.orientation.origin);
-    let start = tag_start.unwrap_or(seg_start);
-    match tracers.map(|t| {
-        try_spawn_tracer(
-            gate,
-            tracer_world,
-            &t.0,
-            tracer_edge,
-            source_id,
-            correlation,
-            pellet,
-            start,
-            seg_end,
-            own_shot,
-            FxMsec::from_host(&host.0),
-            combat,
-        )
-    }) {
-        None | Some(Err(TracerSpawnSkip::NoDef)) => {
-            cursor.tracer_gap = cursor.tracer_gap.saturating_add(1);
-            cursor.tracer_skip_no_def = cursor.tracer_skip_no_def.saturating_add(1);
-        }
-        Some(Err(TracerSpawnSkip::Interval)) => {
-            cursor.tracer_gap = cursor.tracer_gap.saturating_add(1);
-            cursor.tracer_skip_interval = cursor.tracer_skip_interval.saturating_add(1);
-        }
-        Some(Err(TracerSpawnSkip::Short)) => {
-            cursor.tracer_gap = cursor.tracer_gap.saturating_add(1);
-            cursor.tracer_skip_short = cursor.tracer_skip_short.saturating_add(1);
-        }
-        Some(Ok(())) => {
-            combat.tracer_spawned = combat.tracer_spawned.saturating_add(1);
-            if tag_start.is_some() {
-                cursor.tracer_from_tag = cursor.tracer_from_tag.saturating_add(1);
-            }
-        }
-    }
-    if normal == [0.0, 0.0, 0.0] {
-        sync_combat_dump(cursor, combat);
-        return;
-    }
-    let Some(impact_type) = weapons
-        .and_then(|w| w.row(weapon).and_then(|weapon| weapon.event_facts()))
-        .map(|f| f.impact_type)
-    else {
-        cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);
-        combat.last_impact_miss_why = Some("no_weapon".into());
-        sync_combat_dump(cursor, combat);
-        return;
-    };
-    play_impact_table_cell(
-        impact_type,
-        seg_end,
+) -> PelletFxReport {
+    let result = FireFxResult {
+        start: seg_start,
+        end: seg_end,
         normal,
-        surf_type,
-        surface_flags,
-        flesh_flags,
-        catalog,
-        impact_fx,
-        elem_infos,
-        host,
-        cursor,
-        combat,
-        scene,
-    );
+        surface: surf_type,
+        flags: surface_flags,
+        target,
+        flesh: flesh_flags,
+    };
+    let mut request = FireFxRequest {
+        result: Some(result),
+        ..request
+    };
+    request.occurrence = FireFxOccurrence::Glass { pellet, segment };
+    let glass = occurrences.execute(generation, timeline, request, verdicts, || {
+        if request.domain == net::EntityEventDomain::Predicted {
+            return FireFxOutcome::DeferredUntilAuthority;
+        }
+        FireFxOutcome::Applied(host.0.glass.hit_segment(
+            seg_start,
+            seg_end,
+            (u64::from(correlation) << 32)
+                ^ (u64::from(attacker_entity_num as u32) << 16)
+                ^ u64::from(pellet),
+        ) as u32)
+    });
+    request.occurrence = FireFxOccurrence::Tracer { pellet, segment };
+    let tracer = occurrences.execute(generation, timeline, request, verdicts, || {
+        gate.adopt_scope(generation, timeline);
+        combat.last_surf = Some(i64::from(surf_type));
+        combat.last_surf_flags = Some(i64::from(surface_flags));
+        combat.last_surf_name = SURFACE_TYPE_NAMES
+            .get(surf_type as usize)
+            .map(|name| (*name).to_owned());
+        let tracer_edge = weapons
+            .and_then(|weapons| weapons.registry().combat_fx_of(weapon))
+            .map(|fx| fx.tracer)
+            .unwrap_or(assets::AssetEdge::Absent);
+        let own_shot = attacker_entity_num == local_number;
+        let source_id = attacker_entity_num.max(0) as u32;
+
+        let tag_start = gate
+            .first_segment_of_pellet(
+                request.cause,
+                source_id,
+                correlation,
+                pellet,
+                segment,
+                request.now,
+            )
+            .then(|| {
+                if own_shot {
+                    fpv_bolts.flash[usize::from(hand).min(fpv_bolts.flash.len() - 1)]
+                } else {
+                    u16::try_from(attacker_entity_num)
+                        .ok()
+                        .and_then(|number| slots.entity_for_number(number))
+                        .and_then(|entity| world_bolts.get(entity).ok())
+                        .and_then(|bolts| bolts.flash)
+                }
+            })
+            .flatten()
+            .map(|target| target.orientation.origin);
+        let start = tag_start.unwrap_or(seg_start);
+        match tracers.map(|t| {
+            try_spawn_tracer(
+                gate,
+                tracer_world,
+                &t.0,
+                tracer_edge,
+                request.cause,
+                source_id,
+                correlation,
+                pellet,
+                start,
+                seg_end,
+                own_shot,
+                FxMsec::from_host(&host.0),
+                combat,
+            )
+        }) {
+            None | Some(Err(TracerSpawnSkip::NoDef)) => {
+                cursor.tracer_gap = cursor.tracer_gap.saturating_add(1);
+                cursor.tracer_skip_no_def = cursor.tracer_skip_no_def.saturating_add(1);
+                FireFxOutcome::DependencyRefused("tracer_definition")
+            }
+            Some(Err(TracerSpawnSkip::Interval)) => {
+                cursor.tracer_gap = cursor.tracer_gap.saturating_add(1);
+                cursor.tracer_skip_interval = cursor.tracer_skip_interval.saturating_add(1);
+                FireFxOutcome::PolicySkipped("tracer_interval")
+            }
+            Some(Err(TracerSpawnSkip::HistoryCapacity)) => FireFxOutcome::HistoryCapacityRefused,
+            Some(Err(TracerSpawnSkip::Short)) => {
+                cursor.tracer_gap = cursor.tracer_gap.saturating_add(1);
+                cursor.tracer_skip_short = cursor.tracer_skip_short.saturating_add(1);
+                FireFxOutcome::NotApplicable("tracer_short")
+            }
+            Some(Ok(())) => {
+                combat.tracer_spawned = combat.tracer_spawned.saturating_add(1);
+                if tag_start.is_some() {
+                    cursor.tracer_from_tag = cursor.tracer_from_tag.saturating_add(1);
+                }
+                FireFxOutcome::Created(1)
+            }
+        }
+    });
+    let mut play_impact = |products| {
+        if normal == [0.0, 0.0, 0.0] {
+            sync_combat_dump(cursor, combat);
+            return FireFxOutcome::NotApplicable("no_hit_normal");
+        }
+        let Some(impact_type) = weapons
+            .and_then(|w| w.row(weapon).and_then(|weapon| weapon.event_facts()))
+            .map(|f| f.impact_type)
+        else {
+            cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);
+            combat.last_impact_miss_why = Some("no_weapon".into());
+            sync_combat_dump(cursor, combat);
+            return FireFxOutcome::DependencyRefused("weapon");
+        };
+        let previous_mark_entity = host.0.spawn_mark_entity;
+        let previous_products = host.0.spawn_products;
+        host.0.spawn_products = products;
+        host.0.spawn_mark_entity = target;
+        let outcome = play_impact_table_cell(
+            products,
+            impact_type,
+            seg_end,
+            normal,
+            surf_type,
+            surface_flags,
+            flesh_flags,
+            catalog,
+            impact_fx,
+            elem_infos,
+            host,
+            cursor,
+            combat,
+            scene,
+        );
+        host.0.spawn_mark_entity = previous_mark_entity;
+        host.0.spawn_products = previous_products;
+        outcome
+    };
+    request.occurrence = FireFxOccurrence::Impact { pellet, segment };
+    let impact = occurrences.execute(generation, timeline, request, verdicts, || {
+        play_impact(fx::FxSpawnProducts::Transient)
+    });
+    request.occurrence = FireFxOccurrence::Marks { pellet, segment };
+    let marks = occurrences.execute(generation, timeline, request, verdicts, || {
+        if request.domain == net::EntityEventDomain::Predicted {
+            return FireFxOutcome::DeferredUntilAuthority;
+        }
+        play_impact(fx::FxSpawnProducts::Marks)
+    });
+    if [tracer, impact]
+        .iter()
+        .any(|outcome| matches!(outcome, FireFxOutcome::Created(_)))
+    {
+        cursor.pellet_played = cursor.pellet_played.saturating_add(1);
+    }
+    sync_combat_dump(cursor, combat);
+    PelletFxReport {
+        tracer,
+        impact,
+        glass,
+        marks,
+    }
 }
 
 pub fn play_impact_table_cell(
+    products: fx::FxSpawnProducts,
     impact_type: i32,
     origin: [f32; 3],
     normal: [f32; 3],
@@ -293,107 +401,137 @@ pub fn play_impact_table_cell(
     cursor: &mut FxJournalCursor,
     combat: &mut CombatFxDump,
     scene: Option<&dyn FxScene>,
-) {
-    combat.last_surf = Some(i64::from(surf_type));
-    combat.last_surf_name = SURFACE_TYPE_NAMES
-        .get(surf_type as usize)
-        .map(|name| (*name).to_owned());
-    let exit = surface_flags & FX_IMPACT_EXIT_SURFACE_FLAG != 0;
-    let table = impact_fx.and_then(|fx| fx.0.as_ref());
-    let Some(row) = table.map_or_else(
-        || impact_table_row(impact_type, exit),
-        |table| table.impact_row(impact_type, exit),
-    ) else {
-        cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);
-        combat.last_impact_miss_why = Some("no_row".into());
-        sync_combat_dump(cursor, combat);
-        return;
-    };
-    combat.last_row = Some(row as i64);
-    let surf = surf_type as usize;
-    let flesh_slot = (surf == FX_SURF_TYPE_FLESH).then(|| flesh_effect_index(flesh_flags));
-    combat.last_impact_cell_empty = table.and_then(|t| {
-        let entry = t.entries.get(row)?;
-        if let Some(slot) = flesh_slot {
-            return Some(i64::from(
-                entry.flesh.get(slot).is_none_or(|name| name.is_empty()),
-            ));
-        }
-        if surf >= fx_iw4::FX_IMPACT_NONFLESH_COUNT {
-            return Some(0);
-        }
-        Some(i64::from(entry.nonflesh[surf].is_empty()))
-    });
-    let Some(def_name) = table.and_then(|t| t.effect_name(row, surf, flesh_slot)) else {
-        cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
-        combat.last_impact_miss_why = Some(
-            if table.is_none() {
-                "no_table"
-            } else if combat.last_impact_cell_empty == Some(1) {
-                "empty_cell"
+) -> FireFxOutcome {
+    let previous_products = host.0.spawn_products;
+    host.0.spawn_products = products;
+    let outcome = (|| {
+        combat.last_surf = Some(i64::from(surf_type));
+        combat.last_surf_name = SURFACE_TYPE_NAMES
+            .get(surf_type as usize)
+            .map(|name| (*name).to_owned());
+        let exit = surface_flags & FX_IMPACT_EXIT_SURFACE_FLAG != 0;
+        let table = impact_fx.and_then(|fx| fx.0.as_ref());
+        let Some(row) = table.map_or_else(
+            || impact_table_row(impact_type, exit),
+            |table| table.impact_row(impact_type, exit),
+        ) else {
+            cursor.impact_miss_table = cursor.impact_miss_table.saturating_add(1);
+            combat.last_impact_miss_why = Some("no_row".into());
+            sync_combat_dump(cursor, combat);
+            return FireFxOutcome::DependencyRefused("impact_row");
+        };
+        combat.last_row = Some(row as i64);
+        let surf = surf_type as usize;
+        let flesh_slot = (surf == FX_SURF_TYPE_FLESH).then(|| flesh_effect_index(flesh_flags));
+        combat.last_impact_cell_empty = table.and_then(|t| {
+            let entry = t.entries.get(row)?;
+            if let Some(slot) = flesh_slot {
+                return Some(i64::from(
+                    entry.flesh.get(slot).is_none_or(|name| name.is_empty()),
+                ));
+            }
+            if surf >= fx_iw4::FX_IMPACT_NONFLESH_COUNT {
+                return Some(0);
+            }
+            Some(i64::from(entry.nonflesh[surf].is_empty()))
+        });
+        let Some(def_name) = table.and_then(|t| t.effect_name(row, surf, flesh_slot)) else {
+            cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
+            combat.last_impact_miss_why = Some(
+                if table.is_none() {
+                    "no_table"
+                } else if combat.last_impact_cell_empty == Some(1) {
+                    "empty_cell"
+                } else {
+                    "cell_miss"
+                }
+                .into(),
+            );
+            if !cursor.impact_miss_def_warned {
+                cursor.impact_miss_def_warned = true;
+                diag::warn!(
+                    World,
+                    "fx: BulletImpact row={row} surf={surf} — no ImpactFx cell name; play_oriented skipped (further misses counted)"
+                );
+            }
+            sync_combat_dump(cursor, combat);
+            return if table.is_some() && combat.last_impact_cell_empty == Some(1) {
+                FireFxOutcome::NotApplicable("empty_impact_cell")
             } else {
-                "cell_miss"
-            }
-            .into(),
-        );
-        if !cursor.impact_miss_def_warned {
-            cursor.impact_miss_def_warned = true;
-            diag::warn!(
-                World,
-                "fx: BulletImpact row={row} surf={surf} — no ImpactFx cell name; play_oriented skipped (further misses counted)"
-            );
+                FireFxOutcome::DependencyRefused("impact_table_cell")
+            };
+        };
+        combat.last_impact_def = Some(def_name.name.to_owned());
+        combat.last_impact_miss_why = None;
+        let Some(catalog) = catalog else {
+            combat.last_impact_miss_why = Some("no_catalog".into());
+            return FireFxOutcome::DependencyRefused("fx_catalog");
+        };
+        if products == fx::FxSpawnProducts::Marks
+            && def_name
+                .resolve(&catalog.0)
+                .is_some_and(|effect| !catalog.0.can_emit_marks(effect))
+        {
+            return FireFxOutcome::NotApplicable("no_mark_product");
         }
-        sync_combat_dump(cursor, combat);
-        return;
-    };
-    combat.last_impact_def = Some(def_name.name.to_owned());
-    combat.last_impact_miss_why = None;
-    let Some(catalog) = catalog else {
-        return;
-    };
-    cache.sync(&catalog.0);
-    let Some(result) = play_named_oriented_in_world(
-        &mut host.0,
-        &catalog.0,
-        cache,
-        def_name,
-        origin,
-        axis_from_hit_normal(normal),
-        scene,
-    ) else {
-        cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
-        combat.last_impact_miss_why = Some("catalog".into());
-        if !cursor.impact_miss_def_warned {
-            cursor.impact_miss_def_warned = true;
-            diag::warn!(
-                World,
-                "fx: BulletImpact cell `{def_name}` not in FxCatalog — play_oriented skipped"
-            );
-        }
-        sync_combat_dump(cursor, combat);
-        return;
-    };
-    if matches!(
-        result,
-        PlayResult::PlayedReleased { .. } | PlayResult::Held { .. }
-    ) {
-        cursor.impact_played = cursor.impact_played.saturating_add(1);
-        combat.impact_msec = Some(host.0.msec_now);
-    } else if let PlayResult::Failed(e) = result {
-        cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
-        combat.last_impact_miss_why = Some(
-            match e {
-                SpawnFail::RingFull => "ring_full",
-                SpawnFail::TooManySpotlights => "spotlights",
-                SpawnFail::EffectLimit => "effect_limit",
+        cache.sync(&catalog.0);
+        let Some(result) = play_named_oriented_in_world(
+            &mut host.0,
+            &catalog.0,
+            cache,
+            def_name,
+            origin,
+            axis_from_hit_normal(normal),
+            scene,
+        ) else {
+            cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
+            combat.last_impact_miss_why = Some("catalog".into());
+            if !cursor.impact_miss_def_warned {
+                cursor.impact_miss_def_warned = true;
+                diag::warn!(
+                    World,
+                    "fx: BulletImpact cell `{def_name}` not in FxCatalog — play_oriented skipped"
+                );
             }
-            .into(),
-        );
-        diag::warn!(World, "fx: play_oriented `{def_name}` failed: {e:?}");
-    }
+            sync_combat_dump(cursor, combat);
+            return FireFxOutcome::DependencyRefused("impact_definition");
+        };
+        if matches!(
+            result,
+            PlayResult::PlayedReleased { .. } | PlayResult::Held { .. }
+        ) {
+            if products != fx::FxSpawnProducts::Marks {
+                cursor.impact_played = cursor.impact_played.saturating_add(1);
+                combat.impact_msec = Some(host.0.msec_now);
+            }
+        } else if let PlayResult::Failed(e) = result {
+            cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
+            combat.last_impact_miss_why = Some(
+                match e {
+                    SpawnFail::RingFull => "ring_full",
+                    SpawnFail::TooManySpotlights => "spotlights",
+                    SpawnFail::EffectLimit => "effect_limit",
+                }
+                .into(),
+            );
+            diag::warn!(World, "fx: play_oriented `{def_name}` failed: {e:?}");
+        }
 
-    log_combat_fx_gaps(cursor, combat);
-    sync_combat_dump(cursor, combat);
+        log_combat_fx_gaps(cursor, combat);
+        sync_combat_dump(cursor, combat);
+        match result {
+            PlayResult::PlayedReleased { handle } | PlayResult::Held { handle } => {
+                if products == fx::FxSpawnProducts::Marks {
+                    FireFxOutcome::Scheduled(u32::from(handle))
+                } else {
+                    FireFxOutcome::Created(u32::from(handle))
+                }
+            }
+            PlayResult::Failed(reason) => FireFxOutcome::RetryableFailure(reason),
+        }
+    })();
+    host.0.spawn_products = previous_products;
+    outcome
 }
 
 pub fn log_combat_fx_gaps(cursor: &mut FxJournalCursor, combat: &CombatFxDump) {

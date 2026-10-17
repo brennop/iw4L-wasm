@@ -308,6 +308,7 @@ pub fn sync_camera_from_presented(
             ps.link_flags,
             ps.e_flags,
             0.0,
+            ps.scope_zoom_level,
             viewmodel,
             weapons.as_ref().and_then(|w| {
                 w.snapshot_weapon(presented.weapon_epoch(), viewmodel)
@@ -439,6 +440,7 @@ pub fn sync_camera_from_presented(
         ps.link_flags,
         ps.e_flags,
         ps.f_weapon_pos_frac,
+        ps.scope_zoom_level,
         viewmodel,
         weapons.as_ref().and_then(|w| {
             w.snapshot_weapon(presented.weapon_epoch(), viewmodel)
@@ -459,6 +461,7 @@ fn apply_fpv_lens_fov(
     link_flags: u32,
     e_flags: u32,
     f_weapon_pos_frac: f32,
+    scope_zoom_level: u32,
     viewmodel: u32,
     facts: Option<WeaponFpvFacts>,
     b_position_to_ads: bool,
@@ -471,8 +474,12 @@ fn apply_fpv_lens_fov(
         overlay_reticle: facts.overlay_reticle,
         ..WeaponAdsOverlayFacts::default()
     };
-    let ads_target = if facts.ads_zoom_fov > 0.0 {
-        facts.ads_zoom_fov
+    let ads_target = facts
+        .scope_zoom
+        .fov(scope_zoom_level)
+        .unwrap_or(facts.ads_zoom_fov);
+    let ads_target = if ads_target.is_finite() && ads_target > 0.0 {
+        ads_target
     } else {
         base_fov
     };
@@ -486,7 +493,7 @@ fn apply_fpv_lens_fov(
         ads_zoom_fov: ads_target,
         overlay_zoom: 0.0,
         fov_scale: CG_FOV_SCALE_DEFAULT,
-        fov_min: CG_FOV_MIN_DEFAULT,
+        fov_min: CG_FOV_MIN_DEFAULT.min(ads_target),
     };
     let (horiz, _) = calc_fov_from_ads(&inputs, f_weapon_pos_frac, b_position_to_ads, &overlay);
     let zoom_sensitivity = zoom_sensitivity(horiz);

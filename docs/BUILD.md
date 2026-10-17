@@ -33,7 +33,7 @@ macOS needs only the Xcode command line tools (`xcode-select --install`)
 and rustup: winit, wgpu (Metal), CoreAudio and gilrs link system frameworks,
 and the `x11` / `wayland` features compile to nothing. Menu and
 `make map mp_boneyard` run on Apple silicon (M2 Max, Metal). Pipelined
-rendering is off by default there (`bootstrap/src/plugins.rs` says why).
+rendering is off by default there; `IW4L_PIPELINED_RENDERING=1` turns it on.
 Game data: the Windows depot of a Steam copy, `steamcmd
 +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/MW2 +login
 <user> +app_update 10190 +quit`, then `IW4L_GAMES=~/Games`.

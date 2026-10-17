@@ -1,4 +1,4 @@
-pub const INPUT_COMMAND_NAMES: [&str; 78] = [
+pub const INPUT_COMMAND_NAMES: [&str; 83] = [
     "",
     "+attack",
     "-attack",
@@ -77,6 +77,11 @@ pub const INPUT_COMMAND_NAMES: [&str; 78] = [
     "gocrouch",
     "toggleads",
     "leaveads",
+    "",
+    "+changezoom",
+    "-changezoom",
+    "+melee_zoom",
+    "-melee_zoom",
 ];
 
 pub const HOLD_PAIR_LIMIT: u32 = 0x41;
@@ -127,7 +132,7 @@ pub fn command_name(id: u32) -> Option<&'static str> {
 pub fn key_up_command_id(binding: u32) -> Option<u32> {
     if binding == 0 {
         None
-    } else if binding < HOLD_PAIR_LIMIT && binding % 2 == 1 {
+    } else if (binding < HOLD_PAIR_LIMIT && binding % 2 == 1) || matches!(binding, 79 | 81) {
         Some(binding + 1)
     } else {
         None

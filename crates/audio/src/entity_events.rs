@@ -65,6 +65,7 @@ fn selected_alias<'a>(
             (WeaponSoundSlot::Pullback, WeaponSoundSlot::PullbackPlayer)
         }
         EntityEventKind::USE_OFFHAND => (WeaponSoundSlot::Fire, WeaponSoundSlot::FirePlayer),
+        EntityEventKind::DETONATE => (WeaponSoundSlot::Detonate, WeaponSoundSlot::DetonatePlayer),
         EntityEventKind::RECHAMBER_WEAPON => {
             (WeaponSoundSlot::Rechamber, WeaponSoundSlot::RechamberPlayer)
         }
@@ -154,6 +155,7 @@ fn entity_event_sound(
             | EntityEventKind::PULLBACK_WEAPON
             | EntityEventKind::PREP_OFFHAND
             | EntityEventKind::USE_OFFHAND
+            | EntityEventKind::DETONATE
             | EntityEventKind::RECHAMBER_WEAPON
             | EntityEventKind::MELEE_SWIPE
             | EntityEventKind::MELEE_HIT
@@ -166,6 +168,14 @@ fn entity_event_sound(
         );
         return;
     }
+    let weapon = if event == EntityEventKind::DETONATE {
+        let Ok(weapon) = u32::try_from(sound.event.payload.event_parm) else {
+            return;
+        };
+        weapon
+    } else {
+        sound.event.payload.weapon
+    };
     let Some(weapons) = weapons.as_deref() else {
         diag::warn!(
             Audio,
@@ -173,11 +183,7 @@ fn entity_event_sound(
         );
         return;
     };
-    if weapons
-        .registry()
-        .sounds_of(sound.event.payload.weapon)
-        .is_none()
-    {
+    if weapons.registry().sounds_of(weapon).is_none() {
         diag::warn!(
             Audio,
             "audio: entity sound weapon is unavailable (typed gap)"
@@ -190,7 +196,7 @@ fn entity_event_sound(
         && weapons
             .registry()
             .authored_weapon_sound(
-                sound.event.payload.weapon,
+                weapon,
                 if player_view {
                     WeaponSoundSlot::FirePlayer
                 } else {
@@ -205,7 +211,7 @@ fn entity_event_sound(
         selected_alias(
             &weapons.registry(),
             &bank.0,
-            sound.event.payload.weapon,
+            weapon,
             event,
             player_view,
             sound.event.payload.event_parm == 1,
@@ -401,6 +407,46 @@ struct BoundNotetrack {
     rumble_alias: Option<String>,
 }
 
+fn direct_rumble_action(
+    bank: &asset_audio::SoundCatalog,
+    namespace: asset_core::AssetNamespace,
+    note: &str,
+) -> Option<BoundNotetrack> {
+    bank.rawfile_bytes_in(namespace, &format!("rumble/{note}"))?;
+    Some(BoundNotetrack {
+        sound: None,
+        rumble: Some(crate::rumble::Rumble::prepare(bank, namespace, note)),
+        rumble_alias: Some(if namespace == asset_core::AssetNamespace::Iw4 {
+            note.to_owned()
+        } else {
+            format!("{}:{note}", namespace.as_str())
+        }),
+    })
+}
+
+fn bind_direct_rumbles(
+    bank: &asset_audio::SoundCatalog,
+    namespaces: impl IntoIterator<Item = asset_core::AssetNamespace>,
+) -> HashMap<asset_core::AssetNamespace, HashMap<String, BoundNotetrack>> {
+    let mut direct_actions: HashMap<_, HashMap<_, _>> = HashMap::new();
+    for namespace in namespaces {
+        for (name, bytes) in bank.rawfiles_in(namespace) {
+            let Some(note) = name.strip_prefix("rumble/") else {
+                continue;
+            };
+            if bytes.starts_with(b"RUMBLE\\")
+                && let Some(action) = direct_rumble_action(bank, namespace, note)
+            {
+                direct_actions
+                    .entry(namespace)
+                    .or_default()
+                    .insert(note.to_ascii_lowercase(), action);
+            }
+        }
+    }
+    direct_actions
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct NotetrackSoundTable {
     owner: Option<(
@@ -408,6 +454,7 @@ pub(crate) struct NotetrackSoundTable {
         Arc<asset_game::WeaponRegistry>,
     )>,
     actions: HashMap<(u32, String), BoundNotetrack>,
+    direct_actions: HashMap<asset_core::AssetNamespace, HashMap<String, BoundNotetrack>>,
     reported: HashSet<(u32, String)>,
 }
 
@@ -429,12 +476,14 @@ impl NotetrackSoundTable {
         let mut actions = HashMap::new();
         let mut unbound = 0usize;
         let mut rumbles = HashMap::new();
+        let mut namespaces = HashSet::new();
         for weapon in 1..=weapons.len() as u32 {
             let Some(namespace) =
                 weapons.component_namespace_of(weapon, asset_game::WeaponComponent::Sound)
             else {
                 continue;
             };
+            namespaces.insert(namespace);
             for (note, action) in weapons.notetrack_actions_of(weapon) {
                 let sound = action.sound_alias.as_deref().map(|alias| {
                     match weapons
@@ -473,12 +522,13 @@ impl NotetrackSoundTable {
         }
         for ((namespace, alias), rumble) in &rumbles {
             if let Err(error) = rumble {
-                diag::warn!(
+                diag::info!(
                     Audio,
-                    "audio: {namespace:?} rumble `{alias}` refused during binding: {error}"
+                    "audio: notetrack catalog gap: {namespace:?} rumble `{alias}`: {error}"
                 );
             }
         }
+        let direct_actions = bind_direct_rumbles(bank, namespaces);
         diag::info!(
             Audio,
             "audio: viewmodel notetracks bound to the sound bank: actions={} unbound_sounds={unbound} rumbles={} refused_rumbles={}",
@@ -489,6 +539,7 @@ impl NotetrackSoundTable {
         Self {
             owner: Some((Arc::clone(bank), Arc::clone(weapons))),
             actions,
+            direct_actions,
             reported: HashSet::new(),
         }
     }
@@ -592,7 +643,19 @@ fn apply_viewmodel_notetrack(
         return;
     };
     let key = (weapon, note.to_ascii_lowercase());
-    let Some(action) = table.actions.get(&key).cloned() else {
+    let action = table
+        .actions
+        .get(&key)
+        .or_else(|| {
+            let namespace = table
+                .owner
+                .as_ref()?
+                .1
+                .component_namespace_of(weapon, asset_game::WeaponComponent::Sound)?;
+            table.direct_actions.get(&namespace)?.get(key.1.as_str())
+        })
+        .cloned();
+    let Some(action) = action else {
         table.report_once(weapon, note, || {
             format!("audio: notetrack `{note}` has no sound or rumble mapping")
         });

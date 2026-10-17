@@ -109,7 +109,12 @@ fn decode_flac(
         DecodeReservation::reserve(MAX_BLOCK_FRAMES * usize::from(channels) * size_of::<i32>())
             .map_err(DecodeError::Pcm)?;
     let mut decoder = symphonia::default::get_codecs()
-        .make(params, &DecoderOptions { verify: true })
+        .make(
+            params,
+            &DecoderOptions {
+                verify: params.verification_check.is_some(),
+            },
+        )
         .map_err(|_| DecodeError::Decode)?;
     let mut decoded_frames = 0usize;
     loop {

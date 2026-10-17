@@ -13,7 +13,7 @@ pub struct SessionClassStore {
 }
 
 impl SessionClassStore {
-    pub fn from_showcase(seed: u64, registry: &asset_game::WeaponRegistry) -> Self {
+    pub fn from_showcase(seed: u64, registry: &asset_game::EditorWeaponCatalog) -> Self {
         let admission = session::ClassWeaponAdmission::prepare(registry);
         let available = |slot: &HostClassSlot| {
             let row = session::ClassRow::from(slot);

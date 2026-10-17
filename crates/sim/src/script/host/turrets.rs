@@ -115,8 +115,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let weapon =
             crate::script_player::weapon_named(&FrameWorld::from_world(world), &weaponinfo)?;
         let presence = super::presence::spawn_presence(world, origin)?;
+        let birthtime = super::players::now_ms(world) as i32;
         let mut runtime = world.resource_mut::<Runtime>();
         let id = runtime.create_entity(EntityKind::Spawned, &classname)?;
+        runtime.set_object_field(id, "birthtime", Value::Int(birthtime));
         runtime.set_object_field(id, "origin", Value::Vector(origin));
         runtime.set_object_field(id, "angles", Value::Vector([0.0; 3]));
         runtime.set_object_field(id, "weaponinfo", Value::String(weaponinfo.into()));

@@ -18,8 +18,10 @@ mod placement;
 mod player_anim_type;
 mod reload;
 mod response;
+mod scope_zoom;
 mod spread;
 mod sprint;
+pub use scope_zoom::{ScopeZoom, update_scope_zoom};
 mod sway;
 mod tick;
 mod unlocated;
@@ -42,7 +44,8 @@ pub use ammo::{
     get_clip_index, get_total_ammo_in_clips, get_weapon_dual_wield_byte,
     has_akimbo_viewmodel_anims, latch_weapon_dual_wield, num_hands, num_hands_for_held,
     player_weapons_find_slot, set_ammo_not_in_clip, set_clip_for_hand, set_weapon_dual_wield_byte,
-    set_weapon_model_for_held, spend_clip_for_hand, weapon_model_for_held,
+    set_weapon_model_for_held, set_weapon_rechamber_pending, spend_clip_for_hand,
+    weapon_model_for_held, weapon_rechamber_pending,
 };
 pub use event_sound::{
     EV_RELOAD, EV_RELOAD_END, EV_RELOAD_FROM_EMPTY, EV_RELOAD_START, begin_reload_event,
@@ -106,9 +109,9 @@ pub use placement::{
 };
 pub use player_anim_type::{PLAYER_ANIM_TYPE_COUNT, PLAYER_ANIM_TYPE_NAMES};
 pub use reload::{
-    DualMagTimes, ReloadDelayedOutcome, reload_clip, reload_weaponstate_may_credit,
-    weapon_allow_reload, weapon_arm_reload_add_delay, weapon_process_input_wants_reload,
-    weapon_reload_delayed_action,
+    DualMagTimes, EmptyReloadPolicy, ReloadDelayedOutcome, reload_clip,
+    reload_weaponstate_may_credit, weapon_allow_reload, weapon_arm_reload_add_delay,
+    weapon_process_input_wants_reload, weapon_reload_delayed_action,
 };
 pub use response::{LookSway, RecoilAxis, SwayConfig};
 pub use spread::{

@@ -6,6 +6,7 @@ static NEXT_COMMON_PROFILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic:
 pub struct CommonKey {
     pub(super) runtime: Option<PathBuf>,
     pub(super) foreign: Option<PathBuf>,
+    source_revision: u64,
 }
 
 impl CommonKey {
@@ -14,7 +15,10 @@ impl CommonKey {
         runtime: Option<&Path>,
         report: &mut Vec<String>,
     ) -> Self {
+        let source_revision = games_root_from_env()
+            .map_or(0, |games| asset_transport::installation_revision(&games.0));
         Self {
+            source_revision,
             runtime: runtime.map(Path::to_path_buf),
             foreign: resolve_foreign_material_donor(zone_ff, runtime, report),
         }
@@ -29,6 +33,7 @@ impl CommonKey {
             }
         };
         Self {
+            source_revision: asset_transport::installation_revision(&games.0),
             runtime,
             foreign: None,
         }
@@ -109,6 +114,7 @@ pub(super) struct KeptImages {
 }
 
 pub struct CommonSet {
+    pub(super) ui_images: asset_material::UiImagePublication,
     pub(super) id: u64,
     pub(super) key: CommonKey,
     /// Taken, not cloned, when no next map will reuse the set.
@@ -273,7 +279,8 @@ pub(super) async fn ensure_common(key: CommonKey) -> (Arc<CommonSet>, &'static s
 }
 
 pub struct ShellCommon {
-    pub weapons: WeaponRegistry,
+    pub ui_images: asset_material::UiImagePublication,
+    pub weapons: asset_game::EditorWeaponCatalog,
     pub strings: LocalizeCatalog,
     pub tables: Vec<(asset_core::AssetNamespace, asset_game::CapturedStringTable)>,
     pub report: Vec<String>,
@@ -283,15 +290,8 @@ pub async fn load_shell_common(games: asset_transport::GamesRoot) -> ShellCommon
     let mut report = Vec::new();
     let key = CommonKey::shell(&games, &mut report);
     let (common, reach) = ensure_common(key).await;
-    let weapons = common.weapons().publish_for_loadout();
-    for family in weapons.weapon_families().families() {
-        if let Some(id) = family.base
-            && let Some(image) = weapons.hud_icon_image_of(id)
-            && !family.image.is_empty()
-        {
-            asset_material::retain_ui_preview_fallback(family.key.namespace, &family.image, image);
-        }
-    }
+    let weapons = common.weapons().publish_for_editor();
+
     report.push(format!(
         "CAC: {reach} common set {}; weapons={} (iw4={} iw5={} t5={} t6={}) tables={}",
         common.key,
@@ -333,6 +333,7 @@ pub async fn load_shell_common(games: asset_transport::GamesRoot) -> ShellCommon
         ));
     }
     ShellCommon {
+        ui_images: common.ui_images.clone(),
         weapons,
         strings: common.products().strings.clone(),
         tables: common.cac_tables.clone(),
@@ -613,6 +614,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         (None, None) => (Iw5WeaponBundle::default(), None, Vec::new()),
     };
     let Iw5WeaponBundle {
+        fx: iw5_fx,
         weapons: mut iw5_weapons,
         fpv: iw5_fpv,
         world_guns: iw5_world_guns,
@@ -622,6 +624,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         scene_models: iw5_scene_models,
         shared_surfaces: iw5_shared_surfaces,
     } = bundle;
+    common_fx.absorb(iw5_fx);
     let mut material_seed = material_seed;
     let iw5_stats = match iw5_startup_walk {
         Some(task) => {
@@ -666,7 +669,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         weapons.len(),
         weapons.namespace_count(asset_core::AssetNamespace::T5)
     ));
-    let (t6_weapons, preparation, t6_tables, t6_report) = t6_weapon_walk.await;
+    let (t6_weapons, preparation, t6_tables, t6_report, t6_ui_images) = t6_weapon_walk.await;
     common_report.extend(t6_report);
     weapons.absorb(t6_weapons);
     if let Some(compiler) = preparation {
@@ -830,9 +833,26 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     material_seed.mark_images_common_owned();
     let mut iw5_materials = iw5_materials;
     iw5_materials.mark_images_common_owned();
-    asset_material::retain_ui_material_images(&material_seed);
-    asset_material::retain_ui_material_images(&iw5_materials);
+    let mut ui_images = asset_material::UiImageBuild::default();
+    if let Ok(games) = games_root_from_env() {
+        if let Err(error) = ui_images.retain_archives(&games) {
+            common_report.push(format!("UI archives: {error}"));
+        }
+    }
+    ui_images.retain_materials(&material_seed);
+    ui_images.retain_materials(&iw5_materials);
+    ui_images.zone_images(asset_core::AssetNamespace::T6, t6_ui_images);
+    let preview_weapons = weapons.clone().publish_for_editor();
+    for family in preview_weapons.weapon_families().families() {
+        if let Some(id) = family.base
+            && let Some(image) = preview_weapons.hud_icon_image_of(id)
+            && !family.image.is_empty()
+        {
+            ui_images.preview_fallback(family.key.namespace, &family.image, image);
+        }
+    }
     let set = Arc::new(CommonSet {
+        ui_images: ui_images.publish(),
         id: NEXT_COMMON_PROFILE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         key,
         products: std::sync::Mutex::new(Some(CommonProducts {

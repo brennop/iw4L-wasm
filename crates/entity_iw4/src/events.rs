@@ -241,7 +241,7 @@ pub fn entity_event_action(
     event: EntityEventKind,
 ) -> Result<EntityEventAction, UnsupportedEntityEvent> {
     Ok(match event {
-        EntityEventKind::NONE => EntityEventAction::None,
+        EntityEventKind::NONE | EntityEventKind::RELOAD_ADDAMMO => EntityEventAction::None,
         EntityEventKind::STANCE_FORCE_STAND
         | EntityEventKind::STANCE_FORCE_CROUCH
         | EntityEventKind::STANCE_FORCE_PRONE => EntityEventAction::OwnerStance,

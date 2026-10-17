@@ -48,8 +48,12 @@ impl WeaponCatalog {
                 add_ons: facts.add_ons,
                 general: facts.general,
                 reticle: facts.general.and_then(|general| general.body).map(|body| {
-                    let center = leftover_iw5_material_name(stream, Some(body), 8, 8);
-                    let side = leftover_iw5_material_name(stream, Some(body), 12, 16);
+                    let center = geometry
+                        .reticle_center_name
+                        .and_then(|name| leftover_cstr_iw5(stream, name));
+                    let side = geometry
+                        .reticle_side_name
+                        .and_then(|name| leftover_cstr_iw5(stream, name));
                     WeaponReticleAssets {
                         center_authored: center.is_some(),
                         side_authored: side.is_some(),
@@ -222,26 +226,32 @@ impl WeaponCatalog {
             gun_xmodel,
             hand_xmodel,
             world_model,
-            camo_models: WeaponCamoModels {
-                choices: Vec::new(),
-                view: geometry
-                    .gun_xmodel_names
-                    .iter()
-                    .enumerate()
-                    .skip(1)
-                    .filter_map(|(slot, ptr)| {
-                        Some((slot as u8, leftover_cstr_iw5(stream, (*ptr)?)?))
-                    })
-                    .collect(),
-                world: geometry
-                    .world_model_names
-                    .iter()
-                    .enumerate()
-                    .skip(1)
-                    .filter_map(|(slot, ptr)| {
-                        Some((slot as u8, leftover_cstr_iw5(stream, (*ptr)?)?))
-                    })
-                    .collect(),
+            camo_models: {
+                let read = |names: &[Option<fastfile_iw5::Ptr>]| {
+                    let mut models = Vec::new();
+                    let mut invalid = Vec::new();
+                    for (slot, ptr) in names.iter().enumerate().skip(1) {
+                        if let Some(ptr) = ptr {
+                            match stream.cstr(*ptr) {
+                                Ok(name) if !name.is_empty() => {
+                                    models.push((slot as u8, name.to_owned()))
+                                }
+                                Ok(_) => invalid.push(slot as u8),
+                                Err(_) => invalid.push(slot as u8),
+                            }
+                        }
+                    }
+                    (models, invalid)
+                };
+                let (view, invalid_view) = read(&geometry.gun_xmodel_names);
+                let (world, invalid_world) = read(&geometry.world_model_names);
+                WeaponCamoModels {
+                    view,
+                    world,
+                    invalid_view,
+                    invalid_world,
+                    choices: Vec::new(),
+                }
             },
             skin_parent: None,
             projectile_model: geometry
@@ -565,6 +575,9 @@ pub(super) fn capture_iw5_body_facts(
     facts.bolt_action = u8_at_iw5(stream, body, sz::WEAPON_DEF_BOLT_ACTION_OFF, 2439) != 0;
     facts.aim_down_sight = u8_at_iw5(stream, body, sz::WEAPON_DEF_AIM_DOWN_SIGHT_OFF, 2440) != 0;
     facts.can_hold_breath = u8_at_iw5(stream, body, sz::WEAPON_DEF_CAN_HOLD_BREATH_OFF, 2441) != 0;
+    if u8_at_iw5(stream, body, sz::WEAPON_DEF_CAN_VARIABLE_ZOOM_OFF, 2442) != 0 {
+        facts.scope_zoom = weapon_iw4::ScopeZoom::from_fovs([25.0, 15.0, 8.0]);
+    }
     facts.rechamber_while_ads =
         u8_at_iw5(stream, body, sz::WEAPON_DEF_RECHAMBER_WHILE_ADS_OFF, 2443) != 0;
     facts.ads_fire_only = u8_at_iw5(stream, body, sz::WEAPON_DEF_ADS_FIRE_ONLY_OFF, 2448) != 0;
@@ -938,6 +951,8 @@ pub(super) fn leftover_iw5_sounds(
             sz::WEAPON_DEF_SND_PUTAWAY_PLAYER_OFF,
             488,
         ),
+        detonate: None,
+        detonate_player: None,
         proj_explosion: None,
         projectile: None,
         proj_ignition_sound: None,

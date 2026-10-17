@@ -7,6 +7,19 @@ pub const XMODEL_PACKED_UNAVAILABLE: &str =
     "xmodel merge GfxPackedVertex missing or count-mismatched; decoded float is not packed VB";
 pub const XMODEL_PACKED_EMPTY_PLAN: &str = "xmodel plan has no vertices";
 
+pub fn fx_model_packed_mismatch(
+    surfaces: &[render_anim::fpv_pose::PosedModelSurface],
+) -> Option<(usize, usize, usize)> {
+    surfaces.iter().find_map(|surface| {
+        let decoded = surface
+            .mesh
+            .attribute(bevy::prelude::Mesh::ATTRIBUTE_POSITION)
+            .map_or(0, |positions| positions.len());
+        let packed = surface.packed_vertices.len();
+        (packed != decoded).then_some((surface.surface_index, packed, decoded))
+    })
+}
+
 pub fn append_fx_model_asset(
     plan: &mut FxModelDrawPlan,
     model_index: usize,

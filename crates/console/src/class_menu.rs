@@ -23,9 +23,12 @@ fn camo_names(catalog: &ClassLoadoutCatalog, weapon: &str) -> Vec<String> {
     let Some(registry) = catalog.resolver.0.as_deref() else {
         return Vec::new();
     };
-    let Ok(id) =
-        session::resolve_class_weapon(registry, weapon, &[], asset_game::LoadoutRules::default())
-    else {
+    let Ok(id) = session::resolve_editor_class_weapon(
+        registry,
+        weapon,
+        &[],
+        asset_game::LoadoutRules::default(),
+    ) else {
         return Vec::new();
     };
     registry
@@ -39,7 +42,7 @@ fn camo_preview(catalog: &ClassLoadoutCatalog, weapon: &str, camo: &str) -> Stri
     let Some(registry) = catalog.resolver.0.as_deref() else {
         return String::new();
     };
-    session::resolve_class_weapon(registry, weapon, &[], asset_game::LoadoutRules::default())
+    session::resolve_editor_class_weapon(registry, weapon, &[], asset_game::LoadoutRules::default())
         .map_or_else(
             |_| String::new(),
             |id| {
@@ -61,7 +64,7 @@ fn localized_camo_label(
             return loc.text("MPUI_NONE");
         }
         let registry = catalog.resolver.0.as_deref()?;
-        let id = session::resolve_class_weapon(
+        let id = session::resolve_editor_class_weapon(
             registry,
             weapon,
             &[],
@@ -73,9 +76,34 @@ fn localized_camo_label(
             registry.camouflage_caption(id, camo)?,
         )
     };
-    label()
+    let mut label = label()
         .map(str::to_owned)
-        .unwrap_or_else(|| camo_label(camo))
+        .unwrap_or_else(|| camo_label(camo));
+    if !camo.is_empty()
+        && let Some(registry) = catalog.resolver.0.as_deref()
+        && let Ok(id) = session::resolve_editor_class_weapon(
+            registry,
+            weapon,
+            &[],
+            asset_game::LoadoutRules::default(),
+        )
+        && let Some(slot) = registry.camouflage_slot(id, camo)
+        && let Some((view, world)) = registry.appearance_status(id, slot)
+    {
+        let unavailable = |status: &asset_game::AppearanceModelStatus| {
+            matches!(
+                status,
+                asset_game::AppearanceModelStatus::DeclaredUnavailable { .. }
+            )
+        };
+        match (unavailable(&view), unavailable(&world)) {
+            (true, true) => label.push_str(" (models unavailable)"),
+            (true, false) => label.push_str(" (first-person model unavailable)"),
+            (false, true) => label.push_str(" (world model unavailable)"),
+            _ => {}
+        }
+    }
+    label
 }
 
 fn camo_label(camo: &str) -> String {

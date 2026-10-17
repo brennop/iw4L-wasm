@@ -107,6 +107,14 @@ fn capture_globals(loads: &[&ZoneLoad]) -> SoundGlobals {
     globals
 }
 
+fn sound_rawfile(name: &str) -> bool {
+    name.starts_with("rumble/")
+        || name == "soundaliases/channels.def"
+        || name.ends_with("/soundaliases/channels.def")
+        || ((name.starts_with("maps/createfx/") || name.starts_with("maps/mp/"))
+            && name.ends_with("_fx.gsc"))
+}
+
 pub fn capture_t6_sounds<'n>(
     zone: &Path,
     loads: &[&ZoneLoad],
@@ -146,6 +154,45 @@ pub fn capture_t6_sounds<'n>(
     let mut catalog = SoundCatalog::default();
     catalog.set_capture_zone(ZoneOwner::from_zone_path(zone));
     catalog.set_capture_game(game);
+    let mut ignored_rawfiles = 0usize;
+    for &load in loads.iter().rev() {
+        for asset in load.assets.iter().filter(|a| a.ty == AssetType::RawFile) {
+            let rawfile = || -> Result<Option<_>, &str> {
+                let header = asset.header.get(..12).ok_or("truncated header")?;
+                let name = decode_ptr(le32(header, 0))
+                    .and_then(|p| load.blocks.cstr(p).ok())
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .ok_or("invalid name")?
+                    .replace('\\', "/")
+                    .to_ascii_lowercase();
+                if !sound_rawfile(&name) {
+                    return Ok(None);
+                }
+                let len = le32(header, 4) as usize;
+                let data = if len == 0 {
+                    &[]
+                } else {
+                    decode_ptr(le32(header, 8))
+                        .and_then(|p| load.blocks.bytes(p, len).ok())
+                        .ok_or("invalid data span")?
+                };
+                Ok(Some((name, data)))
+            };
+            match rawfile() {
+                Ok(Some((name, data))) => catalog.ingest_rawfile(&name, data, false),
+                Ok(None) => ignored_rawfiles += 1,
+                Err(error) => report.push(format!("t6 sound rawfile: {error}")),
+            }
+        }
+    }
+    let (rawfile_count, rawfile_bytes) = catalog
+        .rawfiles_in(crate::AssetNamespace::T6)
+        .fold((0usize, 0usize), |(count, bytes), (_, data)| {
+            (count + 1, bytes + data.len())
+        });
+    report.push(format!(
+        "t6 audio rawfiles: n={rawfile_count} bytes={rawfile_bytes} ignored={ignored_rawfiles}"
+    ));
     if !globals.groups.is_empty() {
         catalog.ingest_mixer_groups(crate::AssetNamespace::T6, globals.groups.clone());
     }

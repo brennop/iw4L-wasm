@@ -340,6 +340,7 @@ ps_netfields! {
     weapon_primary: u32 = Replication::Replicated, Validation::Exact;
     weap_flags: u32 = Replication::Replicated, Validation::Exact;
     f_weapon_pos_frac: f32 = Replication::Replicated, Validation::Exact;
+    scope_zoom_level: u32 = Replication::Replicated, Validation::Exact;
     aim_spread_scale: f32 = Replication::Replicated, Validation::Exact;
     ads_delay_time: i32 = Replication::Replicated, Validation::Exact;
     spread_override: i32 = Replication::Replicated, Validation::Exact;

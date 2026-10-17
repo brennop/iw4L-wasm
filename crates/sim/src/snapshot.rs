@@ -226,6 +226,24 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn view_tick(&self, viewer: ClientId) -> Tick {
+        let archived = self
+            .meta
+            .for_client(viewer)
+            .is_some_and(|m| m.killcam_hud.is_some());
+        let offset = if archived {
+            self.players
+                .iter()
+                .find(|(id, _)| *id == viewer)
+                .map_or(0, |(_, ps)| {
+                    ps.delta_time.max(0) as u32 / crate::MATCH_TICK_MS
+                })
+        } else {
+            0
+        };
+        Tick(self.tick.0.saturating_sub(offset))
+    }
+
     pub fn unpublished(tick: Tick) -> Self {
         Self {
             tick,

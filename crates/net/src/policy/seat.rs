@@ -13,6 +13,7 @@ pub struct KillcamSession {
     pub archivetime_ms: i32,
 
     pub focus_client: ClientId,
+    pub focus_life: Option<sim::LifeSequence>,
 
     pub focus: SeatFocus,
 
@@ -121,7 +122,15 @@ pub fn sample_killcam_seat(
     }
     let tick = lookup.tick?;
     let frame = archive.frame(tick)?;
-    if !frame.player_state_exists(session.focus_client) {
+    if !frame.player_state_exists(session.focus_client)
+        || session.focus_life.is_some_and(|life| {
+            !frame
+                .snapshot
+                .meta
+                .for_client(session.focus_client)
+                .is_some_and(|meta| meta.life_sequence == life)
+        })
+    {
         return None;
     }
     let archived = frame
@@ -260,6 +269,9 @@ fn seat_snapshot(
         None => live.clone(),
     };
     let sample = apply_seat_to_snapshot(archive, &mut out, viewer, session, now_ms);
+    if sample.is_none() {
+        return (live.clone(), None);
+    }
     let archived = lookup.tick.and_then(|tick| archive.frame(tick));
     overlay_killcam_hud(
         &mut out,

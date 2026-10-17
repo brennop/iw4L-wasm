@@ -111,6 +111,9 @@ pub fn scene_lit_pass_material(
     authored: assets::MaterialIndex,
 ) -> Option<SmodelPassMaterial> {
     let world_material = tess.catalog().derived(authored)?;
+    if world_material.shadow_only {
+        return None;
+    }
     let ordinal = tess
         .catalog()
         .parts()

@@ -103,6 +103,13 @@ impl FrameWorld<'_> {
         Some(&mut self.ecs.get_mut::<ProjectileRow>(entity)?.into_inner().0)
     }
 
+    /// Not for detonations: `note_dying_missile` keeps their slot until the event expires.
+    pub(crate) fn despawn_projectile(&mut self, entnum: i32) -> Option<ProjectileState> {
+        let projectile = self.remove_projectile_by_number(entnum)?;
+        self.free_dynamic_entity_number(projectile.entnum);
+        Some(projectile)
+    }
+
     pub(crate) fn remove_projectile_by_number(&mut self, entnum: i32) -> Option<ProjectileState> {
         let entity = entity_by_number(self.ecs, entnum)?;
         let projectile = self.ecs.get::<ProjectileRow>(entity)?.0;
@@ -277,6 +284,12 @@ impl FrameWorld<'_> {
             self.ecs.despawn(entity),
             "dropped item component vanished before removal"
         );
+        Some(item)
+    }
+
+    pub(crate) fn despawn_dropped_item(&mut self, number: i32) -> Option<DroppedItem> {
+        let item = self.remove_dropped_item_by_number(number)?;
+        self.free_dynamic_entity_number(item.state.number);
         Some(item)
     }
 

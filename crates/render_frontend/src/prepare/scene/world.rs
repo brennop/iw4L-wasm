@@ -238,7 +238,8 @@ pub struct WorldScene {
     pub retained_lightmap_uvs: Vec<[f32; 2]>,
 
     pub exp_fog: Option<asset_world::ExpFog>,
-    pub t6_film_grade: Option<asset_world::T6FilmGrade>,
+    pub t6_vision: Option<asset_world::T6Vision>,
+    pub t6_visions: asset_world::T6VisionCatalog,
 
     pub film_vision: Option<asset_world::FilmVision>,
     pub film_visions: std::collections::BTreeMap<
@@ -746,7 +747,8 @@ impl WorldScene {
             retained_texture_uvs: Vec::new(),
             retained_lightmap_uvs: Vec::new(),
             exp_fog: None,
-            t6_film_grade: None,
+            t6_vision: None,
+            t6_visions: Default::default(),
             film_vision: None,
             film_visions: Default::default(),
             createart_name: None,
@@ -852,7 +854,8 @@ impl WorldScene {
             retained_texture_uvs: Vec::new(),
             retained_lightmap_uvs: Vec::new(),
             exp_fog: None,
-            t6_film_grade: None,
+            t6_vision: None,
+            t6_visions: Default::default(),
             film_vision: None,
             film_visions: Default::default(),
             createart_name: None,
@@ -1269,9 +1272,9 @@ pub fn world_scene_from_draw(
             })
             .collect();
         if !rows.is_empty() {
-            diag::warn!(
+            diag::info!(
                 World,
-                "drawsurf bound images that never decoded: n={} {}",
+                "drawsurf material catalog image gaps: n={} {}",
                 rows.len(),
                 rows.iter().take(24).cloned().collect::<Vec<_>>().join("; ")
             );
@@ -1619,7 +1622,8 @@ pub fn world_scene_from_draw(
     scene.light_grid = world.light_grid;
     scene.sky_model = sky_model;
     scene.exp_fog = world.exp_fog;
-    scene.t6_film_grade = world.t6_film_grade;
+    scene.t6_vision = world.t6_vision;
+    scene.t6_visions = world.t6_visions;
     scene.film_vision = world.film_vision;
     scene.film_visions = world.film_visions;
     scene.createart_name = world.createart_name;

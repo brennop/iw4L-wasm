@@ -125,5 +125,13 @@
       {"dvar": "ui_name", "fields": {"dvar": "ui_player_name", "vis_exp": "1", "disabled_exp": "0", "edit_field": {"max_chars": 16}, "rect": {"x": 420, "y": 28, "w": 156, "h": 20}, "text_key": "", "text_exp": "", "text_align_x": -8, "text_align_mode": 10, "text_align_y": 0, "handlers": {"action": [], "accept": []}}},
       {"text_key": "@MENU_PLAYER_NAME", "fields": {"vis_exp": "1", "rect": {"x": 232, "y": 28, "w": 344, "h": 20}}}
     ]
+  },
+  {
+    "name": "pc_options_actions",
+    "base": "pc_options_actions",
+    "item_copies": [
+      {"dvar": "+melee", "fields": {"name": "change_zoom_binding", "dvar": "+changezoom", "rect": {"x": 232, "y": 288, "w": 344, "h": 20}}},
+      {"text_key": "@MENU_MELEE_ATTACK", "fields": {"name": "change_zoom_label", "text_key": "Change zoom", "rect": {"x": 232, "y": 288, "w": 344, "h": 20}}}
+    ]
   }
 ]

@@ -20,7 +20,7 @@ pub const PRESS_TICK_DT_MAX: f32 = 0.05;
 
 fn plus_command_id(name: &str) -> Option<u32> {
     let id = command_id_lookup(name)?;
-    if id < input_iw4::HOLD_PAIR_LIMIT && id % 2 == 0 {
+    if id.checked_sub(1).and_then(input_iw4::key_up_command_id) == Some(id) {
         Some(id - 1)
     } else {
         Some(id)

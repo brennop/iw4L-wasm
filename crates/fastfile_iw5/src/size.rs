@@ -203,6 +203,7 @@ pub const WEAPON_DEF_SILENCED_OFF: usize = 0x787;
 pub const WEAPON_DEF_BOLT_ACTION_OFF: usize = 0x773;
 pub const WEAPON_DEF_AIM_DOWN_SIGHT_OFF: usize = 0x774;
 pub const WEAPON_DEF_CAN_HOLD_BREATH_OFF: usize = 0x775;
+pub const WEAPON_DEF_CAN_VARIABLE_ZOOM_OFF: usize = 0x776;
 
 pub const WEAPON_DEF_RECHAMBER_WHILE_ADS_OFF: usize = 0x777;
 

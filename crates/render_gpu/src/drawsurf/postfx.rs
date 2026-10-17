@@ -43,7 +43,7 @@ pub struct ExtractedPostFx {
     pub depth_sampler: Option<super::DecodedSampler>,
     pub frame: DofFrame,
     pub vision: Option<asset_world::FilmVision>,
-    pub t6_film_grade: Option<asset_world::T6FilmGrade>,
+    pub t6_vision: Option<asset_world::T6Vision>,
 }
 
 struct PreparedPostFxGpu {
@@ -339,11 +339,12 @@ fn prepare_postfx_gpu(
         return;
     };
     let size = UVec2::new(view.viewport.z, view.viewport.w);
-    if gpu.grade.is_none() {
+    if gpu.grade.as_ref().is_none_or(|grade| grade.size != size) {
         gpu.grade = Some(super::script_grade::GradeGpu::new(
             &device,
             &cache,
             grade_shader.0.clone(),
+            size,
         ));
     }
     if gpu.targets.as_ref().is_none_or(|t| t.size != size) {
@@ -622,6 +623,29 @@ enum PostFxSubmitRefusal {
     MissingCodeImage(u32),
     SamplerMismatch,
     MissingSamplerRegister(u16),
+    PipelineFailed {
+        material: &'static str,
+        error: String,
+    },
+}
+
+fn require_postfx_pipeline(
+    state: &CachedPipelineState,
+    material: &'static str,
+) -> Result<(), PostFxSubmitRefusal> {
+    use bevy::shader::ShaderCacheError;
+    match state {
+        CachedPipelineState::Ok(_) => Ok(()),
+        CachedPipelineState::Queued
+        | CachedPipelineState::Creating(_)
+        | CachedPipelineState::Err(
+            ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable,
+        ) => Err(PostFxSubmitRefusal::PipelinePending),
+        CachedPipelineState::Err(error) => Err(PostFxSubmitRefusal::PipelineFailed {
+            material,
+            error: error.to_string(),
+        }),
+    }
 }
 
 /// The refusal as a number for the counter: the `Debug` string exists only in
@@ -642,6 +666,7 @@ fn refusal_discriminant(cause: &PostFxSubmitRefusal) -> u8 {
         PostFxSubmitRefusal::MissingCodeImage(_) => 10,
         PostFxSubmitRefusal::SamplerMismatch => 11,
         PostFxSubmitRefusal::MissingSamplerRegister(_) => 12,
+        PostFxSubmitRefusal::PipelineFailed { .. } => 13,
     }
 }
 #[derive(Default)]
@@ -656,6 +681,36 @@ struct StepUpload {
     slots: Vec<u32>,
 }
 
+struct PostFxPipelineWait {
+    owner: MaterialGenerationId,
+    started: web_time::Instant,
+    reported: bool,
+}
+
+impl PostFxPipelineWait {
+    fn update(
+        wait: &mut Option<Self>,
+        owner: MaterialGenerationId,
+        now: web_time::Instant,
+    ) -> Option<std::time::Duration> {
+        if wait.as_ref().is_none_or(|wait| wait.owner != owner) {
+            *wait = Some(Self {
+                owner,
+                started: now,
+                reported: false,
+            });
+        }
+        let wait = wait.as_mut()?;
+        let elapsed = now.saturating_duration_since(wait.started);
+        if !wait.reported && elapsed >= std::time::Duration::from_secs(20) {
+            wait.reported = true;
+            Some(elapsed)
+        } else {
+            None
+        }
+    }
+}
+
 fn draw_postfx(
     view: ViewQuery<(&ViewTarget, &ExtractedView)>,
     gpu: Res<ExactPostFxGpu>,
@@ -668,20 +723,22 @@ fn draw_postfx(
     mut context: RenderContext,
     mut texture_table: ResMut<super::texture_table::ExactTextureTable>,
     mut refusal: Local<Option<PostFxSubmitRefusal>>,
+    mut pipeline_wait: Local<Option<PostFxPipelineWait>>,
     mut texture_cache: Local<PostFxTextureCache>,
     mut submitted: Local<Option<(u64, bool, UVec2)>>,
 ) {
     let products = &colour_frame.frame_products;
     let (target, view) = view.into_inner();
     let Some(targets) = gpu.targets.as_ref() else {
+        *pipeline_wait = None;
         return;
     };
     if gpu.prepared.is_empty() || gpu.prepared.len() != gpu.steps.len() {
+        *pipeline_wait = None;
         return;
     }
     let active = extracted.frame.dof.active();
-    let graded =
-        extracted.frame.grading != [0.0, 1.0, 0.0, 1.0] || extracted.t6_film_grade.is_some();
+    let graded = extracted.frame.grading != [0.0, 1.0, 0.0, 1.0] || extracted.t6_vision.is_some();
     let prepare = || -> Result<Vec<StepUpload>, PostFxSubmitRefusal> {
         if target.main_texture_format() != TextureFormat::Rgba8Unorm {
             return Err(PostFxSubmitRefusal::TargetFormat(
@@ -702,19 +759,28 @@ fn draw_postfx(
         {
             return Err(PostFxSubmitRefusal::FloatZNotResolvedForFrame);
         }
-        if graded
-            && gpu
+        if graded {
+            let grade = gpu
                 .grade
                 .as_ref()
-                .is_none_or(|grade| cache.get_render_pipeline(grade.pipeline).is_none())
-        {
-            return Err(PostFxSubmitRefusal::PipelinePending);
+                .ok_or(PostFxSubmitRefusal::PipelinePending)?;
+            for pipeline in grade.required_pipelines(
+                extracted
+                    .t6_vision
+                    .is_some_and(|vision| vision.bloom.is_some()),
+            ) {
+                require_postfx_pipeline(
+                    cache.get_render_pipeline_state(pipeline),
+                    "vision grading",
+                )?;
+            }
         }
         let mut uploads = Vec::new();
         for (ready, step) in gpu.prepared.iter().zip(&gpu.steps) {
-            if cache.get_render_pipeline(ready.pipeline).is_none() {
-                return Err(PostFxSubmitRefusal::PipelinePending);
-            }
+            require_postfx_pipeline(
+                cache.get_render_pipeline_state(ready.pipeline),
+                ready.film.name,
+            )?;
             let size = if matches!(
                 step.target,
                 Image::Output | Image::Graded | Image::ScreenBlur | Image::ScreenPing
@@ -806,17 +872,42 @@ fn draw_postfx(
         Ok(uploads) => uploads,
         Err(cause) => {
             perf::Counter::CounterPostFxRefusal.emit(f64::from(refusal_discriminant(&cause)));
+            if cause == PostFxSubmitRefusal::PipelinePending {
+                if let Some(elapsed) = PostFxPipelineWait::update(
+                    &mut pipeline_wait,
+                    gpu.prepared[0].film.generation,
+                    web_time::Instant::now(),
+                ) {
+                    diag::warn!(
+                        World,
+                        "post-fx pipelines still pending after {:.0}s frame={} planned={planned}",
+                        elapsed.as_secs_f32(),
+                        products.0.frame_id
+                    );
+                }
+            } else {
+                *pipeline_wait = None;
+            }
             if refusal.as_ref() != Some(&cause) {
-                diag::warn!(
-                    World,
-                    "post-fx submit: RED frame={} planned={planned} cause={cause:?}",
-                    products.0.frame_id,
-                );
+                if cause == PostFxSubmitRefusal::PipelinePending {
+                    diag::info!(
+                        World,
+                        "post-fx submit: waiting for pipelines frame={} planned={planned}",
+                        products.0.frame_id
+                    );
+                } else {
+                    diag::warn!(
+                        World,
+                        "post-fx submit: RED frame={} planned={planned} cause={cause:?}",
+                        products.0.frame_id,
+                    );
+                }
                 *refusal = Some(cause);
             }
             return;
         }
     };
+    *pipeline_wait = None;
     perf::Counter::CounterPostFxExecutedSteps.emit(uploads.len() as f64);
 
     let owner = (gpu.prepared[0].film.generation, targets.size);
@@ -838,7 +929,7 @@ fn draw_postfx(
             post.source,
             targets.view(Image::Graded),
             extracted.frame.grading,
-            extracted.t6_film_grade,
+            extracted.t6_vision,
         );
     }
     for ((ready, step), StepUpload { bytes, slots }) in

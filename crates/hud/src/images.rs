@@ -133,6 +133,7 @@ fn make_image(
 
 #[derive(Resource, Default)]
 pub struct HudImages {
+    ui_images: asset_material::UiImagePublication,
     games_root: PathBuf,
 
     trees: NamespaceTrees,
@@ -155,6 +156,16 @@ pub struct HudImages {
 }
 
 impl HudImages {
+    pub fn adopt_ui_images(&mut self, publication: &asset_material::UiImagePublication) {
+        if self.ui_images.id() == publication.id() {
+            return;
+        }
+        self.ui_images = publication.clone();
+        self.by_name.clear();
+        self.rgba_by_name.clear();
+        self.iwd_warmed = false;
+    }
+
     pub fn set_games_root(&mut self, root: &Path) {
         if self.games_root == root {
             return;
@@ -204,10 +215,24 @@ impl HudImages {
         !self.games_root.as_os_str().is_empty()
     }
 
+    pub fn clear_zone_catalog(&mut self) {
+        self.zone_rgba.clear();
+        self.zone_handles.clear();
+        self.zone_image_name.clear();
+        self.material_images.clear();
+        self.zone_states.clear();
+        self.zone_srgb_reads.clear();
+        self.zone_samplers.clear();
+        self.blood_plan = None;
+        self.zone_installed = false;
+        self.zone_uploaded = false;
+        self.by_name.clear();
+        self.rgba_by_name.clear();
+        self.iwd_warmed = false;
+    }
+
     pub fn install_zone_catalog(&mut self, catalog: &MenuCatalog) {
-        if self.zone_installed {
-            return;
-        }
+        self.clear_zone_catalog();
         self.zone_installed = true;
         self.zone_uploaded = false;
         self.blood_plan = Some(blood_material_binding(catalog));
@@ -275,7 +300,7 @@ impl HudImages {
         if ns == HUD_CHROME_NAMESPACE {
             self.zone_states.get(&cache_key(name)).copied().flatten()
         } else {
-            asset_material::zone_ui_material_state(ns, name)
+            self.ui_images.zone_material_state(ns, name)
         }
     }
 
@@ -379,6 +404,10 @@ impl HudImages {
 
     pub fn ensure_rgba(&mut self, ns: AssetNamespace, name: &str) {
         let key = (ns, cache_key(name));
+        if ns == HUD_CHROME_NAMESPACE && self.zone_states.get(&key.1) == Some(&None) {
+            self.rgba_by_name.insert(key, None);
+            return;
+        }
         if self.rgba_by_name.contains_key(&key) {
             return;
         }
@@ -506,39 +535,24 @@ impl HudImages {
         if cache_key(name) == "white" {
             return Some((1, 1, vec![255; 4]));
         }
-        if let Some((width, height, rgba)) = asset_material::zone_ui_image(ns, name) {
-            return Some((width, height, rgba.as_ref().clone()));
+        if self.ui_images.has_zone_image(ns, name) {
+            return self
+                .ui_images
+                .zone_image(ns, name)
+                .map(|(width, height, rgba)| (width, height, rgba.as_ref().clone()));
         }
-        let main = self.trees.main_for(ns)?;
-        let authored = asset_material::ui_material_image(ns, name);
-        let fallback = asset_material::ui_preview_fallback(ns, name);
-        let mapped = authored.as_deref().or_else(|| {
-            (ns == HUD_CHROME_NAMESPACE)
-                .then(|| {
-                    self.material_images
-                        .get(&cache_key(name))
-                        .map(String::as_str)
-                })
-                .flatten()
-        });
-        for image_name in mapped
-            .filter(|image| *image != name)
-            .into_iter()
-            .chain(std::iter::once(name))
-            .chain(fallback.as_deref())
-        {
-            match asset_material::decode_ui_image_from_main(main, image_name) {
-                Ok(Some(image)) => return Some(image),
-                Ok(None) => {}
-                Err(error) => {
-                    diag::warn!(
-                        Ui,
-                        "hud: decode `{}:{image_name}` from {}: {error}",
-                        ns.as_str(),
-                        main.display()
-                    );
-                }
-            }
+        let requested = if ns == HUD_CHROME_NAMESPACE {
+            self.material_images
+                .get(&cache_key(name))
+                .map(String::as_str)
+                .unwrap_or(name)
+        } else {
+            name
+        };
+        let key = format!("{}:material/{requested}", ns.as_str());
+        match asset_material::decode_ui_image(&self.ui_images, &self.games_root, &key) {
+            Ok(image) => return image,
+            Err(error) => diag::warn!(Ui, "hud: {key}: {error}"),
         }
         None
     }

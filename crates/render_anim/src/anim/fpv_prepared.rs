@@ -440,7 +440,7 @@ impl FpvPreparationJob {
         fpv: &FpvMeshCatalog,
         id: u32,
         gun: FpvMeshIndex,
-    ) -> Vec<(u8, Arc<HashMap<usize, SmodelPassMaterial>>)> {
+    ) -> Vec<(u8, Result<Arc<HashMap<usize, SmodelPassMaterial>>, String>)> {
         let Some(base) = fpv.get_at(gun.order()) else {
             return Vec::new();
         };
@@ -450,62 +450,89 @@ impl FpvPreparationJob {
                 .get(surface)
                 .and_then(|edge| edge.bound_index())
         };
-        let mut out = Vec::new();
-        for appearance in self.owner.weapons.appearances_of(id) {
-            let Some((order, camo)) = appearance.view_model(fpv) else {
-                continue;
-            };
-            if camo.skel.surfaces_for_lod(0) != base.skel.surfaces_for_lod(0) {
-                continue;
-            }
-            let mut swaps = HashMap::new();
-            for surface in base.skel.surfaces_for_lod(0) {
-                let (Some(from), Some(to)) = (authored(base, surface), authored(camo, surface))
-                else {
-                    continue;
-                };
-                if from == to {
-                    continue;
-                }
-                if let Some(FpvSurfaceVerdict::Admitted(row)) =
-                    self.admission.verdict(order, surface)
-                    && let Some(material) = self.admission.materials.get(*row as usize)
-                {
-                    swaps.entry(from).or_insert_with(|| material.clone());
-                }
-            }
-            if !swaps.is_empty() {
-                out.push((appearance.slot(), Arc::new(swaps)));
-            }
-        }
-        for appearance in self.owner.weapons.appearances_of(id) {
-            let Some(camo) = appearance.material_camouflage() else {
-                continue;
-            };
-            let mut swaps = HashMap::new();
-            for (from, to) in &camo.materials {
-                let Some(source) = self.owner.materials.material_for_key(from) else {
-                    continue;
-                };
-                let Some(target) = self.owner.materials.material_for_key(to) else {
-                    continue;
-                };
-                let Some(row) = self
-                    .admission
-                    .by_authored
-                    .get(&usize::from(target.asset_id.0))
-                else {
-                    continue;
-                };
-                if let Some(material) = self.admission.materials.get(*row as usize) {
-                    swaps.insert(usize::from(source.asset_id.0), material.clone());
-                }
-            }
-            if !swaps.is_empty() {
-                out.push((camo.slot, Arc::new(swaps)));
-            }
-        }
-        out
+        self.owner
+            .weapons
+            .appearances_of(id)
+            .into_iter()
+            .map(|appearance| {
+                let result = (|| {
+                    if let asset_game::AppearanceModelStatus::DeclaredUnavailable {
+                        source,
+                        reason,
+                    } = appearance.view_status()
+                    {
+                        return Err(format!("{source}: {reason:?}"));
+                    }
+                    let mut swaps = HashMap::new();
+                    if let Some(camo) = appearance.material_camouflage() {
+                        for (from, to) in &camo.materials {
+                            let source = self
+                                .owner
+                                .materials
+                                .material_for_key(from)
+                                .ok_or_else(|| format!("source material missing: {from:?}"))?;
+                            let target = self
+                                .owner
+                                .materials
+                                .material_for_key(to)
+                                .ok_or_else(|| format!("target material missing: {to:?}"))?;
+                            let row = self
+                                .admission
+                                .by_authored
+                                .get(&usize::from(target.asset_id.0))
+                                .ok_or_else(|| format!("target material refused: {to:?}"))?;
+                            let material =
+                                self.admission.materials.get(*row as usize).ok_or_else(|| {
+                                    format!("target material unavailable: {to:?}")
+                                })?;
+                            swaps.insert(usize::from(source.asset_id.0), material.clone());
+                        }
+                    } else {
+                        let (order, camo) = appearance
+                            .view_model(fpv)
+                            .ok_or_else(|| "appearance owner mismatch".to_owned())?;
+                        if order == gun.order() {
+                            return Ok(Arc::new(swaps));
+                        }
+                        if camo.skel.surfaces_for_lod(0) != base.skel.surfaces_for_lod(0)
+                            || camo.skel.bone_names != base.skel.bone_names
+                            || camo.skel.surface_vertex_ranges != base.skel.surface_vertex_ranges
+                            || camo.skel.surface_index_ranges != base.skel.surface_index_ranges
+                            || camo.skel.positions != base.skel.positions
+                            || camo.skel.normals != base.skel.normals
+                            || camo.skel.uvs != base.skel.uvs
+                            || camo.skel.colors != base.skel.colors
+                            || camo.skel.indices != base.skel.indices
+                        {
+                            return Err("appearance topology mismatch".to_owned());
+                        }
+                        for surface in base.skel.surfaces_for_lod(0) {
+                            let from = authored(base, surface).ok_or_else(|| {
+                                format!("base material unresolved: surface {surface}")
+                            })?;
+                            let to = authored(camo, surface).ok_or_else(|| {
+                                format!("appearance material unresolved: surface {surface}")
+                            })?;
+                            if from == to {
+                                continue;
+                            }
+                            let Some(FpvSurfaceVerdict::Admitted(row)) =
+                                self.admission.verdict(order, surface)
+                            else {
+                                return Err(format!("appearance surface refused: {surface}"));
+                            };
+                            let material =
+                                self.admission.materials.get(*row as usize).ok_or_else(|| {
+                                    format!("appearance material unavailable: {surface}")
+                                })?;
+                            swaps.entry(from).or_insert_with(|| material.clone());
+                        }
+                    }
+                    Ok(Arc::new(swaps))
+                })();
+                (appearance.slot(), result)
+            })
+            .collect()
     }
 
     fn prepare_next_weapon(&mut self, fpv: &FpvMeshCatalog, xanims: &XAnimCatalog) {

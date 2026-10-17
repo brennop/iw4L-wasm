@@ -73,6 +73,7 @@ fn adopt(
     entity.presence = presence;
     entity.missile_owner = owner;
     entity.number = projectile.entnum;
+    runtime.set_object_field(object, "birthtime", Value::Int(projectile.spawn_time_ms));
     runtime.set_object_field(object, "model", model);
     runtime.set_object_field(object, "origin", Value::Vector(projectile.origin_at(now)));
     runtime.set_object_field(
@@ -285,6 +286,17 @@ fn notify_weapon_changes(world: &mut World) {
     }
 }
 
+pub(crate) fn publish_projectile_launches(world: &mut World) {
+    if world
+        .resource::<crate::step::StepRequest>()
+        .reason
+        .advances_authority_world()
+        && world.resource::<Runtime>().started
+    {
+        adopt_fired(world);
+    }
+}
+
 fn adopt_fired(world: &mut World) {
     let now = now_ms(world);
     let seen = std::mem::replace(&mut world.resource_mut::<Runtime>().missiles_seen_ms, now);
@@ -357,7 +369,6 @@ fn settle_items(world: &mut World) {
             .collect()
     };
     let pickups = FrameWorld::from_world(world).item_pickups_mut().clone();
-    let mut retired = Vec::new();
     for pickup in pickups {
         let Some((object, _, classname)) = items
             .iter()
@@ -382,14 +393,13 @@ fn settle_items(world: &mut World) {
             });
             raise(world, receiver.clone(), "trigger", vec![player, swapped]);
         }
-        retire(world, object);
-        retired.push(object);
     }
+    // Retire only after every pickup is raised: a death between two triggers on one
+    // item ends the script thread still waiting on it.
     for (object, number, _) in items {
-        if !retired.contains(&object)
-            && FrameWorld::from_world(world)
-                .dropped_item_by_number(number)
-                .is_none()
+        if FrameWorld::from_world(world)
+            .dropped_item_by_number(number)
+            .is_none()
         {
             retire(world, object);
         }
@@ -422,7 +432,7 @@ fn settle_projectiles(world: &mut World, notes: &[WeaponNote]) {
                 .find(|p| p.id == id)
                 .map(|p| p.entnum)
             {
-                FrameWorld::from_world(world).remove_projectile_by_number(number);
+                FrameWorld::from_world(world).despawn_projectile(number);
             }
             continue;
         };

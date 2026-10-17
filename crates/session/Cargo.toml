@@ -14,6 +14,7 @@ asset_anim.workspace = true
 asset_audio.workspace = true
 asset_core.workspace = true
 asset_game.workspace = true
+asset_material.workspace = true
 asset_model.workspace = true
 asset_transport.workspace = true
 asset_world.workspace = true

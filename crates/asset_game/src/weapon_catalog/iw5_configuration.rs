@@ -290,6 +290,7 @@ impl WeaponRegistry {
         apply_iw5_parameter_blocks(&mut row.facts, assets);
         if let Some(reticle) = assets.iter().find_map(|asset| asset.reticle.as_ref()) {
             row.reticle = reticle.clone();
+            row.facts.i_reticle_side_size = reticle.side_size;
         }
         if alternate {
             if let Some(projectile) = iw5_first_block(assets, |asset| asset.projectile) {
@@ -365,7 +366,9 @@ impl WeaponRegistry {
             } else {
                 chosen.anim_time_ms
             };
-            if time > 0 {
+            if time > 0
+                || (alternate && slot == weap_anim::RELOAD_EMPTY && chosen.altmode_anim.is_some())
+            {
                 if let Some(timer) = iw5_anim_timer(&mut row.facts, slot) {
                     *timer = time;
                 }

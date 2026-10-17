@@ -153,6 +153,38 @@ impl ObjectiveVisuals {
         }
     }
 
+    #[must_use]
+    pub fn t6(allies: Option<&str>, axis: Option<&str>) -> Self {
+        let flag = |faction| match faction {
+            Some("seals") => Some("mp_flag_allies_1"),
+            Some("fbi") => Some("mp_flag_allies_2"),
+            Some("isa") => Some("mp_flag_allies_3"),
+            Some("pla") => Some("mp_flag_axis_1"),
+            Some("pmc") => Some("mp_flag_axis_2"),
+            Some("cd") => Some("mp_flag_axis_3"),
+            _ => None,
+        };
+        let flags = [flag(allies), flag(axis)];
+        Self {
+            neutral_flag: Some("mp_flag_neutral".into()),
+            bomb: Some("prop_suitcase_bomb".into()),
+            bomb_explosion_fx: Some("maps/mp_maps/fx_mp_exp_bomb".into()),
+            plant_weapon: Some("briefcase_bomb_mp".into()),
+            defuse_weapon: Some("briefcase_bomb_defuse_mp".into()),
+            flag: flags.map(|name| name.map(str::to_owned)),
+            flag_carry: flags.map(|name| name.map(|name| format!("{name}_carry"))),
+            crate_model: [
+                Some("t6_wpn_supply_drop_ally".into()),
+                Some("t6_wpn_supply_drop_axis".into()),
+            ],
+            crate_overlay: [
+                Some("t6_wpn_supply_drop_ally".into()),
+                Some("t6_wpn_supply_drop_axis".into()),
+            ],
+            ..Default::default()
+        }
+    }
+
     fn models(&self) -> impl Iterator<Item = &Option<String>> {
         [&self.neutral_flag, &self.bomb]
             .into_iter()

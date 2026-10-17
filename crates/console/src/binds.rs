@@ -200,7 +200,7 @@ pub fn pad_layout(layout: usize) -> Vec<(PadButton, &'static str)> {
         (West, "+usereload"),
         (North, "weapnext"),
         (LeftStick, "+breath_sprint"),
-        (RightStick, "+melee"),
+        (RightStick, "+melee_zoom"),
         (DpadUp, "+actionslot 1"),
         (DpadDown, "+actionslot 2"),
         (DpadLeft, "+actionslot 3"),
@@ -212,7 +212,7 @@ pub fn pad_layout(layout: usize) -> Vec<(PadButton, &'static str)> {
         binds.push((button, command));
     };
     let tactical = |set: &mut dyn FnMut(PadButton, &'static str)| {
-        set(East, "+melee");
+        set(East, "+melee_zoom");
         set(RightStick, "+stance");
     };
     match layout {

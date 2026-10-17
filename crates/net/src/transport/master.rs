@@ -283,6 +283,7 @@ impl MasterLaunchIntent {
         let host = std::env::var("IW4L_MASTER_HOST_NAME").ok();
         let join = std::env::var("IW4L_MASTER_JOIN").ok();
         match (host, join) {
+            (None, None) => Ok(Self::disabled()),
             (Some(name), None) if !name.trim().is_empty() => {
                 Ok(Self(MasterLaunchMode::Host(HostConfig {
                     password: std::env::var("IW4L_MASTER_PASSWORD").unwrap_or_default(),

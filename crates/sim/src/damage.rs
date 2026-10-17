@@ -272,7 +272,9 @@ pub(crate) fn apply_script_blast(
                 [0.0; 3]
             },
             hitloc: 0,
-            inflictor: None,
+            inflictor: blast
+                .inflictor
+                .map(crate::script_player::HitInflictor::ScriptModel),
             commit,
         };
         crate::script::player_damage(world.ecs(), tick, &hit);
@@ -351,7 +353,9 @@ pub(crate) fn apply_script_hit(world: &mut FrameWorld, tick: Tick, hit: &crate::
             [0.0; 3]
         },
         hitloc: hit.hitloc,
-        inflictor: None,
+        inflictor: hit
+            .inflictor
+            .map(crate::script_player::HitInflictor::ScriptModel),
         commit,
     };
     crate::script::player_damage(world.ecs(), tick, &player_hit);

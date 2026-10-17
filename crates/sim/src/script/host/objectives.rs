@@ -7,7 +7,7 @@ use bevy_ecs::prelude::World;
 use gamemode_iw4::Team;
 
 const MAX_OBJECTIVES: i32 = 32;
-const ENGINE_SERVER_INFO: &[&str] = &["ui_bomb_timer", "mapname", "g_gametype"];
+const ENGINE_SERVER_INFO: &[&str] = &["ui_bomb_timer", "mapname", "g_gametype", "g_hardcore"];
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ScriptObjective {
@@ -209,6 +209,12 @@ pub(crate) fn publish(world: &mut World) {
     let pain_vision = runtime.engine.pain_vision.clone();
     let fog = runtime.engine.fog;
     let now = crate::level_time_ms(world.resource::<crate::step::StepRequest>().tick);
+    let absent_effects = runtime
+        .restart
+        .as_ref()
+        .map_or_else(std::collections::BTreeSet::new, |plan| {
+            plan.absent_effects.clone()
+        });
     let rows: Vec<(u64, super::entities::PersistentFx, Option<u64>)> = runtime
         .engine
         .effects
@@ -229,6 +235,7 @@ pub(crate) fn publish(world: &mut World) {
     let mut frame = FrameWorld::from_world(world);
     let effects = rows
         .into_iter()
+        .filter(|(_, fx, _)| !absent_effects.contains(&fx.name))
         .map(|(id, fx, viewers)| ScriptEffect {
             id: id as u32,
             effect: frame.effect_name_index(&fx.name),

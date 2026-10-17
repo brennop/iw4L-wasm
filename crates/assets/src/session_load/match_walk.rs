@@ -223,6 +223,30 @@ pub(super) async fn walk_prepared_match(
             facts.team_settings.axis_charset.as_deref(),
         );
     }
+    if map_family == asset_core::FamilyId::T6 {
+        facts.objective_visuals = asset_game::ObjectiveVisuals::t6(
+            facts.team_settings.allies_charset.as_deref(),
+            facts.team_settings.axis_charset.as_deref(),
+        );
+        let mut native_objectives = asset_world::MapXModelSceneCatalog::default();
+        for name in facts.objective_visuals.model_names() {
+            if !matches!(
+                world.map_xmodel_scene_assets.get_name(name),
+                Some(asset_world::MapXModelSceneAsset::T6(_))
+            ) && let Some(index) = world_weapons.index_by_name(map_family, name)
+                && let Some(model) = world_weapons.get_at(index)
+            {
+                native_objectives.set_capture_zone(world_weapons.zone_of(index));
+                native_objectives.insert(
+                    asset_world::MapXModelAssetKey(name.to_owned()),
+                    asset_world::MapXModelSceneAsset::T6(model.skel.clone()),
+                );
+            }
+        }
+        world
+            .map_xmodel_scene_assets
+            .absorb_captured(native_objectives);
+    }
     match (
         facts.t5_teamset.as_deref(),
         facts.team_settings.allies.as_ref(),
@@ -254,9 +278,10 @@ pub(super) async fn walk_prepared_match(
     }
     let map_scripts = match map_namespace {
         Some(asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6) => {
-            let scripts = t5_map_under_iw4_rules(&map_scripts, &zone_name, &facts);
+            let scripts =
+                treyarch_map_under_iw4_rules(&map_scripts, &zone_name, &facts, map_family);
             report.push(format!(
-                "map script: maps/mp/{zone_name} written from the T5 map's declarations; T5 map scripts left out"
+                "map script: maps/mp/{zone_name} written from the {map_family:?} map's declarations; native gametype scripts left out"
             ));
             scripts
         }
@@ -773,6 +798,7 @@ pub(super) async fn walk_prepared_match(
         ));
     }
     let prepared = PreparedMatch {
+        ui_images: common.ui_images.clone(),
         scripts,
         fx,
         world,
@@ -1280,10 +1306,11 @@ fn faction_cells(
     cells
 }
 
-fn t5_map_under_iw4_rules(
+fn treyarch_map_under_iw4_rules(
     map_scripts: &crate::ScriptSources,
     zone_name: &str,
     facts: &crate::MapFacts,
+    family: asset_core::FamilyId,
 ) -> crate::ScriptSources {
     let module = format!("maps/mp/{zone_name}");
     let main = map_scripts
@@ -1298,7 +1325,10 @@ fn t5_map_under_iw4_rules(
     );
     let entities = map_scripts
         .entities()
-        .map(asset_world::t5_entities_for_iw4_rules)
+        .map(|entities| match family {
+            asset_core::FamilyId::T6 => entities.to_owned(),
+            _ => asset_world::t5_entities_for_iw4_rules(entities),
+        })
         .unwrap_or_default();
     let mut scripts = crate::ScriptSources::default();
     let mut map_main = declarations.map_script(&entities);

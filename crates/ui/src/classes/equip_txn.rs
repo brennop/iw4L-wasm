@@ -239,7 +239,9 @@ fn consume_class_select_handoff(
         return;
     };
     let revision = catalog.revision.wrapping_add(1);
-    let mut updated = crate::ClassLoadoutCatalog::from_weapon_registry(weapons.registry().clone());
+    let mut updated = crate::ClassLoadoutCatalog::from_editor_catalog(std::sync::Arc::new(
+        weapons.registry().editor_catalog(),
+    ));
     if let Some(table) = menus.string_table("mp/perkTable.csv") {
         updated = updated.with_perk_table(table);
     }

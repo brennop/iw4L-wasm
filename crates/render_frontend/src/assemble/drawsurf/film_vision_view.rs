@@ -5,6 +5,7 @@ use super::dof::GlowDvars;
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct FilmVisionView {
     pub current: Option<asset_world::FilmVision>,
+    pub native_vision: Option<asset_world::T6Vision>,
     pub script_forced: bool,
     /// Hue in radians, gamma, exposure in stops, saturation.
     pub grading: [f32; 4],
@@ -21,6 +22,7 @@ impl Default for FilmVisionView {
     fn default() -> Self {
         Self {
             current: None,
+            native_vision: None,
             script_forced: false,
             grading: [0.0, 1.0, 0.0, 1.0],
             blur: 0.0,
@@ -213,6 +215,118 @@ struct AppliedVision {
     pain: Option<Option<sim::VisionChange>>,
     pain_slot: FilmVisionView,
     pain_strength: f32,
+    native: NativeVisionLerp,
+    native_pain: NativeVisionLerp,
+    native_pain_selected: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ScriptVision {
+    Film(asset_world::FilmVision),
+    Native(asset_world::T6Vision),
+}
+
+impl ScriptVision {
+    fn film(self) -> Option<asset_world::FilmVision> {
+        match self {
+            Self::Film(vision) => Some(vision),
+            Self::Native(_) => None,
+        }
+    }
+
+    fn native(self) -> Option<asset_world::T6Vision> {
+        match self {
+            Self::Native(grade) => Some(grade),
+            Self::Film(_) => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct NativeVisionLerp {
+    from: Option<asset_world::T6Vision>,
+    to: Option<asset_world::T6Vision>,
+    start_ms: i32,
+    duration_ms: i32,
+}
+
+impl NativeVisionLerp {
+    fn select(&mut self, target: Option<asset_world::T6Vision>, now_ms: i32, duration_ms: i32) {
+        self.from = self.current(now_ms);
+        self.to = target;
+        self.start_ms = now_ms;
+        self.duration_ms = duration_ms.max(0);
+    }
+
+    fn current(&self, now_ms: i32) -> Option<asset_world::T6Vision> {
+        let fraction = if self.duration_ms == 0 {
+            1.0
+        } else {
+            (now_ms.saturating_sub(self.start_ms) as f32 / self.duration_ms as f32).clamp(0.0, 1.0)
+        };
+        mix_optional_native_vision(
+            self.from,
+            self.to,
+            fraction * fraction * (3.0 - 2.0 * fraction),
+        )
+    }
+}
+
+fn mix_optional_native_vision(
+    from: Option<asset_world::T6Vision>,
+    to: Option<asset_world::T6Vision>,
+    fraction: f32,
+) -> Option<asset_world::T6Vision> {
+    let (from, to) = (from.unwrap_or_default(), to.unwrap_or_default());
+    let mix = |a: f32, b: f32| a * (1.0 - fraction) + b * fraction;
+    let film = match (from.film, to.film) {
+        (Some(mut a), Some(b)) => {
+            for (row, target) in a.controls.iter_mut().zip(b.controls) {
+                for (value, target) in row.iter_mut().zip(target) {
+                    *value = mix(*value, target);
+                }
+            }
+            a.strength = mix(a.strength, b.strength);
+            Some(a)
+        }
+        (Some(mut a), None) => {
+            a.strength *= 1.0 - fraction;
+            Some(a)
+        }
+        (None, Some(mut b)) => {
+            b.strength *= fraction;
+            Some(b)
+        }
+        (None, None) => None,
+    }
+    .filter(|grade| grade.strength > 0.0);
+    let bloom = match (from.bloom, to.bloom) {
+        (Some(mut a), Some(b)) => {
+            for (row, target) in a.controls.iter_mut().zip(b.controls) {
+                for (value, target) in row.iter_mut().zip(target) {
+                    *value = mix(*value, target);
+                }
+            }
+            a.strength = mix(a.strength, b.strength);
+            Some(a)
+        }
+        (Some(mut a), None) => {
+            a.strength *= 1.0 - fraction;
+            Some(a)
+        }
+        (None, Some(mut b)) => {
+            b.strength *= fraction;
+            Some(b)
+        }
+        (None, None) => None,
+    }
+    .filter(|bloom| bloom.strength > 0.0);
+    let tone_strength = mix(from.tone_strength, to.tone_strength);
+    (film.is_some() || bloom.is_some() || tone_strength > 0.0).then_some(asset_world::T6Vision {
+        film,
+        bloom,
+        tone_strength,
+    })
 }
 
 pub fn register(app: &mut App) {
@@ -312,11 +426,19 @@ fn update_film_vision_view(
             };
             film.select(
                 scene.film_vision,
-                preset,
+                preset.and_then(ScriptVision::film),
                 clock.time(),
                 duration_ms,
                 glow.allowed || wanted.is_some(),
                 glow.allowed_script_forced || wanted.is_some(),
+            );
+            applied.native.select(
+                match preset {
+                    Some(ScriptVision::Native(grade)) => Some(grade),
+                    _ => scene.t6_vision,
+                },
+                clock.time(),
+                duration_ms,
             );
             applied.vision = Some(wanted);
         }
@@ -335,6 +457,7 @@ fn update_film_vision_view(
         glow.allowed_script_forced || script_forced,
     );
     let mut mixed = mixed;
+    film.script_forced = script_forced && view.ready;
     if !view.ready {
         *applied = AppliedVision::default();
     } else if let Some(snapshot) = presented.snapshot() {
@@ -354,11 +477,17 @@ fn update_film_vision_view(
             };
             applied.pain_slot.select(
                 scene.film_vision,
-                preset,
+                preset.and_then(ScriptVision::film),
                 clock.time(),
                 duration,
                 true,
                 true,
+            );
+            applied.native_pain_selected = matches!(preset, Some(ScriptVision::Native(_)));
+            applied.native_pain.select(
+                preset.and_then(ScriptVision::native),
+                clock.time(),
+                duration,
             );
             applied.pain = Some(wanted.clone());
         }
@@ -412,8 +541,11 @@ fn update_film_vision_view(
     film.blur = 0.0;
     if !view.ready {
         film.script_forced = false;
+        film.native_vision = None;
         return;
     }
+    let mut native_film_enabled = None;
+    let mut native_bloom_enabled = None;
     if let Some(snapshot) = presented.snapshot() {
         if let Some(meta) = snapshot.meta.for_client(local.0) {
             film.blur = meta
@@ -441,8 +573,16 @@ fn update_film_vision_view(
                     if let Ok(value) = value.parse::<f32>() {
                         if value.is_finite() {
                             enable_override = Some(value != 0.0);
+                            native_film_enabled = enable_override;
                         }
                     }
+                }
+                if name.eq_ignore_ascii_case("r_glow") {
+                    native_bloom_enabled = value
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|v| v.is_finite())
+                        .map(|v| v != 0.0);
                 }
                 if apply_script_film_dvar(&mut vision, &mut grading, &mut blur, name, value) {
                     film.script_forced = true;
@@ -456,18 +596,51 @@ fn update_film_vision_view(
             film.current = Some(vision);
         }
     }
+    film.native_vision = if view.ready {
+        let normal = applied.native.current(clock.time());
+        if applied.native_pain_selected {
+            mix_optional_native_vision(
+                normal,
+                applied.native_pain.current(clock.time()),
+                applied.pain_strength,
+            )
+        } else {
+            normal
+        }
+    } else {
+        None
+    };
+    let bloom_disabled =
+        native_bloom_enabled == Some(false) || (!glow.enable && !film.script_forced);
+    if let Some(native) = &mut film.native_vision {
+        if native_film_enabled == Some(false) {
+            native.film = None;
+        }
+        if bloom_disabled {
+            native.bloom = None;
+        }
+    }
 }
 
 fn loaded_script_vision(
     scene: &crate::prepare::scene::world::WorldScene,
     vision: &sim::VisionChange,
-) -> Option<asset_world::FilmVision> {
+) -> Option<ScriptVision> {
     if vision.name.is_empty() {
         return None;
     }
     let key = format!("vision/{}.vision", vision.name.to_ascii_lowercase());
+    if let Some(grade) = scene.t6_visions.get(&key) {
+        return match grade {
+            Ok(grade) => Some(ScriptVision::Native(*grade)),
+            Err(error) => {
+                diag::warn!(World, "vision {key}: {error:?}");
+                None
+            }
+        };
+    }
     match scene.film_visions.get(&key) {
-        Some(Ok(preset)) => Some(*preset),
+        Some(Ok(preset)) => Some(ScriptVision::Film(*preset)),
         Some(Err(error)) => {
             diag::warn!(World, "vision {key}: {error:?}");
             None

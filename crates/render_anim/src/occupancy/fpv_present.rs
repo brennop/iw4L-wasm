@@ -831,7 +831,7 @@ pub fn tick_fpv_viewmodel(
             local.0,
             meta.life_sequence,
             weapon_id,
-            snapshot.tick,
+            snapshot.view_tick(local.0),
         ));
     }
     if let FpvPoseKind::Posed(frame) = &mut kind {
@@ -897,7 +897,24 @@ fn skin_fpv_geometry(
                 return;
             }
             if fpv_plan.rig_generation != rig.generation() || fpv_plan.camo != product.camo {
-                let camo = session.and_then(|session| session.view.camo(product.camo));
+                let camo = match session.map(|session| session.view.camo(product.camo)) {
+                    Some(Ok(camo)) => camo,
+                    Some(Err(reason)) => {
+                        let cause = RenderGapCause::FpvDependencyUnresolved {
+                            weapon_id: session.map_or(0, |session| session.weapon_id),
+                            role: "camouflage",
+                            name: reason.to_owned(),
+                        };
+                        crate::clear_fpv_draw_plan(&mut fpv_plan, handle);
+                        gaps.raise(cause.clone());
+                        status.0 = Some(FpvState::Blocked(cause));
+                        return;
+                    }
+                    None => {
+                        crate::clear_fpv_draw_plan(&mut fpv_plan, handle);
+                        return;
+                    }
+                };
                 crate::install_prepared_fpv_plan(
                     &mut fpv_plan,
                     &rig.geometry,

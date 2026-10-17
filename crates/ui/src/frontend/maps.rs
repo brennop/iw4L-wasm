@@ -26,12 +26,14 @@ pub fn pack_maps(maps: &MenuMapList, pack: usize) -> &[String] {
 
 #[derive(bevy::prelude::Resource, Default)]
 pub struct MapPresentation {
+    ui_images: asset_material::UiImagePublication,
     entries: std::collections::BTreeMap<String, (asset_core::AssetKey, String)>,
 }
 
 impl MapPresentation {
     pub fn from_tables(
         tables: &[(asset_core::AssetNamespace, asset_game::CapturedStringTable)],
+        ui_images: asset_material::UiImagePublication,
     ) -> Self {
         let mut entries = std::collections::BTreeMap::new();
         for (namespace, table) in tables {
@@ -65,7 +67,7 @@ impl MapPresentation {
                 );
             }
         }
-        Self { entries }
+        Self { entries, ui_images }
     }
 
     pub fn label(&self, map: &str, strings: Option<&asset_game::LocalizeCatalog>) -> String {
@@ -81,7 +83,7 @@ impl MapPresentation {
             .get(map)
             .map(|(_, image)| {
                 let loaded = asset_core::AssetKey::parse(image)
-                    .is_ok_and(|key| asset_material::has_zone_ui_image(key.namespace, &key.name));
+                    .is_ok_and(|key| self.ui_images.has_zone_image(key.namespace, &key.name));
                 if loaded {
                     image.clone()
                 } else {

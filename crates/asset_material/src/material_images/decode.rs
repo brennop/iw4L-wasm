@@ -16,6 +16,7 @@ pub(super) struct DecodedMips {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MipStorage {
     Rgba8,
+    R32Float,
     Bc1,
     Bc2,
     Bc3,
@@ -76,14 +77,40 @@ impl DecodedMips {
         storage: MipStorage,
         packed: Vec<u8>,
         level_sizes: Vec<u32>,
-    ) -> Self {
-        Self {
+    ) -> Option<Self> {
+        if width == 0
+            || height == 0
+            || level_sizes.is_empty()
+            || level_sizes.len() > mip_level_count(width, height) as usize
+        {
+            return None;
+        }
+        let mut total = 0usize;
+        for (level, &size) in level_sizes.iter().enumerate() {
+            let w = (width >> level).max(1) as usize;
+            let h = (height >> level).max(1) as usize;
+            let expected = match storage {
+                MipStorage::Rgba8 | MipStorage::R32Float => w.checked_mul(h)?.checked_mul(4)?,
+                MipStorage::Bc1 => w.div_ceil(4).checked_mul(h.div_ceil(4))?.checked_mul(8)?,
+                MipStorage::Bc2 | MipStorage::Bc3 | MipStorage::Bc5 => {
+                    w.div_ceil(4).checked_mul(h.div_ceil(4))?.checked_mul(16)?
+                }
+            };
+            if size as usize != expected {
+                return None;
+            }
+            total = total.checked_add(expected)?;
+        }
+        if total != packed.len() {
+            return None;
+        }
+        Some(Self {
             width,
             height,
             storage,
             packed,
             level_sizes,
-        }
+        })
     }
     fn level_count(&self) -> u32 {
         self.level_sizes.len() as u32
@@ -103,6 +130,9 @@ impl DecodedMips {
         let level0 = self.packed;
         let pixels = match self.storage {
             MipStorage::Rgba8 => level0,
+            MipStorage::R32Float => {
+                return Err("float image cannot be represented as RGBA8 without conversion".into());
+            }
             MipStorage::Bc1 => decode_blocks(&level0, self.width, self.height, PixelFormat::Bc1)?,
             MipStorage::Bc2 => decode_blocks(&level0, self.width, self.height, PixelFormat::Bc2)?,
             MipStorage::Bc3 => decode_blocks(&level0, self.width, self.height, PixelFormat::Bc3)?,
@@ -138,7 +168,21 @@ pub(super) fn decode_iwi_mips_with(bytes: &[u8], keep_bc5: bool) -> Result<Decod
         && let Ok(header) = IwiHeader::parse(bytes)
         && img_format_info(header.format).is_some_and(|info| info.kind == ImgFormatKind::Wavelet)
     {
-        return decode_wavelet_iwi(bytes, header);
+        return decode_wavelet_iwi(bytes, header, IWI_V8_HEADER_LEN);
+    }
+    if bytes.len() >= 48 && bytes[..4] == *b"IWi\x0d" && (6..=10).contains(&bytes[4]) {
+        let half = |at| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+        let word = |at| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let header = IwiHeader {
+            flags: bytes[5],
+            usage: if bytes[5] & 0x0c != 0 { 1 } else { 0 },
+            format: bytes[4],
+            width: half(6),
+            height: half(8),
+            depth: half(10),
+            file_size_for_picmip: [word(16), word(20), word(24), word(28)],
+        };
+        return decode_wavelet_iwi(bytes, header, 48);
     }
     let header = parse_iwi_header(bytes)?;
     let end = header.mip0_end.min(bytes.len());
@@ -216,14 +260,18 @@ pub(super) fn decode_iwi_mips_with(bytes: &[u8], keep_bc5: bool) -> Result<Decod
     ))
 }
 
-fn decode_wavelet_iwi(bytes: &[u8], header: IwiHeader) -> Result<DecodedMips, String> {
+fn decode_wavelet_iwi(
+    bytes: &[u8],
+    header: IwiHeader,
+    header_len: usize,
+) -> Result<DecodedMips, String> {
     let format = wavelet_check_header(&header).map_err(wavelet_error)?;
     let info = img_format_info(format).ok_or_else(|| format!("unsupported IWI format {format}"))?;
     let channels = info.channels;
     let stride = wavelet_pixel_stride(channels);
     let pixel_format = wavelet_d3d_pixel_format(format)?;
     let payload = bytes
-        .get(IWI_V8_HEADER_LEN..)
+        .get(header_len..)
         .ok_or_else(|| "truncated wavelet IWI payload".to_owned())?;
     let mut bits = WaveletBits::new(payload);
     let mut parent = Vec::new();
@@ -443,6 +491,24 @@ pub(super) fn decode_gfx_image(
     height: u32,
     format: u32,
 ) -> Result<DecodedMips, String> {
+    if format == 114 {
+        if width == 0 || height == 0 {
+            return Err("zero-sized image".into());
+        }
+        let needed = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| "R32F image size overflow".to_owned())?;
+        let pixels = bytes
+            .get(..needed)
+            .ok_or_else(|| "truncated R32F image".to_owned())?;
+        return Ok(DecodedMips::single_compressed(
+            width,
+            height,
+            MipStorage::R32Float,
+            pixels.to_vec(),
+        ));
+    }
     let format = match format {
         value if value == u32::from_le_bytes(*b"DXT1") => PixelFormat::Bc1,
         value if value == u32::from_le_bytes(*b"DXT3") => PixelFormat::Bc2,

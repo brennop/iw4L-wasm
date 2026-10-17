@@ -252,6 +252,10 @@ impl ViewmodelController {
                     if timer > 0 { Some(timer) } else { None },
                 )
             }
+            WeaponAnimSlot::Detonate => (
+                WeaponState::Firing,
+                positive_ms(self.weapon.detonate_time_ms),
+            ),
             WeaponAnimSlot::FirstRaise => (
                 WeaponState::Raising {
                     first: true,

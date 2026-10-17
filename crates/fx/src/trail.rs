@@ -370,12 +370,25 @@ fn apply_trail_sample_position(
                     seed,
                 );
                 if def.has_effect_on_impact && impact_child_speed_allows(vec3_length_sq(pre_vel)) {
-                    let (parent_def_name, catalog_index) = match host.effect_at(effect_slot) {
-                        Some(e) => (e.def_name.clone(), e.catalog_index),
-                        None => (String::new(), crate::system::FX_CATALOG_INDEX_NONE),
-                    };
+                    let (parent_def_name, catalog_index, products, mark_entity) =
+                        match host.effect_at(effect_slot) {
+                            Some(e) => (
+                                e.def_name.clone(),
+                                e.catalog_index,
+                                e.products,
+                                e.mark_entity,
+                            ),
+                            None => (
+                                String::new(),
+                                crate::system::FX_CATALOG_INDEX_NONE,
+                                crate::FxSpawnProducts::All,
+                                None,
+                            ),
+                        };
                     host.pending_trail_impacts
                         .push(crate::system::PendingTrailImpact {
+                            products,
+                            mark_entity,
                             parent_def_name,
                             catalog_index,
                             def_index,
