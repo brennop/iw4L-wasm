@@ -406,7 +406,7 @@ pub fn build_skin_layout(
             return None;
         }
         let visible = surface_is_visible(lod_local);
-        if !visible || vertex_count == 0 || index_count == 0 {
+        if vertex_count == 0 || index_count == 0 {
             surfaces.push(SkinSurfaceLayout {
                 surface_index,
                 src_first_vertex: first_vertex,
@@ -435,7 +435,7 @@ pub fn build_skin_layout(
             vertex_count,
             index_start: new_start,
             index_count: index_count as u32,
-            visible: true,
+            visible,
         });
     }
     Some(SkinLayout {
@@ -461,7 +461,7 @@ pub(crate) fn packed_skin_shape(
         layout.dest_vertex_n
     ];
     for surface in &layout.surfaces {
-        if !surface.visible {
+        if surface.index_count == 0 {
             continue;
         }
         for local in 0..surface.vertex_count {

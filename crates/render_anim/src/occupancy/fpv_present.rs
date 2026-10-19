@@ -943,7 +943,6 @@ fn skin_fpv_geometry(
                 return;
             };
             fpv_plan.skin_jobs = jobs;
-            fpv_plan.revisions.bump_vertices();
             fpv_plan.geometry_ok = !fpv_plan.draws().is_empty();
             fpv_plan.settle_visible();
             gaps.clear(RenderGap::FpvViewmodel);

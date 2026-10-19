@@ -4,6 +4,7 @@
 main()
 {
 	level.t6Fx = [];
+	level.t6Fx[ "bolt_warning" ] = loadfx( "t5:weapon/crossbow/fx_trail_crossbow_blink_grn_os" );
 	level.t6Fx[ "betty_explosion" ] = loadfx( "weapon/bouncing_betty/fx_betty_explosion" );
 	level.t6Fx[ "betty_destroyed" ] = loadfx( "weapon/bouncing_betty/fx_betty_destroyed" );
 	level.t6Fx[ "betty_launch" ] = loadfx( "weapon/bouncing_betty/fx_betty_launch_dust" );
@@ -65,7 +66,8 @@ onPlayerSpawned()
 		if ( isDefined( self.t6tactical ) && self hasWeapon( self.t6tactical ) )
 			self setWeaponAmmoClip( self.t6tactical, 1 );
 
-		self thread watchEquipment();
+		self thread watchEquipment( "grenade_fire" );
+		self thread watchEquipment( "missile_fire" );
 	}
 }
 
@@ -88,17 +90,20 @@ deleteObjectsOnDisconnect()
 	self deleteObjects();
 }
 
-watchEquipment()
+watchEquipment( event )
 {
 	self endon( "death" );
 	self endon( "disconnect" );
 
 	for ( ;; )
 	{
-		self waittill( "grenade_fire", grenade, weapName );
+		self waittill( event, grenade, weapName );
 
 		if ( !isDefined( grenade ) )
 			continue;
+
+		if ( grenade.nativename == "explosive_bolt_mp" )
+			grenade thread boltWarning();
 
 		switch ( weapName )
 		{
@@ -122,6 +127,29 @@ watchEquipment()
 					grenade thread plantedLights( self, "c4" );
 				break;
 		}
+	}
+}
+
+boltWarning()
+{
+	self endon( "death" );
+	glow = spawnFx( level.t6Fx[ "bolt_warning" ], self.origin,
+		anglesToForward( self.angles ), anglesToUp( self.angles ) );
+	self thread pulseBoltWarning( glow );
+	self thread deleteOnDeath( glow );
+	self playsound( "t5:wpn_crossbow_alert" );
+	self waittill( "explode" );
+	glow delete();
+}
+
+pulseBoltWarning( glow )
+{
+	self endon( "death" );
+	self endon( "explode" );
+	for ( ;; )
+	{
+		triggerFx( glow );
+		wait 0.35;
 	}
 }
 

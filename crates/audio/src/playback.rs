@@ -57,6 +57,7 @@ impl Plugin for PlayerSoundPlugin {
             .scoped::<crate::ambient::MapSources>(frame::MatchScope::Live)
             .scoped::<crate::script_ambient::ScriptAmbientPlayback>(frame::MatchScope::Live)
             .scoped::<crate::destructible_loops::DestructibleSources>(frame::MatchScope::Live)
+            .scoped::<crate::projectile_loops::ProjectileSources>(frame::Timeline::Running)
             .scoped::<crate::ambient::SoundBankLoadAttempted>(frame::MatchScope::Loading)
             .scoped::<crate::ambient::ResidentSoundBank>(frame::MatchScope::Loading)
             .scoped::<crate::BobCycleTracker>(frame::MatchScope::Live)
@@ -111,6 +112,7 @@ impl Plugin for PlayerSoundPlugin {
                         .after(collect_cue_decisions),
                     play_land_sound_messages.in_set(frame::InMatch),
                     crate::destructible_loops::update.in_set(frame::InMatch),
+                    crate::projectile_loops::update.in_set(frame::InMatch),
                 )
                     .in_set(ClientSet::Effects),
             )

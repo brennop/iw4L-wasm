@@ -55,6 +55,10 @@ impl ScriptMenus {
         self.stack.iter().map(|m| m.name.clone()).collect()
     }
 
+    pub fn is_open(&self, name: &str) -> bool {
+        self.position(name).is_some()
+    }
+
     pub fn focused_item(&self) -> Option<(&str, usize)> {
         let menu = self.input_menu()?;
         Some((&menu.name, menu.focus?))

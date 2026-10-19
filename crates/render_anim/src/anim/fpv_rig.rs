@@ -740,6 +740,26 @@ impl PreparedFpvRig {
                 return None;
             }
             jobs.push(PackedSkinJob {
+                ranges: if model.layout.surfaces.is_empty() {
+                    vec![render_frame::skinning::SkinVertexRange {
+                        start: 0,
+                        count: model.layout.dest_vertex_n as u32,
+                        rigid: false,
+                    }]
+                    .into()
+                } else {
+                    model
+                        .layout
+                        .surfaces
+                        .iter()
+                        .filter(|surface| surface.visible && surface.index_count != 0)
+                        .map(|surface| render_frame::skinning::SkinVertexRange {
+                            start: surface.dest_first_vertex as u32,
+                            count: surface.vertex_count as u32,
+                            rigid: false,
+                        })
+                        .collect()
+                },
                 shape: Arc::clone(shape),
                 bones: matrices
                     .iter()

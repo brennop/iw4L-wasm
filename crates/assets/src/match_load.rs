@@ -262,15 +262,8 @@ fn approve_map_load(
         }
         let games = asset_transport::GamesRoot(identity.games_root.clone());
         let trees = asset_transport::NamespaceTrees::discover(&games);
-        let have = trees.present().fold(0, |mask, (ns, _)| {
-            mask | match ns.as_str() {
-                "iw4" => 1,
-                "iw5" => 2,
-                "t5" => 4,
-                "t6" => 8,
-                _ => 0,
-            }
-        });
+        let have =
+            frame::AssetFamilies::from_families(trees.present().map(|(ns, _)| ns.as_str())).0;
         let selection =
             if *role == frame::RuntimeRole::Client || !request.load_key.match_key.is_none() {
                 server_families

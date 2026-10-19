@@ -120,8 +120,29 @@ impl<'z> T6Model<'z> {
         core::str::from_utf8(self.load.blocks.cstr(p).ok()?).ok()
     }
 
+    pub fn collision(&self) -> Option<(i16, u32, Vec<xmodel_runtime::CollSurfCollision>)> {
+        let (_, surfaces) = capture_collision(
+            &Reader { load: self.load },
+            self,
+            usize::from(self.h_u8(off::NUM_BONES)),
+        )?;
+        Some((
+            self.h_u16(off::COLL_LOD) as i16,
+            self.h_u32(off::CONTENTS),
+            surfaces,
+        ))
+    }
+
     pub fn surface_count(&self) -> usize {
         usize::from(self.h_u8(off::NUM_SURFS))
+    }
+
+    pub fn surface_ptr(&self, index: usize) -> Option<Ptr> {
+        if index >= self.surface_count() {
+            return None;
+        }
+        self.h_ptr(off::SURFS)
+            .map(|p| p.at(index as u32 * XSURFACE))
     }
 
     pub fn material_slot(&self, index: usize) -> Option<Ptr> {

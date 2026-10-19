@@ -45,6 +45,7 @@ pub use start::{
 mod destructible_loops;
 mod match_set;
 mod match_voices;
+mod projectile_loops;
 
 mod weapon_lock;
 

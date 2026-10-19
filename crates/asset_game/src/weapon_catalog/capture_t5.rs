@@ -596,6 +596,7 @@ pub(super) fn leftover_t5_sounds(
         return WeaponSoundAliases::default();
     };
     WeaponSoundAliases {
+        projectile: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_PROJECTILE_SOUND_OFF),
         proj_explosion: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_PROJ_EXPLOSION_SOUND_OFF),
         proj_ignition_sound: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_PROJ_IGNITION_SOUND_OFF),
         notetrack_convention: NotetrackConvention::InlinePrefix,

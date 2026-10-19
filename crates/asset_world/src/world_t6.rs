@@ -493,7 +493,7 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
             let b = r.bytes(p, 12)?;
             out.materials.push(ClipMapMaterial {
                 name: r.text(Reader::ptr(b, 0)?)?.to_owned(),
-                surface_flags: Reader::word(b, 4)?,
+                surface_flags: crate::clip_collision::treyarch_surface_flags(Reader::word(b, 4)?),
                 content_flags: Reader::word(b, 8)?,
             });
         }
@@ -514,7 +514,10 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
                     plane[axis] = if side == 0 { -1.0 } else { 1.0 };
                     plane[3] = if side == 0 { -mins[axis] } else { maxs[axis] };
                     planes.push(plane);
-                    flags.push(Reader::word(b, 60 + side * 12 + axis * 4)?);
+                    flags.push(crate::clip_collision::treyarch_surface_flags(Reader::word(
+                        b,
+                        60 + side * 12 + axis * 4,
+                    )?));
                 }
             }
             let count = Reader::word(b, 28)? as usize;
@@ -530,7 +533,9 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
                         r.f32(plane.at(8))?,
                         r.f32(plane.at(12))?,
                     ]);
-                    flags.push(Reader::word(sb, 8)?);
+                    flags.push(crate::clip_collision::treyarch_surface_flags(Reader::word(
+                        sb, 8,
+                    )?));
                 }
             }
             out.brushes.push(ClipBrush {
@@ -538,6 +543,67 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
                 contents: Reader::word(b, 12)?,
                 plane_surface_flags: flags,
                 glass_encoded: 0,
+            });
+        }
+    }
+    let static_count = word(84)?;
+    if static_count != 0 {
+        let table = ptr(88)?;
+        let mut models = HashMap::new();
+        for index in 0..static_count {
+            let row = table.at(index * 84);
+            let Some(model_asset) = load.asset_in(asset, row.at(4)) else {
+                continue;
+            };
+            let key = std::ptr::from_ref(model_asset);
+            if !models.contains_key(&key) {
+                let model = asset_model::T6Model::new(load, model_asset)
+                    .ok_or("T6 collision model missing")?;
+                let (coll_lod, contents, surfaces) =
+                    model.collision().ok_or("T6 model collision invalid")?;
+                let coll = clipmap_iw4::XModelColl {
+                    coll_lod,
+                    contents,
+                    surfs: surfaces
+                        .into_iter()
+                        .map(|surface| clipmap_iw4::XModelCollSurf {
+                            tris: surface
+                                .tris
+                                .into_iter()
+                                .map(|tri| clipmap_iw4::XModelCollTri {
+                                    plane: tri.plane,
+                                    svec: tri.svec,
+                                    tvec: tri.tvec,
+                                })
+                                .collect(),
+                            midpoint: surface.midpoint,
+                            half_size: surface.half_size,
+                            bone_idx: i32::from(surface.bone),
+                            contents: surface.contents,
+                            surf_flags: crate::clip_collision::treyarch_surface_flags(
+                                surface.surf_flags,
+                            ),
+                        })
+                        .collect(),
+                };
+                models.insert(key, (model.name().unwrap_or_default().to_owned(), coll));
+            }
+            let (name, coll) = &models[&key];
+            let mins = r.xyz(row.at(60))?;
+            let maxs = r.xyz(row.at(72))?;
+            out.static_models.push(crate::ClipPlacedStaticModel {
+                index,
+                name: name.clone(),
+                model: clipmap_iw4::ClipStaticModel {
+                    origin: r.xyz(row.at(12))?,
+                    inv_scaled_axis: [r.xyz(row.at(24))?, r.xyz(row.at(36))?, r.xyz(row.at(48))?],
+                    bounds_mid: core::array::from_fn(|axis| (mins[axis] + maxs[axis]) * 0.5),
+                    bounds_half: core::array::from_fn(|axis| (maxs[axis] - mins[axis]) * 0.5),
+                    coll: clipmap_iw4::XModelColl {
+                        contents: r.u32(row.at(8))?,
+                        ..coll.clone()
+                    },
+                },
             });
         }
     }
@@ -1007,7 +1073,92 @@ pub fn static_model_lighting_origins(
         .collect()
 }
 
-pub fn model_mesh(skel: asset_model::ModelSkel) -> Result<crate::ModelMesh, String> {
+fn surface_collision(
+    load: &ZoneLoad,
+    surface: Ptr,
+) -> Result<crate::XSurfaceCollisionPayload, String> {
+    let r = Reader(load);
+    let raw = r.bytes(surface, 80)?;
+    let tri_limit = usize::from(r.u16(surface.at(6))?);
+    let count = usize::from(raw[1]);
+    let mut lists = Vec::with_capacity(count);
+    if count != 0 {
+        let rows = Reader::ptr(raw, 40)?;
+        for index in 0..count {
+            let row = rows.at(index as u32 * 12);
+            let tri_offset = r.u16(row.at(4))?;
+            let tri_count = r.u16(row.at(6))?;
+            let end = usize::from(tri_offset) + usize::from(tri_count);
+            if end > tri_limit {
+                return Err("T6 rigid triangle range invalid".into());
+            }
+            let tree = load
+                .blocks
+                .ptr_at(row.at(8))
+                .map_err(|e| format!("T6 collision tree: {e:?}"))?;
+            let tree = tree
+                .map(
+                    |tree| -> Result<crate::OwnedXSurfaceCollisionTree, String> {
+                        let h = r.bytes(tree, 40)?;
+                        let node_count = Reader::word(h, 24)?;
+                        let leaf_count = Reader::word(h, 32)?;
+                        let mut nodes = Vec::with_capacity(node_count as usize);
+                        let mut leafs = Vec::with_capacity(leaf_count as usize);
+                        if node_count != 0 {
+                            let rows = Reader::ptr(h, 28)?;
+                            for i in 0..node_count {
+                                let row = rows.at(i * 16);
+                                nodes.push(asset_iw4::XSurfaceCollisionNode {
+                                    mins: [r.u16(row)?, r.u16(row.at(2))?, r.u16(row.at(4))?],
+                                    maxs: [
+                                        r.u16(row.at(6))?,
+                                        r.u16(row.at(8))?,
+                                        r.u16(row.at(10))?,
+                                    ],
+                                    child_begin_index: r.u16(row.at(12))?,
+                                    child_count: r.u16(row.at(14))?,
+                                });
+                            }
+                        }
+                        if leaf_count != 0 {
+                            let rows = Reader::ptr(h, 36)?;
+                            for i in 0..leaf_count {
+                                leafs.push(asset_iw4::XSurfaceCollisionLeaf {
+                                    triangle_begin_index: r.u16(rows.at(i * 2))?,
+                                });
+                            }
+                        }
+                        asset_iw4::validate_xsurface_collision_ranges(
+                            &nodes,
+                            &leafs,
+                            usize::from(tri_offset),
+                            end,
+                        )
+                        .map_err(|e| format!("T6 collision tree ranges: {e:?}"))?;
+                        Ok(crate::OwnedXSurfaceCollisionTree {
+                            trans: r.xyz(tree)?,
+                            scale: r.xyz(tree.at(12))?,
+                            nodes,
+                            leafs,
+                        })
+                    },
+                )
+                .transpose()?;
+            lists.push(crate::OwnedXRigidVertListCollision {
+                tri_offset,
+                tri_count,
+                tree,
+            });
+        }
+    }
+    Ok(crate::XSurfaceCollisionPayload::Iw4(lists))
+}
+
+pub fn model_mesh(
+    load: &ZoneLoad,
+    model: asset_model::T6Model<'_>,
+    skel: asset_model::ModelSkel,
+) -> Result<crate::ModelMesh, String> {
     use bevy::asset::RenderAssetUsages;
     use bevy::prelude::Mesh;
     use bevy::render::mesh::{Indices, PrimitiveTopology};
@@ -1071,9 +1222,10 @@ pub fn model_mesh(skel: asset_model::ModelSkel) -> Result<crate::ModelMesh, Stri
             xsurface_plus_1: Some(0),
             xsurface_base_index: 0,
             xsurface_vert_offset: 0,
-            collision: crate::model_mesh::XSurfaceCollisionPayload::Unavailable {
-                source_layout: "T6 model collision not retained",
-            },
+            collision: surface_collision(
+                load,
+                model.surface_ptr(surface).ok_or("T6 surface missing")?,
+            )?,
         });
     }
     let mut lod_surfaces: [Vec<crate::model_mesh::ModelSurfaceDraw>; 4] = Default::default();

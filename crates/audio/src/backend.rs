@@ -172,6 +172,7 @@ fn submit_presented_audio(
     settings: Option<Res<frame::GameSettings>>,
     listeners: Query<&Transform, With<crate::AmbientListener>>,
     destructibles: Option<Res<crate::destructible_loops::DestructibleSources>>,
+    projectiles: Option<Res<crate::projectile_loops::ProjectileSources>>,
     map: Option<Res<crate::ambient::MapSources>>,
     menu: Option<Res<crate::frontend::MenuSources>>,
     shellshock: Option<Res<crate::shellshock::ShellshockSources>>,
@@ -191,6 +192,9 @@ fn submit_presented_audio(
     let mut desired = Vec::new();
     if let Some(destructibles) = destructibles {
         desired.extend(destructibles.desired.iter().cloned());
+    }
+    if let Some(projectiles) = projectiles {
+        desired.extend(projectiles.desired.iter().cloned());
     }
     if let Some(map) = map {
         desired.extend(map.desired.iter().cloned());

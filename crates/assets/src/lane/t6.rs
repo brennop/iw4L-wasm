@@ -1367,6 +1367,7 @@ const FX_EFFECT_DEF_ELEMS: usize = 28;
 const FX_ELEM_LAST_SPRITE: u8 = 6;
 const FX_ELEM_MODEL: u8 = 7;
 const FX_ELEM_SOUND: u8 = 10;
+const FX_ELEM_DECAL: u8 = 11;
 const FX_ELEM_RUNNER: u8 = 12;
 
 fn capture_effects(
@@ -1480,7 +1481,16 @@ fn capture_effect(
             usize::from(raw[FX_ELEM_TYPE + 3]) + 1,
             FX_ELEM_VIS_SAMPLE,
         );
-        let slots: Vec<fastfile_t6::Ptr> = if visual_count > 1 {
+        let slots: Vec<fastfile_t6::Ptr> = if elem_type == FX_ELEM_DECAL {
+            decode_ptr(header_u32(&raw, FX_ELEM_VISUALS as usize).unwrap_or(0)).map_or_else(
+                Vec::new,
+                |arr| {
+                    (0..visual_count as u32 * 2)
+                        .map(|v| arr.at(v * 4))
+                        .collect()
+                },
+            )
+        } else if visual_count > 1 {
             decode_ptr(header_u32(&raw, FX_ELEM_VISUALS as usize).unwrap_or(0))
                 .map_or_else(Vec::new, |arr| {
                     (0..visual_count as u32).map(|v| arr.at(v * 4)).collect()
@@ -1493,7 +1503,7 @@ fn capture_effect(
         let mut visuals = Vec::new();
         for slot in slots {
             let visual = match elem_type {
-                0..=FX_ELEM_LAST_SPRITE => {
+                0..=FX_ELEM_LAST_SPRITE | FX_ELEM_DECAL => {
                     let material = load.asset_in(asset, slot);
                     let name = material.and_then(|m| header_str(load, &m.header, 0));
                     if let (Some(material), Some(name)) = (material, name)
@@ -2089,7 +2099,7 @@ impl ZoneLane for T6Lane {
                         .map(asset_core::WalkLocalMaterialIndex::from_walk)
                 })
                 .ok_or("T6 sky model geometry missing")?;
-                draw.sky_model = Some(asset_world::world_t6::model_mesh(skel)?);
+                draw.sky_model = Some(asset_world::world_t6::model_mesh(&load, model, skel)?);
             }
             report.push(format!(
                 "T6 skybox: name={sky_name:?} captured={}",
@@ -2109,7 +2119,7 @@ impl ZoneLane for T6Lane {
                 let mesh = asset_model::capture_model_skel_t6(*model, |surface| {
                     model_material(*model, surface)
                 })
-                .map(asset_world::world_t6::model_mesh);
+                .map(|skel| asset_world::world_t6::model_mesh(&load, *model, skel));
                 match mesh {
                     Some(Ok(mesh)) => {
                         smodel_mesh.push((*asset, static_model_meshes.len()));
@@ -2364,10 +2374,11 @@ impl ZoneLane for T6Lane {
             let sound = Some(sound_capture.finish(Ok(())));
             let collision = build_clip_collision(&load)?;
             report.push(format!(
-                "T6 collision: {} brushes, {} BSP leaves, {} triangles",
+                "T6 collision: {} brushes, {} BSP leaves, {} triangles, {} static models",
                 collision.brushes.len(),
                 collision.leaves.len(),
-                collision.mesh.tri_indices.len() / 3
+                collision.mesh.tri_indices.len() / 3,
+                collision.static_models.len(),
             ));
             let entities = entity_string(&load)?;
             let entities = asset_world::t6_entities_for_iw4_rules(entities);

@@ -199,6 +199,11 @@ impl WeaponBuild {
                 .filter_map(|edge| edge.bound_index())
                 .collect();
             let hide_mode = row.preparation.hide_mode();
+            let embedded_ammo = mounts.rocket.is_none()
+                && row.projectile_model.is_some()
+                && hide_tags
+                    .iter()
+                    .any(|tag| tag.eq_ignore_ascii_case("tag_clip"));
             let knife_model = row.knife_xmodel.as_deref().map(|name| {
                 row.preparation
                     .bind_fpv(WeaponComponent::ViewModel, Some(name), fpv)
@@ -212,6 +217,13 @@ impl WeaponBuild {
                                 knife: Option<crate::FpvMeshIndex>,
                                 ads: bool,
                                 jammed: bool| {
+                let assembly_hide_tags: Vec<_> = hide_tags
+                    .iter()
+                    .filter(|tag| {
+                        !(rocket && embedded_ammo && tag.eq_ignore_ascii_case("tag_clip"))
+                    })
+                    .cloned()
+                    .collect();
                 let key = crate::FpvAssemblyKey {
                     hands,
                     gun: mounts.gun,
@@ -221,7 +233,7 @@ impl WeaponBuild {
                         .then(|| mounts.rocket.as_ref().map(|mount| mount.model))
                         .flatten(),
                     knife,
-                    hide_tags: hide_tags.clone(),
+                    hide_tags: assembly_hide_tags.clone(),
                     hide_mode,
                     jammed,
                 };
@@ -236,7 +248,7 @@ impl WeaponBuild {
                             rocket,
                             knife,
                             ads,
-                            &hide_tags,
+                            &assembly_hide_tags,
                             hide_mode,
                             jammed,
                             &mut skeletons,
@@ -273,9 +285,7 @@ impl WeaponBuild {
                         Ok(bare) => bare,
                         Err(error) => return Some(Err(error)),
                     };
-                    let rocket = match mounts
-                        .rocket
-                        .is_some()
+                    let rocket = match (mounts.rocket.is_some() || embedded_ammo)
                         .then(|| assemble(hands, mounts, true, None, false, false))
                     {
                         None => None,

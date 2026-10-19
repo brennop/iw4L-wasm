@@ -39,6 +39,7 @@ impl Plugin for RenderPlugin {
 
         crate::diag::acceptance::register_acceptance_systems(app);
         register_render_frame_diag(app);
+        crate::resolution::register(app);
         app.add_systems(Update, sample_render_frame_diag.in_set(ClientSet::Diag));
         register_frame_spans(app);
         app.init_resource::<CaptureQueue>().add_systems(

@@ -42,7 +42,7 @@ impl CommonKey {
             source_revision: asset_transport::installation_revision(&games.0),
             runtime,
             foreign: None,
-            families: frame::AssetFamilies(15),
+            families: frame::AssetFamilies::ALL,
         }
     }
 }

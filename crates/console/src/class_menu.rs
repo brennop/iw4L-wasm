@@ -254,12 +254,7 @@ pub(crate) fn route(
     let loc = prepared_loc
         .as_ref()
         .map_or(&*shell_loc, |strings| &strings.0);
-    if loading.is_none()
-        && menu_state
-            .open_names()
-            .iter()
-            .any(|name| name == "class_loading")
-    {
+    if loading.is_none() && menu_state.is_some_and(|menus| menus.is_open("class_loading")) {
         menus.write(UiMenuRequest::Close("class_loading".into()));
         if let Some(reason) = catalog.progression_lock("cac", &player_data) {
             dvars.set("ui_class_status", &reason);
@@ -645,7 +640,7 @@ pub(crate) fn route(
     }
     if let Some(slot) = store.slots.get(store.selected) {
         if dvars.get("ui_class_status").is_none_or(str::is_empty)
-            && let Some(reason) = &slot.lock_reason
+            && let Some(reason) = store.lock_reason(store.selected)
         {
             dvars.set("ui_class_status", format!("Class unavailable: {reason}"));
         }

@@ -4,6 +4,8 @@ use core::{fmt, str::FromStr};
 
 /// O16: framing of the WebSocket transport, shared by the master and the browser.
 pub mod ws_frame;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod congestion;
 
 pub const PROTOCOL_VERSION: u16 = 10;
 pub const ALPN: &[u8] = b"iw4l-master/10";
@@ -25,7 +27,7 @@ pub const MAX_BUILD_BYTES: usize = 64;
 pub const MAX_PLAYER_NAME_BYTES: usize = 64;
 pub const MAX_LIST_ADVERTS: usize = 128;
 
-pub const SESSION_IDLE: core::time::Duration = core::time::Duration::from_secs(40);
+pub const SESSION_IDLE: core::time::Duration = core::time::Duration::from_secs(90);
 pub const SESSION_KEEP_ALIVE: core::time::Duration = core::time::Duration::from_secs(1);
 
 const MAGIC: [u8; 4] = *b"IW4M";
@@ -107,6 +109,36 @@ pub type RoomId = AdvertId;
 pub struct ContentFlags(pub u8);
 
 impl ContentFlags {
+    pub const IW4: Self = Self(1 << 0);
+    pub const IW5: Self = Self(1 << 1);
+    pub const T5: Self = Self(1 << 2);
+    pub const T6: Self = Self(1 << 3);
+    pub const KNOWN: Self = Self(Self::IW4.0 | Self::IW5.0 | Self::T5.0 | Self::T6.0);
+    pub const FAMILIES: [(&'static str, Self); 4] = [
+        ("iw4", Self::IW4),
+        ("iw5", Self::IW5),
+        ("t5", Self::T5),
+        ("t6", Self::T6),
+    ];
+
+    pub fn family(name: &str) -> Option<Self> {
+        Self::FAMILIES
+            .into_iter()
+            .find_map(|(family, flag)| (family == name).then_some(flag))
+    }
+
+    pub fn map_family(map: &str) -> &str {
+        map.split_once(':').map_or("iw4", |(family, _)| family)
+    }
+
+    pub fn for_map(map: &str) -> Option<Self> {
+        Self::family(Self::map_family(map))
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
     pub const fn missing_from(self, have: Self) -> Self {
         Self(self.0 & !have.0)
     }

@@ -55,7 +55,10 @@ pub fn apply_pending_class_equip(
         );
         return;
     };
-    if let Err(reason) = catalog.validate_progression(slot, &player_data) {
+    if let Err(reason) = store
+        .lock_reason(index)
+        .map_or_else(|| catalog.validate_progression(slot, &player_data), Err)
+    {
         diag::info!(
             Ui,
             "class equip: refused request_id={} — {reason}",
@@ -226,6 +229,7 @@ pub(crate) fn register_equip_systems(app: &mut App) {
         Update,
         (
             consume_class_select_handoff,
+            sync_server_class_families,
             publish_class_availability,
             publish_signon_class_status.in_set(frame::InMatch),
             sync_class_change_allowed,
@@ -241,6 +245,25 @@ pub(crate) fn register_equip_systems(app: &mut App) {
             .after(apply_pending_class_equip)
             .in_set(frame::ClassEquipResolved),
     );
+}
+
+fn sync_server_class_families(
+    mut store: ResMut<SessionClassStore>,
+    bridge: Option<Res<net::MasterBridge>>,
+    families: Option<Res<frame::AssetFamilies>>,
+    scope: Res<State<frame::MatchScope>>,
+) {
+    let selected = bridge
+        .as_ref()
+        .and_then(|bridge| bridge.state().families())
+        .or_else(|| {
+            (*scope.get() == frame::MatchScope::Live)
+                .then(|| families.as_deref().copied())
+                .flatten()
+        });
+    if store.server_families() != selected {
+        store.set_server_families(selected);
+    }
 }
 
 fn publish_class_availability(
@@ -272,7 +295,7 @@ fn publish_class_availability(
                 store.slots.get(index).map_or_else(
                     || Some("Class is unavailable".to_owned()),
                     |slot| {
-                        slot.lock_reason.clone().or_else(|| {
+                        store.lock_reason(index).or_else(|| {
                             catalog
                                 .validate_class(slot)
                                 .and_then(|()| catalog.validate_progression(slot, &player_data))

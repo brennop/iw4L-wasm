@@ -139,14 +139,11 @@ pub fn commit_class_equip(
     if let Some(request_id) = phase.pending_request_id() {
         return Err(ClassEquipRefusal::AlreadyPending { request_id });
     }
-    let Some(slot) = store.slots.get(index) else {
+    if store.slots.get(index).is_none() {
         return Err(ClassEquipRefusal::UnknownClass(index.to_string()));
-    };
-    if let Some(reason) = slot.lock_reason.as_deref() {
-        let refusal = ClassEquipRefusal::LockedContent {
-            index,
-            reason: reason.to_owned(),
-        };
+    }
+    if let Some(reason) = store.lock_reason(index) {
+        let refusal = ClassEquipRefusal::LockedContent { index, reason };
         status.0 = Some(refusal.to_string());
         return Err(refusal);
     }

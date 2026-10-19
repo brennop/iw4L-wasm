@@ -55,3 +55,5 @@ Body/tree/script/clip replacement resets animation and preserves corpse occupati
 Publication compiles appearance plans once; `SelectedWeaponAppearance` binds models, overrides and UI metadata.
 Raw hand/camouflage data stays on `WeaponBuild`; runtime consumers select appearances.
 The editor reopens attachments/camouflage; previews retain namespace material/image bindings and fall back to authored HUD icons. IW4 scripts bridge foreign smoke, gas, sticky, knife and C4 equipment names.
+Explosive crossbow payloads publish their own script lifecycle and use BO1
+warning FX and audio. Qualified script FX names select the authored family.

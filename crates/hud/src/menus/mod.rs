@@ -53,8 +53,9 @@ use net::{
 };
 
 use crate::chrome::{
-    ChromeAssets, ChromeFrame, ChromeGapKind, ChromeMenuAnim, MenuVisOnError, OwnerDrawArgs,
-    OwnerDrawPaint, execute_chrome_menu_ex, item_screen_rects, push_owner_pic,
+    ChromeAssets, ChromeFrame, ChromeGapKind, ChromeItemOverride, ChromeMenuAnim,
+    ChromeMenuOverrides, MenuVisOnError, OwnerDrawArgs, OwnerDrawPaint,
+    execute_chrome_menu_overrides, item_screen_rects, push_owner_pic,
 };
 use crate::draw2d::{Draw2dList, Draw2dOp, tessellate_fonts};
 use crate::expr_cache::MenuExprCache;
@@ -92,26 +93,28 @@ pub(super) fn choice_index(choices: &[(String, String)], value: &str) -> Option<
     })
 }
 
-fn painted_def(def: &MenuDef, open: &OpenMenu) -> MenuDef {
-    let (mut out, _) = crate::killcam_skip::inherit_shared_vis(def);
-    for (item, state) in out.items.iter_mut().zip(&open.items) {
-        if state.hidden {
-            item.vis_exp = String::from("0");
-        }
-        if let Some(color) = state.fore {
-            item.fore_color = color;
-        }
-        if let Some(color) = state.back {
-            item.back_color = color;
-        }
-    }
-    if let Some(color) = def.focus_color.filter(|color| color[3] > 0.0)
-        && let Some(item) = open.focus.and_then(|index| out.items.get_mut(index))
-        && (!item.text_key.is_empty() || !item.text_exp.is_empty())
-    {
-        item.fore_color = color;
-    }
-    out
+fn item_overrides(def: &MenuDef, open: &OpenMenu) -> Vec<ChromeItemOverride> {
+    def.items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let state = open.items.get(index);
+            ChromeItemOverride {
+                hidden: state.is_some_and(|state| state.hidden),
+                fore: if open.focus == Some(index)
+                    && (!item.text_key.is_empty() || !item.text_exp.is_empty())
+                {
+                    def.focus_color
+                        .filter(|color| color[3] > 0.0)
+                        .or(state.and_then(|state| state.fore))
+                } else {
+                    state.and_then(|state| state.fore)
+                },
+                back: state.and_then(|state| state.back),
+                ..Default::default()
+            }
+        })
+        .collect()
 }
 
 fn custom_class_slot(item: &asset_game::MenuItem) -> Option<usize> {
@@ -488,14 +491,15 @@ pub(crate) fn update_script_menus(
     if (menus.stack.is_empty() && scoreboard.is_none()) || !surface.is_ready() {
         return;
     }
-    let open_names = menus.open_names();
     let mut list = Draw2dList::default();
     let mut reported = std::mem::take(&mut menus.reported);
-    let mut layers: Vec<(String, std::borrow::Cow<MenuDef>, Option<[f32; 4]>)> = Vec::new();
+    let mut layers = Vec::new();
     if let Some(def) = scoreboard {
         layers.push((
             SCOREBOARD_MENU.to_owned(),
-            std::borrow::Cow::Borrowed(def),
+            def,
+            Vec::new(),
+            Vec::new(),
             None,
         ));
     }
@@ -512,43 +516,41 @@ pub(crate) fn update_script_menus(
         let Some(def) = catalog.get(&open.name) else {
             continue;
         };
-        let mut painted = painted_def(def, open);
+        let mut overrides = item_overrides(def, open);
         let mut slider_parts = Vec::new();
-        for item in &mut painted.items {
+        for (index, (item, state)) in def.items.iter().zip(&mut overrides).enumerate() {
             if let Some(reason) = class_unavailable(&open.name, item, &out.dvars) {
                 if let Some(slot) = custom_class_slot(item) {
                     let name = world
                         .classes
                         .and_then(|classes| classes.slots.get(slot))
                         .map_or("Class", |class| class.name.as_str());
-                    item.text_key = format!("{name} — {reason}");
-                    item.text_literal = true;
-                    item.text_exp.clear();
+                    state.text = Some(format!("{name} — {reason}"));
+                    state.text_literal = Some(true);
                 }
-                item.fore_color = [0.5, 0.5, 0.5, 1.0];
+                state.fore = Some([0.5, 0.5, 0.5, 1.0]);
             }
             if item.item_type == 14 && !item.dvar.is_empty() {
-                item.text_key = out
-                    .dvars
-                    .get(&format!("ui_bind_{}", item.dvar))
-                    .unwrap_or("UNBOUND")
-                    .to_owned();
+                state.text = Some(
+                    out.dvars
+                        .get(&format!("ui_bind_{}", item.dvar))
+                        .unwrap_or("UNBOUND")
+                        .to_owned(),
+                );
                 if out.binding.command.as_deref() == Some(item.dvar.as_str()) {
-                    item.text_key = "... (ESC)".to_owned();
+                    state.text = Some("... (ESC)".to_owned());
                 }
-                item.text_literal = true;
-                item.text_exp.clear();
-                item.text_align_mode = 10;
-                item.text_align_x = -8.0;
-                item.text_align_y = 0.0;
+                state.text_literal = Some(true);
+
+                state.text_align = Some((10, -8.0, 0.0));
             }
             if item.item_type == 4 && !item.dvar.is_empty() {
-                item.text_key = out.dvars.get(&item.dvar).unwrap_or("").to_owned();
+                state.text = Some(out.dvars.get(&item.dvar).unwrap_or("").to_owned());
                 if item.edit_field.as_ref().is_some_and(|field| field.masked) {
-                    item.text_key = "*".repeat(item.text_key.chars().count());
+                    state.text =
+                        Some("*".repeat(state.text.as_deref().unwrap_or("").chars().count()));
                 }
-                item.text_literal = true;
-                item.text_exp.clear();
+                state.text_literal = Some(true);
             }
             if let Some(slider) = &item.slider {
                 let value = out
@@ -567,55 +569,62 @@ pub(crate) fn update_script_menus(
                         [1.0, 1.0, 1.0, 1.0],
                     ),
                 ] {
-                    let mut part = item.clone();
-                    part.slider = None;
-                    part.dvar.clear();
-                    part.text_key.clear();
-                    part.text_exp.clear();
-                    part.item_type = 0;
-                    part.static_flags |= WINDOW_DECORATION;
-                    part.style = 1;
-                    part.background = "white".into();
-                    part.back_color = color;
-                    part.rect.x += x;
-                    part.rect.y += y;
-                    part.rect.w = w;
-                    part.rect.h = h;
-                    slider_parts.push(part);
+                    let mut rect = item.rect;
+                    rect.x += x;
+                    rect.y += y;
+                    rect.w = w;
+                    rect.h = h;
+                    slider_parts.push((
+                        index,
+                        ChromeItemOverride {
+                            hidden: state.hidden,
+                            fore: state.fore,
+                            back: Some(color),
+                            text: Some(String::new()),
+                            rect: Some(rect),
+                            style: Some(1),
+                            background: Some("white"),
+                            ..Default::default()
+                        },
+                    ));
                 }
-                let mut label = item.clone();
-                label.slider = None;
-                label.dvar.clear();
-                label.item_type = 0;
-                label.static_flags |= WINDOW_DECORATION;
-                label.background.clear();
-                label.back_color = [0.0; 4];
-                label.text_exp.clear();
-                label.text_literal = true;
                 let displayed = slider
                     .display_range
                     .map_or(value, |[min, max]| min + fraction * (max - min));
                 let decimals = usize::from(slider.decimals.min(6));
-                label.text_key = format!("{displayed:.decimals$}{}", slider.suffix);
-                label.rect.x += item.rect.w + 8.0;
-                label.rect.w = 36.0;
-                slider_parts.push(label);
-                item.background.clear();
-                item.text_key.clear();
-                item.text_exp.clear();
+                let mut rect = item.rect;
+                rect.x += item.rect.w + 8.0;
+                rect.w = 36.0;
+                slider_parts.push((
+                    index,
+                    ChromeItemOverride {
+                        hidden: state.hidden,
+                        fore: state.fore,
+                        back: Some([0.0; 4]),
+                        text: Some(format!("{displayed:.decimals$}{}", slider.suffix)),
+                        text_literal: Some(true),
+                        rect: Some(rect),
+                        background: Some(""),
+                        ..Default::default()
+                    },
+                ));
+                state.background = Some("");
+                state.text = Some(String::new());
             }
-            if !item.choices.is_empty() {
+            let choices = out.dvars.choices(&item.dvar).unwrap_or(&item.choices);
+            if !choices.is_empty() {
                 let value = out.dvars.get(&item.dvar).unwrap_or_default();
-                item.text_key = choice_index(&item.choices, value)
-                    .map(|at| item.choices[at].0.clone())
-                    .unwrap_or_else(|| value.to_owned());
-                item.text_exp.clear();
+                state.text = Some(
+                    choice_index(choices, value)
+                        .map(|at| choices[at].0.clone())
+                        .unwrap_or_else(|| value.to_owned()),
+                );
             }
         }
-        painted.items.extend(slider_parts);
         if let Some(edit) = &menus.editing
             && edit.menu == open.name
-            && let Some(item) = painted.items.get_mut(edit.item)
+            && let Some(item) = def.items.get(edit.item)
+            && let Some(state) = overrides.get_mut(edit.item)
         {
             let mut text = if item.edit_field.as_ref().is_some_and(|field| field.masked) {
                 vec!['*'; edit.buffer.len()]
@@ -623,23 +632,18 @@ pub(crate) fn update_script_menus(
                 edit.buffer.clone()
             };
             text.insert(edit.cursor.min(text.len()), '|');
-            item.text_key = text.into_iter().collect();
-            item.text_exp.clear();
+            state.text = Some(text.into_iter().collect());
         }
-        let focus_rect = open.focus.and_then(|i| painted.items.get(i)).map(item_rect);
-        layers.push((
-            open.name.clone(),
-            std::borrow::Cow::Owned(painted),
-            focus_rect,
-        ));
+        let focus_rect = open.focus.and_then(|i| def.items.get(i)).map(item_rect);
+        layers.push((open.name.clone(), def, overrides, slider_parts, focus_rect));
     }
-    for (name, painted, focus_rect) in &layers {
+    for (name, def, overrides, extra_items, focus_rect) in &layers {
         let host = MenuHost {
             world: &world,
             dvars: &out.dvars,
-            menu: painted,
+            menu: def,
             locals: &locals,
-            open: &open_names,
+            open: &menus.stack,
             focus_rect: *focus_rect,
         };
         let mut owner_draw = |args: OwnerDrawArgs<'_>, frame: &mut ChromeFrame| {
@@ -663,8 +667,8 @@ pub(crate) fn update_script_menus(
             }
             OwnerDrawPaint::Gap(ChromeGapKind::OwnerDraw)
         };
-        let frame = execute_chrome_menu_ex(
-            painted,
+        let frame = execute_chrome_menu_overrides(
+            def,
             &host,
             &surface,
             ChromeAssets {
@@ -675,6 +679,11 @@ pub(crate) fn update_script_menus(
             &mut exprs,
             MenuVisOnError::PaintAnyway,
             Some(&mut owner_draw),
+            ChromeMenuOverrides {
+                items: overrides,
+                extra_items,
+                skip: None,
+            },
         );
         if frame.coverage.typed_gap > 0 && !reported.contains(name) {
             reported.insert(name.clone());
@@ -683,7 +692,12 @@ pub(crate) fn update_script_menus(
                 .gap_ids
                 .iter()
                 .map(|(index, kind)| {
-                    let item = &painted.items[*index];
+                    let source = if *index < def.items.len() {
+                        *index
+                    } else {
+                        extra_items[*index - def.items.len()].0
+                    };
+                    let item = &def.items[source];
                     let error = frame
                         .vis_errors
                         .iter()
@@ -702,7 +716,7 @@ pub(crate) fn update_script_menus(
                 "menu {}: {} of {} items not painted: {}",
                 name,
                 gaps.len(),
-                painted.items.len(),
+                def.items.len() + extra_items.len(),
                 gaps.join(" ")
             );
         }
@@ -866,20 +880,15 @@ fn handle_input(
     let Some(def) = runner.catalog.get(&top) else {
         return;
     };
-    let Some(open) = runner.menus.input_menu() else {
-        return;
-    };
-    let painted = painted_def(def, open);
-    let names = runner.menus.open_names();
     let host = MenuHost {
         world: runner.world,
         dvars: runner.dvars,
-        menu: &painted,
+        menu: def,
         locals: runner.locals,
-        open: &names,
+        open: &runner.menus.stack,
         focus_rect: None,
     };
-    let rects = item_screen_rects(&painted, &host, surface, runner.exprs);
+    let rects = item_screen_rects(def, &host, surface, runner.exprs);
     let visible = runner.visible_items(&top);
     if let Some((menu, index)) = runner.menus.slider_drag.clone() {
         if menu == top && input.mouse.pressed(MouseButton::Left) {

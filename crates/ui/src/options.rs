@@ -50,10 +50,13 @@ pub(crate) fn apply_window_settings(
     // fit_canvas_to_parent, see bootstrap launch + web/index.html). Forcing a
     // physical resolution here would fight that and desync pointer
     // coordinates, so only mode/present-mode apply on wasm32.
+    // Fullscreen covers the display; there the resolution sets the render size.
     #[cfg(not(target_arch = "wasm32"))]
-    window
-        .resolution
-        .set_physical_resolution(settings.resolution.width, settings.resolution.height);
+    if !settings.fullscreen {
+        window
+            .resolution
+            .set_physical_resolution(settings.resolution.width, settings.resolution.height);
+    }
     window.mode = if settings.fullscreen {
         bevy::window::WindowMode::BorderlessFullscreen(MonitorSelection::Current)
     } else {

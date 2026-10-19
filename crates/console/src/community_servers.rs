@@ -4,7 +4,6 @@ pub(crate) fn community_server_menu(
     mut events: MessageReader<crate::ConsoleCommand>,
     servers: Res<ui::CommunityServers>,
     counts: Option<Res<net::CommunityPlayerCounts>>,
-    mut catalog: ResMut<asset_game::MenuCatalog>,
     (screen, party): (Res<frame::AppScreen>, Res<frame::UiPartyState>),
     mut dvars: ResMut<frame::UiMenuDvars>,
     mut exit: MessageWriter<AppExit>,
@@ -16,8 +15,12 @@ pub(crate) fn community_server_menu(
     ),
     mut echo: crate::feature_dispatch::ConsoleEcho,
 ) {
-    if let Some(counts) = counts.as_ref().and_then(|counts| counts.snapshot()) {
+    let mut refresh = dvars.choices("ui_community_server").is_none();
+    if let Some(counts) = counts.as_ref().and_then(|counts| counts.snapshot())
+        && counts != *population
+    {
         *population = counts;
+        refresh = true;
     }
     let counts = &*population;
     let online = servers
@@ -34,28 +37,8 @@ pub(crate) fn community_server_menu(
             |count| format!("{count} players online"),
         ),
     );
-    let choices = servers.display_choices(counts);
-    // A mutable catalog borrow marks it changed, and HUD re-uploads every zone image on change.
-    let stale = catalog
-        .menus
-        .get("options_community_servers")
-        .and_then(|menu| {
-            menu.items
-                .iter()
-                .find(|item| item.name == "community_server")
-        })
-        .is_some_and(|item| item.choices != choices);
-    if stale
-        && let Some(item) = catalog
-            .menus
-            .get_mut("options_community_servers")
-            .and_then(|menu| {
-                menu.items
-                    .iter_mut()
-                    .find(|item| item.name == "community_server")
-            })
-    {
-        item.choices = choices;
+    if refresh {
+        dvars.set_choices("ui_community_server", servers.display_choices(counts));
     }
     let choice = choice.get_or_insert_with(|| servers.selected.clone());
     let in_menu = *screen == frame::AppScreen::MainMenu;

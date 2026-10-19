@@ -55,9 +55,17 @@ impl PackedSkinShape {
 }
 
 #[derive(Clone, Debug)]
+pub struct SkinVertexRange {
+    pub start: u32,
+    pub count: u32,
+    pub rigid: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct PackedSkinJob {
     pub shape: Arc<PackedSkinShape>,
-    pub bones: Vec<[[f32; 4]; 4]>,
+    pub bones: Arc<[[[f32; 4]; 4]]>,
+    pub ranges: Arc<[SkinVertexRange]>,
     pub destination: u32,
     pub offset: [f32; 3],
 }

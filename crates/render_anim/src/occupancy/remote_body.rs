@@ -94,16 +94,14 @@ struct BodySkinShapeKey {
     namespace: asset_core::AssetNamespace,
     name: String,
     lod: u8,
-    surfaces: Vec<(usize, bool)>,
 }
 
 #[derive(Resource, Default)]
 struct BodySkinShapes {
     bodies: Option<Arc<asset_model::BodyMeshCatalog>>,
     weapons: Option<Arc<asset_model::WorldWeaponCatalog>>,
-    shapes: std::sync::Mutex<
-        HashMap<BodySkinShapeKey, std::sync::Weak<render_frame::skinning::PackedSkinShape>>,
-    >,
+    shapes:
+        std::sync::Mutex<HashMap<BodySkinShapeKey, Arc<render_frame::skinning::PackedSkinShape>>>,
 }
 
 impl BodySkinShapes {
@@ -126,7 +124,6 @@ impl BodySkinShapes {
             self.bodies = Some(Arc::clone(&bodies.0));
             self.weapons = weapons.map(|owner| Arc::clone(&owner.0));
         }
-        shapes.retain(|_, shape| shape.strong_count() != 0);
     }
 
     fn shape(
@@ -136,30 +133,20 @@ impl BodySkinShapes {
         world_weapon: bool,
         lod: u8,
         layout: &crate::anim::xmodel_pose::SkinLayout,
-        rigid: impl Fn(usize) -> bool,
     ) -> Arc<render_frame::skinning::PackedSkinShape> {
         let key = BodySkinShapeKey {
             world_weapon,
             namespace,
             name: skel.name.clone(),
             lod,
-            surfaces: layout
-                .surfaces
-                .iter()
-                .filter(|surface| surface.visible)
-                .map(|surface| (surface.surface_index, rigid(surface.surface_index)))
-                .collect(),
         };
         let mut shapes = self
             .shapes
             .lock()
             .expect("body skin cache is never poisoned");
-        if let Some(shape) = shapes.get(&key).and_then(std::sync::Weak::upgrade) {
-            return shape;
-        }
-        let shape = crate::anim::xmodel_pose::packed_skin_shape(skel, lod, layout, rigid);
-        shapes.insert(key, Arc::downgrade(&shape));
-        shape
+        Arc::clone(shapes.entry(key).or_insert_with(|| {
+            crate::anim::xmodel_pose::packed_skin_shape(skel, lod, layout, |_| false)
+        }))
     }
 }
 
@@ -1235,7 +1222,7 @@ fn skin_slot_into(
     );
     let rigid = |surface| stream_lod_surface_rigid(skel, lod, entries, model, surface);
     if layout.dest_vertex_n != 0 {
-        let shape = skin_shapes.shape(skel, namespace, world_weapon, lod, &layout, rigid);
+        let shape = skin_shapes.shape(skel, namespace, world_weapon, lod, &layout);
         let bone_end = base
             .checked_add(shape.required_bones())
             .ok_or("body bone range overflow")?;
@@ -1243,9 +1230,28 @@ fn skin_slot_into(
             .get(base..bone_end)
             .ok_or("body bone range exceeds pose")?;
         geom.skin_jobs.push(render_frame::skinning::PackedSkinJob {
+            ranges: if layout.surfaces.is_empty() {
+                vec![render_frame::skinning::SkinVertexRange {
+                    start: 0,
+                    count: layout.dest_vertex_n as u32,
+                    rigid: false,
+                }]
+                .into()
+            } else {
+                layout
+                    .surfaces
+                    .iter()
+                    .filter(|surface| surface.visible && surface.index_count != 0)
+                    .map(|surface| render_frame::skinning::SkinVertexRange {
+                        start: surface.dest_first_vertex as u32,
+                        count: surface.vertex_count as u32,
+                        rigid: rigid(surface.surface_index),
+                    })
+                    .collect()
+            },
             shape,
             bones: if matrices.is_empty() {
-                vec![Mat4::IDENTITY.to_cols_array_2d()]
+                Arc::new([Mat4::IDENTITY.to_cols_array_2d()])
             } else {
                 matrices.iter().map(Mat4::to_cols_array_2d).collect()
             },
@@ -1355,7 +1361,7 @@ fn assemble_meshes(
     let transform = job.transform;
     let lods = (Some(job.body_lod), job.head_lod, job.gun_lod);
     let mut geom = job.dest;
-    let prior_skin_jobs = std::mem::take(&mut geom.skin_jobs);
+    geom.skin_jobs.clear();
     skin_slot_into(
         &job.body.skel,
         job.body.namespace,
@@ -1432,7 +1438,6 @@ fn assemble_meshes(
             true,
         )?;
     }
-    drop(prior_skin_jobs);
     if let Some(camo) = job.camouflage {
         for surface in &mut geom.surfaces[gun_first..] {
             if let Some((_, to)) = camo
@@ -1557,7 +1562,10 @@ fn submit_remote_bodies(
 
     let packed_id = seated_packed_id(&seated);
     let draw_id = seated_draw_id(&seated);
-    if plan.last_packed_id == Some(packed_id) && seated_clients_match(&plan, &seated) {
+    if plan.last_packed_id == Some(packed_id)
+        && seated_clients_match(&plan, &seated)
+        && refresh_remote_body_bones(&mut plan, &seated)
+    {
         if plan.last_draw_id != Some(draw_id) {
             refresh_remote_body_draws(&mut plan, &seated);
             plan.revisions.bump_draws();
@@ -1658,6 +1666,20 @@ fn submit_remote_bodies(
         return;
     }
     gaps.raise(last_cause.unwrap_or(RenderGapCause::RemoteBodySubmitMissing));
+}
+
+fn refresh_remote_body_bones(
+    plan: &mut RemoteBodyDrawPlan,
+    seated: &[(RemoteBodySkinnedItem, u32, u8, u8)],
+) -> bool {
+    let mut slots = plan.skin_jobs.iter_mut();
+    for job in seated.iter().flat_map(|(item, ..)| &item.geom.skin_jobs) {
+        match slots.next() {
+            Some(slot) if slot.shape.id() == job.shape.id() => slot.bones = Arc::clone(&job.bones),
+            _ => return false,
+        }
+    }
+    slots.next().is_none()
 }
 
 fn seated_packed_id(seated: &[(RemoteBodySkinnedItem, u32, u8, u8)]) -> u64 {

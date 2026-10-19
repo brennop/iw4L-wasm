@@ -197,6 +197,17 @@ pub struct MenuDef {
 }
 
 impl MenuDef {
+    pub fn inherit_shared_vis(&mut self) {
+        let mut prev = String::new();
+        for item in &mut self.items {
+            if item.vis_exp.is_empty() && item.vis_ptr != 0 && !prev.is_empty() {
+                item.vis_exp = prev.clone();
+            } else if !item.vis_exp.is_empty() {
+                prev = item.vis_exp.clone();
+            }
+        }
+    }
+
     pub fn static_dvar_name(&self, index: i32) -> Option<&str> {
         self.expr_dvar_rows
             .get_or_init(|| expr_dvar_rows(&self.expr_dvars))
@@ -357,7 +368,7 @@ pub struct MenuCatalog {
     pub font_headers: usize,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct HudMaterialPlan {
     pub texture_atlas: [u8; 2],
     pub technique_slots: Option<u64>,
@@ -368,7 +379,7 @@ pub struct HudMaterialPlan {
     pub textures: Vec<HudMaterialTextureBinding>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HudMaterialTextureBinding {
     pub name_hash: u32,
     pub name_start: u8,
@@ -379,6 +390,14 @@ pub struct HudMaterialTextureBinding {
 }
 
 impl MenuCatalog {
+    /// Runs after every variant is resolved: a variant that overrides an item's
+    /// visibility must still pass it on to the items that share it.
+    pub fn inherit_shared_vis(&mut self) {
+        for def in self.menus.values_mut() {
+            def.inherit_shared_vis();
+        }
+    }
+
     pub fn load_definitions(&mut self, source: &str) -> Result<(), String> {
         let definitions = crate::menu_source::load(source, self)?;
         self.menus
@@ -454,6 +473,23 @@ impl MenuCatalog {
     pub fn zone_image(&self, name: &str) -> Option<&ZoneUiImage> {
         self.zone_images
             .get(&AssetRef::bare_name(name).to_ascii_lowercase())
+    }
+
+    pub fn image_identity(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for (key, image) in &self.zone_images {
+            key.hash(&mut hasher);
+            image.material.hash(&mut hasher);
+            image.image.hash(&mut hasher);
+            (image.width, image.height).hash(&mut hasher);
+            Arc::as_ptr(&image.rgba).hash(&mut hasher);
+        }
+        self.material_images.hash(&mut hasher);
+        self.material_srgb_reads.hash(&mut hasher);
+        self.material_2d_plans.hash(&mut hasher);
+        self.material_state_bits.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub fn zone_image_n(&self) -> usize {

@@ -55,7 +55,7 @@ pub(crate) fn format_session_transition(
 
 pub const LOADING_DEADLINE_MS: u64 = 120_000;
 pub const RUNNING_SILENCE_MS: u64 = 60_000;
-pub const PEER_ADMISSION_DEADLINE_MS: u64 = 30_000;
+pub const PEER_ADMISSION_DEADLINE_MS: u64 = master_protocol::SESSION_IDLE.as_millis() as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProgressPhase {

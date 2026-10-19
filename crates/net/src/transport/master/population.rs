@@ -2,9 +2,11 @@ use super::*;
 #[cfg(all(online, not(target_arch = "wasm32")))]
 use super::conn::MasterConn;
 #[cfg(all(online, not(target_arch = "wasm32")))]
-use super::online::{connect, endpoint_build, io_timeout, read_frame, write_frame};
+use super::online::{cancellable, connect, endpoint_build, read_frame, write_frame};
 #[cfg(all(online, not(target_arch = "wasm32")))]
 use super::rt;
+#[cfg(all(online, not(target_arch = "wasm32")))]
+use frame::AppScreen;
 #[cfg(all(online, not(target_arch = "wasm32")))]
 use master_protocol::{
     ControlFrame, ControlHello, ControlRequest, ControlResponse, EndpointRole, RequestBody,
@@ -12,14 +14,14 @@ use master_protocol::{
 };
 #[cfg(all(online, not(target_arch = "wasm32")))]
 use std::time::Duration;
-use std::sync::atomic::AtomicBool;
+use tokio::sync::watch;
 
 #[derive(Resource)]
 pub struct CommunityPlayerCounts {
     counts: Arc<Mutex<Vec<Option<u32>>>>,
-    // Read by the native poller only.
+    // Driven by the native poller only; the browser has no community files.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    online: Arc<AtomicBool>,
+    presence: watch::Sender<Presence>,
     cancel: CancellationToken,
 }
 
@@ -35,45 +37,79 @@ impl Drop for CommunityPlayerCounts {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Presence {
+    menu: bool,
+    online: bool,
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl Presence {
+    fn wanted(self, selected: bool) -> bool {
+        self.menu || (selected && self.online)
+    }
+}
+
 #[cfg(all(online, not(target_arch = "wasm32")))]
 pub(super) fn poll_communities(
     mut commands: Commands,
     counts: Option<Res<CommunityPlayerCounts>>,
     bridge: Option<Res<MasterBridge>>,
+    screen: Option<Res<AppScreen>>,
 ) {
-    let online = bridge.as_ref().is_none_or(|bridge| {
-        !matches!(
-            bridge.state(),
-            MasterBridgeState::Hosting { .. } | MasterBridgeState::Joined { .. }
-        )
-    });
+    let presence = Presence {
+        menu: screen.is_none_or(|screen| *screen == AppScreen::MainMenu),
+        online: bridge.as_ref().is_none_or(|bridge| {
+            !matches!(
+                bridge.state(),
+                MasterBridgeState::Hosting { .. } | MasterBridgeState::Joined { .. }
+            )
+        }),
+    };
     if let Some(counts) = counts {
-        counts.online.store(online, Ordering::Relaxed);
+        counts
+            .presence
+            .send_if_modified(|current| std::mem::replace(current, presence) != presence);
         return;
     }
+    let (presence, watcher) = watch::channel(presence);
     let counts = CommunityPlayerCounts {
         counts: Arc::new(Mutex::new(vec![None; updater::communities().len()])),
-        online: Arc::new(AtomicBool::new(online)),
+        presence,
         cancel: CancellationToken::new(),
     };
-    for (index, entry) in updater::communities().iter().enumerate() {
-        let community = std::fs::read(&entry.path)
-            .ok()
-            .and_then(|bytes| updater::Community::parse(&bytes).ok());
-        let Some(community) = community else {
-            continue;
-        };
-        let target = MasterTarget {
-            address: community.master.address,
-            server_name: community.master.server_name,
-            ca_pem: community.updates.ca_pem,
-        };
-        let selected = Some(entry.path.as_path()) == updater::selected_path();
+    let communities: Vec<_> = updater::communities()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let community = std::fs::read(&entry.path)
+                .ok()
+                .and_then(|bytes| updater::Community::parse(&bytes).ok())?;
+            let target = MasterTarget {
+                address: community.master.address,
+                server_name: community.master.server_name,
+                ca_pem: community.updates.ca_pem,
+            };
+            let selected = Some(entry.path.as_path()) == updater::selected_path();
+            Some((index, target, selected))
+        })
+        .collect();
+    if !communities.is_empty() {
         let state = Arc::clone(&counts.counts);
-        let online = Arc::clone(&counts.online);
         let cancel = counts.cancel.clone();
-        rt::spawn_worker(&format!("iw4l-population-{index}"), move || {
-            worker(target, index, selected, state, online, cancel)
+        rt::spawn_worker("iw4l-population", move || async move {
+            let mut tasks = tokio::task::JoinSet::new();
+            for (index, target, selected) in communities {
+                tasks.spawn(watch_community(
+                    target,
+                    index,
+                    selected,
+                    Arc::clone(&state),
+                    watcher.clone(),
+                    cancel.clone(),
+                ));
+            }
+            tasks.join_all().await;
         })
         .expect("spawn community population worker");
     }
@@ -81,72 +117,100 @@ pub(super) fn poll_communities(
 }
 
 #[cfg(all(online, not(target_arch = "wasm32")))]
-async fn worker(
+async fn watch_community(
     target: MasterTarget,
     index: usize,
     selected: bool,
     state: Arc<Mutex<Vec<Option<u32>>>>,
-    online: Arc<AtomicBool>,
+    mut presence: watch::Receiver<Presence>,
     cancel: CancellationToken,
 ) {
-    {
-        while !cancel.is_cancelled() {
-            let result: Result<()> = async {
-                let (_endpoint, connection) = connect(&target, &cancel).await?;
-                let (mut send, mut recv) = io_timeout(&cancel, connection.open_bi()).await?;
-                write_frame(
-                    &mut send,
-                    &ControlFrame::Hello(ControlHello {
-                        protocol_version: master_protocol::PROTOCOL_VERSION,
-                        game_protocol: crate::PROTOCOL_VERSION,
-                        role: EndpointRole::Cli,
-                        build: endpoint_build(),
-                        player_name: String::new(),
-                    }),
-                )
-                .await?;
-                let mut request_id = 0;
-                loop {
-                    let present = selected && online.load(Ordering::Relaxed);
-                    request_id += 1;
-                    let players = io_timeout(&cancel, async {
-                        write_frame(
-                            &mut send,
-                            &ControlFrame::Request(ControlRequest {
-                                request_id,
-                                body: RequestBody::Population { online: present },
-                            }),
-                        )
-                        .await?;
-                        match read_frame(&mut recv).await? {
-                            ControlFrame::Response(ControlResponse {
-                                request_id: id,
-                                body: ResponseBody::Population { players },
-                            }) if id == request_id => Result::<u32>::Ok(players),
-                            frame => {
-                                Err(format!("unexpected population response {frame:?}").into())
-                            }
-                        }
-                    })
-                    .await?;
-                    state.lock().expect("community counts poisoned")[index] = Some(players);
-                    for _ in 0..50 {
-                        tokio::select! {
-                            _ = cancel.cancelled() => return Ok(()),
-                            _ = rt::sleep(Duration::from_millis(100)) => {},
-                        }
-                        if present != (selected && online.load(Ordering::Relaxed)) {
-                            break;
-                        }
-                    }
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            wanted = presence.wait_for(|presence| presence.wanted(selected)) => {
+                if wanted.is_err() {
+                    return;
                 }
             }
-            .await;
-            state.lock().expect("community counts poisoned")[index] = None;
-            if result.is_err() {
-                tokio::select! {
-                    _ = cancel.cancelled() => return,
-                    _ = rt::sleep(Duration::from_secs(5)) => {},
+        }
+        if poll_while_wanted(&target, index, selected, &state, &mut presence, &cancel)
+            .await
+            .is_ok()
+        {
+            continue;
+        }
+        state.lock().expect("community counts poisoned")[index] = None;
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            _ = rt::sleep(Duration::from_secs(5)) => {},
+        }
+    }
+}
+
+#[cfg(all(online, not(target_arch = "wasm32")))]
+async fn poll_while_wanted(
+    target: &MasterTarget,
+    index: usize,
+    selected: bool,
+    state: &Mutex<Vec<Option<u32>>>,
+    presence: &mut watch::Receiver<Presence>,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let (_endpoint, connection) = connect(target, cancel).await?;
+    let (mut send, mut recv) = cancellable(cancel, connection.open_bi()).await?;
+    write_frame(
+        &mut send,
+        &ControlFrame::Hello(ControlHello {
+            protocol_version: master_protocol::PROTOCOL_VERSION,
+            game_protocol: crate::PROTOCOL_VERSION,
+            role: EndpointRole::Cli,
+            build: endpoint_build(),
+            player_name: String::new(),
+        }),
+    )
+    .await?;
+    let mut request_id = 0;
+    loop {
+        let current = *presence.borrow_and_update();
+        if !current.wanted(selected) {
+            return Ok(());
+        }
+        let online = selected && current.online;
+        request_id += 1;
+        let players = cancellable(cancel, async {
+            write_frame(
+                &mut send,
+                &ControlFrame::Request(ControlRequest {
+                    request_id,
+                    body: RequestBody::Population { online },
+                }),
+            )
+            .await?;
+            match read_frame(&mut recv).await? {
+                ControlFrame::Response(ControlResponse {
+                    request_id: id,
+                    body: ResponseBody::Population { players },
+                }) if id == request_id => Result::<u32>::Ok(players),
+                frame => Err(format!("unexpected population response {frame:?}").into()),
+            }
+        })
+        .await?;
+        state.lock().expect("community counts poisoned")[index] = Some(players);
+        let next = rt::sleep(Duration::from_secs(5));
+        tokio::pin!(next);
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return Ok(()),
+                _ = &mut next => break,
+                changed = presence.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                    let now = *presence.borrow();
+                    if !now.wanted(selected) || (selected && now.online) != online {
+                        break;
+                    }
                 }
             }
         }

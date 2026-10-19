@@ -32,8 +32,9 @@ make setup-windows           # rustup target + cargo-xwin, once
 macOS needs only the Xcode command line tools (`xcode-select --install`)
 and rustup: winit, wgpu (Metal), CoreAudio and gilrs link system frameworks,
 and the `x11` / `wayland` features compile to nothing. Menu and
-`make map mp_boneyard` run on Apple silicon (M2 Max, Metal). Pipelined
-rendering is off by default there; `IW4L_PIPELINED_RENDERING=1` turns it on.
+`make map mp_boneyard` run on Apple silicon (M2 Max, M4 Pro, Metal). Rendering
+is pipelined with a frame latency of 2 there; `IW4L_PIPELINED_RENDERING=0` and
+`IW4L_FRAME_LATENCY=1` restore the serialised arm.
 Game data: the Windows depot of a Steam copy, `steamcmd
 +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/MW2 +login
 <user> +app_update 10190 +quit`, then `IW4L_GAMES=~/Games`.

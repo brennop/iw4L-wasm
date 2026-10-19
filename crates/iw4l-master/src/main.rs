@@ -44,8 +44,8 @@ const CONTROL_PRIORITY: i32 = 0;
 
 const BOOTSTRAP_PRIORITY: i32 = -32;
 const CLI_DEADLINE: Duration = Duration::from_secs(8);
-const BOOTSTRAP_FORWARD: Duration = Duration::from_secs(8);
-const HELLO_DEADLINE: Duration = Duration::from_secs(8);
+const BOOTSTRAP_FORWARD: Duration = SESSION_IDLE;
+const HELLO_DEADLINE: Duration = Duration::from_secs(20);
 const MAX_CONNECTIONS: usize = 256;
 /// A household or a LAN party shares one address.
 const MAX_CONNECTIONS_PER_ADDRESS: usize = 32;
@@ -614,6 +614,9 @@ async fn serve(
     transport.keep_alive_interval(Some(SESSION_KEEP_ALIVE));
     transport.datagram_receive_buffer_size(Some(128 * 1024));
     transport.datagram_send_buffer_size(DATAGRAM_SEND_BUFFER);
+    transport.congestion_controller_factory(Arc::new(
+        master_protocol::congestion::StallTolerantConfig::default(),
+    ));
 
     let endpoint = quinn::Endpoint::server(config, bind)?;
     let state = Arc::new(Mutex::new(ServiceState::default()));
@@ -1093,8 +1096,8 @@ fn create_room(
     available: master_protocol::ContentFlags,
     password: String,
 ) -> (ResponseBody, Vec<(u64, ControlFrame)>) {
-    if requires.0 & !15 != 0
-        || requires.0 & 1 == 0
+    if !master_protocol::ContentFlags::KNOWN.contains(requires)
+        || !requires.contains(master_protocol::ContentFlags::IW4)
         || !requires.missing_from(available).is_empty()
         || !map_content_allowed(&map, requires)
     {
@@ -1249,15 +1252,7 @@ fn leave_room(
 }
 
 fn map_content_allowed(map: &str, families: master_protocol::ContentFlags) -> bool {
-    let family = map.split_once(':').map_or("iw4", |(family, _)| family);
-    let bit = match family {
-        "iw4" => 1,
-        "iw5" => 2,
-        "t5" => 4,
-        "t6" => 8,
-        _ => return false,
-    };
-    families.0 & bit != 0
+    master_protocol::ContentFlags::for_map(map).is_some_and(|family| families.contains(family))
 }
 
 fn set_options(

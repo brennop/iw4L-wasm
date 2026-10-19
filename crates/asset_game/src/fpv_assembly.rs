@@ -240,11 +240,7 @@ impl FpvAssembly {
                 }),
             ));
         }
-        if rocket {
-            let mount = mounts
-                .rocket
-                .as_ref()
-                .ok_or(FpvAssemblyError::Catalog("rocket mount"))?;
+        if rocket && let Some(mount) = mounts.rocket.as_ref() {
             parts.push((
                 mount.model,
                 FpvPartRole::Rocket,

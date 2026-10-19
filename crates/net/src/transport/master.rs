@@ -54,48 +54,23 @@ pub use population::CommunityPlayerCounts;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Result<T> = std::result::Result<T, Error>;
 
-pub const CONTENT_IW4: u8 = 1 << 0;
-pub const CONTENT_IW5: u8 = 1 << 1;
-pub const CONTENT_T5: u8 = 1 << 2;
-pub const CONTENT_T6: u8 = 1 << 3;
+pub const CONTENT_IW4: u8 = ContentFlags::IW4.0;
 
 pub const fn content_inventory(iw4: bool, iw5: bool, t5: bool, t6: bool) -> ContentFlags {
     ContentFlags(
-        (if iw4 { CONTENT_IW4 } else { 0 })
-            | (if iw5 { CONTENT_IW5 } else { 0 })
-            | (if t5 { CONTENT_T5 } else { 0 })
-            | (if t6 { CONTENT_T6 } else { 0 }),
+        (if iw4 { ContentFlags::IW4.0 } else { 0 })
+            | (if iw5 { ContentFlags::IW5.0 } else { 0 })
+            | (if t5 { ContentFlags::T5.0 } else { 0 })
+            | (if t6 { ContentFlags::T6.0 } else { 0 }),
     )
 }
 
-pub fn content_required_by_map(map: &str) -> Result<ContentFlags> {
-    let namespace = map
-        .split_once(':')
-        .map_or("iw4", |(namespace, _)| namespace);
-    Ok(ContentFlags(match namespace {
-        "iw4" => CONTENT_IW4,
-        "iw5" => CONTENT_IW5,
-        "t5" => CONTENT_T5,
-        "t6" => CONTENT_T6,
-        other => return Err(format!("unknown content namespace `{other}` in map `{map}`").into()),
-    }))
-}
-
 pub fn content_names(flags: ContentFlags) -> String {
-    let mut names = Vec::new();
-    if flags.0 & CONTENT_IW4 != 0 {
-        names.push("iw4");
-    }
-    if flags.0 & CONTENT_IW5 != 0 {
-        names.push("iw5");
-    }
-    if flags.0 & CONTENT_T5 != 0 {
-        names.push("t5");
-    }
-    if flags.0 & CONTENT_T6 != 0 {
-        names.push("t6");
-    }
-    if flags.0 & !(CONTENT_IW4 | CONTENT_IW5 | CONTENT_T5 | CONTENT_T6) != 0 {
+    let mut names: Vec<_> = ContentFlags::FAMILIES
+        .into_iter()
+        .filter_map(|(name, flag)| flags.contains(flag).then_some(name))
+        .collect();
+    if !ContentFlags::KNOWN.contains(flags) {
         names.push("unknown");
     }
     names.join(",")

@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use master_protocol::ContentFlags;
 
 #[derive(Resource, Default, Debug)]
 pub struct UiPartyState {
@@ -10,6 +11,7 @@ pub struct UiPartyState {
 #[derive(Resource, Default, Debug)]
 pub struct UiMenuDvars {
     values: std::collections::HashMap<String, String>,
+    choices: std::collections::HashMap<String, Vec<(String, String)>>,
 }
 
 impl UiMenuDvars {
@@ -21,6 +23,16 @@ impl UiMenuDvars {
 
     pub fn set(&mut self, name: &str, value: impl Into<String>) {
         self.values.insert(name.to_ascii_lowercase(), value.into());
+    }
+
+    pub fn choices(&self, name: &str) -> Option<&[(String, String)]> {
+        self.choices
+            .get(&name.to_ascii_lowercase())
+            .map(Vec::as_slice)
+    }
+
+    pub fn set_choices(&mut self, name: &str, choices: Vec<(String, String)>) {
+        self.choices.insert(name.to_ascii_lowercase(), choices);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
@@ -70,21 +82,24 @@ pub enum UiMenuKey {
 pub struct AssetFamilies(pub u8);
 
 impl AssetFamilies {
+    pub const ALL: Self = Self(ContentFlags::KNOWN.0);
     pub const SETTINGS: [(&'static str, &'static str, u8); 3] = [
-        ("iw5", "sv_assets_iw5", 2),
-        ("t5", "sv_assets_t5", 4),
-        ("t6", "sv_assets_t6", 8),
+        ("iw5", "sv_assets_iw5", ContentFlags::IW5.0),
+        ("t5", "sv_assets_t5", ContentFlags::T5.0),
+        ("t6", "sv_assets_t6", ContentFlags::T6.0),
     ];
 
+    pub fn from_families<'a>(families: impl IntoIterator<Item = &'a str>) -> Self {
+        Self(
+            families
+                .into_iter()
+                .filter_map(ContentFlags::family)
+                .fold(0, |mask, flag| mask | flag.0),
+        )
+    }
+
     pub fn enabled(self, family: &str) -> bool {
-        let bit = match family {
-            "iw4" => 1,
-            "iw5" => 2,
-            "t5" => 4,
-            "t6" => 8,
-            _ => return false,
-        };
-        self.0 & bit != 0
+        ContentFlags::family(family).is_some_and(|flag| ContentFlags(self.0).contains(flag))
     }
 
     pub fn missing_notice(self, have: u8) -> Option<String> {
@@ -93,16 +108,16 @@ impl AssetFamilies {
             return None;
         }
         let names = [
-            (1, "Modern Warfare 2 (IW4)"),
-            (2, "Modern Warfare 3 (IW5)"),
-            (4, "Black Ops (T5)"),
-            (8, "Black Ops II (T6)"),
+            (ContentFlags::IW4, "Modern Warfare 2 (IW4)"),
+            (ContentFlags::IW5, "Modern Warfare 3 (IW5)"),
+            (ContentFlags::T5, "Black Ops (T5)"),
+            (ContentFlags::T6, "Black Ops II (T6)"),
         ]
         .into_iter()
-        .filter_map(|(bit, name)| (missing & bit != 0).then_some(name))
+        .filter_map(|(flag, name)| ContentFlags(missing).contains(flag).then_some(name))
         .collect::<Vec<_>>()
         .join(", ");
-        let names = if missing & !15 != 0 {
+        let names = if missing & !ContentFlags::KNOWN.0 != 0 {
             if names.is_empty() {
                 "unknown game content (update IW4L)".to_owned()
             } else {
@@ -117,7 +132,7 @@ impl AssetFamilies {
     }
 
     pub fn from_inventory(have: u8, dvars: &UiMenuDvars) -> Result<Self, String> {
-        let mut enabled = have & 1;
+        let mut enabled = have & ContentFlags::IW4.0;
         for (family, setting, bit) in Self::SETTINGS {
             let env = std::env::var(format!("IW4L_ASSETS_{}", family.to_ascii_uppercase())).ok();
             let value = dvars.get(setting).or(env.as_deref());
@@ -140,7 +155,7 @@ impl AssetFamilies {
     }
 
     pub fn require_map(self, map: &str) -> Result<(), String> {
-        let family = map.split_once(':').map_or("iw4", |(family, _)| family);
+        let family = ContentFlags::map_family(map);
         if self.enabled(family) {
             Ok(())
         } else {

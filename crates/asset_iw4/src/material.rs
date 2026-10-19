@@ -111,7 +111,7 @@ pub const CAMERA_REGION_NONE: u8 = 4;
 
 pub const MATERIAL_STATE_BITS_TABLE: usize = 0x5c;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ColorPassAgreement<T> {
     Agreed(T),
 

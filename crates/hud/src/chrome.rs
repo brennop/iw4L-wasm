@@ -149,6 +149,26 @@ pub(crate) fn execute_chrome_menu_with_anim(
     )
 }
 
+#[derive(Default)]
+pub(crate) struct ChromeItemOverride {
+    pub hidden: bool,
+    pub fore: Option<[f32; 4]>,
+    pub back: Option<[f32; 4]>,
+    pub text: Option<String>,
+    pub text_literal: Option<bool>,
+    pub text_align: Option<(i32, f32, f32)>,
+    pub rect: Option<MenuRect>,
+    pub style: Option<i32>,
+    pub background: Option<&'static str>,
+}
+
+#[derive(Default)]
+pub(crate) struct ChromeMenuOverrides<'a> {
+    pub items: &'a [ChromeItemOverride],
+    pub extra_items: &'a [(usize, ChromeItemOverride)],
+    pub skip: Option<&'a dyn Fn(&MenuItem) -> bool>,
+}
+
 pub(crate) fn execute_chrome_menu_ex(
     menu: &MenuDef,
     host: &impl ExprHost,
@@ -157,11 +177,35 @@ pub(crate) fn execute_chrome_menu_ex(
     anim: ChromeMenuAnim,
     exprs: &mut MenuExprCache,
     vis_on_error: MenuVisOnError,
+    owner_draw: Option<&mut dyn FnMut(OwnerDrawArgs<'_>, &mut ChromeFrame) -> OwnerDrawPaint>,
+) -> ChromeFrame {
+    execute_chrome_menu_overrides(
+        menu,
+        host,
+        surface,
+        assets,
+        anim,
+        exprs,
+        vis_on_error,
+        owner_draw,
+        ChromeMenuOverrides::default(),
+    )
+}
+
+pub(crate) fn execute_chrome_menu_overrides(
+    menu: &MenuDef,
+    host: &impl ExprHost,
+    surface: &crate::surface::Hud2dSurface,
+    assets: ChromeAssets<'_>,
+    anim: ChromeMenuAnim,
+    exprs: &mut MenuExprCache,
+    vis_on_error: MenuVisOnError,
     mut owner_draw: Option<&mut dyn FnMut(OwnerDrawArgs<'_>, &mut ChromeFrame) -> OwnerDrawPaint>,
+    overrides: ChromeMenuOverrides<'_>,
 ) -> ChromeFrame {
     let mut frame = ChromeFrame {
         coverage: ChromeCoverage {
-            items_total: menu.items.len(),
+            items_total: menu.items.len() + overrides.extra_items.len(),
             ..ChromeCoverage::default()
         },
         ..ChromeFrame::default()
@@ -169,7 +213,7 @@ pub(crate) fn execute_chrome_menu_ex(
     if !menu.vis_exp.is_empty() {
         match exprs.is_true(&menu.vis_exp, host) {
             Ok(false) => {
-                for _ in 0..menu.items.len() {
+                for _ in 0..frame.coverage.items_total {
                     frame.coverage.vis_false();
                 }
                 return frame;
@@ -180,7 +224,7 @@ pub(crate) fn execute_chrome_menu_ex(
                     .vis_errors
                     .push((usize::MAX, format!("menu vis {err:?}")));
                 if vis_on_error == MenuVisOnError::HideAll {
-                    for index in 0..menu.items.len() {
+                    for index in 0..frame.coverage.items_total {
                         frame.coverage.gap(index, ChromeGapKind::VisExp);
                     }
                     return frame;
@@ -194,7 +238,7 @@ pub(crate) fn execute_chrome_menu_ex(
             frame
                 .vis_errors
                 .push((usize::MAX, format!("menu floatexp {err:?}")));
-            for index in 0..menu.items.len() {
+            for index in 0..frame.coverage.items_total {
                 frame.coverage.gap(index, ChromeGapKind::FloatExp);
             }
             return frame;
@@ -202,13 +246,29 @@ pub(crate) fn execute_chrome_menu_ex(
     };
     parent.x += anim.offset[0];
     parent.y += anim.offset[1];
-    for (index, item) in menu.items.iter().enumerate() {
+    let default = ChromeItemOverride::default();
+    let items = menu
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| (item, overrides.items.get(index).unwrap_or(&default)))
+        .chain(
+            overrides
+                .extra_items
+                .iter()
+                .map(|(source, state)| (&menu.items[*source], state)),
+        );
+    for (index, (item, state)) in items.enumerate() {
+        if state.hidden || overrides.skip.is_some_and(|skip| skip(item)) {
+            frame.coverage.vis_false();
+            continue;
+        }
         let hook = owner_draw.as_mut().map(|h| {
             let h: &mut dyn FnMut(OwnerDrawArgs<'_>, &mut ChromeFrame) -> OwnerDrawPaint = &mut **h;
             h
         });
         paint_item(
-            menu, index, item, host, surface, assets, anim, exprs, &parent, hook, &mut frame,
+            menu, index, item, state, host, surface, assets, anim, exprs, &parent, hook, &mut frame,
         );
     }
     frame
@@ -235,6 +295,7 @@ pub(crate) fn item_screen_rects(
             &parent,
             &menu.rect,
             item,
+            &ChromeItemOverride::default(),
             host,
             exprs,
             ChromeMenuAnim::IDENTITY,
@@ -262,6 +323,7 @@ fn paint_item(
     menu: &MenuDef,
     index: usize,
     item: &MenuItem,
+    state: &ChromeItemOverride,
     host: &impl ExprHost,
     surface: &crate::surface::Hud2dSurface,
     assets: ChromeAssets<'_>,
@@ -283,7 +345,7 @@ fn paint_item(
             return;
         }
     }
-    let style = match evaluate_item_style(parent, &menu.rect, item, host, exprs, anim) {
+    let style = match evaluate_item_style(parent, &menu.rect, item, state, host, exprs, anim) {
         Ok(style) => style,
         Err(err) => {
             frame.vis_errors.push((index, format!("floatexp {err:?}")));
@@ -318,7 +380,7 @@ fn paint_item(
         }
         return;
     }
-    match resolved_material(item, host, exprs) {
+    match resolved_material(item, state.background, host, exprs) {
         Ok(Some(material)) => {
             push_stretch(
                 menu,
@@ -333,18 +395,27 @@ fn paint_item(
                 &mut frame.list,
             );
 
-            if has_text(item) && item.style != 5 {
+            if state
+                .text
+                .as_ref()
+                .map_or_else(|| has_text(item), |text| !text.is_empty())
+                && style.window_style != 5
+            {
                 paint_text(
-                    menu, index, item, &style, host, surface, assets, anim, exprs, frame,
+                    menu, index, item, state, &style, host, surface, assets, anim, exprs, frame,
                 );
             } else {
                 frame.coverage.painted();
             }
         }
         Ok(None) => {
-            if has_text(item) {
+            if state
+                .text
+                .as_ref()
+                .map_or_else(|| has_text(item), |text| !text.is_empty())
+            {
                 paint_text(
-                    menu, index, item, &style, host, surface, assets, anim, exprs, frame,
+                    menu, index, item, state, &style, host, surface, assets, anim, exprs, frame,
                 );
             } else {
                 frame.coverage.painted();
@@ -365,6 +436,7 @@ fn paint_text(
     menu: &MenuDef,
     index: usize,
     item: &MenuItem,
+    state: &ChromeItemOverride,
     style: &EvaluatedItemStyle,
     host: &impl ExprHost,
     surface: &crate::surface::Hud2dSurface,
@@ -373,7 +445,7 @@ fn paint_text(
     exprs: &mut MenuExprCache,
     frame: &mut ChromeFrame,
 ) {
-    let mut resolved = match resolve_text(item, host, assets.localize, exprs) {
+    let mut resolved = match resolve_text(item, state, host, assets.localize, exprs) {
         Ok(Some(text)) => text,
         Ok(None) => {
             frame.coverage.painted();
@@ -415,7 +487,11 @@ fn paint_text(
 
     let draw_text_scale = item_text_paint_scale(item.text_scale, anim.scale);
     let scale = normalized_text_scale(font.pixel_height, draw_text_scale);
-    let wrap_width = (style.rect.w.abs() - item.text_align_x.max(0.0)).max(1.0);
+    let (align_mode, align_x, align_y) =
+        state
+            .text_align
+            .unwrap_or((item.text_align_mode, item.text_align_x, item.text_align_y));
+    let wrap_width = (style.rect.w.abs() - align_x.max(0.0)).max(1.0);
     let lines = menu_text_lines(
         &resolved.text,
         (item.static_flags & 0x0080_0000 != 0).then_some(wrap_width),
@@ -426,15 +502,7 @@ fn paint_text(
         let measured_h = ui_text_height(item.text_scale);
         let rect = &style.rect;
         let (x, y) = item_text_origin(
-            rect.x,
-            rect.y,
-            rect.w,
-            rect.h,
-            item.text_align_mode,
-            item.text_align_x,
-            item.text_align_y,
-            measured_w,
-            measured_h,
+            rect.x, rect.y, rect.w, rect.h, align_mode, align_x, align_y, measured_w, measured_h,
         );
         let applied = surface.apply_rect(
             x,
@@ -686,11 +754,14 @@ struct ResolvedText {
 
 fn resolve_text(
     item: &MenuItem,
+    state: &ChromeItemOverride,
     host: &impl ExprHost,
     loc: Option<&LocalizeCatalog>,
     exprs: &mut MenuExprCache,
 ) -> Result<Option<ResolvedText>, ChromeGapKind> {
-    let raw = if !item.text_key.is_empty() {
+    let raw = if let Some(text) = &state.text {
+        text.clone()
+    } else if !item.text_key.is_empty() {
         item.text_key.clone()
     } else if !item.text_exp.is_empty() {
         exprs
@@ -707,7 +778,7 @@ fn resolve_text(
     }
     if let Some(key) = raw
         .strip_prefix('@')
-        .filter(|_| item.item_type != 4 && !item.text_literal)
+        .filter(|_| item.item_type != 4 && !state.text_literal.unwrap_or(item.text_literal))
     {
         let Some(table) = loc else {
             return Err(ChromeGapKind::Localize);
@@ -759,17 +830,18 @@ pub(crate) fn text_width(font: &FontDef, text: &str) -> i32 {
 
 fn resolved_material(
     item: &MenuItem,
+    background: Option<&str>,
     host: &impl ExprHost,
     exprs: &mut MenuExprCache,
 ) -> Result<Option<String>, ExprError> {
     if !item.material_exp.is_empty() {
         let name = exprs.evaluate_string(&item.material_exp, host)?;
         if name.is_empty() {
-            return Ok(background_stem(&item.background));
+            return Ok(background_stem(background.unwrap_or(&item.background)));
         }
         return Ok(Some(name));
     }
-    Ok(background_stem(&item.background))
+    Ok(background_stem(background.unwrap_or(&item.background)))
 }
 
 fn background_stem(raw: &str) -> Option<String> {
@@ -784,6 +856,7 @@ fn background_stem(raw: &str) -> Option<String> {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EvaluatedItemStyle {
     pub rect: MenuRect,
+    pub window_style: i32,
     pub fore_color: [f32; 4],
     pub glow_color: [f32; 4],
     pub back_color: [f32; 4],
@@ -792,8 +865,8 @@ pub(crate) struct EvaluatedItemStyle {
 }
 
 impl EvaluatedItemStyle {
-    pub fn fill_color(&self, item: &MenuItem) -> [f32; 4] {
-        if item.style == 1 {
+    pub fn fill_color(&self) -> [f32; 4] {
+        if self.window_style == 1 {
             self.back_color
         } else {
             self.fore_color
@@ -805,15 +878,17 @@ fn evaluate_item_style(
     parent: &MenuRect,
     captured_parent: &MenuRect,
     item: &MenuItem,
+    state: &ChromeItemOverride,
     host: &impl ExprHost,
     exprs: &mut MenuExprCache,
     anim: ChromeMenuAnim,
 ) -> Result<EvaluatedItemStyle, ExprError> {
     let mut style = EvaluatedItemStyle {
-        rect: item.rect,
-        fore_color: item.fore_color,
+        rect: state.rect.unwrap_or(item.rect),
+        window_style: state.style.unwrap_or(item.style),
+        fore_color: state.fore.unwrap_or(item.fore_color),
         glow_color: item.glow_color,
-        back_color: item.back_color,
+        back_color: state.back.unwrap_or(item.back_color),
         unsupported: None,
     };
     style.rect.x += parent.x - captured_parent.x;
@@ -956,7 +1031,7 @@ fn push_stretch(
             applied.y = centre_y - applied.h * 0.5;
         }
     }
-    let color = style.fill_color(item);
+    let color = style.fill_color();
     let (material_namespace, material) = match asset_core::AssetKey::parse(&material) {
         Ok(key) if key.kind == asset_core::AssetKind::Material => (key.namespace, key.name),
         _ => (crate::images::HUD_CHROME_NAMESPACE, material),

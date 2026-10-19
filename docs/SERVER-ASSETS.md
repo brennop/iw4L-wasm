@@ -14,8 +14,11 @@ families are excluded even when installed locally; cache reuse includes the
 selection. Disabling IW5 and T5 lets players without those games join, provided
 they have IW4 and every other enabled family.
 
-Saved classes using disabled weapons remain unavailable; select or edit a class
-using enabled families before spawning.
+Saved classes using disabled weapons remain visible but cannot be equipped.
+The restriction applies as soon as the player joins the lobby and names the
+disabled family. Other classes remain selectable, and saved classes do not block
+joining. Leaving the server clears its family restrictions; saved loadouts are
+preserved. Select or edit a class using enabled families before spawning.
 
 If required game files are missing, joining is blocked with a menu notice naming
 the games to install. The host can instead disable those optional families.

@@ -239,7 +239,7 @@ fn describe_slot(store: &SessionClassStore, index: usize) -> String {
     let Some(slot) = store.slots.get(index) else {
         return format!("{index} (missing)");
     };
-    let lock = match slot.lock_reason.as_deref() {
+    let lock = match store.lock_reason(index) {
         Some(reason) => format!(" LOCKED — {reason}"),
         None => String::new(),
     };

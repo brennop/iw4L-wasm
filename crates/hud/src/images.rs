@@ -152,6 +152,7 @@ pub struct HudImages {
     zone_samplers: HashMap<String, u8>,
     blood_plan: Option<Result<BloodMaterialBinding, String>>,
     zone_installed: bool,
+    zone_identity: Option<u64>,
     zone_uploaded: bool,
     iwd_warmed: bool,
 }
@@ -226,6 +227,7 @@ impl HudImages {
         self.zone_samplers.clear();
         self.blood_plan = None;
         self.zone_installed = false;
+        self.zone_identity = None;
         self.zone_uploaded = false;
         self.by_name.clear();
         self.rgba_by_name.clear();
@@ -233,8 +235,13 @@ impl HudImages {
     }
 
     pub fn install_zone_catalog(&mut self, catalog: &MenuCatalog) {
+        let identity = catalog.image_identity();
+        if self.zone_identity == Some(identity) {
+            return;
+        }
         self.clear_zone_catalog();
         self.zone_installed = true;
+        self.zone_identity = Some(identity);
         self.zone_uploaded = false;
         self.blood_plan = Some(blood_material_binding(catalog));
         self.zone_srgb_reads.extend(

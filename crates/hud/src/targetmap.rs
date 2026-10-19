@@ -9,7 +9,7 @@ use net::{LocalPresentClient, LocationCursor, PresentedSnapshot};
 
 use crate::chrome::{
     ChromeAssets, ChromeFrame, ChromeMenuAnim, MenuVisOnError, OwnerDrawArgs, OwnerDrawPaint,
-    execute_chrome_menu_ex,
+    execute_chrome_menu_overrides,
 };
 use crate::compass::DrawableCompass;
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate_fonts};
@@ -17,7 +17,6 @@ use crate::font_overlay;
 use crate::gaps::{GapCause, HudPresentationGaps};
 use crate::gpu_list::{HudTessPass, TessJob};
 use crate::images::{HUD_CHROME_NAMESPACE, HudImages};
-use crate::killcam_skip::inherit_shared_vis;
 use crate::scorebar::milliseconds;
 
 const MENU: &str = "targetmap_fullscreen";
@@ -365,9 +364,6 @@ pub(crate) fn update_targetmap(
         kind: snapshot.meta.kind,
         localize: strings.as_ref().map(|s| &s.0),
     };
-    let (mut menu, _) = inherit_shared_vis(menu);
-    menu.items
-        .retain(|item| !item.background.to_ascii_lowercase().contains("stencil"));
     let Some(map_namespace) = hud_images.map_namespace() else {
         return;
     };
@@ -384,8 +380,8 @@ pub(crate) fn update_targetmap(
         let mut hook = |args: OwnerDrawArgs<'_>, frame: &mut ChromeFrame| {
             owner_draw(&scene, &mut rotated, args, frame)
         };
-        execute_chrome_menu_ex(
-            &menu,
+        execute_chrome_menu_overrides(
+            menu,
             &host,
             &surface,
             ChromeAssets {
@@ -396,6 +392,10 @@ pub(crate) fn update_targetmap(
             &mut exprs,
             MenuVisOnError::HideAll,
             Some(&mut hook),
+            crate::chrome::ChromeMenuOverrides {
+                skip: Some(&|item| item.background.to_ascii_lowercase().contains("stencil")),
+                ..Default::default()
+            },
         )
     };
     let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();

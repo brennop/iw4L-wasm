@@ -25,7 +25,6 @@ impl Runner<'_, '_> {
 
     pub(crate) fn eval(&mut self, menu: &str, dump: &str) -> Option<hud_iw4::Operand> {
         let def = self.catalog.get(menu)?;
-        let open = self.menus.open_names();
         let focus_rect = self
             .menus
             .stack
@@ -39,7 +38,7 @@ impl Runner<'_, '_> {
             dvars: self.dvars,
             menu: def,
             locals: self.locals,
-            open: &open,
+            open: &self.menus.stack,
             focus_rect,
         };
         match self.exprs.evaluate(dump, &host) {
@@ -572,14 +571,12 @@ impl Runner<'_, '_> {
             .find(|m| m.name.eq_ignore_ascii_case(menu))
             .map(|m| m.items.iter().map(|s| s.hidden).collect())
             .unwrap_or_default();
-        let (def, _) = crate::killcam_skip::inherit_shared_vis(def);
-        let open = self.menus.open_names();
         let host = MenuHost {
             world: self.world,
             dvars: self.dvars,
-            menu: &def,
+            menu: def,
             locals: self.locals,
-            open: &open,
+            open: &self.menus.stack,
             focus_rect: None,
         };
         let mut out = Vec::new();
@@ -607,15 +604,16 @@ impl Runner<'_, '_> {
             return false;
         }
         let current = self.dvar(&item.dvar).unwrap_or_default();
+        let choices = self.dvars.choices(&item.dvar).unwrap_or(&item.choices);
         let value = if let Some(slider) = &item.slider {
             let current = current.parse::<f32>().unwrap_or(slider.min);
             (current + step as f32 * slider.step)
                 .clamp(slider.min, slider.max)
                 .to_string()
-        } else if !item.choices.is_empty() {
-            let at = choice_index(&item.choices, current).unwrap_or(0);
-            let next = (at as i32 + step).rem_euclid(item.choices.len() as i32) as usize;
-            item.choices[next].1.clone()
+        } else if !choices.is_empty() {
+            let at = choice_index(choices, current).unwrap_or(0);
+            let next = (at as i32 + step).rem_euclid(choices.len() as i32) as usize;
+            choices[next].1.clone()
         } else {
             return false;
         };

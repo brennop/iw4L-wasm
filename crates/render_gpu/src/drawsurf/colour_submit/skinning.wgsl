@@ -6,9 +6,10 @@ struct Vertex {
 struct Params {
     destination: u32,
     count: u32,
-    pad0: u32,
-    pad1: u32,
+    bone_base: u32,
+    source: u32,
     offset: vec4<f32>,
+    rigid: vec4<u32>,
 }
 @group(0) @binding(0) var<storage, read> vertices: array<Vertex>;
 @group(0) @binding(1) var<storage, read> bones: array<mat4x4<f32>>;
@@ -29,22 +30,22 @@ fn point(matrix: mat4x4<f32>, p: vec3<f32>) -> vec3<f32> {
 @compute @workgroup_size(64)
 fn skin_main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= params.count { return; }
-    let vertex = vertices[id.x];
-    let base = (params.destination + id.x) * 8u;
+    let vertex = vertices[params.source + id.x];
+    let base = (params.destination + params.source + id.x) * 8u;
     for (var word = 0u; word < 8u; word += 1u) {
         output[base + word] = vertex.packed[word];
     }
     let source = vec3<f32>(bitcast<f32>(vertex.packed[0]), bitcast<f32>(vertex.packed[1]), bitcast<f32>(vertex.packed[2]));
     var position = source;
     if vertex.bones.x != 0xffffffffu {
-        let primary = bones[vertex.bones.x];
+        let primary = bones[params.bone_base + vertex.bones.x];
         var sum = 0.0;
         var extra = vec3<f32>(0.0);
         for (var k = 1u; k < 4u; k += 1u) {
             let weight = vertex.weights[k];
-            if weight > 0.0 {
+            if weight > 0.0 && params.rigid.x == 0u {
                 sum += weight;
-                extra += weight * point(bones[vertex.bones[k]], source);
+                extra += weight * point(bones[params.bone_base + vertex.bones[k]], source);
             }
         }
         position = (1.0 - sum) * point(primary, source) + extra;

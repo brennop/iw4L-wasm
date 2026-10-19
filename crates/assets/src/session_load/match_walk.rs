@@ -664,6 +664,10 @@ pub(super) async fn walk_prepared_match(
         fx_model_edges.absent,
     ));
     weapons.resolve_combat_fx(&world.fx, &common_tracers);
+    weapons.stamp_projectile_model_edges(
+        &projectile_meshes,
+        asset_core::ZoneOwner::intern(&zone_name),
+    );
     weapons.resolve_projectile_fx_edges(&world.fx);
     let projectile_fx = weapons.projectile_fx_edge_census();
     report.push(format!(

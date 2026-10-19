@@ -9,6 +9,8 @@ pub struct SessionClassStore {
     pub slots: Vec<ClassSlotState>,
 
     pub selected: usize,
+
+    server_families: Option<frame::AssetFamilies>,
 }
 
 impl SessionClassStore {
@@ -115,7 +117,33 @@ impl SessionClassStore {
         Self {
             slots: slots.iter().map(ClassSlotState::from_host_slot).collect(),
             selected: 0,
+            server_families: None,
         }
+    }
+
+    pub fn set_server_families(&mut self, families: Option<frame::AssetFamilies>) {
+        self.server_families = families;
+    }
+
+    pub fn server_families(&self) -> Option<frame::AssetFamilies> {
+        self.server_families
+    }
+
+    pub fn lock_reason(&self, index: usize) -> Option<String> {
+        let slot = self.slots.get(index)?;
+        if let Some(families) = self.server_families {
+            for reference in [&slot.primary, &slot.secondary, &slot.lethal, &slot.tactical] {
+                if let Some(key) = asset_game::FamilyKey::parse(reference)
+                    && !families.enabled(key.namespace.as_str())
+                {
+                    return Some(format!(
+                        "{} assets are disabled on this server",
+                        key.namespace.as_str().to_ascii_uppercase()
+                    ));
+                }
+            }
+        }
+        slot.lock_reason.clone()
     }
 
     pub fn apply_coverage_locks(&mut self, reasons: impl IntoIterator<Item = Option<String>>) {

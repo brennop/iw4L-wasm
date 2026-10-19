@@ -25,21 +25,6 @@ fn hide(pass: &mut HudTessPass) {
     pass.killcam_skip = TessJob::Hide;
 }
 
-pub(crate) fn inherit_shared_vis(menu: &asset_game::MenuDef) -> (asset_game::MenuDef, i64) {
-    let mut out = menu.clone();
-    let mut prev = String::new();
-    let mut n = 0i64;
-    for item in &mut out.items {
-        if item.vis_exp.is_empty() && item.vis_ptr != 0 && !prev.is_empty() {
-            item.vis_exp = prev.clone();
-            n += 1;
-        } else if !item.vis_exp.is_empty() {
-            prev = item.vis_exp.clone();
-        }
-    }
-    (out, n)
-}
-
 struct KillcamExprHost<'a> {
     menu: Option<&'a asset_game::MenuDef>,
     ms: i32,
@@ -174,9 +159,8 @@ pub(crate) fn update_killcam_skip(
         kind: snapshot.meta.kind,
         localize: strings.as_ref().map(|s| &s.0),
     };
-    let (menu, _) = inherit_shared_vis(menu);
     let frame = execute_chrome_menu(
-        &menu,
+        menu,
         &host,
         &surface,
         ChromeAssets {

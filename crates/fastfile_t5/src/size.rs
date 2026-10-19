@@ -563,6 +563,7 @@ pub const WEAPON_DEF_WORLD_SHELL_EJECT_OFF: usize = 0x194;
 pub const WEAPON_DEF_VIEW_LAST_SHOT_EJECT_OFF: usize = 0x198;
 pub const WEAPON_DEF_WORLD_LAST_SHOT_EJECT_OFF: usize = 0x19c;
 
+pub const WEAPON_DEF_PROJECTILE_SOUND_OFF: usize = 0x8c;
 pub const WEAPON_DEF_SND_FIRE_OFF: usize = 0x98;
 pub const WEAPON_DEF_SND_FIRE_PLAYER_OFF: usize = 0x9c;
 pub const WEAPON_DEF_SND_EMPTY_FIRE_OFF: usize = 0xc0;

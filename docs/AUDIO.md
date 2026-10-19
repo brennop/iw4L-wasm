@@ -42,6 +42,8 @@ cross-channel routes and multichannel output remain unsupported; WMA seek/tail
 semantics need corpus validation.
 
 Desired loops use scope/epoch/object/slot versions and retain virtual cursors.
+Projectile cues follow authoritative bolts and retire on removal or timeline
+replacement.
 Control ranks eight map voices with a 0.002 gain floor. Device recovery uses
 bounded backoff; one-shots preserve PCM during short outages until their start
 deadlines expire. Master volume is applied once. `OfflineRenderer` shares the

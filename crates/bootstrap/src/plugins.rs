@@ -70,11 +70,17 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         #[cfg(target_os = "macos")]
         if pipelined_rendering() {
             // The Metal surface must be created on the main thread; pipelined, only
-            // extraction runs there.
+            // extraction runs there. Window extraction inserts `ExtractedWindow`
+            // through commands, so they are applied first or the first frame finds
+            // no window here and the render thread creates the surface instead.
             render_app.add_systems(
                 bevy::render::ExtractSchedule,
-                bevy::render::view::create_surfaces
-                    .run_if(bevy::render::view::need_surface_configuration)
+                (
+                    bevy::ecs::schedule::ApplyDeferred,
+                    bevy::render::view::create_surfaces
+                        .run_if(bevy::render::view::need_surface_configuration),
+                )
+                    .chain()
                     .after(bevy::render::camera::extract_cameras),
             );
         }
@@ -158,12 +164,10 @@ const PIPELINED_RENDERING_ENV: &str = "IW4L_PIPELINED_RENDERING";
 /// Overlap rendering with the next main frame. Extraction remains the ownership
 /// boundary; the bounded render channel permits one outstanding frame.
 /// Set IW4L_PIPELINED_RENDERING=0 for synchronous presentation.
-///
-/// Off by default on macOS.
 #[cfg(not(target_arch = "wasm32"))]
 fn pipelined_rendering() -> bool {
     match std::env::var_os(PIPELINED_RENDERING_ENV) {
-        None => !cfg!(target_os = "macos"),
+        None => true,
         Some(_) => perf::switch(PIPELINED_RENDERING_ENV),
     }
 }
@@ -175,16 +179,18 @@ const FRAME_LATENCY_ENV: &str = "IW4L_FRAME_LATENCY";
 /// wgpu calls this a hint and the backend is free to clamp it: on Vulkan it is
 /// bound to the number of swapchain images, so a run that asked for two did
 /// not necessarily get two, and only a measurement says which. One is the
-/// default because it is what the runtime shipped; the variable exists so the
-/// other arm needs no rebuild, and the manifest records the number that was
-/// asked for — never the number the driver granted, which this process cannot
-/// read back.
+/// default because it is what the runtime shipped, except on macOS: there a
+/// latency of one leaves a single free drawable, so the render thread waits for
+/// the display before every frame and pipelined rendering gains nothing. The
+/// variable exists so the other arm needs no rebuild, and the manifest records
+/// the number that was asked for — never the number the driver granted, which
+/// this process cannot read back.
 ///
 /// The value is a count, not a switch: anything unparseable or zero is the
 /// default, and says so rather than silently picking an arm. Read once, so the
 /// window and the manifest cannot disagree and the complaint is made once.
 pub(crate) fn frame_latency() -> u32 {
-    const DEFAULT: u32 = 1;
+    const DEFAULT: u32 = if cfg!(target_os = "macos") { 2 } else { 1 };
     static FRAMES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *FRAMES.get_or_init(|| {
         let Some(asked) = std::env::var_os(FRAME_LATENCY_ENV) else {

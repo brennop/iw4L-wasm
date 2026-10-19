@@ -77,17 +77,6 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
     catalog.load_definitions(include_str!("../menus/controller.json"))?;
     catalog.load_definitions(include_str!("../menus/game_folders.json"))?;
     catalog.load_definitions(include_str!("../menus/community_servers.json"))?;
-    if let Some(item) = catalog
-        .menus
-        .get_mut("options_community_servers")
-        .and_then(|menu| {
-            menu.items
-                .iter_mut()
-                .find(|item| item.name == "community_server")
-        })
-    {
-        item.choices = crate::CommunityServers::default().choices;
-    }
     let chat_bindings: Vec<_> = catalog
         .get("pc_options_actions")
         .into_iter()
@@ -265,6 +254,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
             }
         }
     }
+    catalog.inherit_shared_vis();
     Ok(())
 }
 

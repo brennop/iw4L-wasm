@@ -828,9 +828,9 @@ impl FxDefinitions {
         })
     }
 
-    pub fn map_fx_name<'a>(&self, name: &'a str) -> FxName<'a> {
+    pub fn map_fx_name<'a>(&'a self, name: &'a str) -> FxName<'a> {
         match self.resolve_def_for_map(name) {
-            Some(def) => FxName::new(def.namespace, name),
+            Some(def) => FxName::new(def.namespace, &def.name),
             None => FxName::new(
                 self.map_namespace
                     .expect("effects require an explicit map family"),
@@ -869,6 +869,9 @@ impl FxDefinitions {
     }
 
     pub fn resolve_def_for_map(&self, name: &str) -> Option<&OwnedFxEffectDef> {
+        if let Some((family, name)) = name.split_once(':') {
+            return self.resolve_def_in(crate::AssetNamespace::parse(family)?, name);
+        }
         let map_ns = self
             .map_namespace
             .expect("effects require an explicit map family");
@@ -2517,6 +2520,19 @@ fn capture_elem_t6(
                     hint: Some(name.clone()).filter(|name| !name.is_empty()),
                     material_namespace: namespace,
                     authored,
+                })
+                .collect()
+        } else if t == elem_type::DECAL {
+            elem.visuals
+                .chunks_exact(2)
+                .map(|pair| {
+                    let material = |name: &String| OwnedFxVisual::Material {
+                        material: authored.unresolved(),
+                        hint: Some(name.clone()).filter(|name| !name.is_empty()),
+                        material_namespace: namespace,
+                        authored,
+                    };
+                    mark_pair(material(&pair[0]), material(&pair[1]))
                 })
                 .collect()
         } else if t == elem_type::MODEL {

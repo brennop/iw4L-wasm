@@ -146,29 +146,9 @@ fn upload_exact_geometry(
         &queue,
         &mut pending,
     );
-    perf::Counter::CounterSkinJobs.emit(if skinned {
-        frame.skin_jobs.len() as f64
-    } else {
-        0.0
-    });
-    perf::Counter::CounterSkinVertices.emit(if skinned {
-        frame
-            .skin_jobs
-            .iter()
-            .map(|job| job.shape.vertices().len())
-            .sum::<usize>() as f64
-    } else {
-        0.0
-    });
+    perf::Counter::CounterSkinJobs.emit(skinned.jobs as f64);
+    perf::Counter::CounterSkinVertices.emit(skinned.vertices as f64);
     perf::Counter::CounterSkinResidentBytes.emit(skin.resident_bytes() as f64);
-    if !skinned {
-        geometry.xmodel.vertex.set_len(0);
-        diag::error!(
-            World,
-            "packed skinning refused frame {}",
-            frame.xmodel_revision
-        );
-    }
     if let Some(kind) = result.code_mesh_gpu_kind {
         census.preparation.code_mesh_gpu_kind = Some(kind);
     }

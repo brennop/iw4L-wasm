@@ -33,7 +33,7 @@ pub(crate) struct MenuHost<'a> {
     pub menu: &'a MenuDef,
     pub dvars: &'a frame::UiMenuDvars,
     pub locals: &'a UiLocalVars,
-    pub open: &'a [String],
+    pub open: &'a [super::state::OpenMenu],
     pub focus_rect: Option<[f32; 4]>,
 }
 
@@ -487,7 +487,9 @@ impl ExprHost for MenuHost<'_> {
     }
     fn menu_is_open(&self, name: &str) -> Result<i32, ExprError> {
         Ok(i32::from(
-            self.open.iter().any(|open| open.eq_ignore_ascii_case(name)),
+            self.open
+                .iter()
+                .any(|open| open.name.eq_ignore_ascii_case(name)),
         ))
     }
     fn weapon_lock(&self) -> Result<WeaponLockView, ExprError> {
