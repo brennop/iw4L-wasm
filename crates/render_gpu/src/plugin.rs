@@ -4,6 +4,8 @@ pub struct RenderGpuPlugin;
 
 impl Plugin for RenderGpuPlugin {
     fn build(&self, app: &mut App) {
+        let skin = crate::SkinSupport::default();
+        app.insert_resource(skin.clone());
         app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
             frame::DisplayEncodedCamera,
         >::default());
@@ -28,6 +30,7 @@ impl Plugin for RenderGpuPlugin {
             return;
         };
         render_app
+            .insert_resource(skin)
             .init_resource::<crate::GpuSubmitReady>()
             .init_resource::<crate::ColourWorkingSet>()
             .init_resource::<crate::WorldPipelineWarmup>()

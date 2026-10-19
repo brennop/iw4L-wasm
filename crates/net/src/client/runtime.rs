@@ -41,6 +41,140 @@ pub struct PendingPresentedEntityEvents {
     pub in_killcam: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ImpactOccurrence {
+    pub installation: frame::LocalLoadKey,
+    pub timeline: u64,
+    pub tick: sim::Tick,
+    pub cause: Option<sim::FireCause>,
+    pub attacker: i32,
+    pub correlation: u32,
+    pub pellet: u16,
+    pub segment: u16,
+}
+
+#[derive(Message, Clone, Copy, Debug)]
+pub struct AcceptedImpact {
+    pub occurrence: ImpactOccurrence,
+    pub world: frame::WorldStamp,
+    pub record: sim::PelletFxRecord,
+}
+
+#[derive(Message, Clone, Copy, Debug)]
+pub struct ImpactReconstruction {
+    pub context: frame::PresentationContext,
+    pub retained_from: Option<sim::Tick>,
+}
+
+#[derive(Resource, Default)]
+pub struct PendingAcceptedImpacts(Vec<(frame::WorldStamp, sim::Tick, sim::PelletFxRecord)>);
+
+#[derive(Resource, Default)]
+pub(crate) struct ImpactCursor {
+    replay_tick: Option<sim::Tick>,
+    context: Option<(frame::LocalLoadKey, u64)>,
+    seen: std::collections::HashSet<ImpactOccurrence>,
+    order: VecDeque<ImpactOccurrence>,
+}
+
+pub(crate) fn publish_accepted_impacts(
+    mut pending: ResMut<PendingAcceptedImpacts>,
+    mut cursor: ResMut<ImpactCursor>,
+    installed: Res<frame::InstalledMatch>,
+    timeline: Res<crate::EntityEventCursor>,
+    mut impacts: MessageWriter<AcceptedImpact>,
+    presented: Res<PresentedSnapshot>,
+    mut visuals: ResMut<PendingPelletFx>,
+    proxy: Res<RemoteProxyState>,
+    mut reconstruction: MessageWriter<ImpactReconstruction>,
+) {
+    let context = Some((installed.load_key, timeline.timeline()));
+    if cursor.context != context {
+        cursor.context = context;
+        cursor.seen.clear();
+        cursor.order.clear();
+        cursor.replay_tick = None;
+        reconstruction.write(ImpactReconstruction {
+            context: frame::PresentationContext::new(installed.load_key, timeline.timeline()),
+            retained_from: None,
+        });
+    }
+    let mut accepted = std::mem::take(&mut pending.0);
+    if presented.is_archived_replay()
+        && let Some(snapshot) = presented.snapshot()
+    {
+        let world = frame::WorldStamp::from_install(installed.request_id);
+        let (gap, records) = proxy.0.impact_window(cursor.replay_tick, snapshot.tick);
+        if gap.is_some() {
+            cursor.seen.clear();
+            cursor.order.clear();
+            reconstruction.write(ImpactReconstruction {
+                context: frame::PresentationContext::new(installed.load_key, timeline.timeline()),
+                retained_from: gap,
+            });
+        }
+        if records.is_empty() && cursor.replay_tick != Some(snapshot.tick) {
+            accepted.extend(
+                snapshot
+                    .meta
+                    .pellet_fx
+                    .iter()
+                    .copied()
+                    .map(|record| (world, snapshot.tick, record)),
+            );
+        } else {
+            accepted.extend(
+                records
+                    .into_iter()
+                    .map(|(tick, record)| (world, tick, record)),
+            );
+        }
+        cursor.replay_tick = Some(snapshot.tick);
+    }
+    for (world, tick, record) in accepted {
+        if world != frame::WorldStamp::from_install(installed.request_id)
+            || record.normal == [0.0; 3]
+        {
+            continue;
+        }
+        let occurrence = ImpactOccurrence {
+            installation: installed.load_key,
+            timeline: timeline.timeline(),
+            tick: if record.fire_cause.is_some() {
+                sim::Tick(0)
+            } else {
+                tick
+            },
+            cause: record.fire_cause,
+            attacker: record.attacker,
+            correlation: record.correlation,
+            pellet: record.pellet,
+            segment: record.segment,
+        };
+        if !cursor.seen.insert(occurrence) {
+            continue;
+        }
+        cursor.order.push_back(occurrence);
+        while cursor.order.len() > 4096 {
+            if let Some(old) = cursor.order.pop_front() {
+                cursor.seen.remove(&old);
+            }
+        }
+        if presented.is_archived_replay() {
+            visuals
+                .0
+                .push((world, crate::EntityEventDomain::Snapshot, record));
+        }
+        impacts.write(AcceptedImpact {
+            occurrence,
+            world,
+            record,
+        });
+    }
+    let excess = visuals.0.len().saturating_sub(8192);
+    visuals.0.drain(..excess);
+}
+
 #[derive(Resource, Default)]
 pub struct PendingPelletFx(
     pub(crate)  Vec<(
@@ -559,6 +693,7 @@ pub fn reconcile_prediction(
     mut pending: ResMut<PendingClientSends>,
     mut entity_events: ResMut<PendingPresentedEntityEvents>,
     mut pellet_fx: ResMut<PendingPelletFx>,
+    mut accepted: ResMut<PendingAcceptedImpacts>,
     role: Res<RuntimeRole>,
     cg_clock: Res<FrameClock>,
     trace: Option<ResMut<ClientPhaseTrace>>,
@@ -584,9 +719,17 @@ pub fn reconcile_prediction(
             tick.snapshot.meta.world_objects.map_round_epoch == match_key.match_epoch
         };
         if same_match {
+            accepted.0.extend(
+                tick.snapshot
+                    .meta
+                    .pellet_fx
+                    .iter()
+                    .copied()
+                    .map(|record| (reliable.generation.stamp(), tick.snapshot.tick, record)),
+            );
             pellet_fx
                 .0
-                .extend(tick.snapshot.meta.pellet_fx.drain(..).map(|record| {
+                .extend(tick.snapshot.meta.pellet_fx.iter().copied().map(|record| {
                     (
                         reliable.generation.stamp(),
                         crate::EntityEventDomain::Snapshot,
@@ -2031,6 +2174,10 @@ pub fn register_client_runtime(app: &mut App) {
         .scoped::<PresentLocalCensus>(frame::Timeline::Running)
         .scoped::<PendingPresentedEntityEvents>(frame::Timeline::Running)
         .scoped::<PendingPelletFx>(frame::Timeline::Running)
+        .scoped::<PendingAcceptedImpacts>(frame::Timeline::Running)
+        .scoped::<ImpactCursor>(frame::Timeline::Running)
+        .scoped_message::<AcceptedImpact>(frame::Timeline::Running)
+        .scoped_message::<ImpactReconstruction>(frame::Timeline::Running)
         .scoped::<PendingClientSends>(frame::MatchScope::Live)
         .init_resource::<ClientCmdTemplate>()
         .scoped::<WeaponSelect>(frame::MatchScope::Live)

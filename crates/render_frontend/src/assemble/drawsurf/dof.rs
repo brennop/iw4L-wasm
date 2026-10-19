@@ -137,15 +137,19 @@ fn update_dof(
     mut frame: ResMut<DofFrame>,
     mut scene: Local<DepthOfField>,
     clip: Res<crate::adapters::anim::dyn_ent::DynEntPhysClip>,
-    world: Res<frame::WorldGeneration>,
+    context: (Res<frame::InstalledMatch>, Res<net::EntityEventCursor>),
     view_settings: (Res<frame::ViewSubject>, Res<frame::GameSettings>),
     camera: Option<Res<render_anim::occupancy::view_kick::SessionViewKick>>,
-    mut generation: Local<Option<u64>>,
+    mut generation: Local<Option<frame::PresentationContext>>,
 ) {
     let (subject, settings) = view_settings;
     *frame = DofFrame::default();
-    if *generation != world.0 {
-        *generation = world.0;
+    let current = Some(frame::PresentationContext::new(
+        context.0.load_key,
+        context.1.timeline(),
+    ));
+    if *generation != current {
+        *generation = current;
         *scene = DepthOfField::default();
     }
     let Some(ps) = presented.player(local.0).filter(|_| view.ready) else {

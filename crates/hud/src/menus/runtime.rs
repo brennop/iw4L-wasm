@@ -355,6 +355,7 @@ impl Runner<'_, '_> {
             focus: None,
             hover: None,
             items: vec![ItemState::default(); def.items.len()],
+            item_ids: super::state::item_ids(def),
         });
         diag::info!(Ui, "menu open: {}", def.name);
         let name = def.name.clone();
@@ -586,7 +587,13 @@ impl Runner<'_, '_> {
             }
             let enabled = item.disabled_exp.is_empty()
                 || matches!(self.exprs.is_true(&item.disabled_exp, &host), Ok(false));
-            if enabled && matches!(self.exprs.is_true(&item.vis_exp, &host), Ok(true)) {
+            if enabled
+                && matches!(
+                    self.exprs
+                        .is_true_source(item.visibility_expression, &item.vis_exp, &host),
+                    Ok(true)
+                )
+            {
                 out.push(index);
             }
         }

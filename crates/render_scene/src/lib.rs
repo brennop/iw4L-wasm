@@ -1,3 +1,5 @@
+mod skin_support;
+pub use skin_support::SkinSupport;
 pub mod camera;
 pub mod dpvs_cells;
 pub mod dyn_atpoint;

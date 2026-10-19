@@ -188,7 +188,7 @@ impl WeaponBuild {
             if parent == 0 {
                 row.fpv_assemblies = [None, None];
             }
-            let Some(Ok(mounts)) = &row.fpv_mount_plan else {
+            let Some(Ok(mounts)) = &mut row.fpv_mount_plan else {
                 continue;
             };
             let clips: std::collections::BTreeSet<usize> = row
@@ -199,11 +199,19 @@ impl WeaponBuild {
                 .filter_map(|edge| edge.bound_index())
                 .collect();
             let hide_mode = row.preparation.hide_mode();
-            let embedded_ammo = mounts.rocket.is_none()
+            let declares_embedded = row.rocket_model.is_none()
                 && row.projectile_model.is_some()
                 && hide_tags
                     .iter()
                     .any(|tag| tag.eq_ignore_ascii_case("tag_clip"));
+            if declares_embedded && let Err(error) = mounts.prepare_embedded_ammunition(fpv) {
+                row.fpv_assemblies = std::array::from_fn(|_| Some(Err(error.to_string())));
+                continue;
+            }
+            let embedded_ammo = matches!(
+                mounts.ammunition,
+                asset_model::AmmunitionVisualMode::Embedded { .. }
+            );
             let knife_model = row.knife_xmodel.as_deref().map(|name| {
                 row.preparation
                     .bind_fpv(WeaponComponent::ViewModel, Some(name), fpv)
@@ -320,6 +328,7 @@ impl WeaponBuild {
                         .any(|(jammed, bare)| jammed.hide != bare.hide)
                         .then_some(jammed);
                     Some(Ok(crate::FpvSideAssemblies {
+                        ammunition: mounts.ammunition,
                         bare,
                         rocket,
                         melee,

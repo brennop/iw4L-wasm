@@ -43,12 +43,14 @@ impl PeerConnection {
         }
     }
 
-    /// Per-transport Hello deadline: native QUIC peers keep `HELLO_DEADLINE`
-    /// (8 s); browser peers get longer (main-thread load stall).
+    /// Per-transport Hello deadline: native QUIC peers get the response
+    /// budget; browser peers at least `WEBTRANSPORT_HELLO_DEADLINE`
+    /// (main-thread load stall).
     pub fn hello_deadline(&self) -> Duration {
+        let response = crate::limits::values().response;
         match self {
-            Self::Quic(_) => crate::HELLO_DEADLINE,
-            Self::WebTransport(_) | Self::WebSocket(_) => WEBTRANSPORT_HELLO_DEADLINE,
+            Self::Quic(_) => response,
+            Self::WebTransport(_) | Self::WebSocket(_) => response.max(WEBTRANSPORT_HELLO_DEADLINE),
         }
     }
 
@@ -159,6 +161,27 @@ impl PeerSend {
         }
         Ok(())
     }
+
+    /// Waits until the peer has the whole stream (`None`) or stopped it
+    /// (`Some(code)`). A WebSocket stream reports neither and returns at once.
+    pub async fn stopped(&mut self) -> Result<Option<quinn::VarInt>> {
+        Ok(match self {
+            Self::Quic(s) => s.stopped().await?,
+            Self::WebTransport(s) => s.quic_stream_mut().stopped().await?,
+            Self::WebSocket(_) => None,
+        })
+    }
+
+    /// Abandons an unfinished stream. A WebSocket stream has no reset; the
+    /// connection's close ends it.
+    pub fn reset(&mut self, code: quinn::VarInt) -> Result<()> {
+        match self {
+            Self::Quic(s) => s.reset(code)?,
+            Self::WebTransport(s) => s.quic_stream_mut().reset(code)?,
+            Self::WebSocket(_) => {}
+        }
+        Ok(())
+    }
 }
 
 pub enum PeerRecv {
@@ -168,14 +191,6 @@ pub enum PeerRecv {
 }
 
 impl PeerRecv {
-    pub async fn read_to_end(&mut self, limit: usize) -> Result<Vec<u8>> {
-        Ok(match self {
-            Self::Quic(s) => s.read_to_end(limit).await?,
-            Self::WebTransport(s) => s.quic_stream_mut().read_to_end(limit).await?,
-            Self::WebSocket(s) => s.read_to_end(limit).await?,
-        })
-    }
-
     pub fn stop(&mut self, code: quinn::VarInt) -> Result<()> {
         match self {
             Self::Quic(s) => s.stop(code)?,

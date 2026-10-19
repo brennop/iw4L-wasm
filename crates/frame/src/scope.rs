@@ -240,12 +240,6 @@ fn retire_state<S: States>(
         }
         world.resource_mut::<ScopeEpoch<S>>().0 =
             world.resource::<ScopeEpoch<S>>().0.wrapping_add(1);
-        // Match-epoch consumers (audio voices) must also drop what a restarted
-        // timeline played.
-        if TypeId::of::<S>() == TypeId::of::<Timeline>() {
-            world.resource_mut::<ScopeEpoch<MatchScope>>().0 =
-                world.resource::<ScopeEpoch<MatchScope>>().0.wrapping_add(1);
-        }
         if !actions.is_empty() {
             world.resource_mut::<crate::Retiring>().mark_teardown();
             let mut registry = world.resource_mut::<ScopeRegistry>();

@@ -4,8 +4,7 @@ use core::{fmt, str::FromStr};
 
 /// O16: framing of the WebSocket transport, shared by the master and the browser.
 pub mod ws_frame;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod congestion;
+pub mod budget;
 
 pub const PROTOCOL_VERSION: u16 = 10;
 pub const ALPN: &[u8] = b"iw4l-master/10";

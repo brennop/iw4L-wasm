@@ -123,6 +123,34 @@ impl RemoteProxy {
         Self::default()
     }
 
+    pub(crate) fn impact_window(
+        &self,
+        after: Option<sim::Tick>,
+        through: sim::Tick,
+    ) -> (Option<sim::Tick>, Vec<(sim::Tick, sim::PelletFxRecord)>) {
+        let oldest = self.buffer.front().map(|entry| entry.snap.tick);
+        let gap =
+            oldest.filter(|oldest| after.is_some_and(|after| after.0.saturating_add(1) < oldest.0));
+        let records = self
+            .buffer
+            .iter()
+            .filter(|entry| {
+                entry.snap.tick.0 <= through.0
+                    && after.is_none_or(|after| entry.snap.tick.0 > after.0)
+            })
+            .flat_map(|entry| {
+                entry
+                    .snap
+                    .meta
+                    .pellet_fx
+                    .iter()
+                    .copied()
+                    .map(move |record| (entry.snap.tick, record))
+            })
+            .collect();
+        (gap, records)
+    }
+
     pub fn delay_ms(&self) -> i32 {
         self.delay_ms
     }

@@ -572,7 +572,7 @@ fn run_players_system(ecs: &mut World) {
                 if world.publishes_snapshot() {
                     world.record_entity_collision_history(tick);
                 }
-                let emissions = phase_emit(&world, core::slice::from_ref(&shot));
+                let emissions = phase_emit(&world, tick, core::slice::from_ref(&shot));
                 phase_trace(&mut world, tick, &emissions);
             }
             crate::equipment::phase_offhand(&mut world, tick, &[(*id, cmd)]);

@@ -20,6 +20,16 @@ pub struct MatchLoadBusy(pub bool);
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchLoadAbort(pub u64);
 
+#[derive(Resource, Default)]
+pub struct CurrentMatchLoad(pub Option<frame::LocalLoadKey>);
+
+fn current_load(world: &World, key: frame::LocalLoadKey) -> bool {
+    world.resource::<CurrentMatchLoad>().0 == Some(key)
+        && world
+            .get_resource::<MatchLoadAbort>()
+            .is_none_or(|abort| abort.0 != key.local_load_request_id)
+}
+
 #[derive(Resource)]
 pub struct MatchLoadRequest {
     pub request_id: u64,
@@ -87,7 +97,15 @@ fn start_match_load(
         .is_some_and(|abort| abort.0 == request.request_id)
     {
         *waiting_for_retirement = None;
-        commands.remove_resource::<MatchLoadRequest>();
+        let load_key = request.load_key;
+        commands.queue(move |world: &mut World| {
+            if world
+                .get_resource::<MatchLoadRequest>()
+                .is_some_and(|request| request.load_key == load_key)
+            {
+                world.remove_resource::<MatchLoadRequest>();
+            }
+        });
         if busy.is_none() {
             inflight.0 = false;
         }
@@ -132,7 +150,15 @@ fn start_match_load(
             zone: request.zone.clone(),
             error: error.clone(),
         });
-        commands.remove_resource::<MatchLoadRequest>();
+        let load_key = request.load_key;
+        commands.queue(move |world: &mut World| {
+            if world
+                .get_resource::<MatchLoadRequest>()
+                .is_some_and(|request| request.load_key == load_key)
+            {
+                world.remove_resource::<MatchLoadRequest>();
+            }
+        });
         inflight.0 = false;
         return;
     }
@@ -148,12 +174,12 @@ fn start_match_load(
     // The process outlives the overlay and every task this spawns: it is what
     // the table reads, what admission finishes, and what the bench still has
     // once the screen is gone.
-    commands.insert_resource(MapLoadProcess::new(
-        request_id,
-        load_key,
-        zone.clone(),
-        cancel_handle.clone(),
-    ));
+    let process = MapLoadProcess::new(request_id, load_key, zone.clone(), cancel_handle.clone());
+    commands.queue(move |world: &mut World| {
+        if current_load(world, load_key) {
+            world.insert_resource(process);
+        }
+    });
 
     let families = request.families;
     let games = identity.map(|identity| asset_transport::GamesRoot(identity.games_root.clone()));
@@ -210,6 +236,9 @@ fn start_match_load(
     });
     inflight.0 = true;
     commands.queue(move |world: &mut World| {
+        if !current_load(world, load_key) {
+            return;
+        }
         frame::scope::insert(
             world,
             MatchLoadAccepted {
@@ -222,6 +251,10 @@ fn start_match_load(
         );
     });
     commands.queue(move |world: &mut World| {
+        if !current_load(world, load_key) {
+            cancel_handle.cancel();
+            return;
+        }
         frame::scope::insert(
             world,
             MatchLoadTask {
@@ -234,7 +267,14 @@ fn start_match_load(
             frame::MatchScope::Loading,
         );
     });
-    commands.remove_resource::<MatchLoadRequest>();
+    commands.queue(move |world: &mut World| {
+        if world
+            .get_resource::<MatchLoadRequest>()
+            .is_some_and(|request| request.load_key == load_key)
+        {
+            world.remove_resource::<MatchLoadRequest>();
+        }
+    });
 }
 
 fn approve_map_load(
@@ -246,8 +286,10 @@ fn approve_map_load(
     dvars: Res<frame::UiMenuDvars>,
     server_families: Option<Res<frame::AssetFamilies>>,
     abort: Option<Res<MatchLoadAbort>>,
+    mut current: ResMut<CurrentMatchLoad>,
 ) {
     for request in approved.read() {
+        current.0 = Some(request.load_key);
         if abort
             .as_ref()
             .is_some_and(|abort| abort.0 == request.request_id)
@@ -319,7 +361,7 @@ fn approve_map_load(
         // Its own state, never the live map's: tasks from the request before
         // this one still hold handles, and they must not land in these rows.
         let progress = LoadProgress::new(request.request_id);
-        commands.insert_resource(MatchLoadRequest {
+        let candidate = MatchLoadRequest {
             request_id: request.request_id,
             load_key: request.load_key,
             zone,
@@ -327,6 +369,11 @@ fn approve_map_load(
             common_mp,
             progress,
             families,
+        };
+        commands.queue(move |world: &mut World| {
+            if current_load(world, candidate.load_key) {
+                world.insert_resource(candidate);
+            }
         });
     }
 }
@@ -337,14 +384,16 @@ fn poll_match_load(
     mut inflight: ResMut<MatchLoadBusy>,
     abort: Option<Res<MatchLoadAbort>>,
     mut failed: MessageWriter<MapLoadFailed>,
+    current: Res<CurrentMatchLoad>,
 ) {
     let Some(task) = task.as_deref_mut() else {
         return;
     };
 
-    if abort
-        .as_ref()
-        .is_some_and(|abort| abort.0 == task.request_id)
+    if (current.0 != Some(task.load_key)
+        || abort
+            .as_ref()
+            .is_some_and(|abort| abort.0 == task.request_id))
         && !task.progress.is_canceled()
     {
         task.progress.cancel();
@@ -363,9 +412,25 @@ fn poll_match_load(
         Err(panic) => Err(walk_panic_failure(task, panic.as_ref())),
     };
     let request_id = task.request_id;
+    let load_key = task.load_key;
     inflight.0 = false;
-    commands.remove_resource::<MatchLoadTask>();
-    commands.remove_resource::<MatchLoadAccepted>();
+    commands.queue(move |world: &mut World| {
+        if world
+            .get_resource::<MatchLoadTask>()
+            .is_some_and(|task| task.load_key == load_key)
+        {
+            world.remove_resource::<MatchLoadTask>();
+        }
+        if world
+            .get_resource::<MatchLoadAccepted>()
+            .is_some_and(|accepted| accepted.load_key == load_key)
+        {
+            world.remove_resource::<MatchLoadAccepted>();
+        }
+    });
+    if current.0 != Some(load_key) {
+        return;
+    }
     let outcome = match outcome {
         Ok(ready) => ready,
         Err(error) => {
@@ -414,9 +479,10 @@ fn poll_match_load(
             .unwrap_or_else(|| Err("the map zone never opened".to_owned())),
     };
     commands.queue(move |world: &mut World| {
+        if !current_load(world, ready.load_key) {
+            return;
+        }
         frame::scope::insert(world, map_sound, frame::MatchScope::Loading);
-    });
-    commands.queue(move |world: &mut World| {
         frame::scope::insert(world, ready, frame::MatchScope::Loading);
     });
 }
@@ -454,7 +520,18 @@ fn expire_match_load_abort(
     if task.is_some() || request.is_some() || ready.is_some() {
         return;
     }
-    commands.remove_resource::<MatchLoadAbort>();
+    let request_id = abort.expect("checked abort").0;
+    commands.queue(move |world: &mut World| {
+        if world
+            .get_resource::<MatchLoadAbort>()
+            .is_some_and(|abort| abort.0 == request_id)
+            && !world.contains_resource::<MatchLoadTask>()
+            && !world.contains_resource::<MatchLoadRequest>()
+            && !world.contains_resource::<PreparedMatchReady>()
+        {
+            world.remove_resource::<MatchLoadAbort>();
+        }
+    });
 }
 
 pub fn register_match_load_systems(app: &mut App) {
@@ -465,21 +542,23 @@ pub fn register_match_load_systems(app: &mut App) {
         OnExit(frame::MatchScope::Loading),
         cancel_loading.in_set(frame::ScopeSet::Release),
     );
-    app.init_resource::<MatchLoadBusy>().add_systems(
-        Update,
-        (
-            approve_map_load.in_set(MapLoadApproval),
+    app.init_resource::<CurrentMatchLoad>()
+        .init_resource::<MatchLoadBusy>()
+        .add_systems(
+            Update,
             (
-                start_match_load.run_if(in_state(frame::MatchScope::Loading)),
-                poll_match_load.after(start_match_load),
-                expire_match_load_abort.after(poll_match_load),
+                approve_map_load.in_set(MapLoadApproval),
+                (
+                    start_match_load.run_if(in_state(frame::MatchScope::Loading)),
+                    poll_match_load.after(start_match_load),
+                    expire_match_load_abort.after(poll_match_load),
+                )
+                    .in_set(MatchLoadDispatch)
+                    .after(MapLoadApproval),
             )
-                .in_set(MatchLoadDispatch)
-                .after(MapLoadApproval),
-        )
-            .after(frame::SessionSwapApplied)
-            .in_set(ClientSet::Load),
-    );
+                .after(frame::SessionSwapApplied)
+                .in_set(ClientSet::Load),
+        );
 }
 
 fn cancel_loading(task: Option<Res<MatchLoadTask>>, mut busy: ResMut<MatchLoadBusy>) {

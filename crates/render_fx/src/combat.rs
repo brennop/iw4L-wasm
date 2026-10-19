@@ -410,7 +410,7 @@ pub fn play_impact_table_cell(
             .get(surf_type as usize)
             .map(|name| (*name).to_owned());
         let exit = surface_flags & FX_IMPACT_EXIT_SURFACE_FLAG != 0;
-        let table = impact_fx.and_then(|fx| fx.0.as_ref());
+        let table = impact_fx.and_then(|fx| fx.map.as_ref());
         let Some(row) = table.map_or_else(
             || impact_table_row(impact_type, exit),
             |table| table.impact_row(impact_type, exit),

@@ -950,7 +950,149 @@ pub(crate) fn arm_world_spawn_on_install(
     };
 }
 
+fn check_skin_support(
+    support: Option<Res<render_scene::SkinSupport>>,
+    generation: Option<Res<WorldGeneration>>,
+    scene: Option<ResMut<WorldScene>>,
+    products: (
+        Option<Res<assets::PreparedBodies>>,
+        Option<Res<assets::PreparedFpvMeshes>>,
+        Option<Res<assets::PreparedWorldWeapons>>,
+        Option<Res<assets::PreparedWeapons>>,
+    ),
+    mut checked: Local<Option<(WorldStamp, u64)>>,
+) {
+    let Some(support) = support else {
+        return;
+    };
+    let world = generation.map_or(WorldStamp(None), |generation| generation.stamp());
+    support.set_world(world);
+    let Some(mut scene) = scene else {
+        return;
+    };
+    if world.0.is_none() {
+        return;
+    }
+    let installation = (world, support.device_generation());
+    if *checked != Some(installation) {
+        let Some(limits) = support.limits() else {
+            scene.readiness.state = frame::ReadinessState::Pending;
+            return;
+        };
+        let (Some(bodies), Some(fpv), Some(weapons), Some(registry)) = products else {
+            scene.readiness.state = frame::ReadinessState::Pending;
+            return;
+        };
+        let actors = u64::from(master_protocol::MAX_SESSION_MEMBERS)
+            + playerstate_iw4::MAX_CLIENT_CORPSES as u64;
+        let body_sizes: Vec<u64> = bodies
+            .0
+            .names()
+            .filter_map(|name| bodies.0.get(name))
+            .map(|entry| entry.skel.packed_vertices.len() as u64)
+            .collect();
+        let weapon_sizes: Vec<u64> = (0..weapons.0.len())
+            .filter_map(|index| weapons.0.get_at(index))
+            .map(|entry| entry.skel.packed_vertices.len() as u64)
+            .collect();
+        let body = body_sizes.iter().copied().max().unwrap_or(0);
+        let weapon = weapon_sizes.iter().copied().max().unwrap_or(0);
+        let mut fpv_vertices = 0_u64;
+        let mut fpv_parts = 0_u64;
+        for id in 1..=registry.registry().len() as u32 {
+            for axis in [false, true] {
+                let Some(side) = registry.registry().fpv_assemblies_of(id, axis) else {
+                    continue;
+                };
+                for assembly in std::iter::once(&side.bare)
+                    .chain(side.rocket.iter())
+                    .chain(side.melee.iter())
+                    .chain(side.ads.iter())
+                    .chain(side.jammed.iter())
+                {
+                    let vertices = assembly
+                        .parts()
+                        .iter()
+                        .filter_map(|part| fpv.0.get_at(part.model.order()))
+                        .map(|part| part.skel.packed_vertices.len() as u64)
+                        .sum();
+                    fpv_vertices = fpv_vertices.max(vertices);
+                    fpv_parts = fpv_parts.max(assembly.parts().len() as u64);
+                }
+            }
+        }
+        let output = ((body * 2 + weapon * 7) * actors + fpv_vertices) * 32;
+        let input = ((body * 2 + weapon * 7) * actors + fpv_vertices) * 64;
+        let max_bones = bodies
+            .0
+            .names()
+            .filter_map(|name| bodies.0.get(name))
+            .map(|entry| entry.skel.bones.len() as u64)
+            .chain(
+                (0..weapons.0.len())
+                    .filter_map(|index| weapons.0.get_at(index))
+                    .map(|entry| entry.skel.bones.len() as u64),
+            )
+            .chain(
+                (0..fpv.0.len())
+                    .filter_map(|index| fpv.0.get_at(index))
+                    .map(|entry| entry.skel.bones.len() as u64),
+            )
+            .max()
+            .unwrap_or(0);
+        let palettes = (actors * 9 + fpv_parts) * max_bones * 64;
+        let largest_shape = body.max(weapon).max(
+            (0..fpv.0.len())
+                .filter_map(|index| fpv.0.get_at(index))
+                .map(|entry| entry.skel.packed_vertices.len() as u64)
+                .max()
+                .unwrap_or(0),
+        );
+        diag::info!(
+            World,
+            "skinning support envelope: actors={actors} output={output} input={input} palettes={palettes} largest_shape={largest_shape} max_bones={max_bones} budget={} buffer_limit={} binding_limit={}",
+            support.resident_budget,
+            limits.buffer_bytes,
+            limits.storage_bytes
+        );
+        if largest_shape * 64 > limits.storage_bytes
+            || max_bones * 64 > limits.storage_bytes
+            || output > limits.buffer_bytes
+        {
+            support.refuse(
+                world,
+                render_frame::skinning::SkinRefusal::UnsupportedProduct,
+            );
+        } else if (input + palettes)
+            .saturating_mul(2)
+            .saturating_add(output.saturating_mul(3))
+            > support.resident_budget
+        {
+            support.refuse(
+                world,
+                render_frame::skinning::SkinRefusal::ResidencyPressure,
+            );
+        }
+        if let Some(refusal) = support.failure(world) {
+            diag::warn!(World, "skinning support refused: {refusal:?}");
+        }
+        *checked = Some(installation);
+        if scene.spawned && support.failure(world).is_none() {
+            scene.readiness.state = frame::ReadinessState::Ready;
+        }
+    }
+    if support.failure(world).is_some() {
+        scene.readiness.state = frame::ReadinessState::Failed;
+    }
+}
+
 pub(crate) fn register_world_gpu_ready(app: &mut App) {
+    app.add_systems(
+        Update,
+        check_skin_support
+            .after(spawn_world)
+            .in_set(frame::ClientSet::Present),
+    );
     super::world_gpu::register_resources(app);
     app.scoped::<super::world_images::ResidentGpuImages>(frame::MatchScope::Live);
     app.add_systems(

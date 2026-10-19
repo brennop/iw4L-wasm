@@ -239,6 +239,21 @@ impl LocalLoadKey {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PresentationContext {
+    pub installation: LocalLoadKey,
+    pub timeline: u64,
+}
+
+impl PresentationContext {
+    pub fn new(installation: LocalLoadKey, timeline: u64) -> Self {
+        Self {
+            installation,
+            timeline,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AdmissionKey {
     pub match_key: MatchKey,

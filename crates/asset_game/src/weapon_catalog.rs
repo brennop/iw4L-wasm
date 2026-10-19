@@ -31,7 +31,9 @@ mod capture_t6;
 pub use capture_t5::t5_inline_note_alias;
 use capture_t6::*;
 mod capture_t5;
+mod flame_stream;
 use capture_t5::*;
+pub use flame_stream::{FlameStreamView, FlameTube, WeaponFlameStream};
 mod capture_iw5;
 use capture_iw5::*;
 mod binding;
@@ -326,6 +328,7 @@ pub(crate) struct WeaponBodyFacts {
     pub min_player_damage: i32,
     pub max_damage_range: f32,
     pub min_damage_range: f32,
+    pub flame_damage_interval_ms: i32,
 
     pub kick: WeaponKickFacts,
 
@@ -625,6 +628,8 @@ struct CatalogWeapon {
 
     pub combat_fx: WeaponCombatFx,
 
+    pub flame: Option<Box<WeaponFlameStream>>,
+
     pub(crate) combat_slots: CombatFxSlots,
     pub facts: WeaponBodyFacts,
 }
@@ -836,6 +841,9 @@ pub struct WeaponSoundAliases {
 
     pub fire_player_akimbo: Option<String>,
 
+    pub fire_start: Option<String>,
+    pub fire_start_player: Option<String>,
+
     pub fire_loop: Option<String>,
     pub fire_loop_player: Option<String>,
 
@@ -923,6 +931,12 @@ weapon_sound_slots! {
     ProjIgnition => proj_ignition_sound,
     FireLast => fire_last,
     FireLastPlayer => fire_last_player,
+    FireStart => fire_start,
+    FireStartPlayer => fire_start_player,
+    FireLoop => fire_loop,
+    FireLoopPlayer => fire_loop_player,
+    FireStop => fire_stop,
+    FireStopPlayer => fire_stop_player,
 }
 
 impl WeaponSoundAliases {
@@ -967,6 +981,8 @@ impl WeaponSoundAliases {
             self.projectile.as_deref(),
             self.proj_ignition_sound.as_deref(),
             self.fire_player_akimbo.as_deref(),
+            self.fire_start.as_deref(),
+            self.fire_start_player.as_deref(),
             self.fire_loop.as_deref(),
             self.fire_loop_player.as_deref(),
             self.fire_stop.as_deref(),
@@ -1428,6 +1444,8 @@ struct WeaponRow {
 
     combat_fx: WeaponCombatFx,
 
+    flame: Option<Box<WeaponFlameStream>>,
+
     reticle: WeaponReticleAssets,
 
     hud_material_edges: WeaponHudMaterialEdges,
@@ -1533,6 +1551,7 @@ impl Default for WeaponRow {
             iw5_notetrack_overrides: Vec::new(),
             sounds: WeaponSoundAliases::default(),
             combat_fx: WeaponCombatFx::empty(crate::AssetNamespace::Iw4),
+            flame: None,
             reticle: WeaponReticleAssets::default(),
             hud_material_edges: WeaponHudMaterialEdges::default(),
             overlay_material: None,

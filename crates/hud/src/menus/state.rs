@@ -15,6 +15,7 @@ pub(crate) struct OpenMenu {
     pub(crate) focus: Option<usize>,
     pub(crate) hover: Option<usize>,
     pub(crate) items: Vec<ItemState>,
+    pub(crate) item_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -42,7 +43,92 @@ pub struct ScriptMenus {
     pub(crate) bind_requests: Vec<String>,
 }
 
+pub(crate) fn item_ids(def: &asset_game::MenuDef) -> Vec<String> {
+    let mut occurrences = std::collections::HashMap::<String, usize>::new();
+    def.items
+        .iter()
+        .map(|item| {
+            let name = if !item.authored_id.is_empty() {
+                format!("authored:{}", item.authored_id.to_ascii_lowercase())
+            } else if item.name.is_empty() {
+                format!(
+                    "anonymous:{}:{}:{}:{}",
+                    item.item_type, item.owner_draw, item.dvar, item.text_key
+                )
+            } else {
+                item.name.to_ascii_lowercase()
+            };
+            let occurrence = occurrences.entry(name.clone()).or_default();
+            let id = format!("{name}#{}", *occurrence);
+            *occurrence += 1;
+            id
+        })
+        .collect()
+}
+
 impl ScriptMenus {
+    pub(crate) fn reconcile(&mut self, catalog: &asset_game::MenuCatalog) {
+        self.stack.retain(|open| catalog.get(&open.name).is_some());
+        for open in &mut self.stack {
+            let Some(def) = catalog.get(&open.name) else {
+                continue;
+            };
+            let ids = item_ids(def);
+            if open.item_ids == ids {
+                continue;
+            }
+            let remap = |index: Option<usize>| {
+                index
+                    .and_then(|index| open.item_ids.get(index))
+                    .and_then(|id| ids.iter().position(|next| next == id))
+            };
+            open.focus = remap(open.focus);
+            open.hover = remap(open.hover);
+            if let Some(editing) = &mut self.editing
+                && editing.menu.eq_ignore_ascii_case(&open.name)
+            {
+                if let Some(next) = remap(Some(editing.item)) {
+                    editing.item = next;
+                } else {
+                    self.editing = None;
+                }
+            }
+            if let Some((menu, index)) = &mut self.slider_drag
+                && menu.eq_ignore_ascii_case(&open.name)
+            {
+                if let Some(next) = remap(Some(*index)) {
+                    *index = next;
+                } else {
+                    self.slider_drag = None;
+                }
+            }
+            let mut states: std::collections::HashMap<_, _> = open
+                .item_ids
+                .drain(..)
+                .zip(std::mem::take(&mut open.items))
+                .collect();
+            open.items = ids
+                .iter()
+                .map(|id| states.remove(id).unwrap_or_default())
+                .collect();
+            open.item_ids = ids;
+        }
+        if self
+            .editing
+            .as_ref()
+            .is_some_and(|editing| !self.is_open(&editing.menu))
+        {
+            self.editing = None;
+        }
+        if self
+            .slider_drag
+            .as_ref()
+            .is_some_and(|(menu, _)| !self.is_open(menu))
+        {
+            self.slider_drag = None;
+        }
+    }
+
     pub fn captures_input(&self) -> bool {
         self.input_menu().is_some()
     }

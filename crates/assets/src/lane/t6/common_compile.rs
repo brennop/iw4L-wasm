@@ -27,6 +27,7 @@ impl CommonFamilyCompiler for T6CommonCompiler {
         } = products;
         let t6_captured = self.captured_weapons;
         let mut content = self.content;
+        let impact_fx = content.impact_fx.take();
         let t6_hands = content.hands.clone();
         let (added, kept) = xanims.absorb_vacant(std::mem::take(&mut content.xanims));
         report.push(format!(
@@ -92,6 +93,7 @@ impl CommonFamilyCompiler for T6CommonCompiler {
                 fx: common_fx,
                 report,
             },
+            impact_fx,
             refusals,
         }
     }

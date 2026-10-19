@@ -52,6 +52,14 @@ pub struct WeaponSound {
 }
 
 #[derive(Message, Clone, Debug)]
+pub struct FlameFire {
+    pub number: u32,
+    pub weapon: u32,
+    pub player_view: bool,
+    pub origin_inches: [f32; 3],
+}
+
+#[derive(Message, Clone, Debug)]
 pub struct BoundWeaponSound {
     pub event: Option<crate::AudioEvent>,
     pub bank_revision: u64,

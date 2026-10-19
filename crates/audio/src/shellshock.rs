@@ -25,7 +25,7 @@ pub(crate) fn update_shellshock_tinnitus(
     runtime: Res<crate::AudioRuntime>,
     mut sources: ResMut<ShellshockSources>,
     mut play: MessageWriter<crate::AliasCommand>,
-    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
 ) {
     let local_id = local.as_ref().map(|l| l.0.0);
     let life = local.as_ref().and_then(|local| {
@@ -51,7 +51,11 @@ pub(crate) fn update_shellshock_tinnitus(
         sources.was_active = false;
         return;
     };
-    let context = (epoch.0, local.0.0, life.unwrap_or(0));
+    let context = (
+        crate::backend::presentation_epoch(epoch.as_deref()),
+        local.0.0,
+        life.unwrap_or(0),
+    );
     if sources.context != Some(context) {
         sources.source = None;
         sources.was_active = false;
@@ -87,7 +91,7 @@ pub(crate) fn update_shellshock_tinnitus(
                     alias: parms.loop_alias.clone(),
                     emitter: Some(local.0.0),
                     scope: crate::backend::AudioScope::Match,
-                    epoch: epoch.0,
+                    epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                     group: None,
                 })
             {
@@ -98,7 +102,7 @@ pub(crate) fn update_shellshock_tinnitus(
                 sources.source = Some(DesiredSource {
                     key: SourceKey {
                         scope: crate::backend::AudioScope::Match,
-                        epoch: epoch.0,
+                        epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                         object: u64::from(local.0.0),
                         slot: 5,
                     },

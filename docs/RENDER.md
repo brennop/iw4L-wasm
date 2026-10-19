@@ -1,8 +1,6 @@
 # Render: what lives where
-
 `render_frontend` reads the presented snapshot; `render_gpu` writes pixels and
 owns `wgpu`. Rendering decides no gameplay and never writes `AuthorityWorld`.
-
 | crate | role |
 |---|---|
 | `render_frontend` | scene preparation, culling, occupancy adapters, frame products and tessellation |
@@ -12,22 +10,18 @@ owns `wgpu`. Rendering decides no gameplay and never writes `AuthorityWorld`.
 | `render_material`, `render_backend` | material tables and draw-list views |
 | `render_gpu` | GPU preparation and recording |
 | `render` | composition, extraction and diagnostics |
-
 ```text
 zone → asset IR → prepare/scene/ → assemble/drawsurf/
      → sorted draw list → tessellation → material execution
      → SM3/WGSL → GPU contract → wgpu
 ```
-
 One drawsurf machine accepts world, static-model and viewmodel emitters.
 Lighting uses `lighting_iw4`, `smodel_lighting.rs` and `model_lighting_atlas.rs`;
 shadows use `sun_shadow.rs`. `StaticSunAndFx` overlaps static sun preparation
 with FX, joins before frame products consume results, then merges dynamic
 casters. Sun model draws reuse colour geometry's index buffers.
-
 Retained lanes in `retained_list/` key static reuse on world, material,
 visibility and eye/LOD. FX also keys on distortion; glass re-sorts for each eye.
-
 GPU skinning computes FPV and remote body packed vertices before native colour/shadows.
 Shapes use stable IDs and retire with live jobs; invalid jobs refuse geometry.
 
@@ -48,3 +42,9 @@ variables (`IW4L_SINGLE_CELL`, `IW4L_SUN_SHADOW_*`); observation uses
 
 Film vision presets come from map/common fastfiles. Console `visionSetNaked`
 and `visionReset` transition `FilmVisionView` between presets.
+
+Packed skinning uses bounded output pages and per-batch palettes under actual device limits.
+`IW4L_SKIN_RESIDENT_BYTES` defaults to 1073741824 (range 1048576–4294967296); invalid settings refuse support.
+Readiness preflights the worst admitted player/corpse loadouts and FPV assembly, including replacement/retirement costs.
+Cold shapes can leave GPU residency while their immutable CPU products remain valid; retired bytes stay counted until queue completion.
+Capacity refusal is explicit and stops required presentation; there is no CPU skinning fallback.

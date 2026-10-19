@@ -53,10 +53,6 @@ pub(crate) fn format_session_transition(
     )
 }
 
-pub const LOADING_DEADLINE_MS: u64 = 120_000;
-pub const RUNNING_SILENCE_MS: u64 = 60_000;
-pub const PEER_ADMISSION_DEADLINE_MS: u64 = master_protocol::SESSION_IDLE.as_millis() as u64;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProgressPhase {
     Idle,
@@ -102,10 +98,16 @@ impl ProgressWatch {
         match self.phase {
             ProgressPhase::Idle => false,
             ProgressPhase::Loading => {
-                now_ms.saturating_sub(self.phase_started_at) >= LOADING_DEADLINE_MS
+                now_ms.saturating_sub(self.phase_started_at)
+                    >= crate::transport::master::limits::values()
+                        .loading
+                        .as_millis() as u64
             }
             ProgressPhase::Running => {
-                now_ms.saturating_sub(self.last_progress_ms) >= RUNNING_SILENCE_MS
+                now_ms.saturating_sub(self.last_progress_ms)
+                    >= crate::transport::master::limits::values()
+                        .silence
+                        .as_millis() as u64
             }
         }
     }
@@ -230,7 +232,7 @@ pub enum PeerPhase {
 pub struct PeerAdmission {
     pub phase: PeerPhase,
     pub map_loaded: Option<HostWorldReady>,
-    pub started_at_ms: u64,
+    pub started_at_ms: Option<u64>,
     pub connection_id: Option<u64>,
 }
 
@@ -239,7 +241,7 @@ impl Default for PeerAdmission {
         Self {
             phase: PeerPhase::Waiting,
             map_loaded: None,
-            started_at_ms: 0,
+            started_at_ms: None,
             connection_id: None,
         }
     }
@@ -249,6 +251,11 @@ impl Default for PeerAdmission {
 pub enum HostMatchEvent {
     Start {
         match_key: MatchKey,
+        now_ms: u64,
+    },
+    PeerRoster {
+        match_key: MatchKey,
+        members: Vec<MemberId>,
         now_ms: u64,
     },
     AuthorityReady {
@@ -363,6 +370,7 @@ impl TransitionIds {
     fn from_event(event: &HostMatchEvent, elapsed_from: u64) -> Self {
         match event {
             HostMatchEvent::Start { now_ms, .. }
+            | HostMatchEvent::PeerRoster { now_ms, .. }
             | HostMatchEvent::AuthorityReady { now_ms, .. }
             | HostMatchEvent::AuthorityProgress { now_ms }
             | HostMatchEvent::Tick { now_ms } => Self {
@@ -526,6 +534,26 @@ impl HostMatchCore {
                 self.progress.set_phase(ProgressPhase::Loading, now_ms);
                 self.finish(&ids, before, "start loading", Vec::new())
             }
+            HostMatchEvent::PeerRoster {
+                match_key,
+                members,
+                now_ms,
+            } => {
+                if match_key != self.match_key
+                    || !matches!(self.phase, MatchPhase::Loading | MatchPhase::Running)
+                    || members.len() > master_protocol::MAX_SESSION_MEMBERS as usize
+                {
+                    return self.reject(&ids, before, "stale or invalid peer roster");
+                }
+                self.peers.retain(|member, _| members.contains(member));
+                for member in members {
+                    self.peers.entry(member).or_insert_with(|| PeerAdmission {
+                        started_at_ms: Some(now_ms),
+                        ..Default::default()
+                    });
+                }
+                self.finish(&ids, before, "peer roster", Vec::new())
+            }
             HostMatchEvent::AuthorityReady { ready, now_ms } => {
                 if !epoch_applies(ready.epoch, self.match_key.match_epoch) {
                     return self.reject(&ids, before, "stale host world");
@@ -539,10 +567,8 @@ impl HostMatchCore {
                     self.phase = MatchPhase::Running;
                     self.progress.set_phase(ProgressPhase::Running, now_ms);
                     for peer in self.peers.values_mut() {
-                        peer.started_at_ms = now_ms;
+                        peer.started_at_ms = Some(now_ms);
                     }
-                } else {
-                    self.progress.beat(now_ms);
                 }
                 let match_key = self.match_key;
                 let effects = self
@@ -568,12 +594,14 @@ impl HostMatchCore {
                 {
                     return self.reject(&ids, before, "stale map loaded");
                 }
-                let peer = self.peers.entry(member).or_default();
+                let Some(peer) = self.peers.get_mut(&member) else {
+                    return self.reject(&ids, before, "map loaded outside peer roster");
+                };
                 if matches!(peer.phase, PeerPhase::Failed | PeerPhase::Cancelled) {
                     return self.reject(&ids, before, "map loaded after admission ended");
                 }
-                if self.phase == MatchPhase::Running && peer.started_at_ms == 0 {
-                    peer.started_at_ms = now_ms;
+                if self.phase == MatchPhase::Running && peer.started_at_ms.is_none() {
+                    peer.started_at_ms = Some(now_ms);
                 }
                 peer.map_loaded = Some(loaded);
                 let effects = self
@@ -721,9 +749,12 @@ impl HostMatchCore {
                 if self.phase == MatchPhase::Running {
                     for (member, peer) in &self.peers {
                         if matches!(peer.phase, PeerPhase::Waiting | PeerPhase::Syncing { .. })
-                            && peer.started_at_ms != 0
-                            && now_ms.saturating_sub(peer.started_at_ms)
-                                >= PEER_ADMISSION_DEADLINE_MS
+                            && peer.started_at_ms.is_some_and(|started| {
+                                now_ms.saturating_sub(started)
+                                    >= crate::transport::master::limits::values()
+                                        .admission
+                                        .as_millis() as u64
+                            })
                         {
                             expired.push(*member);
                         }

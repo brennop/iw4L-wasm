@@ -582,6 +582,8 @@ pub const WEAPON_DEF_SND_RELOAD_START_OFF: usize = 0xf8;
 pub const WEAPON_DEF_SND_RELOAD_START_PLAYER_OFF: usize = 0xfc;
 pub const WEAPON_DEF_SND_RELOAD_END_OFF: usize = 0x100;
 pub const WEAPON_DEF_SND_RELOAD_END_PLAYER_OFF: usize = 0x104;
+pub const WEAPON_DEF_SND_ALT_SWITCH_OFF: usize = 0x148;
+pub const WEAPON_DEF_SND_ALT_SWITCH_PLAYER_OFF: usize = 0x14c;
 pub const WEAPON_DEF_SND_RAISE_PLAYER_OFF: usize = 0x154;
 pub const WEAPON_DEF_SND_PUTAWAY_PLAYER_OFF: usize = 0x164;
 pub const WEAPON_DEF_AMMO_COUNTER_CLIP_OFF: usize = 0x338;
@@ -592,6 +594,16 @@ pub const WEAPON_DEF_AMMO_COUNT_CLIP_RELATIVE_OFF: usize = 0x359;
 
 pub const WEAPON_DEF_SHOT_COUNT_OFF: usize = 0x348;
 pub const WEAPON_DEF_DAMAGE_OFF: usize = 0x35c;
+pub const WEAPON_DEF_DAMAGE_INTERVAL_OFF: usize = 0x364;
+pub const WEAPON_DEF_FUEL_TANK_WEAPON_OFF: usize = 0x61;
+pub const WEAPON_DEF_TANK_LIFE_TIME_OFF: usize = 0x64;
+pub const WEAPON_DEF_FLAME_TABLE_FIRST_PERSON_OFF: usize = 0x7f0;
+pub const WEAPON_DEF_FLAME_TABLE_THIRD_PERSON_OFF: usize = 0x7f4;
+pub const FLAME_TABLE_STREAM_FUEL_LENGTH_OFF: usize = 0xa8;
+pub const FLAME_TABLE_STREAM_FLAME_LENGTH_OFF: usize = 0xbc;
+pub const FLAME_TABLE_IGNITE_SOUND_OFF: usize = 0x1d0;
+pub const FLAME_TABLE_ON_LOOP_SOUND_OFF: usize = 0x1d4;
+pub const FLAME_TABLE_COOLDOWN_SOUND_OFF: usize = 0x1d8;
 
 pub const WEAPON_DEF_FIRE_DELAY_OFF: usize = 0x378;
 pub const WEAPON_DEF_MELEE_DAMAGE_OFF: usize = 0x36c;

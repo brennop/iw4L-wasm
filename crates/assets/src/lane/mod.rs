@@ -158,6 +158,7 @@ pub(crate) enum CommonDependencyRefusal {
 
 pub(crate) struct CommonPreparationResult {
     pub products: CommonPreparationProducts,
+    pub impact_fx: Option<asset_game::OwnedFxImpactTable>,
     pub refusals: Vec<CommonDependencyRefusal>,
 }
 

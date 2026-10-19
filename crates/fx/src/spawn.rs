@@ -506,6 +506,7 @@ fn spawn_elem(
         visual_count: elem_def.visual_count,
         sequence,
         at_rest_fraction: FX_ELEM_AT_REST_NONE,
+        supported_since_ms: None,
         emit_residual: 0,
         next_elem_handle: prev_head,
         prev_elem_handle: FX_ELEM_HANDLE_NONE,

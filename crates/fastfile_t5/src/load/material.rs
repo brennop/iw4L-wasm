@@ -328,6 +328,7 @@ pub(super) fn load_material(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
         surface_type_bits: s.u32_at(p, 0x18)?,
         layered_surface_types: s.u32_at(p, 0x1c)?,
         sort_key: s.u8_at(p, 9)?,
+        texture_atlas: [s.u8_at(p, 10)?, s.u8_at(p, 11)?],
         info_game_flags: s.u8_at(p, sz::MATERIAL_INFO_GAME_FLAGS_OFF)?,
         state_flags: s.u8_at(p, sz::MATERIAL_STATE_FLAGS_OFF)?,
         camera_region: s.u8_at(p, sz::MATERIAL_CAMERA_REGION_OFF)?,

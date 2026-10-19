@@ -10,9 +10,9 @@ pub struct OwnedFxImpactEntry {
     pub flesh: [String; FX_IMPACT_FLESH_COUNT],
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct OwnedFxImpactTable {
-    pub t5: bool,
+    pub namespace: crate::AssetNamespace,
     pub name: String,
     pub entries: Vec<OwnedFxImpactEntry>,
     pub capture_gaps: usize,
@@ -28,11 +28,7 @@ impl OwnedFxImpactTable {
     }
 
     pub fn namespace(&self) -> crate::AssetNamespace {
-        if self.t5 {
-            crate::AssetNamespace::T5
-        } else {
-            crate::AssetNamespace::Iw4
-        }
+        self.namespace
     }
 
     pub fn effect_name(
@@ -105,7 +101,7 @@ impl ImpactFxCatalog {
         }
         self.capture_gaps += gaps;
         self.table = Some(OwnedFxImpactTable {
-            t5: false,
+            namespace: crate::AssetNamespace::Iw4,
             name,
             entries,
             capture_gaps: gaps,
@@ -164,7 +160,7 @@ impl ImpactFxCatalog {
         }
         self.capture_gaps += gaps;
         self.table = Some(OwnedFxImpactTable {
-            t5: true,
+            namespace: crate::AssetNamespace::T5,
             name: s.cstr(name)?.to_owned(),
             entries: rows,
             capture_gaps: gaps,
@@ -175,7 +171,7 @@ impl ImpactFxCatalog {
 
 impl OwnedFxImpactTable {
     pub fn impact_row(&self, impact_type: i32, exit: bool) -> Option<usize> {
-        if !self.t5 {
+        if self.namespace == crate::AssetNamespace::Iw4 {
             return fx_iw4::impact_table_row(impact_type, exit);
         }
         let exit = usize::from(exit);

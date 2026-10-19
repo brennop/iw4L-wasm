@@ -382,6 +382,8 @@ pub struct FxEffectDefGeometry {
     pub elem_def_count: usize,
 }
 
+pub const FLAME_TABLE_MATERIAL_COUNT: usize = 8;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponGeometry {
     pub kill_icon_name: Option<Ptr>,
@@ -389,6 +391,9 @@ pub struct WeaponGeometry {
     pub overlay_material_lowres_name: Option<Ptr>,
     pub reticle_center_name: Option<Ptr>,
     pub reticle_side_name: Option<Ptr>,
+    /// Material names of the first- and third-person flame tables, in
+    /// `FlameTable` order: fire, smoke, heat, drips, fuel, fuel2, flame, flame2.
+    pub flame_material_names: [[Option<Ptr>; FLAME_TABLE_MATERIAL_COUNT]; 2],
     pub name: Option<Ptr>,
     pub alternate_weapon_name: Option<Ptr>,
     pub alternate_raise_time_ms: i32,
@@ -632,6 +637,7 @@ pub struct MaterialGeometry {
     pub surface_type_bits: u32,
     pub layered_surface_types: u32,
     pub sort_key: u8,
+    pub texture_atlas: [u8; 2],
 
     pub info_game_flags: u8,
 

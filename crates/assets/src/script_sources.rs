@@ -65,6 +65,70 @@ impl ScriptSources {
         names
     }
 
+    pub(crate) fn fx_references(&self) -> BTreeMap<String, String> {
+        let mut references = BTreeMap::new();
+        for (module, source) in &self.sources {
+            let Ok(bytes) = &source.bytes else {
+                continue;
+            };
+            let mut at = 0;
+            while at < bytes.len() {
+                if bytes[at..].starts_with(b"//") {
+                    while at < bytes.len() && bytes[at] != b'\n' {
+                        at += 1;
+                    }
+                } else if bytes[at..].starts_with(b"/*") {
+                    at += 2;
+                    while at + 1 < bytes.len() && &bytes[at..at + 2] != b"*/" {
+                        at += 1;
+                    }
+                    at = (at + 2).min(bytes.len());
+                } else if bytes[at] == b'"' {
+                    at += 1;
+                    while at < bytes.len() && bytes[at] != b'"' {
+                        at += if bytes[at] == b'\\' { 2 } else { 1 };
+                    }
+                    at = (at + 1).min(bytes.len());
+                } else if bytes[at].is_ascii_alphabetic() || bytes[at] == b'_' {
+                    let start = at;
+                    while at < bytes.len()
+                        && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_')
+                    {
+                        at += 1;
+                    }
+                    if !bytes[start..at].eq_ignore_ascii_case(b"loadfx") {
+                        continue;
+                    }
+                    let mut value = at;
+                    while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                        value += 1;
+                    }
+                    if bytes.get(value) != Some(&b'(') {
+                        continue;
+                    }
+                    value += 1;
+                    while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                        value += 1;
+                    }
+                    if bytes.get(value) != Some(&b'"') {
+                        continue;
+                    }
+                    value += 1;
+                    let start = value;
+                    while value < bytes.len() && bytes[value] != b'"' {
+                        value += 1;
+                    }
+                    if let Ok(name) = std::str::from_utf8(&bytes[start..value]) {
+                        references.insert(normalize(name), module.clone());
+                    }
+                } else {
+                    at += 1;
+                }
+            }
+        }
+        references
+    }
+
     pub fn schemas(&self) -> &BTreeMap<String, std::sync::Arc<structured_data_iw4::DefinitionSet>> {
         &self.schemas
     }

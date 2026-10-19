@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Weak};
 
 use bevy::prelude::Resource;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{PendingCommandBuffers, RenderDevice, RenderQueue};
-use render_frame::skinning::{PackedSkinJob, PackedSkinShape};
-
-use super::residency::GpuStream;
+use render_frame::skinning::{
+    PackedSkinJob, PackedSkinShape, SkinBatchLimits, SkinRefusal, plan_skin_batches,
+};
 
 const VERTEX_BYTES: u64 = 32;
 const PARAMS_BYTES: u64 = 48;
@@ -17,12 +17,10 @@ struct Pipeline {
     pipeline: ComputePipeline,
 }
 
-/// Lives as long as the main world holds the shape, not as long as the shape
-/// keeps showing up in frames: a body culled for one frame keeps its upload.
 struct ResidentShape {
     owner: Weak<PackedSkinShape>,
     buffer: Buffer,
-    binding: Option<([BufferId; 3], BindGroup)>,
+    last_used: u64,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -34,28 +32,36 @@ pub(super) struct Skinned {
 #[derive(Resource, Default)]
 pub(super) struct SkinGpu {
     pipeline: Option<Pipeline>,
+    device: Option<RenderDevice>,
+    device_generation: u64,
     shapes: HashMap<u64, ResidentShape>,
-    reported: HashMap<u64, Weak<PackedSkinShape>>,
-    bones: GpuStream,
-    params: GpuStream,
-    bone_rows: Vec<[[f32; 4]; 4]>,
-    param_rows: Vec<u8>,
-    accepted: Vec<usize>,
-    refused: Vec<(usize, &'static str)>,
+    frame: u64,
+    output_bytes: u64,
+    frame_buffers: Vec<Buffer>,
+    retired: Vec<Buffer>,
+    retired_bytes: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SkinGpu {
+    pub(super) fn device_generation(&self) -> u64 {
+        self.device_generation
+    }
+
     pub(super) fn resident_bytes(&self) -> u64 {
         self.shapes
             .values()
             .map(|shape| shape.buffer.size())
-            .chain(
-                [self.bones.buffer(), self.params.buffer()]
-                    .into_iter()
-                    .flatten()
-                    .map(|buffer| buffer.size()),
-            )
-            .sum()
+            .sum::<u64>()
+            + self
+                .frame_buffers
+                .iter()
+                .map(|buffer| buffer.size())
+                .sum::<u64>()
+            + self.output_bytes.saturating_mul(2)
+            + self.retired.iter().map(|buffer| buffer.size()).sum::<u64>()
+            + self
+                .retired_bytes
+                .load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub(super) fn dispatch(
@@ -64,228 +70,235 @@ impl SkinGpu {
         output: Option<&Buffer>,
         vertex_count: usize,
         device: &RenderDevice,
-        queue: &RenderQueue,
+        _queue: &RenderQueue,
         pending: &mut PendingCommandBuffers,
-    ) -> Skinned {
+        budget: u64,
+    ) -> Result<Skinned, SkinRefusal> {
         let _prepare = perf::Span::RenderSkinPrepareMs.enter();
-        self.shapes
-            .retain(|_, shape| shape.owner.strong_count() != 0);
-        self.reported.retain(|_, shape| shape.strong_count() != 0);
-        self.accepted.clear();
-        self.refused.clear();
+        if self
+            .device
+            .as_ref()
+            .is_none_or(|previous| previous.wgpu_device() != device.wgpu_device())
+        {
+            let generation = self
+                .device_generation
+                .checked_add(1)
+                .expect("skin device generation exhausted");
+            *self = Self::default();
+            self.device = Some(device.clone());
+            self.device_generation = generation;
+        }
+        self.frame = self.frame.wrapping_add(1);
+        self.retired.append(&mut self.frame_buffers);
+        let expired: Vec<u64> = self
+            .shapes
+            .iter()
+            .filter(|(_, shape)| shape.owner.strong_count() == 0)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in expired {
+            if let Some(shape) = self.shapes.remove(&id) {
+                self.retired.push(shape.buffer);
+            }
+        }
         if jobs.is_empty() {
-            return Skinned::default();
+            return Ok(Skinned::default());
         }
-        let Some(output) = output else {
-            self.refused
-                .extend((0..jobs.len()).map(|index| (index, "no xmodel vertex buffer")));
-            self.report(jobs);
-            return Skinned::default();
-        };
+        let output = output.ok_or(SkinRefusal::UnsupportedProduct)?;
+        self.output_bytes = output.size();
         let limits = device.limits();
-        let max_binding = limits.max_storage_buffer_binding_size;
-        let bank = (vertex_count as u64).min(output.size() / VERTEX_BYTES) as usize;
-        let bank_refusal = (vertex_count as u64 * VERTEX_BYTES > output.size()
-            || output.size() > max_binding)
-            .then_some("xmodel vertex bank exceeds its buffer or the storage binding limit");
-        for (index, job) in jobs.iter().enumerate() {
-            if job.ranges.iter().all(|range| range.count == 0) {
-                continue;
-            }
-            let count = job.shape.vertices().len();
-            let end = (job.destination as usize).checked_add(count);
-            let refusal = bank_refusal.or(if count == 0 {
-                Some("empty shape")
-            } else if end.is_none_or(|end| end > vertex_count) {
-                Some("destination outside the xmodel vertex bank")
-            } else if count.div_ceil(64) > limits.max_compute_workgroups_per_dimension as usize
-                || count as u64 * 64 > max_binding
-            {
-                Some("shape exceeds the dispatch or binding limit")
-            } else if job.ranges.iter().any(|range| {
-                range
-                    .start
-                    .checked_add(range.count)
-                    .is_none_or(|end| end as usize > count)
-            }) {
-                Some("surface range outside the shape")
-            } else if job.bones.is_empty() || job.shape.required_bones() > job.bones.len() {
-                Some("bone palette shorter than the shape")
-            } else {
-                None
-            });
-            match refusal {
-                Some(reason) => self.refused.push((index, reason)),
-                None => self.accepted.push(index),
+        let batches = plan_skin_batches(
+            jobs,
+            output.size().min(vertex_count as u64 * VERTEX_BYTES),
+            SkinBatchLimits {
+                storage_bytes: limits.max_storage_buffer_binding_size,
+                buffer_bytes: limits.max_buffer_size,
+                storage_alignment: u64::from(limits.min_storage_buffer_offset_alignment),
+                uniform_alignment: u64::from(limits.min_uniform_buffer_offset_alignment),
+                dispatch_groups: limits.max_compute_workgroups_per_dimension,
+            },
+        )?;
+        let needed: HashSet<u64> = batches
+            .iter()
+            .flat_map(|batch| batch.jobs.iter().map(|index| jobs[*index].shape.id()))
+            .collect();
+        let unique: HashMap<u64, &PackedSkinShape> = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .jobs
+                    .iter()
+                    .map(|index| (jobs[*index].shape.id(), jobs[*index].shape.as_ref()))
+            })
+            .collect();
+        let inputs = unique
+            .values()
+            .map(|shape| shape.vertices().len() as u64 * 64)
+            .sum::<u64>();
+        let transient = batches
+            .iter()
+            .map(|batch| batch.palette_bytes + batch.parameter_bytes)
+            .sum::<u64>();
+        if inputs
+            .saturating_add(transient.saturating_mul(2))
+            .saturating_add(output.size().saturating_mul(2))
+            > budget
+        {
+            return Err(SkinRefusal::ResidencyPressure);
+        }
+        while self
+            .resident_bytes()
+            .saturating_add(inputs)
+            .saturating_add(transient.saturating_mul(2))
+            > budget
+        {
+            let cold = self
+                .shapes
+                .iter()
+                .filter(|(id, _)| !needed.contains(id))
+                .min_by_key(|(_, shape)| shape.last_used)
+                .map(|(id, _)| *id);
+            let Some(cold) = cold else {
+                break;
+            };
+            if let Some(shape) = self.shapes.remove(&cold) {
+                self.retired.push(shape.buffer);
             }
         }
-        self.accepted
-            .sort_unstable_by_key(|&index| jobs[index].destination);
-        let mut covered = 0usize;
-        let refused = &mut self.refused;
-        self.accepted.retain(|&index| {
-            let start = jobs[index].destination as usize;
-            if start < covered {
-                refused.push((index, "overlaps another job's destination"));
-                return false;
-            }
-            covered = start + jobs[index].shape.vertices().len();
-            true
-        });
+        let additional = unique
+            .iter()
+            .filter(|(id, _)| !self.shapes.contains_key(id))
+            .map(|(_, shape)| shape.vertices().len() as u64 * 64)
+            .sum::<u64>();
+        if self
+            .resident_bytes()
+            .saturating_add(additional)
+            .saturating_add(transient)
+            > budget
+        {
+            return Err(SkinRefusal::ResidencyPressure);
+        }
+        for (id, shape) in unique {
+            let resident = self.shapes.entry(id).or_insert_with(|| ResidentShape {
+                owner: Arc::downgrade(
+                    &jobs
+                        .iter()
+                        .find(|job| job.shape.id() == id)
+                        .expect("shape owner")
+                        .shape,
+                ),
+                buffer: device.create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("packed_skin_shape"),
+                    contents: bytemuck::cast_slice(shape.vertices()),
+                    usage: BufferUsages::STORAGE,
+                }),
+                last_used: self.frame,
+            });
+            resident.last_used = self.frame;
+        }
         let stride =
             PARAMS_BYTES.next_multiple_of(u64::from(limits.min_uniform_buffer_offset_alignment));
-        self.bone_rows.clear();
-        self.param_rows.clear();
-        let mut kept = Vec::with_capacity(self.accepted.len());
-        for &index in &self.accepted {
-            let job = &jobs[index];
-            let bone_base = self.bone_rows.len();
-            if (bone_base + job.bones.len()) as u64 * 64 > max_binding {
-                self.refused
-                    .push((index, "frame bone palette exceeds the binding limit"));
-                continue;
-            }
-            self.bone_rows.extend_from_slice(&job.bones);
-            for range in job.ranges.iter().filter(|range| range.count != 0) {
-                let params = [
-                    job.destination,
-                    range.count,
-                    bone_base as u32,
-                    range.start,
-                    job.offset[0].to_bits(),
-                    job.offset[1].to_bits(),
-                    job.offset[2].to_bits(),
-                    0,
-                    u32::from(range.rigid),
-                    0,
-                    0,
-                    0,
-                ];
-                let slot = self.param_rows.len().div_ceil(stride as usize);
-                self.param_rows.resize(slot * stride as usize, 0);
-                self.param_rows
-                    .extend_from_slice(bytemuck::cast_slice(&params));
-            }
-            kept.push(index);
-        }
-        self.accepted = kept;
-        if !self.accepted.is_empty() {
-            self.bones.reserve(
-                device,
-                "packed_skin_bones",
-                BufferUsages::STORAGE,
-                self.bone_rows.len(),
-                64,
-            );
-            self.params.reserve(
-                device,
-                "packed_skin_params",
-                BufferUsages::UNIFORM,
-                self.param_rows.len().div_ceil(stride as usize),
-                stride as usize,
-            );
-            if !(self
-                .bones
-                .write_at(queue, 0, bytemuck::cast_slice(&self.bone_rows))
-                && self.params.write_at(queue, 0, &self.param_rows))
-            {
-                self.refused.extend(
-                    self.accepted
-                        .drain(..)
-                        .map(|index| (index, "bone or parameter upload refused")),
-                );
-            }
-        }
-        self.report(jobs);
+        let pipeline = self.pipeline.get_or_insert_with(|| make_pipeline(device));
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("packed_skin"),
         });
-        for &(index, _) in &self.refused {
-            let job = &jobs[index];
-            let start = (job.destination as usize).min(bank);
-            let end = start.saturating_add(job.shape.vertices().len()).min(bank);
-            if end > start {
-                encoder.clear_buffer(
-                    output,
-                    start as u64 * VERTEX_BYTES,
-                    Some((end - start) as u64 * VERTEX_BYTES),
-                );
-            }
-        }
         let mut skinned = Skinned::default();
-        if !self.accepted.is_empty() {
-            let pipeline = self.pipeline.get_or_insert_with(|| make_pipeline(device));
-            let bones = self.bones.buffer().expect("bones reserved");
-            let params = self.params.buffer().expect("params reserved");
-            let key = [bones.id(), params.id(), output.id()];
+        for batch in batches {
+            let mut bone_rows = Vec::new();
+            let mut param_rows = Vec::new();
+            for &index in &batch.jobs {
+                let job = &jobs[index];
+                let base = bone_rows.len() as u32;
+                bone_rows.extend_from_slice(&job.bones);
+                for range in job.ranges.iter().filter(|range| range.count != 0) {
+                    let params = [
+                        job.destination - (batch.output_offset / VERTEX_BYTES) as u32,
+                        range.count,
+                        base,
+                        range.start,
+                        job.offset[0].to_bits(),
+                        job.offset[1].to_bits(),
+                        job.offset[2].to_bits(),
+                        0,
+                        u32::from(range.rigid),
+                        0,
+                        0,
+                        0,
+                    ];
+                    let slot = param_rows.len().div_ceil(stride as usize);
+                    param_rows.resize(slot * stride as usize, 0);
+                    param_rows.extend_from_slice(bytemuck::cast_slice(&params));
+                }
+            }
+            let bones = device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("packed_skin_bones"),
+                contents: bytemuck::cast_slice(&bone_rows),
+                usage: BufferUsages::STORAGE,
+            });
+            let params = device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("packed_skin_params"),
+                contents: &param_rows,
+                usage: BufferUsages::UNIFORM,
+            });
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("packed_skin"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline.pipeline);
-            let mut slot = 0u64;
-            for &index in &self.accepted {
+            let mut slot = 0_u64;
+            for index in batch.jobs {
                 let job = &jobs[index];
-                let shape = self
-                    .shapes
-                    .entry(job.shape.id())
-                    .or_insert_with(|| ResidentShape {
-                        owner: Arc::downgrade(&job.shape),
-                        buffer: device.create_buffer_with_data(&BufferInitDescriptor {
-                            label: Some("packed_skin_shape"),
-                            contents: bytemuck::cast_slice(job.shape.vertices()),
-                            usage: BufferUsages::STORAGE,
+                let shape = &self.shapes[&job.shape.id()];
+                let binding = device.create_bind_group(
+                    "packed_skin",
+                    &pipeline.layout,
+                    &BindGroupEntries::sequential((
+                        shape.buffer.as_entire_binding(),
+                        bones.as_entire_binding(),
+                        BindingResource::Buffer(BufferBinding {
+                            buffer: &params,
+                            offset: 0,
+                            size: NonZeroU64::new(PARAMS_BYTES),
                         }),
-                        binding: None,
-                    });
-                if shape.binding.as_ref().is_none_or(|(at, _)| *at != key) {
-                    let binding = device.create_bind_group(
-                        "packed_skin",
-                        &pipeline.layout,
-                        &BindGroupEntries::sequential((
-                            shape.buffer.as_entire_binding(),
-                            bones.as_entire_binding(),
-                            BindingResource::Buffer(BufferBinding {
-                                buffer: params,
-                                offset: 0,
-                                size: NonZeroU64::new(PARAMS_BYTES),
-                            }),
-                            output.as_entire_binding(),
-                        )),
-                    );
-                    shape.binding = Some((key, binding));
-                }
-                let (_, binding) = shape.binding.as_ref().expect("binding installed");
+                        BindingResource::Buffer(BufferBinding {
+                            buffer: output,
+                            offset: batch.output_offset,
+                            size: NonZeroU64::new(batch.output_bytes),
+                        }),
+                    )),
+                );
                 for range in job.ranges.iter().filter(|range| range.count != 0) {
-                    pass.set_bind_group(0, &**binding, &[(slot * stride) as u32]);
+                    pass.set_bind_group(0, &*binding, &[(slot * stride) as u32]);
                     pass.dispatch_workgroups(range.count.div_ceil(64), 1, 1);
                     slot += 1;
                     skinned.vertices += range.count as usize;
                 }
                 skinned.jobs += 1;
             }
+            drop(pass);
+            self.frame_buffers.extend([bones.clone(), params.clone()]);
         }
-        // Pending buffers precede the render graph's colour and shadow consumers.
+        // Command buffers own the referenced pages through GPU execution.
         pending.push([encoder.finish()]);
-        skinned
+        Ok(skinned)
     }
+}
 
-    fn report(&mut self, jobs: &[PackedSkinJob]) {
-        for &(index, reason) in &self.refused {
-            let shape = &jobs[index].shape;
-            if self.reported.contains_key(&shape.id()) {
-                continue;
-            }
-            self.reported.insert(shape.id(), Arc::downgrade(shape));
-            diag::error!(
-                World,
-                "packed skinning hid job {index} (shape {}, {} vertices at {}): {reason}",
-                shape.id(),
-                shape.vertices().len(),
-                jobs[index].destination,
-            );
-        }
+pub(super) fn retire_submitted_buffers(
+    mut skin: bevy::prelude::ResMut<SkinGpu>,
+    queue: bevy::prelude::Res<RenderQueue>,
+) {
+    let retired = std::mem::take(&mut skin.retired);
+    if retired.is_empty() {
+        return;
     }
+    let bytes = retired.iter().map(|buffer| buffer.size()).sum::<u64>();
+    let pending = Arc::clone(&skin.retired_bytes);
+    pending.fetch_add(bytes, std::sync::atomic::Ordering::AcqRel);
+    queue.on_submitted_work_done(move || {
+        drop(retired);
+        pending.fetch_sub(bytes, std::sync::atomic::Ordering::AcqRel);
+    });
 }
 
 fn make_pipeline(device: &RenderDevice) -> Pipeline {

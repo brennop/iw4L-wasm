@@ -660,6 +660,7 @@ impl ZoneLane for Iw4Lane {
                         fx_glass,
                         map_content,
                         impact_fx,
+                        family_impact_fx: Vec::new(),
                         reflection_probe_images,
                         intermission_view,
                         exp_fog,

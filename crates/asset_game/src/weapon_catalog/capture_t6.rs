@@ -117,7 +117,14 @@ impl WeaponCatalog {
             sz_xanims_left: t6_sz_xanims_left(weapon),
             hide_tags: Vec::new(),
             sounds: capture_t6_sounds(weapon),
+            flame: None,
             combat_fx: WeaponCombatFx {
+                view_flash_hint: weapon
+                    .def_asset_name(fastfile_t6::weapon::def::VIEW_FLASH_EFFECT)
+                    .map(str::to_owned),
+                world_flash_hint: weapon
+                    .def_asset_name(fastfile_t6::weapon::def::WORLD_FLASH_EFFECT)
+                    .map(str::to_owned),
                 explosion_hint: weapon
                     .def_asset_name(fastfile_t6::weapon::def::PROJ_EXPLOSION_EFFECT)
                     .map(str::to_owned),
@@ -424,6 +431,8 @@ pub(super) fn capture_t6_sounds(w: fastfile_t6::weapon::WeaponView<'_>) -> Weapo
         melee_miss: name(d::MELEE_MISS_SOUND),
         pullback: name(d::PULLBACK_SOUND),
         pullback_player: name(d::PULLBACK_SOUND_PLAYER),
+        alt_switch: name(d::ALT_SWITCH_SOUND),
+        alt_switch_player: name(d::ALT_SWITCH_SOUND_PLAYER),
         raise: name(d::RAISE_SOUND),
         raise_player: name(d::RAISE_SOUND_PLAYER),
         first_raise: name(d::FIRST_RAISE_SOUND),

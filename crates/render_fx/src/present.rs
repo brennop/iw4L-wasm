@@ -689,6 +689,7 @@ fn eval_pending_collide(
             |start, end, mins, maxs, mask| {
                 let t = world.trace_world(start, end, mins, maxs, mask);
                 FxElemTraceHit {
+                    complete: world.collision_complete(),
                     fraction: t.fraction,
                     normal: t.normal,
                     startsolid: t.startsolid != 0,
@@ -723,6 +724,7 @@ fn evaluate_physics_piece(
         |start, end, mins, maxs, mask| {
             let t = world.trace_world(start, end, mins, maxs, mask);
             FxElemTraceHit {
+                complete: world.collision_complete(),
                 fraction: t.fraction,
                 normal: t.normal,
                 startsolid: t.startsolid != 0,
@@ -892,6 +894,7 @@ fn tick_fx_pass(
                         |start, end, mins, maxs, mask| {
                             let t = world.trace_world(start, end, mins, maxs, mask);
                             FxElemTraceHit {
+                                complete: world.collision_complete(),
                                 fraction: t.fraction,
                                 normal: t.normal,
                                 startsolid: t.startsolid != 0,

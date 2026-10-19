@@ -28,12 +28,25 @@ pub struct ClipCmodel {
 #[derive(Clone, Debug, Default)]
 pub struct ClipMapMaterial {
     pub name: String,
+    pub source_surface_flags: u32,
     pub surface_flags: u32,
     pub content_flags: u32,
 }
 
+pub const COLLISION_ADAPTER_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CollisionCoverage {
+    #[default]
+    Unvalidated,
+    Complete,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ClipCollision {
+    pub adapter_version: u32,
+    pub source_family: Option<asset_core::AssetNamespace>,
+    pub coverage: CollisionCoverage,
     pub brushes: Vec<ClipBrush>,
 
     pub nodes: Vec<ClipBspNode>,
@@ -178,6 +191,244 @@ impl clipmap_iw4::BrushView for ClipBrush {
 }
 
 impl ClipCollision {
+    pub fn validate(
+        &mut self,
+        family: asset_core::AssetNamespace,
+    ) -> Result<(), ClipCollisionError> {
+        self.coverage = CollisionCoverage::Unvalidated;
+        let invalid = || ClipCollisionError::InvalidSemantics("BSP node graph");
+        let finite = |v: &[f32]| v.iter().all(|n| n.is_finite());
+        let mut node_indegree = vec![0_usize; self.nodes.len()];
+        for node in &self.nodes {
+            if !finite(&node.plane) || node.plane[..3].iter().map(|n| n * n).sum::<f32>() < 0.5 {
+                return Err(invalid());
+            }
+            for child in node.children {
+                if child >= 0 {
+                    let slot = node_indegree.get_mut(child as usize).ok_or_else(invalid)?;
+                    *slot += 1;
+                } else if (-1_i64 - i64::from(child)) as usize >= self.leaves.len() {
+                    return Err(invalid());
+                }
+            }
+        }
+        let mut roots: std::collections::VecDeque<_> = node_indegree
+            .iter()
+            .enumerate()
+            .filter_map(|(index, n)| (*n == 0).then_some(index))
+            .collect();
+        let mut visited = 0;
+        while let Some(index) = roots.pop_front() {
+            visited += 1;
+            for child in self.nodes[index]
+                .children
+                .into_iter()
+                .filter(|child| *child >= 0)
+            {
+                node_indegree[child as usize] -= 1;
+                if node_indegree[child as usize] == 0 {
+                    roots.push_back(child as usize);
+                }
+            }
+        }
+        if visited != self.nodes.len() {
+            return Err(invalid());
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("brush hull");
+        for brush in &self.brushes {
+            if brush.planes.len() < 4
+                || brush.planes.len() != brush.plane_surface_flags.len()
+                || brush.planes.iter().any(|plane| {
+                    !finite(plane) || plane[..3].iter().map(|n| n * n).sum::<f32>() < 0.5
+                })
+            {
+                return Err(invalid());
+            }
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("leaf brush references");
+        if self
+            .leafbrushes
+            .iter()
+            .any(|index| *index as usize >= self.brushes.len())
+        {
+            return Err(invalid());
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("leaf brush span");
+        for leaf in &self.leaves {
+            if (leaf.first_brush as usize)
+                .checked_add(leaf.num_brushes as usize)
+                .is_none_or(|end| end > self.leafbrushes.len())
+            {
+                return Err(invalid());
+            }
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("collision model span or bounds");
+        for model in &self.cmodels {
+            if !finite(&model.mins)
+                || !finite(&model.maxs)
+                || !model.radius.is_finite()
+                || model.radius < 0.0
+                || (0..3).any(|axis| model.mins[axis] > model.maxs[axis])
+                || (model.first_brush as usize)
+                    .checked_add(model.num_brushes as usize)
+                    .is_none_or(|end| end > self.leafbrushes.len())
+            {
+                return Err(invalid());
+            }
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("mesh arrays");
+        let mesh = &self.mesh;
+        let triangles = mesh.tri_count();
+        if mesh.tri_indices.len() % 3 != 0 {
+            return Err(ClipCollisionError::InvalidSemantics("triangle triplets"));
+        }
+        if mesh.verts.iter().any(|vertex| !finite(vertex)) {
+            return Err(ClipCollisionError::InvalidSemantics("finite mesh vertices"));
+        }
+        if triangles != 0 && mesh.partitions.is_empty() {
+            return Err(ClipCollisionError::InvalidSemantics(
+                "mesh partitions absent",
+            ));
+        }
+        if triangles != 0 && mesh.tri_surface_flags.len() != triangles {
+            return Err(ClipCollisionError::InvalidSemantics(
+                "triangle surface flags",
+            ));
+        }
+        if triangles != 0 && mesh.tri_content_flags.len() != triangles {
+            return Err(ClipCollisionError::InvalidSemantics("triangle contents"));
+        }
+        if !self.tri_material_index.is_empty()
+            && (self.tri_material_index.len() != triangles
+                || self
+                    .tri_material_index
+                    .iter()
+                    .enumerate()
+                    .any(|(tri, index)| {
+                        *index as usize >= self.materials.len()
+                            && mesh
+                                .tri_content_flags
+                                .get(tri)
+                                .is_some_and(|flags| *flags != 0)
+                    }))
+        {
+            return Err(invalid());
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("partition range");
+        let mut covered = vec![false; triangles];
+        for partition in &mesh.partitions {
+            let first = usize::try_from(partition.first_tri).map_err(|_| invalid())?;
+            let end = first
+                .checked_add(partition.tri_count as usize)
+                .filter(|end| *end <= triangles)
+                .ok_or_else(invalid)?;
+            if (partition.first_border as usize)
+                .checked_add(partition.border_count as usize)
+                .is_none_or(|end| end > mesh.borders.len())
+            {
+                return Err(invalid());
+            }
+            covered[first..end].fill(true);
+            let base = partition.first_vert_segment as usize * clipmap_iw4::VERTS_PER_SEGMENT;
+            if mesh.tri_indices[first * 3..end * 3]
+                .iter()
+                .any(|index| base + *index as usize >= mesh.verts.len())
+            {
+                return Err(invalid());
+            }
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("triangle coverage");
+        if covered
+            .iter()
+            .enumerate()
+            .any(|(tri, covered)| !covered && mesh.tri_content_flags[tri] != 0)
+        {
+            return Err(invalid());
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("mesh border");
+        for border in &mesh.borders {
+            if !finite(&border.dist_eq)
+                || !finite(&[border.z_base, border.z_slope, border.start, border.length])
+                || border.length < 0.0
+            {
+                return Err(invalid());
+            }
+        }
+        for leaf in &self.leaves {
+            if (leaf.first_coll_aabb_index as usize)
+                .checked_add(leaf.coll_aabb_count as usize)
+                .is_none_or(|end| end > mesh.aabb_trees.len())
+            {
+                return Err(invalid());
+            }
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("AABB roots");
+        if mesh
+            .aabb_roots
+            .iter()
+            .any(|index| *index as usize >= mesh.aabb_trees.len())
+        {
+            return Err(invalid());
+        }
+        let invalid = || ClipCollisionError::InvalidSemantics("AABB child or partition reference");
+        for node in &mesh.aabb_trees {
+            if !finite(&node.origin)
+                || !finite(&node.half_size)
+                || node.half_size.iter().any(|n| *n < 0.0)
+                || (node.child_count != 0
+                    && usize::try_from(node.u)
+                        .ok()
+                        .and_then(|first| first.checked_add(node.child_count as usize))
+                        .is_none_or(|end| end > mesh.aabb_trees.len()))
+                || (node.child_count == 0
+                    && usize::try_from(node.u)
+                        .ok()
+                        .is_none_or(|index| index >= mesh.partitions.len()))
+            {
+                return Err(invalid());
+            }
+        }
+        let mut indegree = vec![0_usize; mesh.aabb_trees.len()];
+        for node in &mesh.aabb_trees {
+            if node.child_count == 0 {
+                if !self.materials.is_empty()
+                    && node.material_index as usize >= self.materials.len()
+                {
+                    return Err(invalid());
+                }
+            } else {
+                for child in node.u as usize..node.u as usize + node.child_count as usize {
+                    indegree[child] += 1;
+                }
+            }
+        }
+        let mut roots: std::collections::VecDeque<_> = indegree
+            .iter()
+            .enumerate()
+            .filter_map(|(index, n)| (*n == 0).then_some(index))
+            .collect();
+        let mut visited = 0;
+        while let Some(index) = roots.pop_front() {
+            visited += 1;
+            let node = &mesh.aabb_trees[index];
+            if node.child_count != 0 {
+                for child in node.u as usize..node.u as usize + node.child_count as usize {
+                    indegree[child] -= 1;
+                    if indegree[child] == 0 {
+                        roots.push_back(child);
+                    }
+                }
+            }
+        }
+        if visited != mesh.aabb_trees.len() {
+            return Err(ClipCollisionError::InvalidSemantics("AABB cycle"));
+        }
+        self.adapter_version = COLLISION_ADAPTER_VERSION;
+        self.source_family = Some(family);
+        self.coverage = CollisionCoverage::Complete;
+        Ok(())
+    }
+
     fn map_ref(&self) -> clipmap_iw4::ClipMapRef<'_, ClipBrush> {
         clipmap_iw4::ClipMapRef {
             nodes: &self.nodes,
@@ -208,6 +459,7 @@ impl ClipCollision {
         let mesh = self.mesh.as_ref().as_ref();
         let trace = clipmap_iw4::trace_brush_and_mesh(&map, &mesh, &ext, &|_piece| true);
         ClipSweepHit {
+            coverage: self.coverage,
             fraction: trace.fraction,
             normal: trace.normal,
             endpos: trace.endpos,
@@ -220,6 +472,7 @@ impl ClipCollision {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ClipSweepHit {
+    pub coverage: CollisionCoverage,
     pub fraction: f32,
     pub normal: [f32; 3],
     pub endpos: [f32; 3],
@@ -235,11 +488,15 @@ pub enum ClipCollisionError {
     Truncated,
 
     LeafbrushIndexOverflow,
+    InvalidSemantics(&'static str),
 }
 
 impl core::fmt::Display for ClipCollisionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::InvalidSemantics(reason) => {
+                write!(f, "collision semantics or references are invalid: {reason}")
+            }
             Self::MissingTables => write!(f, "clipmap brush tables were not retained"),
             Self::Truncated => write!(f, "clipmap brush bytes truncated in arena"),
             Self::LeafbrushIndexOverflow => {
@@ -362,6 +619,7 @@ pub fn build_clip_collision(
     extract_cmodels(s, g, &mut out)?;
     gate_leafbrush_index_fits(out.leafbrushes.len())?;
 
+    out.validate(asset_core::AssetNamespace::Iw4)?;
     Ok(out)
 }
 
@@ -372,6 +630,9 @@ pub fn attach_static_models(
     out: &mut ClipCollision,
 ) {
     extract_static_models(s, g, catalog, out);
+    if out.static_models.len() != g.static_model_count {
+        out.coverage = CollisionCoverage::Unvalidated;
+    }
 }
 
 pub fn attach_iw5_static_models(
@@ -381,6 +642,9 @@ pub fn attach_iw5_static_models(
     out: &mut ClipCollision,
 ) {
     extract_iw5_static_models(s, g, catalog, out);
+    if out.static_models.len() != g.static_model_count {
+        out.coverage = CollisionCoverage::Unvalidated;
+    }
 }
 
 fn extract_mesh_tables(
@@ -389,6 +653,12 @@ fn extract_mesh_tables(
     out: &mut ClipCollision,
 ) -> Result<(), ClipCollisionError> {
     let mesh = std::sync::Arc::make_mut(&mut out.mesh);
+    if (g.vert_count != 0 && g.verts.is_none())
+        || (g.tri_count != 0 && g.tri_indices.is_none())
+        || (g.material_count != 0 && g.materials.is_none())
+    {
+        return Err(ClipCollisionError::MissingTables);
+    }
     let Some(verts_ptr) = g.verts else {
         return Ok(());
     };
@@ -548,7 +818,9 @@ fn extract_clip_materials_iw4(
 ) -> Result<Vec<ClipMapMaterial>, ClipCollisionError> {
     let mut out = Vec::with_capacity(g.material_count);
     let Some(mats) = g.materials else {
-        out.resize(g.material_count, ClipMapMaterial::default());
+        if g.material_count != 0 {
+            return Err(ClipCollisionError::MissingTables);
+        }
         return Ok(out);
     };
     for i in 0..g.material_count {
@@ -568,6 +840,7 @@ fn extract_clip_materials_iw4(
             .map_err(|_| ClipCollisionError::Truncated)?;
         out.push(ClipMapMaterial {
             name,
+            source_surface_flags: surface_flags,
             surface_flags,
             content_flags,
         });
@@ -1160,6 +1433,7 @@ pub fn build_iw5_clip_collision(
     extract_iw5_cmodels(s, g, &mut out)?;
     gate_leafbrush_index_fits(out.leafbrushes.len())?;
 
+    out.validate(asset_core::AssetNamespace::Iw5)?;
     Ok(out)
 }
 
@@ -1307,6 +1581,12 @@ fn extract_iw5_mesh_tables(
     out: &mut ClipCollision,
 ) -> Result<(), ClipCollisionError> {
     let mesh = std::sync::Arc::make_mut(&mut out.mesh);
+    if (g.vert_count != 0 && g.verts.is_none())
+        || (g.tri_count != 0 && g.tri_indices.is_none())
+        || (g.material_count != 0 && g.materials.is_none())
+    {
+        return Err(ClipCollisionError::MissingTables);
+    }
     let Some(verts_ptr) = g.verts else {
         return Ok(());
     };
@@ -1461,12 +1741,15 @@ fn extract_iw5_mesh_materials(
                     .map_err(|_| ClipCollisionError::Truncated)?;
                 mats.push(ClipMapMaterial {
                     name,
+                    source_surface_flags: surface_flags,
                     surface_flags,
                     content_flags,
                 });
             }
         } else {
-            mats.resize(g.material_count, ClipMapMaterial::default());
+            if g.material_count != 0 {
+                return Err(ClipCollisionError::MissingTables);
+            }
         }
         mats
     };
@@ -1814,6 +2097,7 @@ pub fn build_t5_clip_collision(
     extract_t5_mesh_tables(s, g, &mut out)?;
     extract_t5_bsp_tables(s, g, &mut out)?;
 
+    out.validate(asset_core::AssetNamespace::T5)?;
     Ok(out)
 }
 
@@ -1834,6 +2118,12 @@ fn extract_t5_mesh_tables(
     out: &mut ClipCollision,
 ) -> Result<(), ClipCollisionError> {
     let mesh = std::sync::Arc::make_mut(&mut out.mesh);
+    if (g.vert_count != 0 && g.verts.is_none())
+        || (g.tri_count != 0 && g.tri_indices.is_none())
+        || (g.material_count != 0 && g.materials.is_none())
+    {
+        return Err(ClipCollisionError::MissingTables);
+    }
     let Some(verts_ptr) = g.verts else {
         return Ok(());
     };
@@ -1876,6 +2166,7 @@ fn extract_t5_mesh_tables(
             let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             out.materials.push(ClipMapMaterial {
                 name: String::from_utf8_lossy(&bytes[..end]).into_owned(),
+                source_surface_flags: s.u32_at(p, 64).map_err(|_| ClipCollisionError::Truncated)?,
                 surface_flags: treyarch_surface_flags(
                     s.u32_at(p, 64).map_err(|_| ClipCollisionError::Truncated)?,
                 ),

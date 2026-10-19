@@ -53,6 +53,8 @@ fn archived_snapshot_bytes(snapshot: &Snapshot) -> usize {
         .sum();
     SNAPSHOT_BASE
         + snapshot.players.len() * core::mem::size_of::<PlayerState>()
+        + snapshot.meta.pellet_fx.len() * core::mem::size_of::<sim::PelletFxRecord>()
+        + snapshot.meta.entity_events.len() * core::mem::size_of::<sim::EntityEventRecord>()
         + snapshot.projectiles.len() * 64
         + snapshot.meta.entities.len() * core::mem::size_of::<entity_iw4::EntityState>()
         + hud_elems * core::mem::size_of::<hud_iw4::HudElem>()
@@ -98,6 +100,9 @@ impl FrameArchive {
     }
 
     pub fn push(&mut self, frame: ArchivedFrame) -> bool {
+        if frame.bytes() > ARCHIVE_BYTE_BUDGET {
+            return false;
+        }
         if let Some(newest) = self.frames.back()
             && frame.tick.0 <= newest.tick.0
         {

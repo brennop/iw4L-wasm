@@ -1,3 +1,4 @@
+pub use render_scene::SkinSupport;
 pub mod diag;
 pub mod drawsurf;
 mod plugin;

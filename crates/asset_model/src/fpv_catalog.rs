@@ -561,16 +561,104 @@ pub struct FpvMount {
     pub tag: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AmmunitionVisualMode {
+    Absent,
+    Embedded { bone: u16 },
+    Mounted,
+}
+
 #[derive(Clone, Debug)]
 pub struct FpvMountPlan {
     pub gun: FpvMeshIndex,
     pub secondary_gun: Option<FpvMeshIndex>,
     pub attachments: Vec<FpvMount>,
     pub rocket: Option<FpvMount>,
+    pub ammunition: AmmunitionVisualMode,
     pub ads_swaps: Vec<(usize, FpvMeshIndex)>,
 }
 
 impl FpvMountPlan {
+    pub fn prepare_embedded_ammunition(
+        &mut self,
+        catalog: &FpvMeshCatalog,
+    ) -> Result<(), FpvMountError> {
+        let entry = catalog
+            .get_at(self.gun.order())
+            .ok_or_else(|| FpvMountError {
+                model: format!("#{}", self.gun.order()),
+                detail: "gun missing from FPV catalog",
+            })?;
+        let valid = entry.skel.pose.as_ref().is_some_and(|pose| {
+            let count = entry.skel.bone_names.len();
+            pose.num_bones == count
+                && entry.skel.bones.len() == count
+                && pose.num_root_bones > 0
+                && pose.num_root_bones <= count
+                && pose.parent_list.len() == count - pose.num_root_bones
+                && (pose.num_root_bones..count).all(|bone| entry.skel.parent_of(bone).is_some())
+                && entry.skel.vert_skin.iter().all(|skin| {
+                    (0..4)
+                        .filter(|index| {
+                            if *index == 0 {
+                                !skin.primary_is_zero()
+                            } else {
+                                skin.has_extra_weight(*index)
+                            }
+                        })
+                        .all(|index| usize::from(skin.bones[index]) < count)
+                })
+        });
+        if !valid {
+            return Err(FpvMountError {
+                model: entry.skel.name.clone(),
+                detail: "invalid embedded ammunition hierarchy or binding",
+            });
+        }
+        let bone = entry
+            .skel
+            .bone_names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case("tag_clip"))
+            .filter(|bone| *bone <= u8::MAX as usize)
+            .filter(|bone| {
+                entry.skel.vert_skin.iter().any(|skin| {
+                    skin.bones
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| {
+                            if *index == 0 {
+                                !skin.primary_is_zero()
+                            } else {
+                                skin.has_extra_weight(*index)
+                            }
+                        })
+                        .any(|(_, bound)| {
+                            let mut current = Some(usize::from(*bound));
+                            while let Some(index) = current {
+                                if index == *bone {
+                                    return true;
+                                }
+                                current = entry.skel.parent_of(index);
+                            }
+                            false
+                        })
+                })
+            })
+            .ok_or_else(|| FpvMountError {
+                model: entry.skel.name.clone(),
+                detail: "embedded ammunition has no bound geometry",
+            })?;
+        if entry.skel.pose.is_none() || self.rocket.is_some() {
+            return Err(FpvMountError {
+                model: entry.skel.name.clone(),
+                detail: "invalid embedded ammunition structure",
+            });
+        }
+        self.ammunition = AmmunitionVisualMode::Embedded { bone: bone as u16 };
+        Ok(())
+    }
+
     pub fn attachment_models(&self, ads: bool) -> impl Iterator<Item = FpvMeshIndex> + '_ {
         self.attachments.iter().enumerate().map(move |(at, mount)| {
             ads.then(|| self.ads_swaps.iter().find(|(swap, _)| *swap == at))
@@ -728,6 +816,11 @@ pub fn plan_fpv_mounts(
         gun,
         secondary_gun: None,
         attachments: selected,
+        ammunition: if rocket.is_some() {
+            AmmunitionVisualMode::Mounted
+        } else {
+            AmmunitionVisualMode::Absent
+        },
         rocket,
         ads_swaps: Vec::new(),
     })

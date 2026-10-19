@@ -1,7 +1,10 @@
 use super::{AssetLinkSink, asset_ptr_at, follow_name, load_asset_at_observed};
 use crate::asset_type::AssetType;
 use crate::size as sz;
-use crate::zone::{Ptr, Result, WeaponGeometry, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream};
+use crate::zone::{
+    FLAME_TABLE_MATERIAL_COUNT, Ptr, Result, WeaponGeometry, XFILE_BLOCK_VIRTUAL, ZonePtr,
+    ZoneStream,
+};
 
 pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
     let p = s.alloc_load(4, sz::WEAPON_VARIANT_DEF)?;
@@ -19,6 +22,14 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
                     kill_icon: material_name_at(s, links, body.at(sz::WEAPON_DEF_KILL_ICON_OFF)),
                     reticle_center: material_name_at(s, links, body.at(0x1a0)),
                     reticle_side: material_name_at(s, links, body.at(0x1a4)),
+                    flame_materials: [0x7f0, 0x7f4].map(|off| match s.ptr_at(body, off) {
+                        Ok(ZonePtr::Offset(t)) => {
+                            let table = s.resolve_alias(t);
+                            FLAME_TABLE_MATERIAL_OFFS
+                                .map(|m| material_name_at(s, links, table.at(m)))
+                        }
+                        _ => [None; FLAME_TABLE_MATERIAL_COUNT],
+                    }),
                     ..WeaponAssets::default()
                 },
             )
@@ -71,6 +82,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         overlay_material_lowres_name,
         reticle_center_name: assets.reticle_center,
         reticle_side_name: assets.reticle_side,
+        flame_material_names: assets.flame_materials,
         alternate_weapon_name,
         alternate_raise_time_ms: s.i32_at(p, 0x3c)?,
         alternate_drop_time_ms: weap_def
@@ -208,15 +220,21 @@ fn load_weapon_def(
         follow_name(s, p, off)?;
     }
 
-    if s.begin_body(p.at(0x7f0))? {
-        let ft = s.alloc_load(4, sz::FLAME_TABLE)?;
-        s.fixup_slot(p.at(0x7f0), ft)?;
-        load_flame_table(s, links, ft)?;
-    }
-    if s.begin_body(p.at(0x7f4))? {
-        let ft = s.alloc_load(4, sz::FLAME_TABLE)?;
-        s.fixup_slot(p.at(0x7f4), ft)?;
-        load_flame_table(s, links, ft)?;
+    let mut flame_materials = [[None; FLAME_TABLE_MATERIAL_COUNT]; 2];
+    for (view, off) in [0x7f0, 0x7f4].into_iter().enumerate() {
+        flame_materials[view] = if s.begin_body(p.at(off))? {
+            let ft = s.alloc_load(4, sz::FLAME_TABLE)?;
+            s.fixup_slot(p.at(off), ft)?;
+            load_flame_table(s, links, ft)?
+        } else {
+            match s.ptr_at(p, off)? {
+                ZonePtr::Offset(t) => {
+                    let table = s.resolve_alias(t);
+                    FLAME_TABLE_MATERIAL_OFFS.map(|m| material_name_at(s, links, table.at(m)))
+                }
+                _ => [None; FLAME_TABLE_MATERIAL_COUNT],
+            }
+        };
     }
 
     asset_ptr_at(s, links, AssetType::Fx, p.at(0x7f8))?;
@@ -230,6 +248,7 @@ fn load_weapon_def(
         world: world0,
         reticle_center,
         reticle_side,
+        flame_materials,
     })
 }
 
@@ -336,15 +355,23 @@ fn follow_xmodel_ptr(
         }))
 }
 
-fn load_flame_table(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) -> Result<()> {
+const FLAME_TABLE_MATERIAL_OFFS: [usize; FLAME_TABLE_MATERIAL_COUNT] =
+    [0x1ac, 0x1b0, 0x1b4, 0x1b8, 0x1bc, 0x1c0, 0x1c4, 0x1c8];
+
+fn load_flame_table(
+    s: &mut ZoneStream<'_>,
+    links: &mut dyn AssetLinkSink,
+    p: Ptr,
+) -> Result<[Option<Ptr>; FLAME_TABLE_MATERIAL_COUNT]> {
     follow_name(s, p, 0x1a8)?;
-    for off in [0x1ac, 0x1b0, 0x1b4, 0x1b8, 0x1bc, 0x1c0, 0x1c4, 0x1c8] {
-        asset_ptr_at(s, links, AssetType::Material, p.at(off))?;
+    let mut names = [None; FLAME_TABLE_MATERIAL_COUNT];
+    for (name, off) in names.iter_mut().zip(FLAME_TABLE_MATERIAL_OFFS) {
+        *name = follow_material_name(s, links, p.at(off))?;
     }
     for off in [0x1cc, 0x1d0, 0x1d4, 0x1d8] {
         follow_name(s, p, off)?;
     }
-    Ok(())
+    Ok(names)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -408,4 +435,5 @@ struct WeaponAssets {
     world: Option<Ptr>,
     reticle_center: Option<Ptr>,
     reticle_side: Option<Ptr>,
+    flame_materials: [[Option<Ptr>; FLAME_TABLE_MATERIAL_COUNT]; 2],
 }

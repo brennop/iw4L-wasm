@@ -2044,7 +2044,7 @@ impl MaterialCatalog {
                 sort_key: geometry.sort_key,
 
                 info_game_flags: geometry.info_game_flags,
-                texture_atlas: None,
+                texture_atlas: Some(geometry.texture_atlas),
                 surface_type_bits: Some(geometry.surface_type_bits),
                 t5_layered_surface_types: Some(geometry.layered_surface_types),
                 state_flags: geometry.state_flags,

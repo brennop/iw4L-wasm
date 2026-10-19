@@ -91,6 +91,7 @@ struct RemoteBodyLightingBinds {
 #[derive(Hash, PartialEq, Eq)]
 struct BodySkinShapeKey {
     world_weapon: bool,
+    product_revision: u64,
     namespace: asset_core::AssetNamespace,
     name: String,
     lod: u8,
@@ -109,9 +110,9 @@ impl BodySkinShapes {
         let same_bodies = self
             .bodies
             .as_ref()
-            .is_some_and(|old| Arc::ptr_eq(old, &bodies.0));
+            .is_some_and(|old| old.identity() != 0 && old.identity() == bodies.0.identity());
         let same_weapons = match (&self.weapons, weapons) {
-            (Some(old), Some(new)) => Arc::ptr_eq(old, &new.0),
+            (Some(old), Some(new)) => old.identity() != 0 && old.identity() == new.0.identity(),
             (None, None) => true,
             _ => false,
         };
@@ -134,8 +135,16 @@ impl BodySkinShapes {
         lod: u8,
         layout: &crate::anim::xmodel_pose::SkinLayout,
     ) -> Arc<render_frame::skinning::PackedSkinShape> {
+        let product_revision = if world_weapon {
+            self.weapons
+                .as_ref()
+                .map_or(0, |weapons| weapons.identity())
+        } else {
+            self.bodies.as_ref().map_or(0, |bodies| bodies.identity())
+        };
         let key = BodySkinShapeKey {
             world_weapon,
+            product_revision,
             namespace,
             name: skel.name.clone(),
             lod,
@@ -382,8 +391,22 @@ fn occupy_remote_scene_ents(
         let meta = presented
             .snapshot()
             .and_then(|snap| snap.meta.for_client(client));
-        let ffa_team = meta.and_then(|m| m.ffa_team);
-        let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
+        let corpse = presented.snapshot().and_then(|snapshot| {
+            snapshot
+                .meta
+                .corpses
+                .slots
+                .iter()
+                .find(|slot| slot.occupied && slot.entnum == i32::from(identity.number()))
+        });
+        let ffa_team = corpse.map_or_else(
+            || meta.and_then(|meta| meta.ffa_team),
+            |corpse| corpse.ffa_team,
+        );
+        let client_state_team = corpse.map_or_else(
+            || meta.map_or(0, |meta| meta.client_state_team),
+            |corpse| corpse.client_state_team,
+        );
         let axis = asset_model::kit_assignment_is_axis(client_state_team, ffa_team);
         let Ok(soldier) = soldiers.side(axis) else {
             continue;
@@ -524,8 +547,22 @@ fn sync_remote_bodies(
         let meta = presented
             .snapshot()
             .and_then(|snap| snap.meta.for_client(client));
-        let ffa_team = meta.and_then(|m| m.ffa_team);
-        let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
+        let corpse = presented.snapshot().and_then(|snapshot| {
+            snapshot
+                .meta
+                .corpses
+                .slots
+                .iter()
+                .find(|slot| slot.occupied && slot.entnum == i32::from(identity.number()))
+        });
+        let ffa_team = corpse.map_or_else(
+            || meta.and_then(|meta| meta.ffa_team),
+            |corpse| corpse.ffa_team,
+        );
+        let client_state_team = corpse.map_or_else(
+            || meta.map_or(0, |meta| meta.client_state_team),
+            |corpse| corpse.client_state_team,
+        );
         let Ok(soldier) = soldiers.side(asset_model::kit_assignment_is_axis(
             client_state_team,
             ffa_team,
@@ -879,13 +916,13 @@ impl<'a> RemotePoseFrame<'a> {
         let persist_key = u32::from(identity.number());
         let is_corpse = runtime.next_state.e_type == ET_PLAYER_CORPSE
             || runtime.pose_e_type == ET_PLAYER_CORPSE as u8;
-        let occupation_key = is_corpse.then(|| corpse_occupation_key(&runtime.next_state));
+        let occupation_key = is_corpse.then(|| corpse_occupation_key(identity)).flatten();
         if let Some(key) = occupation_key {
             let victim = u32::try_from(runtime.next_state.client_num).unwrap_or(0);
             clone_corpse_tree_from_victim(self.trees, persist_key, victim, key);
         }
         let corpse_age_ms =
-            occupation_key.map(|key| runtime.pose_time_ms.wrapping_sub(key.spawn_time_ms));
+            occupation_key.map(|_| runtime.pose_time_ms.wrapping_sub(runtime.next_state.time2));
 
         if runtime.previous_pose.is_none() {
             if let Some(slot) = self.trees.get_mut(persist_key) {

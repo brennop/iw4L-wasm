@@ -37,6 +37,7 @@ pub struct PendingViewHurt(pub u32);
 
 #[derive(Resource, Default)]
 pub struct SessionViewKick {
+    context: Option<frame::PresentationContext>,
     pub state: ViewKickState,
     pub sway: ViewSwayState,
 
@@ -138,7 +139,16 @@ pub fn tick_session_view_kick(
     weapons: Option<Res<PreparedWeapons>>,
     walk: Option<Res<AppliedEntityEventWalk>>,
     mut kick: ResMut<SessionViewKick>,
+    context: (Res<frame::InstalledMatch>, Res<net::EntityEventCursor>),
 ) {
+    let context = Some(frame::PresentationContext::new(
+        context.0.load_key,
+        context.1.timeline(),
+    ));
+    if kick.context != context {
+        kick.clear_for_new_life();
+        kick.context = context;
+    }
     let Some(ps) = presented.player(local.0) else {
         return;
     };
@@ -229,7 +239,25 @@ pub fn sync_camera_from_presented(
     view: Res<ViewSubject>,
     death_cam_clip: Res<crate::occupancy::dyn_ent::DynEntPhysClip>,
     mut missile_view: Local<RemoteMissileView>,
+    context: (
+        Local<Option<frame::PresentationContext>>,
+        Res<frame::InstalledMatch>,
+        Res<net::EntityEventCursor>,
+    ),
 ) {
+    let (mut previous, installed, timeline) = context;
+    let current = Some(frame::PresentationContext::new(
+        installed.load_key,
+        timeline.timeline(),
+    ));
+    if *previous != current {
+        *killcam = super::killcam::KillcamCamera::default();
+        *missile_view = RemoteMissileView::default();
+        kick.clear_for_new_life();
+        kick.context = current;
+        hurt.0 = 0;
+        *previous = current;
+    }
     kick.killcam_focus_distance = None;
     if let Some(view) = sim_cam.view_override {
         for mut transform in &mut q {

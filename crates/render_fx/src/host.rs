@@ -17,7 +17,22 @@ pub struct PreparedFxModels(pub asset_game::FxModelCatalog);
 pub struct PreparedFxElemInfos(pub FxElemInfoCache);
 
 #[derive(Resource, Default)]
-pub struct PreparedImpactFx(pub Option<asset_game::OwnedFxImpactTable>);
+pub struct PreparedImpactFx {
+    pub map: Option<asset_game::OwnedFxImpactTable>,
+    pub families: Vec<asset_game::OwnedFxImpactTable>,
+}
+
+impl PreparedImpactFx {
+    pub fn explosion_table(
+        &self,
+        weapon_namespace: Option<asset_core::AssetNamespace>,
+    ) -> Option<&asset_game::OwnedFxImpactTable> {
+        self.families
+            .iter()
+            .find(|table| Some(table.namespace) == weapon_namespace)
+            .or(self.map.as_ref())
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct FxWorldColorImages {

@@ -130,6 +130,7 @@ fn upload_exact_geometry(
     mut pending: ResMut<bevy::render::renderer::PendingCommandBuffers>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
+    support: Res<crate::SkinSupport>,
 ) {
     let result = geometry::upload_exact_geometry(
         &frame,
@@ -145,7 +146,22 @@ fn upload_exact_geometry(
         &device,
         &queue,
         &mut pending,
+        support.resident_budget,
     );
+    let limits = device.limits();
+    support.report(
+        frame.world_generation,
+        render_frame::skinning::SkinBatchLimits {
+            storage_bytes: limits.max_storage_buffer_binding_size,
+            buffer_bytes: limits.max_buffer_size,
+            storage_alignment: u64::from(limits.min_storage_buffer_offset_alignment),
+            uniform_alignment: u64::from(limits.min_uniform_buffer_offset_alignment),
+            dispatch_groups: limits.max_compute_workgroups_per_dimension,
+        },
+        skin.device_generation(),
+        skinned.as_ref().err().copied(),
+    );
+    let skinned = skinned.unwrap_or_default();
     perf::Counter::CounterSkinJobs.emit(skinned.jobs as f64);
     perf::Counter::CounterSkinVertices.emit(skinned.vertices as f64);
     perf::Counter::CounterSkinResidentBytes.emit(skin.resident_bytes() as f64);
@@ -2976,6 +2992,9 @@ pub(super) fn register(app: &mut App) {
             (
                 pipeline::init_or_update_pipeline.in_set(RenderSystems::PrepareAssets),
                 upload_exact_geometry.in_set(RenderSystems::PrepareResources),
+                skinning::retire_submitted_buffers
+                    .after(RenderSystems::Render)
+                    .before(RenderSystems::Cleanup),
                 pipeline::kick_extracted_colour_pipelines.in_set(RenderSystems::Prepare),
                 prepare_camera::install_shared_colour_pass
                     .in_set(RenderSystems::Prepare)

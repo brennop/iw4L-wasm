@@ -4,12 +4,12 @@ use frame::ClientSet;
 pub(crate) use crate::render_core::AudioScope;
 use crate::runtime::AudioRuntime;
 
-use frame::{MatchScope, ScopeEpoch};
+use frame::MatchScope;
 
 pub(crate) fn register(app: &mut App) {
     app.add_systems(
         StateTransition,
-        sync_scope_epoch
+        sync_presentation_epoch
             .in_set(bevy::state::state::StateTransitionSystems::TransitionSchedules)
             .after(frame::scope::ScopeRetired),
     );
@@ -23,24 +23,23 @@ pub(crate) fn register(app: &mut App) {
     app.world()
         .resource::<AudioRuntime>()
         .set_fire_verdicts(verdicts);
-    app.init_resource::<ScopeEpoch<MatchScope>>()
-        .add_systems(
-            Update,
-            publish_audio_context
-                .in_set(ClientSet::Predict)
-                .after(frame::OwnerEventsPublished),
-        )
-        .add_systems(
-            PostUpdate,
-            (
-                submit_presented_audio,
-                cancel_audio_on_exit.after(submit_presented_audio),
-            ),
-        );
+    app.add_systems(
+        Update,
+        publish_audio_context
+            .in_set(ClientSet::Predict)
+            .after(frame::OwnerEventsPublished),
+    )
+    .add_systems(
+        PostUpdate,
+        (
+            submit_presented_audio,
+            cancel_audio_on_exit.after(submit_presented_audio),
+        ),
+    );
 }
 
 pub(crate) fn publish_audio_context(
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     runtime: Res<AudioRuntime>,
     verdicts: Option<Res<net::FireVerdictState>>,
     clips: Option<Res<crate::ClipStore>>,
@@ -59,7 +58,7 @@ pub(crate) fn publish_audio_context(
     if let Some(verdicts) = verdicts {
         runtime.set_fire_verdicts(verdicts.clone());
     }
-    runtime.set_match_epoch(epoch.0);
+    runtime.set_presentation_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
     runtime.set_event_context(
         generation
             .and_then(|generation| generation.0)
@@ -109,15 +108,15 @@ pub(crate) fn publish_audio_context(
             .or_else(|| frontend.as_ref().map(|frontend| frontend.clips.service())),
     );
     if let Some(mix) = mix.as_mut() {
-        mix.reset_epoch(epoch.0);
+        mix.reset_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
     }
     if let Some(channels) = channels.as_mut() {
-        channels.reset_epoch(epoch.0);
+        channels.reset_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
     }
     runtime.set_cue_mix(
         mix.zip(channels)
             .map(|(mix, channels)| crate::cue_execution::CueMix {
-                epoch: epoch.0,
+                epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                 gain: mix.gain.clone(),
                 channels: channels.bindings(),
             }),
@@ -168,17 +167,18 @@ fn cancel_audio_on_exit(mut exit: MessageReader<AppExit>, runtime: Res<AudioRunt
 
 fn submit_presented_audio(
     mut runtime: ResMut<AudioRuntime>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     settings: Option<Res<frame::GameSettings>>,
     listeners: Query<&Transform, With<crate::AmbientListener>>,
     destructibles: Option<Res<crate::destructible_loops::DestructibleSources>>,
     projectiles: Option<Res<crate::projectile_loops::ProjectileSources>>,
+    flames: Option<Res<crate::flame_loops::FlameSources>>,
     map: Option<Res<crate::ambient::MapSources>>,
     menu: Option<Res<crate::frontend::MenuSources>>,
     shellshock: Option<Res<crate::shellshock::ShellshockSources>>,
     breath: Option<Res<crate::breath::BreathSources>>,
 ) {
-    runtime.set_match_epoch(epoch.0);
+    runtime.set_presentation_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
     let mut listener = listeners.iter();
     let pose = listener.next();
     assert!(listener.next().is_none(), "more than one ambient listener");
@@ -196,6 +196,9 @@ fn submit_presented_audio(
     if let Some(projectiles) = projectiles {
         desired.extend(projectiles.desired.iter().cloned());
     }
+    if let Some(flames) = flames {
+        desired.extend(flames.desired.iter().cloned());
+    }
     if let Some(map) = map {
         desired.extend(map.desired.iter().cloned());
     }
@@ -211,8 +214,12 @@ fn submit_presented_audio(
     runtime.set_sources(desired);
 }
 
-fn sync_scope_epoch(epoch: Res<ScopeEpoch<MatchScope>>, runtime: Res<AudioRuntime>) {
-    runtime.set_match_epoch(epoch.0);
+pub(crate) fn presentation_epoch(cursor: Option<&net::EntityEventCursor>) -> u64 {
+    cursor.map_or(0, net::EntityEventCursor::timeline)
+}
+
+fn sync_presentation_epoch(epoch: Option<Res<net::EntityEventCursor>>, runtime: Res<AudioRuntime>) {
+    runtime.set_presentation_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
 }
 
 fn release_audio(mut runtime: ResMut<AudioRuntime>) {

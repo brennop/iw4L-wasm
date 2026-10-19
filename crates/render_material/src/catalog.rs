@@ -400,6 +400,8 @@ pub struct RuntimeMaterial {
     pub sort_key: u8,
 
     pub info_game_flags: u8,
+    /// `textureAtlasRowCount`, `textureAtlasColumnCount`; zero means one.
+    pub texture_atlas: [u8; 2],
 
     pub state_flags: u8,
 

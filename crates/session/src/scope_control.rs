@@ -6,7 +6,7 @@ use frame::{MatchScope, RoundPhase, ScopeSet, TeardownReason};
 #[derive(Resource, Default)]
 pub struct ScopeControl {
     pending: Option<(u8, MatchScope)>,
-    install: Option<CommandQueue>,
+    install: Option<(frame::LocalLoadKey, CommandQueue)>,
     pub(crate) teardown: Option<TeardownReason>,
     round: Option<RoundPhase>,
     last_reason: Option<TeardownReason>,
@@ -30,9 +30,9 @@ impl ScopeControl {
         self.request(1, MatchScope::Loading);
     }
 
-    pub(crate) fn install(&mut self, install: CommandQueue) {
+    pub(crate) fn install(&mut self, key: frame::LocalLoadKey, install: CommandQueue) {
         assert!(self.install.is_none(), "two prepared installs in one frame");
-        self.install = Some(install);
+        self.install = Some((key, install));
         self.request(2, MatchScope::Live);
     }
 
@@ -65,6 +65,27 @@ impl ScopeControl {
     }
 }
 
+pub(crate) fn accepts_install(world: &World, key: frame::LocalLoadKey) -> bool {
+    world
+        .get_resource::<assets::CurrentMatchLoad>()
+        .is_some_and(|current| current.0 == Some(key))
+        && world
+            .resource::<crate::SessionSwapRequest>()
+            .accepts_install(key.local_load_request_id)
+        && world
+            .get_resource::<assets::MatchLoadAbort>()
+            .is_none_or(|abort| abort.0 != key.local_load_request_id)
+        && (key.match_key.is_none()
+            || world
+                .get_resource::<net::MasterBridge>()
+                .is_some_and(|bridge| {
+                    let state = bridge.state();
+                    state.in_match()
+                        && state.identity().match_key() == key.match_key
+                        && bridge.incarnation() == key.incarnation
+                }))
+}
+
 fn resolve_scope(world: &mut World) {
     let (pending, round) = {
         let mut control = world.resource_mut::<ScopeControl>();
@@ -75,6 +96,7 @@ fn resolve_scope(world: &mut World) {
             if let Some(install) = world.resource_mut::<ScopeControl>().install.take() {
                 world.resource_mut::<frame::Retiring>().hand_over(install);
             }
+            world.resource_mut::<InstallAnnouncement>().1 = None;
             frame::scope::discard_staging(world);
             let announcement = std::mem::take(&mut world.resource_mut::<InstallAnnouncement>().0);
             world
@@ -82,8 +104,30 @@ fn resolve_scope(world: &mut World) {
                 .hand_over(announcement);
         }
         if target == MatchScope::Live {
-            if let Some(mut install) = world.resource_mut::<ScopeControl>().install.take() {
+            if let Some((key, mut install)) = world.resource_mut::<ScopeControl>().install.take() {
+                if !accepts_install(world, key) {
+                    world.resource_mut::<frame::Retiring>().hand_over(install);
+                    return;
+                }
+                if world.resource::<frame::RuntimeRole>().runs_client()
+                    && !world.contains_resource::<audio::AudioSilent>()
+                    && audio::prepared_match_audio_key(world) != Some(key)
+                {
+                    world
+                        .resource_mut::<Messages<frame::MapLoadFailed>>()
+                        .write(frame::MapLoadFailed {
+                            request_id: key.local_load_request_id,
+                            load_key: key,
+                            zone: String::new(),
+                            error: "Prepared audio does not belong to the current load".into(),
+                        });
+                    world.resource_mut::<frame::Retiring>().hand_over(install);
+                    return;
+                }
+                world.resource_mut::<InstallAnnouncement>().1 = Some(key);
                 install.apply(world);
+            } else {
+                return;
             }
         }
         world.resource_mut::<NextState<MatchScope>>().set(target);
@@ -96,10 +140,20 @@ fn resolve_scope(world: &mut World) {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct InstallAnnouncement(pub CommandQueue);
+pub(crate) struct InstallAnnouncement(pub CommandQueue, pub Option<frame::LocalLoadKey>);
 
 fn announce_install(world: &mut World) {
-    let mut queue = std::mem::take(&mut world.resource_mut::<InstallAnnouncement>().0);
+    let (mut queue, key) = {
+        let mut announcement = world.resource_mut::<InstallAnnouncement>();
+        (std::mem::take(&mut announcement.0), announcement.1.take())
+    };
+    if key.is_none_or(|key| !accepts_install(world, key)) {
+        world.resource_mut::<frame::Retiring>().hand_over(queue);
+        world
+            .resource_mut::<NextState<MatchScope>>()
+            .set(MatchScope::Loading);
+        return;
+    }
     queue.apply(world);
 }
 
@@ -107,7 +161,8 @@ pub(crate) fn register(app: &mut App) {
     if !app.is_plugin_added::<frame::ScopePlugin>() {
         app.add_plugins(frame::ScopePlugin);
     }
-    app.staged::<frame::WorldGeneration>(MatchScope::Live)
+    app.staged::<assets::prepared::PreparedCapabilities>(MatchScope::Live)
+        .staged::<frame::WorldGeneration>(MatchScope::Live)
         .staged::<frame::WorldProducts>(MatchScope::Live)
         .staged::<crate::LiveWorldIdentity>(MatchScope::Live)
         .staged::<render_frontend::prepare::scene::world::WorldScene>(MatchScope::Live)

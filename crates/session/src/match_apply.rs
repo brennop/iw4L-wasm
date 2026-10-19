@@ -38,6 +38,10 @@ fn log_world_report(report: &[String]) {
 pub struct PreparedMatchSource<'w, 's> {
     ready: ResMut<'w, PreparedMatchReady>,
     audio_status: Option<Res<'w, audio::LoadingAudioStatus>>,
+    audio_owner: Option<Res<'w, audio::LoadingAudioOwner>>,
+    audio_candidate: Option<Res<'w, audio::PreparedMatchAudio>>,
+    audio_silent: Option<Res<'w, audio::AudioSilent>>,
+    current: Res<'w, assets::CurrentMatchLoad>,
     swap: Res<'w, crate::SessionSwapRequest>,
     bridge: Option<Res<'w, net::MasterBridge>>,
     intent: Option<Res<'w, net::MasterLaunchIntent>>,
@@ -80,6 +84,17 @@ pub struct MatchInstallPresentation<'w> {
     player_data: Res<'w, sim::LocalPlayerData>,
 }
 
+fn discard_ready(commands: &mut Commands, key: frame::LocalLoadKey) {
+    commands.queue(move |world: &mut World| {
+        if world
+            .get_resource::<PreparedMatchReady>()
+            .is_some_and(|ready| ready.load_key == key)
+        {
+            world.remove_resource::<PreparedMatchReady>();
+        }
+    });
+}
+
 pub fn apply_prepared_match(
     mut commands: Commands,
     source: PreparedMatchSource,
@@ -93,6 +108,10 @@ pub fn apply_prepared_match(
     let PreparedMatchSource {
         mut ready,
         audio_status,
+        audio_owner,
+        audio_candidate,
+        audio_silent,
+        current,
         swap,
         bridge,
         intent,
@@ -126,7 +145,8 @@ pub fn apply_prepared_match(
                 || state.identity().match_key() != ready.load_key.match_key
                 || ready.load_key.incarnation != bridge.incarnation()
         });
-    if !swap.accepts_install(ready.request_id)
+    if current.0 != Some(ready.load_key)
+        || !swap.accepts_install(ready.request_id)
         || stale_key
         || ready.load_key.local_load_request_id != ready.request_id
     {
@@ -139,7 +159,7 @@ pub fn apply_prepared_match(
         if let Some(stage) = install_stage.take() {
             stage.cancel();
         }
-        commands.remove_resource::<PreparedMatchReady>();
+        discard_ready(&mut commands, ready.load_key);
         return;
     }
     if ready.load_key.match_key.is_none() && intent.as_ref().is_some_and(|intent| intent.is_join())
@@ -152,16 +172,40 @@ pub fn apply_prepared_match(
         if let Some(stage) = install_stage.take() {
             stage.cancel();
         }
-        commands.remove_resource::<PreparedMatchReady>();
-        commands.remove_resource::<MatchLoadAbort>();
+        discard_ready(&mut commands, ready.load_key);
+        let request_id = ready.request_id;
+        commands.queue(move |world: &mut World| {
+            if world
+                .get_resource::<MatchLoadAbort>()
+                .is_some_and(|abort| abort.0 == request_id)
+            {
+                world.remove_resource::<MatchLoadAbort>();
+            }
+        });
         diag::info!(
             World,
             "match install: aborted request #{dropped} (`{zone}`) — not occupying the menu"
         );
         return;
     }
+    if role.runs_client()
+        && audio_owner
+            .as_ref()
+            .is_none_or(|owner| owner.0 != Some(ready.load_key))
+    {
+        return;
+    }
     match audio_status.as_deref() {
-        Some(audio::LoadingAudioStatus::Ready) => {}
+        Some(audio::LoadingAudioStatus::Ready) => {
+            if role.runs_client()
+                && audio_silent.is_none()
+                && audio_candidate
+                    .as_ref()
+                    .is_none_or(|candidate| candidate.load_key != ready.load_key)
+            {
+                return;
+            }
+        }
         Some(audio::LoadingAudioStatus::Failed(error)) => {
             failed.write(frame::MapLoadFailed {
                 request_id: ready.request_id,
@@ -169,7 +213,7 @@ pub fn apply_prepared_match(
                 zone: ready.zone.clone(),
                 error: error.clone(),
             });
-            commands.remove_resource::<PreparedMatchReady>();
+            discard_ready(&mut commands, ready.load_key);
             return;
         }
         _ => return,
@@ -199,7 +243,7 @@ pub fn apply_prepared_match(
     let Some(mut prepared) = ready.prepared.take() else {
         return;
     };
-    commands.remove_resource::<PreparedMatchReady>();
+    discard_ready(&mut commands, ready.load_key);
 
     let world_report = std::mem::take(&mut prepared.report);
     log_world_report(&world_report);
@@ -217,6 +261,7 @@ pub fn apply_prepared_match(
         rules.as_deref(),
         catalog.as_deref(),
         identity.as_deref(),
+        *role,
     ) {
         Ok(plan) => plan,
         Err(refusal) => {
@@ -248,6 +293,7 @@ pub fn apply_prepared_match(
         install.push(audio::stage_prepared_match_audio);
         let MatchInstallPlan {
             ui_images,
+            capabilities,
             scripts,
             script_level,
             script_entries,
@@ -392,6 +438,8 @@ pub fn apply_prepared_match(
             .set_map(Arc::clone(&prepared_map.content))
             .map_err(|error| InstallRefusal::new(format!("Invalid map content: {error}")))?;
         content.set_script_sound_aliases(script_sound_aliases);
+        content.set_script_fx(capabilities.script_fx.clone());
+        stage_resource(&mut install, capabilities);
         let mut sim = sim::SimWorld::new();
         if role.runs_authority()
             && let Some(previous) = previous.as_ref()
@@ -733,7 +781,9 @@ pub fn apply_prepared_match(
                                 && bridge.incarnation() == load_key.incarnation
                         });
                 if accepts && same_match {
-                    world.resource_mut::<crate::ScopeControl>().install(install);
+                    world
+                        .resource_mut::<crate::ScopeControl>()
+                        .install(load_key, install);
                 }
             });
             if let Some(stage) = install_stage {
@@ -765,6 +815,7 @@ pub fn apply_prepared_match(
 /// commit half of `apply_prepared_match` has nothing to install until preflight
 /// hands one over.
 struct MatchInstallPlan {
+    capabilities: assets::prepared::PreparedCapabilities,
     ui_images: asset_material::UiImagePublication,
     scripts: sim::script::Program,
     script_level: sim::script::LevelData,
@@ -890,7 +941,19 @@ fn preflight_match_install(
     rules: Option<&frame::HostMatchRules>,
     catalog: Option<&asset_game::MenuCatalog>,
     identity: Option<&LaunchIdentity>,
+    role: frame::RuntimeRole,
 ) -> Result<MatchInstallPlan, InstallRefusal> {
+    if prepared
+        .clip
+        .as_ref()
+        .is_none_or(|clip| clip.coverage != asset_world::CollisionCoverage::Complete)
+    {
+        return Err(InstallRefusal::new(
+            "Required collision geometry has incomplete query coverage",
+        ));
+    }
+    let capabilities = assets::prepared::PreparedCapabilities::prepare(&prepared);
+    capabilities.validate(role).map_err(InstallRefusal::new)?;
     let killstreaks = assets::prepared::PreparedKillstreaks(
         prepared
             .scripts
@@ -1208,7 +1271,10 @@ fn preflight_match_install(
             .collect(),
     );
     let fx_models = PreparedFxModels(std::mem::take(&mut prepared.world.fx_models));
-    let impact_fx = PreparedImpactFx(std::mem::take(&mut prepared.world.impact_fx));
+    let impact_fx = PreparedImpactFx {
+        map: std::mem::take(&mut prepared.world.impact_fx),
+        families: std::mem::take(&mut prepared.world.family_impact_fx),
+    };
     let tracers = PreparedTracers(std::mem::take(&mut prepared.tracers));
     let scene = match world_scene_from_draw(
         prepared.world,
@@ -1232,6 +1298,7 @@ fn preflight_match_install(
         ));
     }
     Ok(MatchInstallPlan {
+        capabilities,
         ui_images: prepared.ui_images,
         script_sound_aliases: prepared.script_sound_aliases,
         scripts,
@@ -1739,6 +1806,7 @@ fn install_clip_and_player(
             .collect(),
     };
     content.set_clip_map(brushes, bsp, mesh, cmodels);
+    content.set_collision_complete(clip.coverage == asset_world::CollisionCoverage::Complete);
     sim.install_content(content.finish());
     sim.install_model_library(authority_models.models);
     let owner_count = authority_models.capabilities.len();

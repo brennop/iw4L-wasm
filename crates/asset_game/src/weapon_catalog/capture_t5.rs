@@ -185,6 +185,7 @@ impl WeaponCatalog {
             hide_tags: read_hide_tags_t5(stream, strings, geometry.hide_tags),
             sounds: leftover_t5_sounds(stream, strings, &geometry),
             combat_fx: WeaponCombatFx::empty(crate::AssetNamespace::T5),
+            flame: flame_stream::capture_t5_flame_stream(stream, &geometry),
             combat_slots: CombatFxSlots::default(),
             facts: capture_t5_body_facts(stream, &geometry),
         });
@@ -383,6 +384,46 @@ pub(super) fn leftover_t5_cstr(
         .ok()
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
+}
+
+fn leftover_t5_flame_table(
+    stream: &fastfile_t5::ZoneStream<'_>,
+    body: fastfile_t5::Ptr,
+    off: usize,
+) -> Option<fastfile_t5::Ptr> {
+    match stream.ptr_at(body, off).ok()? {
+        fastfile_t5::ZonePtr::Offset(q) => Some(stream.resolve_alias(q)),
+        _ => None,
+    }
+}
+
+fn apply_t5_flame(
+    stream: &fastfile_t5::ZoneStream<'_>,
+    body: fastfile_t5::Ptr,
+    facts: &mut WeaponBodyFacts,
+) {
+    use fastfile_t5::size as sz;
+    let fuel_tank = u8_at_t5(stream, body, sz::WEAPON_DEF_FUEL_TANK_WEAPON_OFF) != 0;
+    let tank_life_ms = i32_at_t5(stream, body, sz::WEAPON_DEF_TANK_LIFE_TIME_OFF);
+    if fuel_tank && tank_life_ms > 0 && facts.fire_time_ms > 0 {
+        let ticks = (tank_life_ms / facts.fire_time_ms).max(1);
+        facts.clip_size = facts.clip_size.saturating_mul(ticks);
+        if !facts.ammo_count_clip_relative {
+            facts.start_ammo = facts.start_ammo.saturating_mul(ticks);
+            facts.max_ammo = facts.max_ammo.saturating_mul(ticks);
+        }
+    }
+    facts.flame_damage_interval_ms =
+        f32_at_t5(stream, body, sz::WEAPON_DEF_DAMAGE_INTERVAL_OFF) as i32;
+    let reach = leftover_t5_flame_table(stream, body, sz::WEAPON_DEF_FLAME_TABLE_FIRST_PERSON_OFF)
+        .map(|table| {
+            f32_at_t5(stream, table, sz::FLAME_TABLE_STREAM_FUEL_LENGTH_OFF)
+                + f32_at_t5(stream, table, sz::FLAME_TABLE_STREAM_FLAME_LENGTH_OFF)
+        })
+        .unwrap_or(0.0);
+    facts.min_damage = facts.damage;
+    facts.max_damage_range = reach;
+    facts.min_damage_range = reach;
 }
 
 pub(super) fn leftover_t5_asset_slot(
@@ -595,11 +636,40 @@ pub(super) fn leftover_t5_sounds(
     let Some(body) = geometry.weap_def else {
         return WeaponSoundAliases::default();
     };
+    let gas = geometry.weap_type == weapon_iw4::WEAPTYPE_GAS;
+    let flame_sound = |table_off, sound_off| {
+        let table = gas.then(|| leftover_t5_flame_table(stream, body, table_off))??;
+        leftover_t5_cstr(stream, table, sound_off)
+    };
     WeaponSoundAliases {
         projectile: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_PROJECTILE_SOUND_OFF),
         proj_explosion: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_PROJ_EXPLOSION_SOUND_OFF),
         proj_ignition_sound: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_PROJ_IGNITION_SOUND_OFF),
         notetrack_convention: NotetrackConvention::InlinePrefix,
+        fire_start: flame_sound(
+            sz::WEAPON_DEF_FLAME_TABLE_THIRD_PERSON_OFF,
+            sz::FLAME_TABLE_IGNITE_SOUND_OFF,
+        ),
+        fire_start_player: flame_sound(
+            sz::WEAPON_DEF_FLAME_TABLE_FIRST_PERSON_OFF,
+            sz::FLAME_TABLE_IGNITE_SOUND_OFF,
+        ),
+        fire_loop: flame_sound(
+            sz::WEAPON_DEF_FLAME_TABLE_THIRD_PERSON_OFF,
+            sz::FLAME_TABLE_ON_LOOP_SOUND_OFF,
+        ),
+        fire_loop_player: flame_sound(
+            sz::WEAPON_DEF_FLAME_TABLE_FIRST_PERSON_OFF,
+            sz::FLAME_TABLE_ON_LOOP_SOUND_OFF,
+        ),
+        fire_stop: flame_sound(
+            sz::WEAPON_DEF_FLAME_TABLE_THIRD_PERSON_OFF,
+            sz::FLAME_TABLE_COOLDOWN_SOUND_OFF,
+        ),
+        fire_stop_player: flame_sound(
+            sz::WEAPON_DEF_FLAME_TABLE_FIRST_PERSON_OFF,
+            sz::FLAME_TABLE_COOLDOWN_SOUND_OFF,
+        ),
         fire: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_FIRE_OFF),
         fire_player: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_FIRE_PLAYER_OFF),
         empty_fire: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_EMPTY_FIRE_OFF),
@@ -622,6 +692,8 @@ pub(super) fn leftover_t5_sounds(
         ),
         reload_end: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_RELOAD_END_OFF),
         reload_end_player: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_RELOAD_END_PLAYER_OFF),
+        alt_switch: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_ALT_SWITCH_OFF),
+        alt_switch_player: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_ALT_SWITCH_PLAYER_OFF),
         raise_player: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_RAISE_PLAYER_OFF),
         putaway_player: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_PUTAWAY_PLAYER_OFF),
         melee_swipe: leftover_t5_cstr(stream, body, sz::WEAPON_DEF_SND_MELEE_SWIPE_OFF),
@@ -853,6 +925,9 @@ pub(super) fn capture_t5_body_facts(
     };
     facts.inherits_perks = leftover_t5_inherits_host_perks();
     facts.kick = leftover_t5_kick(stream, geometry);
+    if facts.weap_type == weapon_iw4::WEAPTYPE_GAS {
+        apply_t5_flame(stream, body, &mut facts);
+    }
     facts
 }
 

@@ -12,9 +12,7 @@ use crate::adapters::fx::world_mark::FrontendFxScene;
 use crate::prepare::scene::cull::DynEntModelEntity;
 use crate::prepare::scene::world::{WorldDynEntInstance, WorldScene};
 use assets::{BoundWeapons, PreparedWeapons};
-use net::{
-    ClientPredictionState, EntityBulletHit, EntityEventSound, EntityExplosion, EntityPhysicsSphere,
-};
+use net::{ClientPredictionState, EntityEventSound, EntityExplosion, EntityPhysicsSphere};
 use render_fx::{EntityMarks, HostFxSystem, PreparedFxCatalog};
 
 pub const DYNENT_BULLET_FORCE: f32 = 1000.0;
@@ -50,14 +48,6 @@ pub struct DynEntWakeBroadphase {
     pub full_scan_n: u32,
     pub fallback_n: u32,
     pub query_ms: f32,
-}
-
-#[derive(Clone, Copy, Debug, Message)]
-pub struct DynEntPelletHit {
-    pub world: frame::WorldStamp,
-    pub weapon: u32,
-    pub start: Vec3,
-    pub end: Vec3,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -677,8 +667,9 @@ fn hit_one_dyn_ent(
     }
 }
 
-pub(crate) fn on_entity_bullet_hit(
-    hit: On<EntityBulletHit>,
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hit_dyn_ents_from_pellets(
+    mut hits: MessageReader<net::AcceptedImpact>,
     weapons: Option<Res<PreparedWeapons>>,
     catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     mut broadphase: ResMut<DynEntWakeBroadphase>,
@@ -698,49 +689,44 @@ pub(crate) fn on_entity_bullet_hit(
     scene: Option<Res<WorldScene>>,
     entity_marks: Res<EntityMarks>,
 ) {
-    if hit.event.domain == net::EntityEventDomain::Predicted {
-        return;
-    }
-    let weapons = weapons
-        .as_deref()
-        .and_then(|weapons| weapons.for_event(hit.event.world).ok());
-    let payload = hit.event.payload;
-    let start = Vec3::from_array(payload.origin2);
-    let end = Vec3::from_array(payload.origin);
     let catalog = catalog.as_deref();
-    let mut host = host.as_deref_mut();
     let fx = fx.as_deref();
     let scene = scene.as_deref();
     let marks = entity_marks.as_ref();
-    if let Some((entity, pose, bullet_scale)) =
-        closest_segment_hit(start, end, catalog, &mut broadphase, &instances)
-    {
-        hit_one_dyn_ent(
-            entity,
-            pose,
-            start,
-            end,
-            bullet_scale,
-            weapon_hit_damage(weapons.as_ref(), payload.weapon),
-            &mut instances,
-            &mut impulses,
-            phys.as_mut(),
-            host.as_deref_mut(),
-            fx,
-            scene,
-            marks,
+    for hit in hits.read() {
+        let direct = closest_segment_hit(
+            Vec3::from_array(hit.record.start),
+            Vec3::from_array(hit.record.end),
+            catalog,
+            &mut broadphase,
+            &instances,
         );
-    }
-    if matches!(
-        hit.event.event,
-        EntityEventKind::BULLET_HIT_EXPLODE | EntityEventKind::BULLET_HIT_CLIENT_EXPLODE
-    ) {
-        let Some((inner, outer)) = weapon_radii(weapons.as_ref(), payload.weapon) else {
-            return;
+        let weapons = weapons
+            .as_deref()
+            .and_then(|weapons| weapons.for_event(hit.world).ok());
+        if let Some((entity, pose, bullet_scale)) = direct {
+            hit_one_dyn_ent(
+                entity,
+                pose,
+                Vec3::from_array(hit.record.start),
+                Vec3::from_array(hit.record.end),
+                bullet_scale,
+                weapon_hit_damage(weapons.as_ref(), hit.record.weapon),
+                &mut instances,
+                &mut impulses,
+                phys.as_mut(),
+                host.as_deref_mut(),
+                fx,
+                scene,
+                marks,
+            );
+        }
+        let Some((inner, outer)) = weapon_radii(weapons.as_ref(), hit.record.weapon) else {
+            continue;
         };
         let (inner_damage, outer_damage) =
-            weapon_explosion_damage(weapons.as_ref(), payload.weapon);
-        let origin = end;
+            weapon_explosion_damage(weapons.as_ref(), hit.record.weapon);
+        let origin = Vec3::from_array(hit.record.end);
         let started = Instant::now();
         if let Some(candidates) = broadphase.sphere_candidates(origin, outer) {
             for &entity in candidates {
@@ -792,59 +778,6 @@ pub(crate) fn on_entity_bullet_hit(
             }
         }
         broadphase.query_ms += started.elapsed().as_secs_f32() * 1000.0;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn hit_dyn_ents_from_pellets(
-    mut hits: MessageReader<DynEntPelletHit>,
-    weapons: Option<Res<PreparedWeapons>>,
-    catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
-    mut broadphase: ResMut<DynEntWakeBroadphase>,
-    mut instances: Query<
-        (
-            Entity,
-            &mut WorldDynEntInstance,
-            &Transform,
-            &mut Visibility,
-        ),
-        With<DynEntModelEntity>,
-    >,
-    mut impulses: MessageWriter<DynEntPhysImpulse>,
-    mut phys: ResMut<DynEntPhysWorld>,
-    mut host: Option<ResMut<HostFxSystem>>,
-    fx: Option<Res<PreparedFxCatalog>>,
-    scene: Option<Res<WorldScene>>,
-    entity_marks: Res<EntityMarks>,
-) {
-    let catalog = catalog.as_deref();
-    let fx = fx.as_deref();
-    let scene = scene.as_deref();
-    let marks = entity_marks.as_ref();
-    for hit in hits.read() {
-        let Some((entity, pose, bullet_scale)) =
-            closest_segment_hit(hit.start, hit.end, catalog, &mut broadphase, &instances)
-        else {
-            continue;
-        };
-        let weapons = weapons
-            .as_deref()
-            .and_then(|weapons| weapons.for_event(hit.world).ok());
-        hit_one_dyn_ent(
-            entity,
-            pose,
-            hit.start,
-            hit.end,
-            bullet_scale,
-            weapon_hit_damage(weapons.as_ref(), hit.weapon),
-            &mut instances,
-            &mut impulses,
-            phys.as_mut(),
-            host.as_deref_mut(),
-            fx,
-            scene,
-            marks,
-        );
     }
 }
 
@@ -976,18 +909,66 @@ fn on_physics_sphere(
     }
 }
 
+#[derive(Resource, Default)]
+struct DynEntPresentationCheckpoint {
+    initial: HashMap<Entity, (WorldDynEntInstance, Transform, Visibility)>,
+}
+
+fn reconstruct_dyn_ent_presentation(
+    mut reset: MessageReader<net::ImpactReconstruction>,
+    mut checkpoint: ResMut<DynEntPresentationCheckpoint>,
+    mut instances: Query<
+        (
+            Entity,
+            &mut WorldDynEntInstance,
+            &mut Transform,
+            &mut Visibility,
+        ),
+        With<DynEntModelEntity>,
+    >,
+    mut physics: ResMut<DynEntPhysWorld>,
+    mut impulses: ResMut<Messages<DynEntPhysImpulse>>,
+) {
+    let reset = reset.read().count() != 0;
+    checkpoint
+        .initial
+        .retain(|entity, _| instances.contains(*entity));
+    for (entity, mut instance, mut transform, mut visibility) in &mut instances {
+        let initial = checkpoint
+            .initial
+            .entry(entity)
+            .or_insert_with(|| (instance.clone(), *transform, *visibility));
+        if reset {
+            *instance = initial.0.clone();
+            *transform = initial.1;
+            *visibility = initial.2;
+        }
+    }
+    if reset {
+        physics.reset_presentation();
+        impulses.clear();
+    }
+}
+
 pub fn register_dyn_ent_wake(app: &mut App) {
     app.scoped::<DynEntWakeBroadphase>(frame::MatchScope::Live)
-        .scoped_message::<DynEntPelletHit>(frame::MatchScope::Live)
+        .scoped::<DynEntPresentationCheckpoint>(frame::MatchScope::Live)
+        .add_systems(
+            Update,
+            reconstruct_dyn_ent_presentation
+                .in_set(frame::InMatch)
+                .in_set(net::ClientSet::Present)
+                .before(rebuild_dyn_ent_wake_broadphase),
+        )
         .add_observer(on_entity_explosion)
         .add_observer(on_physics_sphere)
-        .add_observer(on_entity_bullet_hit)
         .add_observer(on_entity_event_sound)
         .add_systems(
             Update,
             rebuild_dyn_ent_wake_broadphase
                 .in_set(frame::InMatch)
-                .in_set(net::ClientSet::Receive),
+                .in_set(net::ClientSet::Present)
+                .before(hit_dyn_ents_from_pellets),
         )
         .add_systems(
             Update,

@@ -98,6 +98,7 @@ pub(super) async fn walk_prepared_match(
         t6_player_anim_sources,
         t5_fx,
         t5_impact_fx,
+        t6_impact_fx,
         iw5_materials,
         mut iw5_scene_models,
         iw5_shared_surfaces,
@@ -736,12 +737,14 @@ pub(super) async fn walk_prepared_match(
             .into(),
     );
     decode_fx_colour_maps(&world.fx, &mut global, &image_trees, &progress, &mut report);
+    world.family_impact_fx = [t5_impact_fx, t6_impact_fx].into_iter().flatten().collect();
     if world.impact_fx.is_none() {
-        world.impact_fx = if map_namespace == Some(asset_core::AssetNamespace::T5) {
-            t5_impact_fx.or(common_impact)
-        } else {
-            common_impact
-        };
+        world.impact_fx = world
+            .family_impact_fx
+            .iter()
+            .find(|table| Some(table.namespace) == map_namespace)
+            .cloned()
+            .or(common_impact);
     } else if let Some(common_table) = common_impact {
         report.push(format!(
             "impactfx: map table kept; common_mp table `{}` discarded",
@@ -758,6 +761,14 @@ pub(super) async fn walk_prepared_match(
         ));
     } else {
         report.push("impactfx handoff: missing — combat play_oriented will miss cells".into());
+    }
+    for table in &world.family_impact_fx {
+        report.push(format!(
+            "impactfx family table: {:?}:`{}` rows={}",
+            table.namespace,
+            table.name,
+            table.row_count()
+        ));
     }
     report.push(format!(
         "tracer catalog handoff: {} named ({} bound, {} unresolved)",

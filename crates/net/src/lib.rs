@@ -53,8 +53,8 @@ pub use client::presentation::centity_runtime::{
     remote_body_submits, remote_pose_sample,
 };
 pub use client::presentation::entities::{
-    CEntity, CEntityBirthCensus, CEntitySlots, CLIENT_ENTITY_SLOT_COUNT, register_client_entities,
-    sync_client_entities,
+    CEntity, CEntityBirthCensus, CEntitySlots, CLIENT_ENTITY_SLOT_COUNT, CorpseIdentity,
+    register_client_entities, sync_client_entities,
 };
 pub use client::presentation::entity_event_dispatch::{
     AppliedEntityEventWalk, DispatchedEntityEvent, EntityBulletHit, EntityEjectBrass,
@@ -80,14 +80,15 @@ pub use client::proxy::{
 };
 pub use client::realtime::ClientRealtime;
 pub use client::runtime::{
-    ClientClock, ClientCmdTemplate, ClientPhaseTrace, ClientPredictionState, ClientReliableAck,
-    ClockTick, FireCommandVerdicts, LastAdoptedSnapshot, LocationCursor, PendingClientSends,
-    PendingPelletFx, PendingPresentedEntityEvents, ReceivedTicks, ReliableControlEvent,
-    RemoteProxyState, WeaponSelect, advance_cg_frame_clock, advance_cls_realtime,
-    arm_listen_prediction, cycle_weapon_select, follow_held_weapon_select,
-    listen_prediction_needs_content, predict_local_move, publish_presented, receive_ticks,
-    reconcile_prediction, register_client_runtime, register_listen_prediction_arm,
-    sample_client_input, send_pending_commands,
+    AcceptedImpact, ClientClock, ClientCmdTemplate, ClientPhaseTrace, ClientPredictionState,
+    ClientReliableAck, ClockTick, FireCommandVerdicts, ImpactOccurrence, ImpactReconstruction,
+    LastAdoptedSnapshot, LocationCursor, PendingClientSends, PendingPelletFx,
+    PendingPresentedEntityEvents, ReceivedTicks, ReliableControlEvent, RemoteProxyState,
+    WeaponSelect, advance_cg_frame_clock, advance_cls_realtime, arm_listen_prediction,
+    cycle_weapon_select, follow_held_weapon_select, listen_prediction_needs_content,
+    predict_local_move, publish_presented, receive_ticks, reconcile_prediction,
+    register_client_runtime, register_listen_prediction_arm, sample_client_input,
+    send_pending_commands,
 };
 pub use gaps::{NetGap, NetGapCause, NetIdentityGaps, ScriptNotify};
 pub use plugin::NetPlugin;
@@ -174,6 +175,6 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 118;
+pub const PROTOCOL_VERSION: u32 = 119;
 
 pub use client::fire_verdict::{FireVerdictState, PredictedFireStatus};

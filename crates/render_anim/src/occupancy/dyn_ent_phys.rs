@@ -18,9 +18,8 @@ const MAX_ITERS: i32 = 2;
 
 const CONTENTS_SOLID: u32 = 1;
 const CONTENTS_ITEMCLIP: u32 = 0x400;
-const WAKE_MASKS: [u32; 2] = [CONTENTS_SOLID | CONTENTS_ITEMCLIP, CONTENTS_SOLID];
+const COLLISION_MASK: u32 = CONTENTS_SOLID | CONTENTS_ITEMCLIP;
 const WAKE_LIFTS: [f32; 6] = [0.0, CONTACT_SLOP, 0.25, 0.5, 1.0, 2.0];
-const WAKE_FOOTPRINTS: [f32; 3] = [1.0, 0.75, 0.5];
 const SLEEP_SPEED: f32 = 4.0;
 const GROUND_NZ: f32 = 0.7;
 const CONTACT_SLOP: f32 = 0.125;
@@ -36,6 +35,11 @@ pub struct DynEntPhysWorld {
 }
 
 impl DynEntPhysWorld {
+    pub fn reset_presentation(&mut self) {
+        self.bodies.clear();
+        self.last_time = None;
+    }
+
     pub fn is_awake(&self, entity: Entity) -> bool {
         self.bodies.contains_key(&entity)
     }
@@ -105,30 +109,33 @@ pub fn step_phys_world0(
         let (mins, maxs) = xmodel_phys_hull(catalog, &inst.current_model);
         let add_vel = impulse.impulse / preset.mass;
         let phys_clip = clip.0.as_deref();
-        world
-            .bodies
-            .entry(entity)
-            .and_modify(|body| {
-                body.vel += add_vel;
-                body.asleep_ms = 0;
-            })
-            .or_insert_with(|| {
-                let pose = phys_clip
-                    .and_then(|clip| clear_wake_pose(clip, transform.translation, mins, maxs));
-                let (origin, mins, maxs, mask) =
-                    pose.unwrap_or((transform.translation, mins, maxs, CONTENTS_SOLID));
-                DynEntPhysBody {
-                    origin,
-                    vel: add_vel,
-                    mins,
-                    maxs,
-                    bounce: preset.bounce,
-                    friction: preset.friction,
-                    mask,
-                    on_ground: false,
-                    asleep_ms: 0,
-                }
-            });
+        if let Some(body) = world.bodies.get_mut(&entity) {
+            body.vel += add_vel;
+            body.asleep_ms = 0;
+            continue;
+        }
+        let Some(clip) = phys_clip else {
+            continue;
+        };
+        let RecoveryOutcome::Recovered(origin) =
+            clear_wake_pose(clip, transform.translation, mins, maxs, COLLISION_MASK)
+        else {
+            continue;
+        };
+        world.bodies.insert(
+            entity,
+            DynEntPhysBody {
+                origin,
+                vel: add_vel,
+                mins,
+                maxs,
+                bounce: preset.bounce,
+                friction: preset.friction,
+                mask: COLLISION_MASK,
+                on_ground: false,
+                asleep_ms: 0,
+            },
+        );
     }
 
     let now = clock
@@ -198,37 +205,31 @@ pub fn step_phys_world0(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum RecoveryOutcome {
+    Recovered(Vec3),
+    Blocked,
+    Incomplete,
+}
+
 fn clear_wake_pose(
     clip: &ClipCollision,
     origin: Vec3,
     mins: [f32; 3],
     maxs: [f32; 3],
-) -> Option<(Vec3, [f32; 3], [f32; 3], u32)> {
-    for mask in WAKE_MASKS {
-        for scale in WAKE_FOOTPRINTS {
-            let (mins, maxs) = narrowed_footprint(mins, maxs, scale);
-            for lift in WAKE_LIFTS {
-                let at = (origin + Vec3::Z * lift).to_array();
-                let probe = clip.sweep_box(at, at, mins, maxs, mask);
-                if !probe.startsolid && !probe.allsolid {
-                    return Some((Vec3::from_array(at), mins, maxs, mask));
-                }
-            }
+    mask: u32,
+) -> RecoveryOutcome {
+    if clip.coverage != asset_world::CollisionCoverage::Complete {
+        return RecoveryOutcome::Incomplete;
+    }
+    for lift in WAKE_LIFTS {
+        let at = origin + Vec3::Z * lift;
+        let probe = clip.sweep_box(at.to_array(), at.to_array(), mins, maxs, mask);
+        if !probe.startsolid && !probe.allsolid {
+            return RecoveryOutcome::Recovered(at);
         }
     }
-    None
-}
-
-fn narrowed_footprint(mins: [f32; 3], maxs: [f32; 3], scale: f32) -> ([f32; 3], [f32; 3]) {
-    let mut lo = mins;
-    let mut hi = maxs;
-    for axis in 0..2 {
-        let mid = (mins[axis] + maxs[axis]) * 0.5;
-        let half = (maxs[axis] - mins[axis]) * 0.5 * scale;
-        lo[axis] = mid - half;
-        hi[axis] = mid + half;
-    }
-    (lo, hi)
+    RecoveryOutcome::Blocked
 }
 
 fn integrate_free(body: &mut DynEntPhysBody, dt: f32) {
@@ -238,6 +239,12 @@ fn integrate_free(body: &mut DynEntPhysBody, dt: f32) {
 }
 
 fn integrate_body(body: &mut DynEntPhysBody, clip: &ClipCollision, dt: f32) {
+    if clip.coverage != asset_world::CollisionCoverage::Complete {
+        body.vel = Vec3::ZERO;
+        body.on_ground = false;
+        body.asleep_ms = 0;
+        return;
+    }
     body.vel.z += GRAVITY_Z * dt;
     let start = body.origin;
     let end = start + body.vel * dt;
@@ -250,7 +257,8 @@ fn integrate_body(body: &mut DynEntPhysBody, clip: &ClipCollision, dt: f32) {
     );
     if hit.allsolid || hit.startsolid {
         body.vel = Vec3::ZERO;
-        body.on_ground = true;
+        body.on_ground = false;
+        body.asleep_ms = 0;
         return;
     }
     if hit.fraction < 1.0 {

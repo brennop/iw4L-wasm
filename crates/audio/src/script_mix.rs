@@ -3,7 +3,6 @@ use asset_audio::ChannelKey;
 use asset_core::AssetNamespace;
 use bevy::prelude::*;
 use frame::ScopeApp;
-use frame::{MatchScope, ScopeEpoch};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Resource, Default)]
@@ -166,11 +165,11 @@ fn update_channel_mix(
     bank: Option<Res<crate::SoundBank>>,
     namespace: Option<Res<crate::ambient::SoundBankNamespace>>,
     local: Option<Res<net::LocalPresentClient>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     runtime: Res<crate::AudioRuntime>,
 ) {
     let now = runtime.audio_frame();
-    mix.reset_epoch(epoch.0);
+    mix.reset_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
     for event in events.read() {
         if event.0.target().is_some() {
             mix.pending.push_back(event.0.clone());

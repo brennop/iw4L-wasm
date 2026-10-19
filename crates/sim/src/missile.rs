@@ -13,7 +13,7 @@ pub(crate) fn fire_accepted_shot(world: &mut FrameWorld, tick: crate::Tick, shot
         return;
     };
     match fire_weapon_kind(combat.weap_type, combat.weap_class) {
-        Some(FireWeaponKind::Bullet) => {}
+        Some(FireWeaponKind::Bullet | FireWeaponKind::Flame) => {}
         Some(FireWeaponKind::GrenadeLauncher) => {
             spawn_grenade_projectile(
                 world,
@@ -109,7 +109,7 @@ pub(crate) fn magic_bullet(
             })
             .flatten()
         }
-        Some(FireWeaponKind::Bullet) | None => {
+        Some(FireWeaponKind::Bullet | FireWeaponKind::Flame) | None => {
             return Err("MagicBullet bullets are not simulated".into());
         }
     };

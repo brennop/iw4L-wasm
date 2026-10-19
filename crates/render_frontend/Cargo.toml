@@ -34,6 +34,7 @@ hud_iw4.workspace = true
 marks_iw4.workspace = true
 math_iw4.workspace = true
 net.workspace = true
+master_protocol.workspace = true
 perf.workspace = true
 playerstate_iw4.workspace = true
 render_anim.workspace = true

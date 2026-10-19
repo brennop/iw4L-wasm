@@ -32,8 +32,8 @@ pub use lighting_iw4::MODEL_LIGHTING_TILE_BYTES;
 pub use loading_screen::{LoadingPreviewSource, LoadingScreen};
 pub use map_load_process::MapLoadProcess;
 pub use match_load::{
-    MapLoadApproval, MatchLoadAbort, MatchLoadAccepted, MatchLoadBusy, MatchLoadDispatch,
-    MatchLoadRequest, PreparedMatchReady, PreparedMatchSound,
+    CurrentMatchLoad, MapLoadApproval, MatchLoadAbort, MatchLoadAccepted, MatchLoadBusy,
+    MatchLoadDispatch, MatchLoadRequest, PreparedMatchReady, PreparedMatchSound,
 };
 pub use plugin::AssetPlugin;
 pub use prepared::{

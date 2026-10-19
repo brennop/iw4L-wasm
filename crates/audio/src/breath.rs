@@ -33,7 +33,7 @@ pub(crate) fn update(
     mut state: Local<BreathAudio>,
     mut sources: ResMut<BreathSources>,
     runtime: Res<crate::AudioRuntime>,
-    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     mut play: MessageWriter<AliasCommand>,
 ) {
     let client = local.as_ref().map(|local| local.0);
@@ -45,9 +45,13 @@ pub(crate) fn update(
             .for_client(client)
             .map(|meta| meta.life_sequence.0)
     });
-    let context = client
-        .zip(life)
-        .map(|(client, life)| (epoch.0, client.0, life));
+    let context = client.zip(life).map(|(client, life)| {
+        (
+            crate::backend::presentation_epoch(epoch.as_deref()),
+            client.0,
+            life,
+        )
+    });
     if sources.context != context {
         if state.active {
             stop_aliases(
@@ -145,7 +149,7 @@ pub(crate) fn update(
                     alias: cues.heartbeat.into(),
                     emitter: client.map(|client| client.0),
                     scope: crate::backend::AudioScope::Match,
-                    epoch: epoch.0,
+                    epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                     group: None,
                 })
             {
@@ -156,7 +160,7 @@ pub(crate) fn update(
                 sources.source = Some(DesiredSource {
                     key: SourceKey {
                         scope: crate::backend::AudioScope::Match,
-                        epoch: epoch.0,
+                        epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                         object: u64::from(client.expect("alive client").0),
                         slot: 6,
                     },

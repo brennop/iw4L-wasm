@@ -597,12 +597,15 @@ pub fn tick_fpv_viewmodel(
         product.kind = FpvPoseKind::Hide;
         return;
     }
-    if presented_is_third_person(
+    // Outside the killcam the hidden viewmodel keeps animating: its notetracks
+    // are the player's reload and handling sounds.
+    let hidden = presented_is_third_person(
         &presented,
         local.0,
         view.in_killcam(),
         settings.third_person,
-    ) {
+    );
+    if hidden && view.in_killcam() {
         product.kind = FpvPoseKind::Hide;
         return;
     }
@@ -840,6 +843,10 @@ pub fn tick_fpv_viewmodel(
             weapon_id,
             snapshot.view_tick(local.0),
         ));
+    }
+    if hidden {
+        product.kind = FpvPoseKind::Hide;
+        return;
     }
     if let FpvPoseKind::Posed(frame) = &mut kind {
         // Nothing downstream of the bones waits for a vertex.

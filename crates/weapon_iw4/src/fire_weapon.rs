@@ -2,6 +2,7 @@ pub const WEAPTYPE_BULLET: i32 = 0;
 pub const WEAPTYPE_GRENADE: i32 = 1;
 pub const WEAPTYPE_PROJECTILE: i32 = 2;
 pub const WEAPTYPE_SHIELD: i32 = 3;
+pub const WEAPTYPE_GAS: i32 = 4;
 
 pub const WEAPCLASS_GRENADE: i32 = 6;
 pub const WEAPCLASS_SPREAD: i32 = 4;
@@ -73,6 +74,7 @@ pub enum FireWeaponKind {
     ThrownGrenade,
     GrenadeLauncher,
     Missile,
+    Flame,
 }
 
 pub const fn fire_weapon_kind(weap_type: i32, weap_class: i32) -> Option<FireWeaponKind> {
@@ -86,6 +88,7 @@ pub const fn fire_weapon_kind(weap_type: i32, weap_class: i32) -> Option<FireWea
                 Some(FireWeaponKind::Missile)
             }
         }
+        WEAPTYPE_GAS => Some(FireWeaponKind::Flame),
         _ => None,
     }
 }

@@ -1,5 +1,6 @@
 #[cfg(all(online, target_arch = "wasm32"))]
 use rt::JoinHandle;
+use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,6 +49,7 @@ pub fn register_master_bridge(app: &mut App) {
     );
 }
 
+pub(crate) mod limits;
 mod population;
 pub use population::CommunityPlayerCounts;
 
@@ -423,7 +425,9 @@ enum MasterBridgeCommand {
     MatchEnded {
         match_key: frame::MatchKey,
     },
-    AuthorityProgress,
+    AuthorityProgress {
+        now_ms: u64,
+    },
     AdmitEnter {
         member_id: MemberId,
         epoch: u32,
@@ -432,6 +436,51 @@ enum MasterBridgeCommand {
         client_id: u32,
     },
     Shutdown,
+}
+
+impl MasterBridgeCommand {
+    fn queued_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + match self {
+                Self::SetPassword { password } => password.capacity(),
+                Self::UpdateLobby { map, mode } | Self::StartMatch { map, mode } => {
+                    map.capacity() + mode.capacity()
+                }
+                _ => 0,
+            }
+    }
+}
+
+/// A command waiting for the worker. `web_time` because this side also builds
+/// on wasm32, where `std::time::Instant::now` panics.
+#[cfg_attr(not(online), allow(dead_code))]
+struct QueuedCommand {
+    command: MasterBridgeCommand,
+    deadline: web_time::Instant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MasterOperationOutcome {
+    Succeeded,
+    Refused(String),
+    RemoteOutcomeUnknown(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MasterOperationResult {
+    pub request_id: u64,
+    pub outcome: MasterOperationOutcome,
+}
+
+/// Milliseconds since the first call: a monotonic clock for host-match timing.
+#[cfg_attr(not(online), allow(dead_code))]
+fn now_ms() -> u64 {
+    static START: std::sync::OnceLock<web_time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(web_time::Instant::now)
+        .elapsed()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
 }
 
 #[derive(Resource, Default)]
@@ -562,7 +611,8 @@ impl MasterBridgeState {
 #[derive(Resource)]
 pub struct MasterBridge {
     state: Arc<Mutex<MasterBridgeState>>,
-    commands: Arc<Mutex<Vec<MasterBridgeCommand>>>,
+    commands: Arc<Mutex<Vec<QueuedCommand>>>,
+    outcomes: Arc<Mutex<VecDeque<MasterOperationResult>>>,
     installed_load: Arc<Mutex<Option<frame::LocalLoadKey>>>,
     mailbox: RelayMailbox,
     #[cfg_attr(not(online), allow(dead_code))]
@@ -592,15 +642,52 @@ impl MasterBridge {
         self.close.cancel();
     }
 
+    pub fn take_operation_results(&self) -> Vec<MasterOperationResult> {
+        self.outcomes
+            .lock()
+            .expect("control outcomes poisoned")
+            .drain(..)
+            .collect()
+    }
+
     pub fn mailbox(&self) -> RelayMailbox {
         self.mailbox.clone()
     }
 
     fn send(&self, command: MasterBridgeCommand) {
-        self.commands
-            .lock()
-            .expect("master command queue poisoned")
-            .push(command);
+        let mut commands = self.commands.lock().expect("master command queue poisoned");
+        if matches!(command, MasterBridgeCommand::AuthorityProgress { .. })
+            && let Some(queued) = commands.iter_mut().find(|queued| {
+                matches!(
+                    queued.command,
+                    MasterBridgeCommand::AuthorityProgress { .. }
+                )
+            })
+        {
+            queued.command = command;
+            return;
+        }
+        if commands.len() >= limits::values().queue_items
+            || commands
+                .iter()
+                .map(|queued| queued.command.queued_bytes())
+                .sum::<usize>()
+                .saturating_add(command.queued_bytes())
+                > limits::values().queue_bytes
+        {
+            drop(commands);
+            publish_failed(
+                &self.state,
+                self.state().identity(),
+                TransportFault::new("local_command", "local", "command budget exhausted"),
+            );
+            self.close.cancel();
+            return;
+        }
+        commands.push(QueuedCommand {
+            command,
+            deadline: web_time::Instant::now() + limits::values().queue_age,
+        });
     }
 
     pub fn set_installed_load(&self, load: Option<frame::LocalLoadKey>) {
@@ -632,7 +719,7 @@ impl MasterBridge {
     }
 
     pub fn report_authority_progress(&self) {
-        self.send(MasterBridgeCommand::AuthorityProgress);
+        self.send(MasterBridgeCommand::AuthorityProgress { now_ms: now_ms() });
     }
 
     pub fn report_match_ended(&self, match_key: frame::MatchKey) {
@@ -676,7 +763,10 @@ impl MasterBridge {
 impl Drop for MasterBridge {
     fn drop(&mut self) {
         if let Ok(mut queue) = self.commands.lock() {
-            queue.push(MasterBridgeCommand::Shutdown);
+            queue.push(QueuedCommand {
+                command: MasterBridgeCommand::Shutdown,
+                deadline: web_time::Instant::now() + limits::values().shutdown,
+            });
         }
         self.close.cancel();
         let _ = self.worker.take();

@@ -9,6 +9,7 @@ pub(super) fn draw_exact_colour(
         Option<&Msaa>,
     )>,
     frame: Res<PublishedRenderFrame>,
+    support: Res<crate::SkinSupport>,
     geometry: Res<ExactColourGeometry>,
     smodel_cache_gpu: Res<SmodelCacheGpu>,
     pipeline: Res<ExactColourPipeline>,
@@ -60,6 +61,9 @@ pub(super) fn draw_exact_colour(
     ),
     mut context: RenderContext,
 ) {
+    if support.failure(frame.world_generation).is_some() {
+        return;
+    }
     let extracted = ExtractedColourRefs::new(&frame);
     let products = &extracted.frame.frame_products;
     let _colour_submit = perf::Span::RenderColourSubmitMs.enter();

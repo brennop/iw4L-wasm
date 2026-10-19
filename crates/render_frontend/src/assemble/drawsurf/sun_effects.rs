@@ -13,7 +13,7 @@ pub struct SunEffectsFrameInput {
 
 #[derive(Default)]
 pub(crate) struct SunEffectsCameraTrack {
-    world_generation: Option<u64>,
+    context: Option<frame::PresentationContext>,
     camera_key: u64,
     origin: Vec3,
     armed: bool,
@@ -29,7 +29,23 @@ pub(crate) fn publish_sun_effects_frame(
     clock: Option<Res<FrameClock>>,
     world_generation: Option<Res<frame::WorldGeneration>>,
     cameras: Query<(Entity, &GlobalTransform), (With<Camera3d>, Without<FpvLens>)>,
+    context: (
+        Option<Res<frame::InstalledMatch>>,
+        Option<Res<net::EntityEventCursor>>,
+    ),
 ) {
+    let current = context
+        .0
+        .as_ref()
+        .zip(context.1.as_ref())
+        .map(|(installed, timeline)| {
+            frame::PresentationContext::new(installed.load_key, timeline.timeline())
+        });
+    let context_changed = track.context != current;
+    if context_changed {
+        *track = SunEffectsCameraTrack::default();
+        track.context = current;
+    }
     let Some(def) = sun.and_then(|sun| sun.def) else {
         *published = SunEffectsFrameInput::default();
         *track = SunEffectsCameraTrack::default();
@@ -51,10 +67,9 @@ pub(crate) fn publish_sun_effects_frame(
         0.0
     };
     let camera_cut = !track.armed
-        || track.world_generation != generation
+        || context_changed
         || track.camera_key != camera_key
         || origin_delta > CAMERA_CUT_ORIGIN;
-    track.world_generation = generation;
     track.camera_key = camera_key;
     track.origin = origin;
     track.armed = true;

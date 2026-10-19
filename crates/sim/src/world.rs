@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use weapon_iw4::WeaponCombatFacts;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Tick(pub u32);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -422,6 +422,16 @@ impl SimState {
 
     pub(crate) fn set_hud_elem_sound_ids(&mut self, ids: crate::hudelem::PulseFxSoundIds) {
         self.hud_elem_sound_ids = ids;
+    }
+
+    pub fn collision_complete(&self) -> bool {
+        self.content.collision_complete()
+    }
+
+    pub fn script_fx_available(&self, name: &str) -> bool {
+        self.content
+            .script_fx()
+            .contains(&name.to_ascii_lowercase())
     }
 
     pub fn script_sound_exists(&self, name: &str) -> Option<bool> {

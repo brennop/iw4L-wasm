@@ -58,13 +58,31 @@ fn adopt(
     let model =
         Value::string(FrameWorld::from_world(world).weapon_projectile_model(projectile.weapon));
     let facts = FrameWorld::from_world(world).equipment_facts_for(projectile.weapon);
+    if let Some(object) = world
+        .resource::<RoundScript>()
+        .missiles
+        .get(&projectile.id)
+        .copied()
+    {
+        return Ok(object);
+    }
+    let object = world
+        .resource_mut::<RoundScript>()
+        .create_entity(EntityKind::Missile(projectile.id), classname)?;
     let presence = if facts.is_some_and(|facts| !facts.timed_detonation && facts.stickiness != 0) {
-        Some(super::presence::spawn_presence(world, projectile.origin)?)
+        match super::presence::spawn_presence(world, projectile.origin) {
+            Ok(presence) => Some(presence),
+            Err(error) => {
+                let mut runtime = world.resource_mut::<RoundScript>();
+                runtime.entities.remove(&object);
+                runtime.objects.remove(&object);
+                return Err(error);
+            }
+        }
     } else {
         None
     };
     let mut runtime = world.resource_mut::<RoundScript>();
-    let object = runtime.create_entity(EntityKind::Missile(projectile.id), classname)?;
     let owner = runtime
         .players
         .get(&projectile.owner.0)

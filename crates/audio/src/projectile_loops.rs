@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use frame::{MatchScope, ScopeEpoch};
 
 use crate::backend::AudioScope;
 use crate::sources::{DesiredSource, SourceCueRequest, SourceKey};
@@ -15,7 +14,7 @@ struct ProjectileLoop {
 
 #[derive(Resource, Default)]
 pub(crate) struct ProjectileSources {
-    context: Option<(u64, u64)>,
+    context: Option<frame::PresentationContext>,
     next_version: u64,
     live: HashMap<u32, ProjectileLoop>,
     pub desired: Vec<DesiredSource>,
@@ -27,11 +26,14 @@ pub(crate) fn update(
     bank: Option<Res<SoundBank>>,
     clock: Option<Res<net::FrameClock>>,
     timeline: Res<net::EntityEventCursor>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
     runtime: Res<AudioRuntime>,
     mut sources: ResMut<ProjectileSources>,
+    installed: Res<frame::InstalledMatch>,
 ) {
-    let context = Some((epoch.0, timeline.timeline()));
+    let context = Some(frame::PresentationContext::new(
+        installed.load_key,
+        timeline.timeline(),
+    ));
     if sources.context != context {
         sources.context = context;
         sources.live.clear();
@@ -81,7 +83,7 @@ pub(crate) fn update(
                 alias: alias.into(),
                 emitter: u32::try_from(projectile.entnum).ok(),
                 scope: AudioScope::Match,
-                epoch: epoch.0,
+                epoch: timeline.timeline(),
                 group: None,
             }) else {
                 continue;
@@ -99,7 +101,7 @@ pub(crate) fn update(
                     source: DesiredSource {
                         key: SourceKey {
                             scope: AudioScope::Match,
-                            epoch: epoch.0,
+                            epoch: timeline.timeline(),
                             object: u64::from(id),
                             slot: 7,
                         },

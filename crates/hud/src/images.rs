@@ -72,7 +72,7 @@ pub(crate) struct BloodMaterialBinding {
 fn blood_material_binding(catalog: &MenuCatalog) -> Result<BloodMaterialBinding, String> {
     let pass = "splatter_alt/unlit/pass 0";
     let plan = catalog
-        .material_2d_plans
+        .material_2d_plans()
         .get("splatter_alt")
         .ok_or_else(|| format!("{pass}: material plan missing"))?;
     if plan.unlit_pass_count != Some(1) || plan.unlit_pass_states.len() != 1 {
@@ -152,7 +152,7 @@ pub struct HudImages {
     zone_samplers: HashMap<String, u8>,
     blood_plan: Option<Result<BloodMaterialBinding, String>>,
     zone_installed: bool,
-    zone_identity: Option<u64>,
+    zone_identity: Option<asset_game::ImageProductRevision>,
     zone_uploaded: bool,
     iwd_warmed: bool,
 }
@@ -235,7 +235,9 @@ impl HudImages {
     }
 
     pub fn install_zone_catalog(&mut self, catalog: &MenuCatalog) {
-        let identity = catalog.image_identity();
+        let identity = catalog
+            .image_revision()
+            .unwrap_or_else(|| asset_game::ImageProductRevision(catalog.image_identity()));
         if self.zone_identity == Some(identity) {
             return;
         }
@@ -246,17 +248,17 @@ impl HudImages {
         self.blood_plan = Some(blood_material_binding(catalog));
         self.zone_srgb_reads.extend(
             catalog
-                .material_srgb_reads
+                .material_srgb_reads()
                 .iter()
                 .map(|(name, &srgb)| (cache_key(name), srgb)),
         );
         self.material_images.extend(
             catalog
-                .material_images
+                .material_images()
                 .iter()
                 .map(|(material, image)| (cache_key(material), image.clone())),
         );
-        for (name, plan) in &catalog.material_2d_plans {
+        for (name, plan) in catalog.material_2d_plans() {
             let binding =
                 plan.textures
                     .iter()
@@ -268,13 +270,13 @@ impl HudImages {
                         })
                     });
             if let Some(binding) = binding
-                && catalog.material_images.get(name) == binding.image.as_ref()
+                && catalog.material_images().get(name) == binding.image.as_ref()
             {
                 self.zone_samplers
                     .insert(cache_key(name), binding.sampler_state);
             }
         }
-        for (name, state) in &catalog.material_state_bits {
+        for (name, state) in catalog.material_state_bits() {
             let compiled = state.agreed().and_then(|words| {
                 let compiled = asset_material::compile_material_state(HUD_CHROME_NAMESPACE, words);
                 if let Some(fields) = compiled.unsupported_host_fields() {
@@ -285,11 +287,11 @@ impl HudImages {
                 }
             });
             self.zone_states.insert(name.clone(), compiled);
-            if catalog.zone_images.contains_key(name) && state.agreed().is_none() {
+            if catalog.zone_images().contains_key(name) && state.agreed().is_none() {
                 diag::warn!(Ui, "hud material state gap: {name}: {state:?}");
             }
         }
-        for (key, atlas) in &catalog.zone_images {
+        for (key, atlas) in catalog.zone_images() {
             self.zone_rgba
                 .insert(key.clone(), (atlas.width, atlas.height, atlas.rgba.clone()));
             self.zone_image_name

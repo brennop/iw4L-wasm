@@ -7,6 +7,7 @@ pub struct CommonKey {
     pub(super) runtime: Option<PathBuf>,
     pub(super) foreign: Option<PathBuf>,
     source_revision: u64,
+    collision_adapter_version: u32,
     families: frame::AssetFamilies,
 }
 
@@ -20,6 +21,7 @@ impl CommonKey {
         let source_revision = games_root_from_env()
             .map_or(0, |games| asset_transport::installation_revision(&games.0));
         Self {
+            collision_adapter_version: asset_world::COLLISION_ADAPTER_VERSION,
             source_revision,
             runtime: runtime.map(Path::to_path_buf),
             foreign: families
@@ -39,6 +41,7 @@ impl CommonKey {
             }
         };
         Self {
+            collision_adapter_version: asset_world::COLLISION_ADAPTER_VERSION,
             source_revision: asset_transport::installation_revision(&games.0),
             runtime,
             foreign: None,
@@ -107,6 +110,7 @@ pub(super) struct CommonProducts {
     pub(super) t6_player_anim_sources: asset_anim::PlayerAnimSources,
     pub(super) t5_fx: FxCatalog,
     pub(super) t5_impact_fx: Option<asset_game::OwnedFxImpactTable>,
+    pub(super) t6_impact_fx: Option<asset_game::OwnedFxImpactTable>,
     pub(super) iw5_materials: MaterialCatalog,
     pub(super) iw5_scene_models: asset_world::MapXModelSceneCatalog,
     pub(super) iw5_shared_surfaces: asset_model::SharedXModelSurfaces,
@@ -785,6 +789,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         t6_weapon_walk.await;
     common_report.extend(t6_report);
     weapons.absorb(t6_weapons);
+    let mut t6_impact_fx = None;
     if let Some(compiler) = preparation {
         let prepared = compiler.compile(crate::lane::CommonPreparationProducts {
             weapons,
@@ -802,6 +807,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
                 .iter()
                 .map(|cause| format!("common family preparation refused: {cause:?}")),
         );
+        t6_impact_fx = prepared.impact_fx;
         let products = prepared.products;
         common_report.extend(products.report);
         (
@@ -998,6 +1004,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             t6_player_anim_sources,
             t5_fx,
             t5_impact_fx,
+            t6_impact_fx,
             iw5_materials,
             iw5_scene_models,
             iw5_shared_surfaces,

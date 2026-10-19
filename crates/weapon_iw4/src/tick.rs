@@ -93,6 +93,7 @@ pub struct CapturedCombatInput {
     pub stunned_start_time_ms: i32,
     pub stunned_end_time_ms: i32,
     pub damage: i32,
+    pub flame_damage_interval_ms: i32,
     pub min_damage: i32,
     pub max_damage_range: f32,
     pub min_damage_range: f32,
@@ -246,6 +247,7 @@ pub struct WeaponCombatFacts {
     pub stunned_start_time_ms: i32,
     pub stunned_end_time_ms: i32,
     pub damage: i32,
+    pub flame_damage_interval_ms: i32,
     pub min_damage: i32,
     pub max_damage_range: f32,
     pub min_damage_range: f32,
@@ -365,6 +367,7 @@ impl WeaponCombatFacts {
             stunned_start_time_ms: 0,
             stunned_end_time_ms: 0,
             damage: 0,
+            flame_damage_interval_ms: 0,
             min_damage: 0,
             max_damage_range: 0.0,
             min_damage_range: 0.0,
@@ -483,6 +486,7 @@ impl WeaponCombatFacts {
             stunned_start_time_ms: input.stunned_start_time_ms,
             stunned_end_time_ms: input.stunned_end_time_ms,
             damage: input.damage,
+            flame_damage_interval_ms: input.flame_damage_interval_ms,
             min_damage: input.min_damage,
             max_damage_range: input.max_damage_range,
             min_damage_range: input.min_damage_range,
@@ -578,7 +582,7 @@ impl WeaponCombatFacts {
     }
 
     pub fn bullet_range(self) -> f32 {
-        if self.weap_class == crate::WEAPCLASS_SPREAD {
+        if self.weap_class == crate::WEAPCLASS_SPREAD || self.weap_type == crate::WEAPTYPE_GAS {
             self.min_damage_range
         } else {
             crate::BULLET_MAX_RANGE

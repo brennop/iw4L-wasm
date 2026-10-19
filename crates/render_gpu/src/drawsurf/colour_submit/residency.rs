@@ -24,6 +24,7 @@ pub(super) struct GpuStream {
     stride: usize,
 
     allocation: u64,
+    device: Option<RenderDevice>,
 }
 
 impl GpuStream {
@@ -58,20 +59,41 @@ impl GpuStream {
         usage: BufferUsages,
         elements: usize,
         stride: usize,
-    ) {
+    ) -> bool {
+        if self
+            .device
+            .as_ref()
+            .is_none_or(|previous| previous.wgpu_device() != device.wgpu_device())
+        {
+            self.buffer = None;
+            self.capacity = 0;
+            self.device = Some(device.clone());
+        }
         self.stride = stride;
         let bytes = u64::try_from(elements.saturating_mul(stride)).unwrap_or(u64::MAX);
         if self.fits(bytes) {
-            return;
+            return true;
         }
-        self.capacity = stream_capacity(bytes);
+        let limits = device.limits();
+        let limit = limits.max_buffer_size;
+        if bytes.next_multiple_of(RANGE_GRANULE as u64) > limit {
+            self.buffer = None;
+            self.capacity = 0;
+            return false;
+        }
+        self.capacity =
+            stream_capacity(bytes).min(limit / RANGE_GRANULE as u64 * RANGE_GRANULE as u64);
         self.buffer = Some(device.create_buffer(&BufferDescriptor {
             label: Some(label),
             size: self.capacity,
             usage: usage | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
-        self.allocation = self.allocation.wrapping_add(1);
+        self.allocation = self
+            .allocation
+            .checked_add(1)
+            .expect("GPU allocation generation exhausted");
+        true
     }
 
     pub(super) fn set_len(&mut self, elements: usize) {

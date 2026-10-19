@@ -279,6 +279,8 @@ impl WeaponCatalog {
                     geometry.notetrack_rumble_values,
                 ),
                 fire_player_akimbo: None,
+                fire_start: None,
+                fire_start_player: None,
                 fire_loop: None,
                 fire_loop_player: None,
                 fire_stop: None,
@@ -304,6 +306,7 @@ impl WeaponCatalog {
                 explosion: geometry.explosion_slot,
                 tracer: geometry.tracer_slot,
             },
+            flame: None,
             combat_fx: WeaponCombatFx {
                 last_shot_eject_pair_authored: geometry.view_last_shot_eject_slot.is_some()
                     && geometry.world_last_shot_eject_slot.is_some(),
@@ -464,6 +467,7 @@ impl WeaponCatalog {
                 min_player_damage: geometry.min_player_damage,
                 max_damage_range: geometry.max_damage_range,
                 min_damage_range: geometry.min_damage_range,
+                flame_damage_interval_ms: 0,
                 kick: WeaponKickFacts::from_capture(geometry.kick),
                 sway: WeaponSwayFacts::from_capture(geometry.sway),
                 dual_wield_view_model_offset: geometry.dual_wield_view_model_offset,

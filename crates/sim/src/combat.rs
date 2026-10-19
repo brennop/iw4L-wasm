@@ -1149,7 +1149,16 @@ pub fn spread_direction_on_plane(
     }
 }
 
-pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emission> {
+fn flame_burns_this_tick(facts: &weapon_iw4::WeaponCombatFacts, now_ms: i32) -> bool {
+    let interval = facts
+        .flame_damage_interval_ms
+        .max(facts.fire_time_ms)
+        .max(1);
+    let window = facts.fire_time_ms.max(1);
+    now_ms.div_euclid(interval) != (now_ms - window).div_euclid(interval)
+}
+
+pub(crate) fn phase_emit(world: &FrameWorld, tick: Tick, shots: &[AcceptedShot]) -> Vec<Emission> {
     let mut out = Vec::new();
     for shot in shots {
         let Some(facts) = world.combat_facts_for(shot.weapon) else {
@@ -1159,6 +1168,14 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
         match fire_weapon_kind(facts.weap_type, facts.weap_class) {
             Some(FireWeaponKind::Bullet) => {
                 if facts.damage <= 0 || facts.bullet_range() <= 0.0 {
+                    continue;
+                }
+            }
+            Some(FireWeaponKind::Flame) => {
+                if facts.damage <= 0
+                    || facts.bullet_range() <= 0.0
+                    || !flame_burns_this_tick(&facts, crate::level_time_ms(tick))
+                {
                     continue;
                 }
             }

@@ -91,18 +91,6 @@ pub async fn load_prepared_match(
             return MatchLoadOutcome::Ready(prepared);
         }
     }
-    let dropped = RESIDENT_MAP
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .take();
-    if let Some(dropped) = dropped {
-        diag::info!(
-            World,
-            "resident map: `{}` walk #{} dropped before the next walk",
-            dropped.zone.path.display(),
-            dropped.prepared.materials.products_id
-        );
-    }
     let (outcome, common) =
         walk_prepared_match(zone_ff, common_mp, progress.clone(), families).await;
     let MatchLoadOutcome::Ready(mut prepared) = outcome else {

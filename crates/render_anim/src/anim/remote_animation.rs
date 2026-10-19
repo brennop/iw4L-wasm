@@ -90,15 +90,13 @@ pub fn skip_frozen_corpse_dobj(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CorpseOccupationKey {
-    pub spawn_time_ms: i32,
-    pub victim: i32,
+    pub identity: net::CorpseIdentity,
 }
 
-pub fn corpse_occupation_key(es: &entity_iw4::EntityState) -> CorpseOccupationKey {
-    CorpseOccupationKey {
-        spawn_time_ms: es.time2,
-        victim: es.client_num,
-    }
+pub fn corpse_occupation_key(entity: &net::CEntity) -> Option<CorpseOccupationKey> {
+    entity
+        .corpse_identity()
+        .map(|identity| CorpseOccupationKey { identity })
 }
 
 pub fn fresh_corpse_clip_time(age_ms: i32, clip_length_ms: i32) -> f32 {

@@ -452,23 +452,6 @@ impl WsRecv {
         }
     }
 
-    pub async fn read_to_end(&mut self, limit: usize) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        if !self.chunk.is_empty() {
-            out.extend_from_slice(&self.chunk.split_off(0));
-        }
-        while let Some(chunk) = self.rx.recv().await {
-            out.extend_from_slice(&chunk);
-            if out.len() > limit {
-                return Err(format!("stream longer than {limit} bytes").into());
-            }
-        }
-        if out.len() > limit {
-            return Err(format!("stream longer than {limit} bytes").into());
-        }
-        Ok(out)
-    }
-
     /// Tells the sender to stop and discards what arrives.
     pub fn stop(&mut self, code: u32) -> Result<()> {
         self.rx.close();
@@ -608,7 +591,9 @@ mod tests {
 
         // FIN from the client ends the control reader.
         send(&mut client, WsFrame::Fin { stream: 0 }).await;
-        assert!(control_rx.read_to_end(16).await.unwrap().is_empty());
+        let mut rest = Vec::new();
+        control_rx.read_to_end(&mut rest).await.unwrap();
+        assert!(rest.is_empty());
 
         peer.close(0_u8.into(), b"session closed");
         assert_eq!(
@@ -654,6 +639,8 @@ mod tests {
             .await;
         }
         send(&mut client, WsFrame::Fin { stream: 0 }).await;
-        assert_eq!(rx.read_to_end(100).await.unwrap(), b"abcdefg");
+        let mut received = Vec::new();
+        rx.read_to_end(&mut received).await.unwrap();
+        assert_eq!(received, b"abcdefg");
     }
 }

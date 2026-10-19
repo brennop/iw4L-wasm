@@ -74,12 +74,45 @@ pub(super) trait MasterSendStream {
     fn set_priority(&self, priority: i32) -> Result<(), ConnError>;
     async fn write_all(&mut self, bytes: &[u8]) -> Result<(), ConnError>;
     fn finish(&mut self) -> Result<(), ConnError>;
+
+    /// Writes `bytes` and finishes the stream, failing when no write makes
+    /// progress for `progress`. The caller bounds the whole transfer. The
+    /// default (browser transports) has no per-write progress to observe.
+    async fn write_transfer(
+        &mut self,
+        bytes: &[u8],
+        _progress: std::time::Duration,
+    ) -> Result<(), ConnError> {
+        self.write_all(bytes).await?;
+        self.finish()
+    }
+
+    /// Abandons an unfinished stream.
+    fn reset(&mut self) {}
 }
 
 pub(super) trait MasterRecvStream {
     async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ConnError>;
     async fn read_to_end(&mut self, limit: usize) -> Result<Vec<u8>, ConnError>;
+
+    /// `read_to_end`, failing when no chunk arrives for `progress`. The caller
+    /// bounds the whole transfer. The default (browser transports) only has
+    /// that overall bound.
+    async fn read_transfer(
+        &mut self,
+        limit: usize,
+        _progress: std::time::Duration,
+    ) -> Result<Vec<u8>, ConnError> {
+        self.read_to_end(limit).await
+    }
+
+    /// Tells the sender to stop; nothing more will be read.
+    fn stop(&mut self) {}
 }
+
+/// Largest read or write a QUIC transfer makes at once.
+#[cfg(not(target_arch = "wasm32"))]
+const TRANSFER_CHUNK: usize = 16 * 1024;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) type Conn = QuicConn;
@@ -232,6 +265,40 @@ impl MasterSendStream for QuicSend {
     fn finish(&mut self) -> Result<(), ConnError> {
         self.0.finish().map_err(ConnError::from_display)
     }
+
+    async fn write_transfer(
+        &mut self,
+        bytes: &[u8],
+        progress: std::time::Duration,
+    ) -> Result<(), ConnError> {
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let end = (offset + TRANSFER_CHUNK).min(bytes.len());
+            let written = tokio::time::timeout(progress, self.0.write(&bytes[offset..end]))
+                .await
+                .map_err(|_| ConnError::from_display("transfer progress deadline"))?
+                .map_err(ConnError::from_display)?;
+            if written == 0 {
+                return Err(ConnError::from_display("transfer made no progress"));
+            }
+            offset += written;
+        }
+        self.finish()?;
+        if let Some(code) = tokio::time::timeout(progress, self.0.stopped())
+            .await
+            .map_err(|_| ConnError::from_display("transfer acknowledgement deadline"))?
+            .map_err(ConnError::from_display)?
+        {
+            return Err(ConnError::from_display(format!(
+                "transfer refused with code {code}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        let _ = self.0.reset(0_u8.into());
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -248,5 +315,30 @@ impl MasterRecvStream for QuicRecv {
             .read_to_end(limit)
             .await
             .map_err(ConnError::from_display)
+    }
+
+    async fn read_transfer(
+        &mut self,
+        limit: usize,
+        progress: std::time::Duration,
+    ) -> Result<Vec<u8>, ConnError> {
+        let mut bytes = Vec::new();
+        loop {
+            let chunk = tokio::time::timeout(progress, self.0.read_chunk(TRANSFER_CHUNK, true))
+                .await
+                .map_err(|_| ConnError::from_display("transfer progress deadline"))?
+                .map_err(ConnError::from_display)?;
+            let Some(chunk) = chunk else {
+                return Ok(bytes);
+            };
+            if chunk.bytes.is_empty() || bytes.len() + chunk.bytes.len() > limit {
+                return Err(ConnError::from_display("transfer byte budget exceeded"));
+            }
+            bytes.extend_from_slice(&chunk.bytes);
+        }
+    }
+
+    fn stop(&mut self) {
+        let _ = self.0.stop(0_u8.into());
     }
 }

@@ -71,7 +71,6 @@ const TURN_SAMPLES: usize = 4;
 #[derive(Default)]
 struct MissileTurn {
     missile: Option<(LifeSequence, ProjectileId)>,
-    archived: bool,
     samples: Vec<(i32, [f32; 3])>,
 }
 
@@ -79,17 +78,11 @@ impl MissileTurn {
     fn record(
         &mut self,
         missile: (LifeSequence, ProjectileId),
-        archived: bool,
         snapshot_ms: i32,
         angles: [f32; 3],
     ) {
-        // The final killcam of the pilot's own kill replays the same missile
-        // of the same life from seat snapshots stamped with the live tick,
-        // later than every sample of the flight, so a switch between live and
-        // archived presentation starts a fresh history.
-        if self.missile != Some(missile) || self.archived != archived {
+        if self.missile != Some(missile) {
             self.missile = Some(missile);
-            self.archived = archived;
             self.samples.clear();
         }
         match self.samples.last_mut() {
@@ -153,12 +146,8 @@ impl RemoteMissileView {
             .flatten();
         let snapshot_ms = presented.tick().map_or(at_time, sim::level_time_ms);
         if let Some(missile) = flying {
-            self.turn.record(
-                (life, link.projectile),
-                presented.is_archived_replay(),
-                snapshot_ms,
-                link.angles,
-            );
+            self.turn
+                .record((life, link.projectile), snapshot_ms, link.angles);
             let pose = WorldCameraPose {
                 origin: missile_eye(missile, snapshot_ms, at_time, clip),
                 angles: self.turn.angles_at(at_time).unwrap_or(link.angles),

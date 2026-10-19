@@ -109,12 +109,19 @@ impl WorldWeaponBuild {
     pub fn seal_identity(&mut self) -> u64 {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         if self.catalog.identity == 0 {
-            self.catalog.identity = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.catalog.identity = NEXT_ID
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |next| next.checked_add(1),
+                )
+                .expect("world weapon product revision exhausted");
         }
         self.catalog.identity
     }
 
-    pub fn publish(self) -> WorldWeaponCatalog {
+    pub fn publish(mut self) -> WorldWeaponCatalog {
+        self.seal_identity();
         self.catalog
     }
 
@@ -227,6 +234,7 @@ impl WorldWeaponBuild {
     }
 
     fn retain(&mut self, key: WorldWeaponKey, entry: WorldWeaponEntry) {
+        self.catalog.identity = 0;
         if let Some(&pos) = self.catalog.indices.get(&key) {
             self.catalog.zones[pos] = self.capture_zone;
             self.catalog.entries[pos] = entry;

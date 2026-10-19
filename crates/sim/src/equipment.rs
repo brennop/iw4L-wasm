@@ -194,7 +194,7 @@ fn grenade_deadlines(
     }
     let cleanup_at_ms = cap_at;
     match kind {
-        GrenadeLaunchKind::Launcher if facts.fuse_time_ms <= 0 => {
+        GrenadeLaunchKind::Launcher if facts.fuse_time_ms <= 0 || !facts.timed_detonation => {
             if facts.projectile_activate_dist != 0 {
                 (None, cleanup_at_ms)
             } else {
@@ -218,14 +218,10 @@ fn grenade_deadlines(
             };
             (Some(now_ms.saturating_add(fuse)), cleanup_at_ms)
         }
-        GrenadeLaunchKind::Launcher => {
-            let fuse = if facts.fuse_time_ms <= 0 {
-                GRENADE_DEFAULT_FUSE_MS
-            } else {
-                facts.fuse_time_ms.min(GRENADE_FUSE_CAP_MS)
-            };
-            (Some(now_ms.saturating_add(fuse)), cleanup_at_ms)
-        }
+        GrenadeLaunchKind::Launcher => (
+            Some(now_ms.saturating_add(facts.fuse_time_ms.min(GRENADE_FUSE_CAP_MS))),
+            cleanup_at_ms,
+        ),
     }
 }
 

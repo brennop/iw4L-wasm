@@ -168,7 +168,7 @@ struct ActiveRumble {
 #[derive(Default)]
 struct RumblePlayback {
     owner: Option<(frame::WorldStamp, sim::ClientId, sim::LifeSequence, u64)>,
-    last_time: i32,
+    timeline: u64,
     active: Vec<ActiveRumble>,
     output: Option<(Entity, GamepadRumbleIntensity)>,
     selected: Option<Entity>,
@@ -308,6 +308,7 @@ fn update(
     local: Res<LocalPresentClient>,
     generation: Res<frame::WorldGeneration>,
     time: Res<Time>,
+    cursor: Option<Res<net::EntityEventCursor>>,
     devices: Res<frame::InputDevices>,
     mut tests: MessageReader<frame::TestControllerRumble>,
     gamepads: Query<Entity, With<Gamepad>>,
@@ -316,6 +317,15 @@ fn update(
     settings: Res<frame::GameSettings>,
     active: Option<Res<frame::ActivePad>>,
 ) {
+    let timeline = crate::backend::presentation_epoch(cursor.as_deref());
+    if state.timeline != timeline {
+        state.active.clear();
+        if let Some((gamepad, _)) = state.output.take() {
+            output.write(GamepadRumbleRequest::Stop { gamepad });
+        }
+        state.timeline = timeline;
+        state.next_refresh_ms = 0;
+    }
     let now = (time.elapsed_secs_f64() * 1000.0) as i32;
     let selected = active
         .and_then(|active| active.0)
@@ -347,14 +357,13 @@ fn update(
             bank.0.revision(),
         ))
     });
-    if owner != state.owner || now < state.last_time {
+    if owner != state.owner {
         state.active.clear();
         if let Some((gamepad, _)) = state.output.take() {
             output.write(GamepadRumbleRequest::Stop { gamepad });
         }
         state.owner = owner;
     }
-    state.last_time = now;
     state
         .active
         .retain(|row| now.saturating_sub(row.start) < row.rumble.duration_ms);

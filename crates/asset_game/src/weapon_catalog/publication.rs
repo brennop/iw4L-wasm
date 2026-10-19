@@ -328,6 +328,9 @@ impl WeaponBuild {
                             entry.sounds.leftover_sound_overrides.clone();
                     }
                     merge_combat_fx(&mut existing.combat_fx, &entry.combat_fx);
+                    if existing.flame.is_none() {
+                        existing.flame = entry.flame;
+                    }
                     merge_combat_slots(&mut existing.combat_slots, &entry.combat_slots);
                     merge_body_facts(&mut existing.facts, entry.facts);
                 }
@@ -430,6 +433,7 @@ impl WeaponBuild {
                 iw5_notetrack_overrides: entry.iw5_notetrack_overrides,
                 sounds: entry.sounds,
                 combat_fx: entry.combat_fx,
+                flame: entry.flame,
                 reticle: entry.reticle,
                 hud_material_edges: entry.hud_material_edges,
                 overlay_material_from_slot: entry.overlay_material_slot.is_some(),

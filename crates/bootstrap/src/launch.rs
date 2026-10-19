@@ -222,7 +222,7 @@ fn install_class_catalog(
         if key.contains('+')
             && asset_core::AssetKey::parse(key)
                 .is_ok_and(|key| key.namespace == asset_core::AssetNamespace::Iw4)
-            && menus.material_images.contains_key(&preview.image)
+            && menus.material_images().contains_key(&preview.image)
         {
             preview.image = format!("iw4:material/{}", preview.image);
         }
@@ -744,15 +744,16 @@ fn run_map(
     if cfg!(target_arch = "wasm32") && config.role == Role::Client {
         diag::info!(Launch, "launch: browser join, no pre-join load");
     } else {
-        app.insert_resource(MatchLoadRequest {
-            request_id: 0,
-            load_key: Default::default(),
-            zone: zone.clone(),
-            zone_ff,
-            common_mp,
-            progress: progress.clone(),
-            families,
-        });
+        app.insert_resource(assets::CurrentMatchLoad(Some(Default::default())))
+            .insert_resource(MatchLoadRequest {
+                request_id: 0,
+                load_key: Default::default(),
+                zone: zone.clone(),
+                zone_ff,
+                common_mp,
+                progress: progress.clone(),
+                families,
+            });
     }
     let ui_games_root = asset_game::ui_games_root(&games).ok().map(|root| root.0);
     app.insert_resource(launch_identity(&config))

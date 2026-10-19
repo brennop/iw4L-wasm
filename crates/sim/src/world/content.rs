@@ -101,6 +101,9 @@ impl SimContent {
         &self.data.map
     }
 
+    pub fn collision_complete(&self) -> bool {
+        self.data.collision_complete
+    }
     pub fn clip_brushes(&self) -> &[SimBrush] {
         &self.data.clip_brushes
     }
@@ -120,6 +123,8 @@ struct ContentData {
     map: Arc<asset_core::MapContentDefinition>,
     weapons: Arc<crate::SimWeaponContent>,
     script_sound_aliases: Option<std::collections::BTreeMap<String, Option<bool>>>,
+    script_fx: std::collections::BTreeSet<String>,
+    collision_complete: bool,
     clip_brushes: Vec<SimBrush>,
     clip_bsp: SimClipBsp,
     clip_mesh: SimClipMesh,
@@ -166,6 +171,8 @@ impl SimContentBuilder {
                 map: Default::default(),
                 weapons,
                 script_sound_aliases: Default::default(),
+                script_fx: Default::default(),
+                collision_complete: false,
                 clip_brushes: Default::default(),
                 clip_bsp: Default::default(),
                 clip_mesh: Default::default(),
@@ -192,6 +199,10 @@ impl SimContentBuilder {
 
     pub fn uses_weapons(&self, weapons: &Arc<crate::SimWeaponContent>) -> bool {
         Arc::ptr_eq(&self.data.weapons, weapons)
+    }
+
+    pub fn set_script_fx(&mut self, names: std::collections::BTreeSet<String>) {
+        self.data.script_fx = names;
     }
 
     pub fn set_script_sound_aliases(
@@ -303,6 +314,10 @@ impl SimContentBuilder {
         self.data.clip_cmodels = SimClipCmodels::default();
     }
 
+    pub fn set_collision_complete(&mut self, complete: bool) {
+        self.data.collision_complete = complete;
+    }
+
     pub fn set_clip_map(
         &mut self,
         brushes: Vec<SimBrush>,
@@ -321,6 +336,10 @@ impl SimContent {
     pub(super) fn weapons(&self) -> &Arc<crate::SimWeaponContent> {
         &self.data.weapons
     }
+    pub(super) fn script_fx(&self) -> &std::collections::BTreeSet<String> {
+        &self.data.script_fx
+    }
+
     pub(super) fn script_sound_aliases(
         &self,
     ) -> &Option<std::collections::BTreeMap<String, Option<bool>>> {

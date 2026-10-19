@@ -14,7 +14,6 @@ use crate::messages::{
     ViewmodelNotetracks, WeaponSound,
 };
 use crate::start::{SoundClass, StartDecision, StartDecisions, StartFailure, StartOutcome};
-use frame::{MatchScope, ScopeEpoch};
 
 #[derive(Component, Default)]
 pub struct AmbientListener;
@@ -49,6 +48,7 @@ pub(crate) struct PlayerSoundPlugin;
 impl Plugin for PlayerSoundPlugin {
     fn build(&self, app: &mut App) {
         app.scoped::<crate::LoadingAudioStatus>(frame::MatchScope::Loading)
+            .scoped::<crate::LoadingAudioOwner>(frame::MatchScope::Loading)
             .init_resource::<crate::clip_store::ResidentClipCache>()
             .init_resource::<MissingAliasGaps>()
             .init_resource::<StartDecisions>()
@@ -58,6 +58,8 @@ impl Plugin for PlayerSoundPlugin {
             .scoped::<crate::script_ambient::ScriptAmbientPlayback>(frame::MatchScope::Live)
             .scoped::<crate::destructible_loops::DestructibleSources>(frame::MatchScope::Live)
             .scoped::<crate::projectile_loops::ProjectileSources>(frame::Timeline::Running)
+            .scoped::<crate::flame_loops::FlameSources>(frame::Timeline::Running)
+            .scoped_message::<crate::FlameFire>(frame::Timeline::Running)
             .scoped::<crate::ambient::SoundBankLoadAttempted>(frame::MatchScope::Loading)
             .scoped::<crate::ambient::ResidentSoundBank>(frame::MatchScope::Loading)
             .scoped::<crate::BobCycleTracker>(frame::MatchScope::Live)
@@ -113,6 +115,7 @@ impl Plugin for PlayerSoundPlugin {
                     play_land_sound_messages.in_set(frame::InMatch),
                     crate::destructible_loops::update.in_set(frame::InMatch),
                     crate::projectile_loops::update.in_set(frame::InMatch),
+                    crate::flame_loops::update.in_set(frame::InMatch),
                 )
                     .in_set(ClientSet::Effects),
             )
@@ -195,13 +198,16 @@ fn play_alias_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     local: Res<net::LocalPresentClient>,
 ) {
     for command in events.read() {
         let (event, pitch_scale) = match command {
             AliasCommand::StopEntity { snd_ent } => {
-                runtime.stop_emitter_cues(*snd_ent, epoch.0);
+                runtime.stop_emitter_cues(
+                    *snd_ent,
+                    crate::backend::presentation_epoch(epoch.as_deref()),
+                );
                 continue;
             }
             AliasCommand::Play(event) => (event, 1.0),
@@ -212,7 +218,12 @@ fn play_alias_messages(
                 snd_ent,
             } => {
                 let snd_ent = sound_entity(*snd_ent, local.0);
-                runtime.stop_cue(*namespace, alias, snd_ent, epoch.0);
+                runtime.stop_cue(
+                    *namespace,
+                    alias,
+                    snd_ent,
+                    crate::backend::presentation_epoch(epoch.as_deref()),
+                );
                 continue;
             }
         };
@@ -234,7 +245,7 @@ fn play_alias_messages(
             &mut decisions,
             sound_entity(event.snd_ent, local.0),
             SoundClass::World,
-            epoch.0,
+            crate::backend::presentation_epoch(epoch.as_deref()),
             pitch_scale,
             1.0,
             event.fallback.iter().cloned().collect(),
@@ -250,7 +261,7 @@ fn play_footstep_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
 ) {
     let Some(bank) = bank else {
         drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
@@ -267,7 +278,7 @@ fn play_footstep_messages(
             &mut decisions,
             event.snd_ent,
             SoundClass::World,
-            epoch.0,
+            crate::backend::presentation_epoch(epoch.as_deref()),
             event.event,
             event.volume_scale,
         );
@@ -285,7 +296,7 @@ fn play_weapon_sound_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
 ) {
     let Some(bank) = bank else {
         drop_without_bank(
@@ -306,7 +317,7 @@ fn play_weapon_sound_messages(
             &mut decisions,
             event.snd_ent,
             SoundClass::Weapon,
-            epoch.0,
+            crate::backend::presentation_epoch(epoch.as_deref()),
             1.0,
             1.0,
             Vec::new(),
@@ -325,7 +336,7 @@ fn play_bound_weapon_sounds(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     local: Res<net::LocalPresentClient>,
 ) {
     let Some(bank) = bank else {
@@ -353,7 +364,7 @@ fn play_bound_weapon_sounds(
             &mut decisions,
             sound_entity(event.snd_ent, local.0),
             SoundClass::Weapon,
-            epoch.0,
+            crate::backend::presentation_epoch(epoch.as_deref()),
             1.0,
             1.0,
             Vec::new(),
@@ -372,7 +383,7 @@ fn play_land_sound_messages(
     mut pending: ResMut<CueFeedback>,
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
 ) {
     let Some(bank) = bank else {
         drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
@@ -389,7 +400,7 @@ fn play_land_sound_messages(
             &mut decisions,
             event.snd_ent,
             SoundClass::World,
-            epoch.0,
+            crate::backend::presentation_epoch(epoch.as_deref()),
             event.event,
             event.volume_scale,
         );

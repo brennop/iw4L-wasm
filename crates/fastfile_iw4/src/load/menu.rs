@@ -1,6 +1,6 @@
 use asset_iw4::size as sz;
 
-use super::{AssetLinkSink, asset_ptr_at, asset_ptr_at_linked, follow_name};
+use super::{AssetLinkSink, ItemExpressionField, asset_ptr_at, asset_ptr_at_linked, follow_name};
 use crate::asset_type::AssetType;
 use crate::zone::{Ptr, Result, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream};
 
@@ -911,7 +911,7 @@ fn load_event_handler(
                 let c = s.alloc_load(4, s.layout(sz::CONDITIONAL_SCRIPT, 16))?;
                 let mut condition_buf = [0u8; ITEM_STATEMENT_DUMP];
                 let mut condition_len = 0;
-                capture_expr_body_or_alias(s, c, s.layout(4, 8), cache, |dump| {
+                capture_expr_body_or_alias(s, c, s.layout(4, 8), cache, |_source, dump| {
                     condition_len = copy_into(dump, &mut condition_buf).len();
                 })?;
                 let condition = core::str::from_utf8(&condition_buf[..condition_len]).unwrap_or("");
@@ -933,7 +933,7 @@ fn load_event_handler(
                 let name = copy_into(string_at(s, v, 0), &mut name_buf);
 
                 let mut captured = Ok(());
-                capture_expr_body_or_alias(s, v, s.layout(4, 8), cache, |expr| {
+                capture_expr_body_or_alias(s, v, s.layout(4, 8), cache, |_source, expr| {
                     captured = links.capture_menu_set_local_var(menu, item, kind, t, name, expr);
                 })?;
                 captured?;
@@ -1110,21 +1110,51 @@ fn load_item_def(
         for i in 0..float_expression_count {
             let e = arr.at(i * s.layout(sz::ITEM_FLOAT_EXPRESSION, 16));
             let key = s.u32_at(e, 0).unwrap_or(0);
-            capture_expr_body_or_alias(s, e, s.layout(4, 8), cache, |dump| {
+            capture_expr_body_or_alias(s, e, s.layout(4, 8), cache, |source, dump| {
+                let _ = links.capture_item_expression_reference(
+                    menu_name,
+                    item_name,
+                    ItemExpressionField::Float(key),
+                    source,
+                );
                 let _ = links.capture_item_float_exp(menu_name, item_name, key, dump);
             })?;
         }
     }
-    capture_expr_body_or_alias(s, p, s.layout(324, 416), cache, |dump| {
-        let _ = links.capture_item_visible_exp(menu_name, item_name, dump);
+    capture_expr_body_or_alias(s, p, s.layout(324, 416), cache, |source, dump| {
+        let _ = links.capture_item_expression_reference(
+            menu_name,
+            item_name,
+            ItemExpressionField::Visible,
+            source,
+        );
+        let _ = links.capture_item_visible_reference(menu_name, item_name, source, dump);
     })?;
-    capture_expr_body_or_alias(s, p, s.layout(328, 424), cache, |dump| {
+    capture_expr_body_or_alias(s, p, s.layout(328, 424), cache, |source, dump| {
+        let _ = links.capture_item_expression_reference(
+            menu_name,
+            item_name,
+            ItemExpressionField::Disabled,
+            source,
+        );
         let _ = links.capture_item_disabled_exp(menu_name, item_name, dump);
     })?;
-    capture_expr_body_or_alias(s, p, s.layout(332, 432), cache, |dump| {
+    capture_expr_body_or_alias(s, p, s.layout(332, 432), cache, |source, dump| {
+        let _ = links.capture_item_expression_reference(
+            menu_name,
+            item_name,
+            ItemExpressionField::Text,
+            source,
+        );
         let _ = links.capture_item_text_exp(menu_name, item_name, dump);
     })?;
-    capture_expr_body_or_alias(s, p, s.layout(336, 440), cache, |dump| {
+    capture_expr_body_or_alias(s, p, s.layout(336, 440), cache, |source, dump| {
+        let _ = links.capture_item_expression_reference(
+            menu_name,
+            item_name,
+            ItemExpressionField::Material,
+            source,
+        );
         let _ = links.capture_item_material_exp(menu_name, item_name, dump);
     })?;
     Ok(())
@@ -1135,24 +1165,27 @@ fn capture_expr_body_or_alias(
     parent: Ptr,
     field: usize,
     cache: &mut StatementCache,
-    mut on_dump: impl FnMut(&str),
+    mut on_dump: impl FnMut(Ptr, &str),
 ) -> Result<()> {
     if s.begin_body(parent.at(field))? {
         let mut buf = [0u8; ITEM_STATEMENT_DUMP];
-        let dump = dump_item_statement(s, &mut buf, cache)?;
-        if !dump.is_empty() {
-            on_dump(dump);
-        }
+        let mut dump = ExpDump {
+            buf: &mut buf,
+            used: 0,
+        };
+        let source = load_statement_rec(s, &mut dump, cache)?;
+        cache.insert(source, dump.as_str());
+        s.expr_stmt_insert(source, dump.as_str());
+        s.fixup_slot(parent.at(field), source)?;
+        on_dump(source, dump.as_str());
         return Ok(());
     }
-    let Ok(ZonePtr::Offset(stmt)) = s.ptr_at(parent, field) else {
+    let ZonePtr::Offset(stmt) = s.ptr_at(parent, field)? else {
         return Ok(());
     };
     let body = s.resolve_alias(stmt);
     if let Some(cached) = s.expr_stmt_get(body).or_else(|| cache.get(body)) {
-        if !cached.is_empty() {
-            on_dump(cached);
-        }
+        on_dump(body, cached);
         return Ok(());
     }
     let mut buf = [0u8; ITEM_STATEMENT_DUMP];
@@ -1160,9 +1193,12 @@ fn capture_expr_body_or_alias(
         buf: &mut buf,
         used: 0,
     };
-    let _ = dump_loaded_statement(s, body, &mut dump, cache, 0, None);
+    dump_loaded_statement(s, body, &mut dump, cache, 0, None)?;
+    if dump.used == 0 || dump.as_str().contains("fnmiss") {
+        return Err(crate::ZoneError::UnresolvedPointer(body));
+    }
     if dump.used > 0 {
-        on_dump(dump.as_str());
+        on_dump(body, dump.as_str());
     }
     Ok(())
 }

@@ -288,7 +288,10 @@ pub(crate) fn item_screen_rects(
     };
     let mut out = Vec::new();
     for (index, item) in menu.items.iter().enumerate() {
-        if !matches!(exprs.is_true(&item.vis_exp, host), Ok(true)) {
+        if !matches!(
+            exprs.is_true_source(item.visibility_expression, &item.vis_exp, host),
+            Ok(true)
+        ) {
             continue;
         }
         let Ok(style) = evaluate_item_style(
@@ -333,7 +336,7 @@ fn paint_item(
     owner_draw: Option<&mut dyn FnMut(OwnerDrawArgs<'_>, &mut ChromeFrame) -> OwnerDrawPaint>,
     frame: &mut ChromeFrame,
 ) {
-    match exprs.is_true(&item.vis_exp, host) {
+    match exprs.is_true_source(item.visibility_expression, &item.vis_exp, host) {
         Ok(false) => {
             frame.coverage.vis_false();
             return;
@@ -835,7 +838,11 @@ fn resolved_material(
     exprs: &mut MenuExprCache,
 ) -> Result<Option<String>, ExprError> {
     if !item.material_exp.is_empty() {
-        let name = exprs.evaluate_string(&item.material_exp, host)?;
+        let name = exprs.string_source(
+            item.expression_ids.get("Material").copied(),
+            &item.material_exp,
+            host,
+        )?;
         if name.is_empty() {
             return Ok(background_stem(background.unwrap_or(&item.background)));
         }
@@ -901,7 +908,11 @@ fn evaluate_item_style(
             style.unsupported.get_or_insert(key);
             continue;
         }
-        let value = match exprs.evaluate_float(dump, host) {
+        let value = match exprs.float_source(
+            item.expression_ids.get(&format!("Float({key})")).copied(),
+            dump,
+            host,
+        ) {
             Ok(value) => value,
             Err(err) if key <= FLOAT_RECT_H => return Err(err),
             Err(_) => {
@@ -973,7 +984,7 @@ pub(crate) fn atlas_frame_st(
     let [rows, columns] = catalog
         .and_then(|catalog| {
             catalog
-                .material_2d_plans
+                .material_2d_plans()
                 .get(&material.to_ascii_lowercase())
         })
         .map(|plan| plan.texture_atlas.map(|n| u32::from(n.max(1))))

@@ -207,6 +207,8 @@ pub(super) fn merge_sound_aliases(dst: &mut WeaponSoundAliases, src: &WeaponSoun
         (&mut dst.projectile, &src.projectile),
         (&mut dst.proj_ignition_sound, &src.proj_ignition_sound),
         (&mut dst.fire_player_akimbo, &src.fire_player_akimbo),
+        (&mut dst.fire_start, &src.fire_start),
+        (&mut dst.fire_start_player, &src.fire_start_player),
         (&mut dst.fire_loop, &src.fire_loop),
         (&mut dst.fire_loop_player, &src.fire_loop_player),
         (&mut dst.fire_stop, &src.fire_stop),
@@ -679,6 +681,9 @@ pub(super) fn merge_body_facts(dst: &mut WeaponBodyFacts, src: WeaponBodyFacts) 
     }
     if dst.min_damage_range == 0.0 {
         dst.min_damage_range = src.min_damage_range;
+    }
+    if dst.flame_damage_interval_ms == 0 {
+        dst.flame_damage_interval_ms = src.flame_damage_interval_ms;
     }
     if !dst.inherits_perks && src.inherits_perks {
         dst.inherits_perks = true;

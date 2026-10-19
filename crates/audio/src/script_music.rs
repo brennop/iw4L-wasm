@@ -12,7 +12,7 @@ pub(crate) struct ScriptMusicPlayback {
 }
 
 pub(crate) fn update_script_music(
-    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     ready: Res<crate::AudioReady>,
     generation: Res<frame::WorldGeneration>,
     runtime: Res<crate::AudioRuntime>,
@@ -23,7 +23,7 @@ pub(crate) fn update_script_music(
     mut mix: ResMut<crate::script_mix::ScriptAudioMix>,
     mut feedback: ResMut<crate::clip_store::CueFeedback>,
 ) {
-    mix.reset_epoch(epoch.0);
+    mix.reset_epoch(crate::backend::presentation_epoch(epoch.as_deref()));
     if playback
         .active
         .as_ref()
@@ -81,7 +81,7 @@ pub(crate) fn update_script_music(
         origin_inches: None,
         emitter: None,
         class: SoundClass::Music,
-        epoch: epoch.0,
+        epoch: crate::backend::presentation_epoch(epoch.as_deref()),
         pitch_scale: 1.0,
         volume_scale: 1.0,
         fallbacks: Vec::new(),

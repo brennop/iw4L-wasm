@@ -1106,6 +1106,10 @@ impl WeaponRegistry {
         self.rows.get(index as usize).map(|row| &row.combat_fx)
     }
 
+    pub fn flame_stream_of(&self, index: u32) -> Option<&WeaponFlameStream> {
+        self.rows.get(index as usize)?.flame.as_deref()
+    }
+
     pub fn tracer_type_census(&self) -> AssetEdgeCensus {
         let mut census = AssetEdgeCensus::default();
         for row in self.rows.iter().skip(1) {

@@ -159,6 +159,15 @@ fn load_asset_body_observed(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemExpressionField {
+    Visible,
+    Disabled,
+    Text,
+    Material,
+    Float(u32),
+}
+
 pub trait AssetLinkSink {
     fn loaded(
         &mut self,
@@ -262,6 +271,28 @@ pub trait AssetLinkSink {
     fn capture_menu_item_layout(&mut self, rec: &MenuItemLayout<'_>) -> Result<()> {
         let _ = rec;
         Ok(())
+    }
+
+    fn capture_item_expression_reference(
+        &mut self,
+        menu: &str,
+        item: &str,
+        field: ItemExpressionField,
+        source: Ptr,
+    ) -> Result<()> {
+        let _ = (menu, item, field, source);
+        Ok(())
+    }
+
+    fn capture_item_visible_reference(
+        &mut self,
+        menu: &str,
+        item: &str,
+        source: Ptr,
+        dump: &str,
+    ) -> Result<()> {
+        let _ = source;
+        self.capture_item_visible_exp(menu, item, dump)
     }
 
     fn capture_item_visible_exp(&mut self, menu: &str, item: &str, dump: &str) -> Result<()> {

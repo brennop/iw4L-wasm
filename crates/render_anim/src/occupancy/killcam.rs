@@ -20,7 +20,6 @@ pub struct KillcamCamera {
     stop: Option<(i32, f32, Vec3, Vec3)>,
     entered_at: i32,
     last_time: i32,
-    last_replay_tick: Option<u32>,
     last_pose: Option<WorldCameraPose>,
     blend_until: i32,
 }
@@ -182,18 +181,9 @@ impl KillcamCamera {
         clip: Option<&ClipCollision>,
     ) -> Option<(WorldCameraPose, f32, Option<f32>)> {
         let ps = presented.player(viewer)?;
-        let replay_tick = presented
-            .snapshot()
-            .map(|snapshot| snapshot.view_tick(viewer).0);
-        if !in_killcam
-            || now < self.last_time
-            || replay_tick
-                .zip(self.last_replay_tick)
-                .is_some_and(|(next, old)| next < old)
-        {
+        if !in_killcam {
             *self = Self::default();
         }
-        self.last_replay_tick = replay_tick;
         let previous_time = self.last_time;
         self.last_time = now;
         if !in_killcam {

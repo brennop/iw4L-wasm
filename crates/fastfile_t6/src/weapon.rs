@@ -50,6 +50,8 @@ pub mod def {
     pub const FIRE_TYPE: u32 = 48;
     pub const OFFHAND_CLASS: u32 = 96;
     pub const OFFHAND_SLOT: u32 = 100;
+    pub const VIEW_FLASH_EFFECT: u32 = 108;
+    pub const WORLD_FLASH_EFFECT: u32 = 112;
     pub const PULLBACK_SOUND: u32 = 168;
     pub const PULLBACK_SOUND_PLAYER: u32 = 172;
     pub const FIRE_SOUND: u32 = 176;
@@ -62,6 +64,8 @@ pub mod def {
     pub const MELEE_SWIPE_SOUND_PLAYER: u32 = 252;
     pub const MELEE_HIT_SOUND: u32 = 256;
     pub const MELEE_MISS_SOUND: u32 = 260;
+    pub const ALT_SWITCH_SOUND: u32 = 376;
+    pub const ALT_SWITCH_SOUND_PLAYER: u32 = 380;
     pub const RAISE_SOUND: u32 = 384;
     pub const RAISE_SOUND_PLAYER: u32 = 388;
     pub const FIRST_RAISE_SOUND: u32 = 392;

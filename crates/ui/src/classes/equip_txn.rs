@@ -12,6 +12,20 @@ use crate::classes::store::SessionClassStore;
 #[derive(Resource, Debug, Default)]
 pub struct EquipTxnWatch {
     request_id: Option<u32>,
+    next_revision: u32,
+    correlation: Option<EquipCorrelation>,
+}
+
+#[derive(Clone, Debug)]
+struct EquipCorrelation {
+    class_id: ClassId,
+    revision: u32,
+    load_key: frame::LocalLoadKey,
+    class: frame::HostClassSlot,
+    catalog_revision: u64,
+    families: Option<frame::AssetFamilies>,
+    capability_version: Option<(u32, frame::WorldProducts)>,
+    policy: Vec<(String, String)>,
 }
 
 pub fn apply_pending_class_equip(
@@ -26,6 +40,11 @@ pub fn apply_pending_class_equip(
     mut status: ResMut<ClassSelectStatus>,
     local: Res<LocalPresentClient>,
     signon: Option<Res<net::SignonState>>,
+    context: (
+        Res<frame::InstalledMatch>,
+        Option<Res<frame::HostMatchRules>>,
+        Option<Res<assets::prepared::PreparedCapabilities>>,
+    ),
 ) {
     let Some(req) = pending.0.take() else {
         return;
@@ -87,12 +106,38 @@ pub fn apply_pending_class_equip(
         }
     };
 
+    let Some(revision) = watch.next_revision.checked_add(1) else {
+        reject_class_equip(
+            &mut phase,
+            &mut status,
+            req.request_id,
+            "Class revision capacity exhausted",
+        );
+        return;
+    };
+    watch.next_revision = revision;
+    let correlation = EquipCorrelation {
+        class_id: ClassId(index as u32),
+        revision,
+        load_key: context.0.load_key,
+        class: frame::HostClassSlot::from(slot),
+        catalog_revision: catalog.revision,
+        families: store.server_families(),
+        capability_version: context
+            .2
+            .as_ref()
+            .map(|facts| (facts.version, facts.products)),
+        policy: context
+            .1
+            .as_ref()
+            .map_or_else(Vec::new, |policy| policy.0.clone()),
+    };
     if let Err(error) = actions.push(
         local.0,
         ClientAction::SelectClass {
             request_id: req.request_id,
             class_id: ClassId(index as u32),
-            revision: 1,
+            revision,
             loadout,
         },
     ) {
@@ -110,9 +155,10 @@ pub fn apply_pending_class_equip(
         return;
     }
     watch.request_id = Some(req.request_id);
+    watch.correlation = Some(correlation);
     diag::info!(
         Ui,
-        "class select: queued SelectClass request_id={} id={} rev=1 (queued→gather→step→codec→present)",
+        "class select: queued SelectClass request_id={} id={} rev={revision} (queued→gather→step→codec→present)",
         req.request_id,
         index
     );
@@ -177,19 +223,62 @@ pub fn resolve_class_equip_transaction(
     mut status: ResMut<ClassSelectStatus>,
     mut watch: ResMut<EquipTxnWatch>,
     mut reliable: MessageReader<net::ReliableControlEvent>,
+    context: (
+        Res<SessionClassStore>,
+        Res<crate::ClassLoadoutCatalog>,
+        Res<frame::InstalledMatch>,
+        Option<Res<frame::HostMatchRules>>,
+        Option<Res<assets::prepared::PreparedCapabilities>>,
+    ),
 ) {
-    let Some(request_id) = watch.request_id.or_else(|| phase.pending_request_id()) else {
+    let Some(request_id) = watch.request_id else {
         reliable.clear();
         return;
     };
 
+    let (store, catalog, installed, policy, capabilities) = context;
+    let current_policy = policy
+        .as_ref()
+        .map_or_else(Vec::new, |policy| policy.0.clone());
+    let Some(correlation) = watch.correlation.clone() else {
+        reliable.clear();
+        return;
+    };
+    let unchanged = correlation.load_key == installed.load_key
+        && correlation.catalog_revision == catalog.revision
+        && correlation.policy == current_policy
+        && correlation.families == store.server_families()
+        && correlation.capability_version
+            == capabilities
+                .as_ref()
+                .map(|facts| (facts.version, facts.products))
+        && store
+            .slots
+            .get(correlation.class_id.0 as usize)
+            .is_some_and(|slot| frame::HostClassSlot::from(slot) == correlation.class);
+    if !unchanged {
+        reject_class_equip(
+            &mut phase,
+            &mut status,
+            request_id,
+            "Class or session policy changed while awaiting admission",
+        );
+        watch.request_id = None;
+        watch.correlation = None;
+        reliable.clear();
+        return;
+    }
     for event in reliable.read() {
         match event.0 {
             SimEvent::ClassRejected {
                 request_id: rid,
                 reason,
-                ..
-            } if rid == request_id => {
+                class_id,
+                revision,
+            } if rid == request_id
+                && class_id == correlation.class_id
+                && revision == correlation.revision =>
+            {
                 let reason = reason.as_str();
                 if reject_class_equip(&mut phase, &mut status, request_id, reason) {
                     diag::info!(
@@ -198,11 +287,17 @@ pub fn resolve_class_equip_transaction(
                     );
                 }
                 watch.request_id = None;
+                watch.correlation = None;
                 return;
             }
             SimEvent::ClassAccepted {
-                request_id: rid, ..
-            } if rid == request_id => {
+                request_id: rid,
+                class_id,
+                revision,
+            } if rid == request_id
+                && class_id == correlation.class_id
+                && revision == correlation.revision =>
+            {
                 if accept_class_equip(&mut equipped, &mut phase, &mut overlay, request_id) {
                     diag::info!(
                         Ui,
@@ -210,6 +305,7 @@ pub fn resolve_class_equip_transaction(
                     );
                 }
                 watch.request_id = None;
+                watch.correlation = None;
                 return;
             }
             _ => {}

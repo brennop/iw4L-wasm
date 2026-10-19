@@ -79,6 +79,7 @@ fn captured_input(f: WeaponBodyFacts, melee_charge_anim: bool) -> CapturedCombat
         stunned_start_time_ms: f.stunned_start_time_ms,
         stunned_end_time_ms: f.stunned_end_time_ms,
         damage: f.damage,
+        flame_damage_interval_ms: f.flame_damage_interval_ms,
         min_damage: f.min_damage,
         max_damage_range: f.max_damage_range,
         min_damage_range: f.min_damage_range,

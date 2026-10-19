@@ -123,6 +123,7 @@ pub struct FpvAssemblyKey {
 
 #[derive(Clone, Debug)]
 pub struct FpvSideAssemblies {
+    pub ammunition: asset_model::AmmunitionVisualMode,
     pub bare: Arc<FpvAssembly>,
     pub rocket: Option<Arc<FpvAssembly>>,
     pub melee: Option<Arc<FpvAssembly>>,

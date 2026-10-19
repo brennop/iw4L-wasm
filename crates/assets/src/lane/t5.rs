@@ -454,6 +454,7 @@ impl ZoneLane for T5Lane {
                         fx_glass: None,
                         map_content: Default::default(),
                         impact_fx: sink.impact_fx.take_table(),
+                        family_impact_fx: Vec::new(),
                         reflection_probe_images,
                         intermission_view,
                         exp_fog,

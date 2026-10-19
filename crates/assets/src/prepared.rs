@@ -195,3 +195,133 @@ pub struct SessionCompass {
 
 #[derive(Clone, Copy, Debug, Default, Resource, PartialEq, Eq)]
 pub struct PreparedBodyClips(pub bool);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencyRole {
+    Authority,
+    Presentation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencyImportance {
+    Required,
+    Optional,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedDependency {
+    pub key: String,
+    pub source: String,
+    pub role: DependencyRole,
+    pub importance: DependencyImportance,
+    pub available: bool,
+}
+
+#[derive(Clone, Debug, Resource)]
+pub struct PreparedCapabilities {
+    pub version: u32,
+    pub products: frame::WorldProducts,
+    pub dependencies: Vec<PreparedDependency>,
+    pub script_fx: std::collections::BTreeSet<String>,
+}
+
+impl PreparedCapabilities {
+    pub fn prepare(prepared: &crate::PreparedMatch) -> Self {
+        let mut script_fx = std::collections::BTreeSet::new();
+        let mut dependencies = Vec::new();
+        for namespace in [
+            asset_core::AssetNamespace::Iw4,
+            asset_core::AssetNamespace::Iw5,
+            asset_core::AssetNamespace::T5,
+            asset_core::AssetNamespace::T6,
+        ] {
+            for name in prepared.fx.names() {
+                if prepared.fx.get_in(namespace, name).is_none() {
+                    continue;
+                }
+                let key = format!("{}:{name}", namespace.as_str()).to_ascii_lowercase();
+                script_fx.insert(key.clone());
+                script_fx.insert(name.to_ascii_lowercase());
+                dependencies.push(PreparedDependency {
+                    key,
+                    source: format!("{} effect corpus", namespace.as_str()),
+                    role: DependencyRole::Presentation,
+                    importance: DependencyImportance::Optional,
+                    available: true,
+                });
+            }
+        }
+        for (key, source) in prepared.scripts.fx_references() {
+            let available = script_fx.contains(&key);
+            script_fx.insert(key.clone());
+            dependencies.push(PreparedDependency {
+                key,
+                source,
+                role: DependencyRole::Presentation,
+                importance: DependencyImportance::Optional,
+                available,
+            });
+        }
+        let has_crossbow = (1..=prepared.weapons.len() as u32)
+            .filter_map(|id| prepared.weapons.key_of(id))
+            .any(|key| {
+                key.namespace == asset_core::AssetNamespace::T6 && key.name.contains("crossbow")
+            });
+        if has_crossbow {
+            let effect = "weapon/crossbow/fx_trail_crossbow_blink_grn_os";
+            for (key, available) in [
+                (
+                    format!("t5:{effect}"),
+                    prepared
+                        .fx
+                        .get_in(asset_core::AssetNamespace::T5, effect)
+                        .is_some(),
+                ),
+                (
+                    "t5:wpn_crossbow_alert".into(),
+                    prepared
+                        .script_sound_aliases
+                        .as_ref()
+                        .is_some_and(|aliases| {
+                            aliases
+                                .get("t5:wpn_crossbow_alert")
+                                .is_some_and(|facts| facts.is_some())
+                        }),
+                ),
+            ] {
+                dependencies.push(PreparedDependency {
+                    key,
+                    source: "t6 crossbow warning".into(),
+                    role: DependencyRole::Presentation,
+                    importance: DependencyImportance::Required,
+                    available,
+                });
+            }
+        }
+        Self {
+            version: 1,
+            products: frame::WorldProducts::from_walk(prepared.materials.products_id),
+            dependencies,
+            script_fx,
+        }
+    }
+
+    pub fn validate(&self, role: frame::RuntimeRole) -> Result<(), String> {
+        for dependency in &self.dependencies {
+            let required_role = match dependency.role {
+                DependencyRole::Authority => role.runs_authority(),
+                DependencyRole::Presentation => role.runs_client(),
+            };
+            if required_role
+                && dependency.importance == DependencyImportance::Required
+                && !dependency.available
+            {
+                return Err(format!(
+                    "Required capability {} missing ({})",
+                    dependency.key, dependency.source
+                ));
+            }
+        }
+        Ok(())
+    }
+}

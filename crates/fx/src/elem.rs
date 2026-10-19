@@ -15,6 +15,7 @@ pub struct FxElemSlot {
     pub visual_count: u8,
     pub sequence: u8,
     pub at_rest_fraction: u8,
+    pub supported_since_ms: Option<i32>,
 
     pub emit_residual: u8,
     pub next_elem_handle: u16,
@@ -51,6 +52,7 @@ impl Default for FxElemSlot {
             visual_count: 0,
             sequence: 0,
             at_rest_fraction: FX_ELEM_AT_REST_NONE,
+            supported_since_ms: None,
             emit_residual: 0,
             next_elem_handle: FX_ELEM_HANDLE_NONE,
             prev_elem_handle: FX_ELEM_HANDLE_NONE,

@@ -80,6 +80,7 @@ impl BodyMeshEntry {
 
 #[derive(Clone, Debug, Default)]
 pub struct BodyMeshCatalog {
+    identity: u64,
     entries: HashMap<String, BodyMeshEntry>,
     kits_cache: std::sync::OnceLock<SoldierKits>,
 }
@@ -99,7 +100,15 @@ impl std::ops::Deref for BodyMeshBuild {
 }
 
 impl BodyMeshBuild {
-    pub fn publish(self) -> BodyMeshCatalog {
+    pub fn publish(mut self) -> BodyMeshCatalog {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        self.catalog.identity = NEXT
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |next| next.checked_add(1),
+            )
+            .expect("body product revision exhausted");
         self.catalog
     }
 
@@ -193,6 +202,10 @@ impl BodyMeshBuild {
 }
 
 impl BodyMeshCatalog {
+    pub fn identity(&self) -> u64 {
+        self.identity
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

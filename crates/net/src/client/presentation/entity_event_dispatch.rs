@@ -159,7 +159,7 @@ struct DeferredEntityEvent {
     target: DeferredTarget,
 }
 
-#[derive(Resource, Default, Debug)]
+#[derive(Resource, Debug)]
 pub struct EntityEventCursor {
     seen_through: u32,
 
@@ -171,6 +171,32 @@ pub struct EntityEventCursor {
     predicted_shots: u32,
     authority_shots: u32,
     deferred: VecDeque<DeferredEntityEvent>,
+}
+
+fn fresh_timeline() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_update(
+        std::sync::atomic::Ordering::Relaxed,
+        std::sync::atomic::Ordering::Relaxed,
+        |next| next.checked_add(1),
+    )
+    .expect("presentation timeline exhausted")
+}
+
+impl Default for EntityEventCursor {
+    fn default() -> Self {
+        Self {
+            seen_through: 0,
+            archived_through: None,
+            archive_tick: None,
+            archive_start_tick: None,
+            in_killcam: false,
+            timeline: fresh_timeline(),
+            predicted_shots: 0,
+            authority_shots: 0,
+            deferred: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,7 +335,7 @@ fn dispatch_entity_events(
             .is_some_and(|(next, old)| next.0 < old.0);
     cursor.archive_tick = pending.archive_tick;
     if killcam_transition {
-        cursor.timeline = cursor.timeline.wrapping_add(1);
+        cursor.timeline = fresh_timeline();
         cursor.in_killcam = pending.in_killcam;
         cursor.archived_through = None;
         cursor.archive_start_tick = pending.archive_tick;
@@ -745,6 +771,10 @@ pub fn register_entity_event_dispatch(app: &mut App) {
                     .in_set(frame::InMatch)
                     .in_set(ClientSet::Reconcile)
                     .after(crate::sync_client_entities),
+                crate::client::runtime::publish_accepted_impacts
+                    .in_set(frame::InMatch)
+                    .in_set(frame::OwnerEventsPublished)
+                    .after(dispatch_owner_events),
                 dispatch_owner_events
                     .in_set(frame::InMatch)
                     .in_set(frame::OwnerEventsPublished)

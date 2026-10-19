@@ -297,6 +297,7 @@ pub(crate) fn update_script_menus(
         }
         return;
     }
+    menus.reconcile(catalog);
     let screen_changed = menus.screen.map(|s| s == AppScreen::MainMenu) != Some(frontend);
     if screen_changed {
         out.binding.command = None;

@@ -15,6 +15,10 @@ pub const G_CLONE_PLAYER_MAX_VELOCITY: f32 = 80.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerCorpseSlot {
     pub occupied: bool,
+    pub spawn_sequence: u64,
+    pub weapon_model: u8,
+    pub client_state_team: i32,
+    pub ffa_team: Option<u8>,
 
     pub entnum: i32,
     pub victim: ClientId,
@@ -46,6 +50,10 @@ impl Default for PlayerCorpseSlot {
     fn default() -> Self {
         Self {
             occupied: false,
+            spawn_sequence: 0,
+            weapon_model: 0,
+            client_state_team: 0,
+            ffa_team: None,
             entnum: -1,
             victim: ClientId(0),
             origin: [0.0; 3],
@@ -84,6 +92,7 @@ pub struct PlayerCorpsePool {
     pub slots: [PlayerCorpseSlot; MAX_CLIENT_CORPSES as usize],
 
     pub spawn_ring: u8,
+    pub next_spawn_sequence: u64,
 }
 
 impl Default for PlayerCorpsePool {
@@ -91,6 +100,7 @@ impl Default for PlayerCorpsePool {
         Self {
             slots: [PlayerCorpseSlot::default(); MAX_CLIENT_CORPSES as usize],
             spawn_ring: 0,
+            next_spawn_sequence: 0,
         }
     }
 }
@@ -144,6 +154,11 @@ impl PlayerCorpsePool {
 
     pub fn occupy(&mut self, slot: u8, entnum: i32, mut body: PlayerCorpseSlot) -> u8 {
         let i = (slot as usize) % MAX_CLIENT_CORPSES as usize;
+        self.next_spawn_sequence = self
+            .next_spawn_sequence
+            .checked_add(1)
+            .expect("corpse spawn sequence exhausted");
+        body.spawn_sequence = self.next_spawn_sequence;
         body.occupied = true;
         body.entnum = entnum;
         self.slots[i] = body;
@@ -167,6 +182,10 @@ pub(crate) fn occupy_player_clone(
         .client_meta(victim)
         .and_then(|meta| meta.shield)
         .filter(|shield| shield.on_back);
+    let (client_state_team, ffa_team) = world
+        .client_meta(victim)
+        .map_or((0, None), |meta| (meta.client_state_team, meta.ffa_team));
+    let weapon_model = weapon_iw4::weapon_model_for_held(&ps.weapons, &ps.weapon_data, ps.weapon);
     let pool = world.corpses_mut();
     let entnum = pool.alloc_clone_entity();
     let slot = pool.get_free(ps.origin);
@@ -175,6 +194,9 @@ pub(crate) fn occupy_player_clone(
         entnum,
         PlayerCorpseSlot {
             victim,
+            weapon_model,
+            client_state_team,
+            ffa_team,
             origin: ps.origin,
 
             viewangles: [0.0, client_think_entity_yaw(ps), 0.0],

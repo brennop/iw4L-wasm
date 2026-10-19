@@ -24,13 +24,15 @@ pub use aliases::{
     land_aliases, quiet_surface_alias, select_cg_fire_alias, select_fire_alias, step_prefix,
     surface_alias_candidates, world_surface_alias,
 };
-pub use ambient::{MapAmbientBooted, SoundIwd, stage_prepared_match_audio};
+pub use ambient::{
+    MapAmbientBooted, SoundIwd, prepared_match_audio_key, stage_prepared_match_audio,
+};
 pub use clip_store::{ClipPath, ClipPathCost, ClipPrepCost, ClipStore, clip_prep_cost};
 pub use emit::{BobCycleTracker, emit_footstep_on_bob_wrap, emit_weapon_fire};
 pub use frontend::FrontendAudio;
 pub use match_set::{AudioReady, AudioSilent};
 pub use messages::{
-    AliasCommand, BoundWeaponSound, Footstep, LandSound, PlayAlias, SND_ENT_LOCAL,
+    AliasCommand, BoundWeaponSound, FlameFire, Footstep, LandSound, PlayAlias, SND_ENT_LOCAL,
     ViewmodelNotetrack, ViewmodelNotetracks, WeaponSound, ent_from_number,
 };
 pub use playback::{
@@ -43,6 +45,7 @@ pub use start::{
 };
 
 mod destructible_loops;
+mod flame_loops;
 mod match_set;
 mod match_voices;
 mod projectile_loops;
@@ -85,4 +88,4 @@ mod event;
 mod web_output;
 pub use event::{AnimationMarkerId, AudioEvent, AudioEventId, AudioOccurrence};
 
-pub use ambient::LoadingAudioStatus;
+pub use ambient::{LoadingAudioOwner, LoadingAudioStatus, PreparedMatchAudio};

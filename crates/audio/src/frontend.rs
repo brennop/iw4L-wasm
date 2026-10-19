@@ -154,7 +154,7 @@ fn play_ui_sound_messages(
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
     frontend: Option<Res<FrontendAudio>>,
-    epoch: Res<frame::ScopeEpoch<frame::MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     namespace: Option<Res<crate::ambient::SoundBankNamespace>>,
 ) {
     let bank = bank
@@ -191,7 +191,7 @@ fn play_ui_sound_messages(
             &mut decisions,
             Some(crate::SND_ENT_LOCAL),
             SoundClass::Ui,
-            epoch.0,
+            crate::backend::presentation_epoch(epoch.as_deref()),
         );
         if outcome.allows_binding_fallback() {
             gaps.record(&event.alias);

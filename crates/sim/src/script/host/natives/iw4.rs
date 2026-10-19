@@ -101,6 +101,9 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         if name.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("fx/")) {
             return Err("effect name should start after the 'fx' folder.".into());
         }
+        if !crate::frame::FrameWorld::from_world(world).script_fx_available(&name) {
+            return Err(format!("effect capability unavailable: {name}"));
+        }
         precache(world, "fx", name).map(Value::Int)
     });
     registry.register(Function, "makedvarserverinfo", |world, _, args| {

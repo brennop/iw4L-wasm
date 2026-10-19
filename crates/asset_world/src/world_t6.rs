@@ -493,6 +493,7 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
             let b = r.bytes(p, 12)?;
             out.materials.push(ClipMapMaterial {
                 name: r.text(Reader::ptr(b, 0)?)?.to_owned(),
+                source_surface_flags: Reader::word(b, 4)?,
                 surface_flags: crate::clip_collision::treyarch_surface_flags(Reader::word(b, 4)?),
                 content_flags: Reader::word(b, 8)?,
             });
@@ -553,7 +554,7 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
         for index in 0..static_count {
             let row = table.at(index * 84);
             let Some(model_asset) = load.asset_in(asset, row.at(4)) else {
-                continue;
+                return Err(format!("T6 collision static model {index} is unresolved"));
             };
             let key = std::ptr::from_ref(model_asset);
             if !models.contains_key(&key) {
@@ -802,6 +803,8 @@ pub fn build_clip_collision(load: &ZoneLoad) -> Result<crate::ClipCollision, Str
         }
     }
     out.mesh = std::sync::Arc::new(mesh);
+    out.validate(asset_core::AssetNamespace::T6)
+        .map_err(|error| error.to_string())?;
     Ok(out)
 }
 

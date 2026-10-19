@@ -254,7 +254,6 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
             }
         }
     }
-    catalog.inherit_shared_vis();
     Ok(())
 }
 

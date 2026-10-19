@@ -12,7 +12,6 @@ use bevy::{
 use crate::backend::AudioScope;
 use crate::playback::SoundBank;
 use crate::sources::{DesiredSource, SourceCueRequest, SourceKey, SourceRenderGroup};
-use frame::{MatchScope, ScopeEpoch};
 
 pub(crate) const MAP_BED_SLOT: u32 = 2;
 const MAP_EMITTER_SLOT: u32 = 3;
@@ -29,7 +28,10 @@ pub struct SoundIwd(pub Arc<NamespaceSoundIwd>);
 pub struct MapAmbientBooted(pub bool);
 
 #[derive(Resource, Default)]
-pub(crate) struct SoundBankLoadAttempted(pub bool);
+pub struct LoadingAudioOwner(pub Option<frame::LocalLoadKey>);
+
+#[derive(Resource, Default)]
+pub(crate) struct SoundBankLoadAttempted(pub Option<frame::LocalLoadKey>);
 
 const SOUND_BANK_COMPOSE_STALL: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -155,25 +157,29 @@ pub(crate) struct SoundBankNamespace {
 pub(crate) fn start_sound_bank_compose(
     mut attempted: ResMut<SoundBankLoadAttempted>,
     mut status: ResMut<LoadingAudioStatus>,
+    mut owner: ResMut<LoadingAudioOwner>,
     accepted: Option<Res<assets::MatchLoadAccepted>>,
+    current: Res<assets::CurrentMatchLoad>,
     abort: Option<Res<assets::MatchLoadAbort>>,
     identity: Option<Res<frame::LaunchIdentity>>,
     silent: Option<Res<crate::AudioSilent>>,
     resident: Res<ResidentSoundBank>,
     mut commands: Commands,
 ) {
-    if attempted.0 {
-        return;
-    }
-    if silent.is_some() {
-        *status = LoadingAudioStatus::Ready;
-        attempted.0 = true;
-        return;
-    }
     let Some(accepted) = accepted else {
         return;
     };
-    if abort.is_some_and(|abort| abort.0 == accepted.request_id) {
+    if current.0 != Some(accepted.load_key)
+        || abort.is_some_and(|abort| abort.0 == accepted.request_id)
+        || attempted.0 == Some(accepted.load_key)
+    {
+        return;
+    }
+    owner.0 = Some(accepted.load_key);
+    *status = LoadingAudioStatus::Pending;
+    if silent.is_some() {
+        *status = LoadingAudioStatus::Ready;
+        attempted.0 = Some(accepted.load_key);
         return;
     }
     let Some(identity) = identity else {
@@ -182,7 +188,7 @@ pub(crate) fn start_sound_bank_compose(
     if accepted.zone.is_empty() || identity.games_root.as_os_str().is_empty() {
         return;
     }
-    attempted.0 = true;
+    attempted.0 = Some(accepted.load_key);
     let games = GamesRoot(identity.games_root.clone());
     let zone = accepted.zone.clone();
     let opened_zone = zone.clone();
@@ -211,6 +217,9 @@ pub(crate) fn start_sound_bank_compose(
     };
     let load_key = accepted.load_key;
     commands.queue(move |world: &mut World| {
+        if world.resource::<assets::CurrentMatchLoad>().0 != Some(load_key) {
+            return;
+        }
         frame::scope::insert(
             world,
             SoundBankCompose {
@@ -234,6 +243,7 @@ pub(crate) fn install_sound_bank(
     mut compose: Option<ResMut<SoundBankCompose>>,
     identity: Option<Res<frame::LaunchIdentity>>,
     accepted: Option<Res<assets::MatchLoadAccepted>>,
+    current: Res<assets::CurrentMatchLoad>,
     abort: Option<Res<assets::MatchLoadAbort>>,
     mut map_sound: Option<ResMut<assets::PreparedMatchSound>>,
     process: Option<Res<assets::MapLoadProcess>>,
@@ -245,16 +255,25 @@ pub(crate) fn install_sound_bank(
         return;
     };
 
-    let superseded = accepted
-        .as_ref()
-        .is_some_and(|accepted| accepted.load_key != compose.load_key);
+    let superseded = current.0 != Some(compose.load_key)
+        || accepted
+            .as_ref()
+            .is_some_and(|accepted| accepted.load_key != compose.load_key);
     if abort.is_some_and(|abort| abort.0 == compose.load_key.local_load_request_id) || superseded {
         diag::info!(
             Audio,
             "audio: sound bank for `{}` dropped — the session moved on",
             compose.zone
         );
-        commands.remove_resource::<SoundBankCompose>();
+        let load_key = compose.load_key;
+        commands.queue(move |world: &mut World| {
+            if world
+                .get_resource::<SoundBankCompose>()
+                .is_some_and(|compose| compose.load_key == load_key)
+            {
+                world.remove_resource::<SoundBankCompose>();
+            }
+        });
         return;
     }
     // Install on the load key, not `identity.zone`: gating on a display spelling
@@ -282,7 +301,15 @@ pub(crate) fn install_sound_bank(
                 compose.common_profile_id = arrived.common_profile_id;
                 let products_id = arrived.products_id;
                 let map = std::mem::replace(&mut arrived.sound, Err(String::new()));
-                commands.remove_resource::<assets::PreparedMatchSound>();
+                let load_key = compose.load_key;
+                commands.queue(move |world: &mut World| {
+                    if world
+                        .get_resource::<assets::PreparedMatchSound>()
+                        .is_some_and(|sound| sound.load_key == load_key)
+                    {
+                        world.remove_resource::<assets::PreparedMatchSound>();
+                    }
+                });
                 let kept = resident
                     .0
                     .as_ref()
@@ -341,7 +368,15 @@ pub(crate) fn install_sound_bank(
         }
         return;
     };
-    commands.remove_resource::<SoundBankCompose>();
+    let load_key = compose.load_key;
+    commands.queue(move |world: &mut World| {
+        if world
+            .get_resource::<SoundBankCompose>()
+            .is_some_and(|compose| compose.load_key == load_key)
+        {
+            world.remove_resource::<SoundBankCompose>();
+        }
+    });
     let IwdOpen::Open(iwd) = std::mem::replace(&mut compose.iwd, IwdOpen::Open(Arc::default()))
     else {
         unreachable!("the bank is polled only once the archives are open");
@@ -396,10 +431,19 @@ pub(crate) fn install_sound_bank(
                 zone: compose.zone.clone(),
                 namespace,
             };
+            let load_key = compose.load_key;
             commands.queue(move |world: &mut World| {
+                if world.resource::<assets::CurrentMatchLoad>().0 != Some(load_key)
+                    || world
+                        .get_resource::<assets::MatchLoadAbort>()
+                        .is_some_and(|abort| abort.0 == load_key.local_load_request_id)
+                {
+                    return;
+                }
                 frame::scope::insert(
                     world,
                     PreparedMatchAudio {
+                        load_key,
                         iwd: sound_iwd,
                         clips: new_clips,
                         bank: SoundBank(bank),
@@ -428,7 +472,7 @@ pub(crate) fn boot_map_ambient_once(
     identity: Option<Res<frame::LaunchIdentity>>,
     script_sound: Option<Res<asset_audio::SessionMapScriptSound>>,
     namespace: Option<Res<SoundBankNamespace>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     ready: Res<crate::AudioReady>,
     generation: Res<frame::WorldGeneration>,
     runtime: Res<crate::AudioRuntime>,
@@ -495,7 +539,7 @@ pub(crate) fn boot_map_ambient_once(
             alias,
             emitter: None,
             scope: AudioScope::Match,
-            epoch: epoch.0,
+            epoch: crate::backend::presentation_epoch(epoch.as_deref()),
             group,
         }) else {
             continue;
@@ -503,7 +547,7 @@ pub(crate) fn boot_map_ambient_once(
         sources.desired.push(DesiredSource {
             key: SourceKey {
                 scope: AudioScope::Match,
-                epoch: epoch.0,
+                epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                 object,
                 slot,
             },
@@ -538,11 +582,18 @@ pub enum LoadingAudioStatus {
 }
 
 #[derive(Resource)]
-struct PreparedMatchAudio {
+pub struct PreparedMatchAudio {
+    pub load_key: frame::LocalLoadKey,
     iwd: SoundIwd,
     clips: crate::ClipStore,
     bank: SoundBank,
     namespace: SoundBankNamespace,
+}
+
+pub fn prepared_match_audio_key(world: &World) -> Option<frame::LocalLoadKey> {
+    world
+        .get_resource::<PreparedMatchAudio>()
+        .map(|prepared| prepared.load_key)
 }
 
 pub fn stage_prepared_match_audio(world: &mut World) {

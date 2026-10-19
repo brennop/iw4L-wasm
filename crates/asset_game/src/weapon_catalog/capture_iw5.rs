@@ -269,6 +269,7 @@ impl WeaponCatalog {
             sz_xanims_left: [const { None }; WEAPON_ANIM_SLOTS],
             hide_tags: read_hide_tags_iw5(stream, strings, geometry.hide_tags),
             sounds: leftover_iw5_sounds(stream, strings, &geometry),
+            flame: None,
             combat_fx: read_iw5_combat_fx(stream, &geometry, fx_name_at_slot),
             combat_slots: CombatFxSlots::default(),
             facts: capture_iw5_body_facts(stream, &geometry),
@@ -839,6 +840,8 @@ pub(super) fn leftover_iw5_sounds(
     };
     let mut sounds = WeaponSoundAliases {
         notetrack_convention: NotetrackConvention::SoundMap,
+        fire_start: None,
+        fire_start_player: None,
         pickup: leftover_iw5_snd_alias(stream, body, sz::WEAPON_DEF_SND_PICKUP_OFF, 128),
         pickup_player: leftover_iw5_snd_alias(
             stream,

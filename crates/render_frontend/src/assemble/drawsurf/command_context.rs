@@ -101,6 +101,8 @@ pub const CODE_TEXTURE_OUTDOOR_SAMPLER: u8 = 0x62;
 
 pub const CODE_DEPTH_FROM_CLIP: u16 = 0x49;
 
+pub const CODE_ZNEAR: u16 = 0x21;
+
 pub const R_ZNEAR_DEPTHHACK: f32 = hud_iw4::R_ZNEAR_DEPTHHACK_DEFAULT;
 
 pub const CODE_TEXTURE_MODEL_LIGHTING: u32 = lighting_iw4::TEXTURE_SRC_CODE_MODEL_LIGHTING as u32;
@@ -544,6 +546,9 @@ pub(crate) fn update_command_context_code_sources(
             height: vp.height,
         },
     );
+    mat_frame
+        .code_sources
+        .set_constant_rows(CODE_ZNEAR, &[float4_bits([prepared.near, 0.0, 0.0, 0.0])]);
     if let Some(light) = dir_light.as_deref() {
         let _ = produce_dir_primary_light(&mut mat_frame.code_sources, light);
     }

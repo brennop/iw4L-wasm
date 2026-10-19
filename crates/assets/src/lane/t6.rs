@@ -48,6 +48,7 @@ struct T6Content {
     pub fx: Vec<asset_game::T6FxCapture>,
     pub fx_materials: BTreeMap<String, T6MaterialCapture>,
     pub camouflages: BTreeMap<String, Vec<asset_game::WeaponCamouflage>>,
+    pub impact_fx: Option<asset_game::OwnedFxImpactTable>,
     pub report: Vec<String>,
 }
 
@@ -1351,8 +1352,50 @@ fn capture_content(
         content.materials.len(),
         ipaks.len()
     ));
+    content.impact_fx = capture_impact_table(&zones);
     capture_effects(&zones, ipaks, &mut content);
     content
+}
+
+const FX_IMPACT_ROWS: u32 = 21;
+const FX_IMPACT_ENTRY: u32 = 144;
+const FX_IMPACT_NONFLESH: u32 = 32;
+const FX_IMPACT_FIRST_EXPLOSION_ROW: usize = 11;
+
+fn capture_impact_table(
+    zones: &[&fastfile_t6::ZoneLoad],
+) -> Option<asset_game::OwnedFxImpactTable> {
+    zones.iter().find_map(|&load| {
+        let asset = load
+            .assets
+            .iter()
+            .find(|asset| asset.ty == fastfile_t6::AssetType::ImpactFx)?;
+        let table = decode_ptr(header_u32(&asset.header, 4)?)?;
+        let name_at = |cell: u32| {
+            load.asset_at(table.at(cell * 4))
+                .and_then(|fx| header_str(load, &fx.header, 0))
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let entries = (0..FX_IMPACT_ROWS)
+            .map(|row| {
+                let first = row * FX_IMPACT_ENTRY / 4;
+                // The 32nd nonflesh surface (riotshield) has no IW4-shaped column.
+                asset_game::OwnedFxImpactEntry {
+                    nonflesh: std::array::from_fn(|surf| name_at(first + surf as u32)),
+                    flesh: std::array::from_fn(|slot| {
+                        name_at(first + FX_IMPACT_NONFLESH + slot as u32)
+                    }),
+                }
+            })
+            .collect();
+        Some(asset_game::OwnedFxImpactTable {
+            namespace: asset_core::AssetNamespace::T6,
+            name: header_str(load, &asset.header, 0)?.to_owned(),
+            entries,
+            capture_gaps: 0,
+        })
+    })
 }
 
 const FX_ELEM_DEF: u32 = 292;
@@ -1381,6 +1424,34 @@ fn capture_effects(
         .map(|&name| name.to_owned())
         .collect();
     wanted.insert("maps/mp_maps/fx_mp_exp_bomb".to_owned());
+    if let Some(table) = &content.impact_fx {
+        wanted.extend(
+            table.entries[FX_IMPACT_FIRST_EXPLOSION_ROW..]
+                .iter()
+                .flat_map(|entry| entry.nonflesh.iter().chain(&entry.flesh))
+                .filter(|name| !name.is_empty())
+                .cloned(),
+        );
+    }
+    for &load in zones {
+        for asset in load
+            .assets
+            .iter()
+            .filter(|asset| asset.ty == fastfile_t6::AssetType::Weapon)
+        {
+            let Some(weapon) = fastfile_t6::weapon::WeaponView::new(load, asset) else {
+                continue;
+            };
+            use fastfile_t6::weapon::def;
+            wanted.extend(
+                [def::VIEW_FLASH_EFFECT, def::WORLD_FLASH_EFFECT]
+                    .into_iter()
+                    .filter_map(|off| weapon.def_asset_name(off))
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+    }
     for load in zones {
         match destructible::effect_names(load) {
             Ok(names) => wanted.extend(names),
@@ -2524,6 +2595,7 @@ impl ZoneLane for T6Lane {
                 path: path.to_owned(),
                 ..Default::default()
             };
+            effect_content.impact_fx = capture_impact_table(&image_loads);
             capture_effects(&image_loads, &ipaks, &mut effect_content);
             let mut fx = asset_game::FxCatalog::default();
             let mut effect_refusals = Vec::new();

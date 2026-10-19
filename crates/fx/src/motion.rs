@@ -65,6 +65,7 @@ pub fn evaluate_elem_collide_motion(
             base_vel: q.base_vel,
             remove: false,
             at_rest_fraction: Some(q.at_rest_fraction),
+            supported_since_ms: q.supported_since_ms,
             spawn_impact: None,
         });
     }
@@ -107,6 +108,7 @@ pub fn evaluate_elem_collide_motion(
                 effect_axis: q.effect_axis,
                 orient: q.orient,
                 at_rest_fraction: q.at_rest_fraction,
+                supported_since_ms: q.supported_since_ms,
             };
             let free = integrate_free_flight(
                 flags,
@@ -127,6 +129,9 @@ pub fn evaluate_elem_collide_motion(
                 orientation_pos_to_world(q.orient.origin, q.orient.axis, end_local),
             );
             let hit = trace(start, end, coll_mins, coll_maxs, mask);
+            if !hit.complete {
+                return None;
+            }
             if hit.allsolid || (hit.startsolid && !leaves_start_solid) {
                 base_vel = [0.0; 3];
                 break;
@@ -222,6 +227,7 @@ pub fn evaluate_elem_collide_motion(
         base_vel,
         remove,
         at_rest_fraction,
+        supported_since_ms: None,
         spawn_impact,
     })
 }
@@ -241,12 +247,20 @@ pub fn evaluate_elem_physics_motion(
     q: FxElemMotionQuery<'_>,
     mut trace: impl FnMut([f32; 3], [f32; 3], [f32; 3], [f32; 3], u32) -> FxElemTraceHit,
 ) -> FxElemMotionResult {
-    let mut landed = (q.at_rest_fraction != FX_ELEM_AT_REST_NONE).then_some(q.at_rest_fraction);
+    let mut landed = (q.at_rest_fraction != FX_ELEM_AT_REST_NONE && q.base_vel == [0.0; 3])
+        .then_some(q.at_rest_fraction);
+    let mut supported_since =
+        if q.at_rest_fraction != FX_ELEM_AT_REST_NONE && q.base_vel != [0.0; 3] {
+            None
+        } else {
+            q.supported_since_ms
+        };
     let mut result = FxElemMotionResult {
         origin_delta: [0.0; 3],
         base_vel: q.base_vel,
         remove: false,
         at_rest_fraction: landed,
+        supported_since_ms: q.supported_since_ms,
         spawn_impact: None,
     };
     if landed.is_some() && q.base_vel == [0.0; 3] {
@@ -279,20 +293,39 @@ pub fn evaluate_elem_physics_motion(
             pos[2] + vel[2] * dt,
         ];
         let hit = trace(pos, end, mins, maxs, mask);
+        if !hit.complete {
+            result.remove = true;
+            return result;
+        }
         if hit.allsolid {
-            vel = [0.0; 3];
+            supported_since = None;
             match lift_out_of_solid(pos, mins, maxs, mask, &mut trace) {
                 Some(lifted) => {
                     pos = lifted;
                     continue;
                 }
                 None => {
-                    landed.get_or_insert(at_rest_byte(step.msec_start, q.msec_begin, q.life_ms));
+                    result.remove = true;
                     break;
                 }
             }
         }
         if hit.fraction >= 1.0 {
+            if supported_since.is_some()
+                && vec3_length_sq(vel) < FX_PHYS_REST_SPEED * FX_PHYS_REST_SPEED
+            {
+                let support = trace(end, [end[0], end[1], end[2] - 0.5], mins, maxs, mask);
+                if !support.complete
+                    || support.allsolid
+                    || support.startsolid
+                    || support.fraction >= 1.0
+                    || !collide_on_ground(support.normal[2])
+                {
+                    supported_since = None;
+                }
+            } else {
+                supported_since = None;
+            }
             pos = end;
             continue;
         }
@@ -302,6 +335,9 @@ pub fn evaluate_elem_physics_motion(
             pos[2] + (end[2] - pos[2]) * hit.fraction,
         ];
         let n = hit.normal;
+        for (position, normal) in pos.iter_mut().zip(n) {
+            *position += normal * FX_PHYS_CONTACT_SLOP;
+        }
         let into = dot(vel, n);
         if into < 0.0 {
             let push = (1.0 + FX_PHYS_BOUNCE) * into;
@@ -314,12 +350,16 @@ pub fn evaluate_elem_physics_motion(
                 *v = normal_part + (*v - normal_part) * (1.0 - FX_PHYS_FRICTION);
             }
         }
-        if collide_on_ground(n[2]) {
-            landed.get_or_insert(at_rest_byte(step.msec_end, q.msec_begin, q.life_ms));
-            if vec3_length_sq(vel) < FX_PHYS_REST_SPEED * FX_PHYS_REST_SPEED {
+        if collide_on_ground(n[2]) && vec3_length_sq(vel) < FX_PHYS_REST_SPEED * FX_PHYS_REST_SPEED
+        {
+            let since = *supported_since.get_or_insert(step.msec_start);
+            if step.msec_end.saturating_sub(since) >= 200 {
+                landed = Some(at_rest_byte(step.msec_end, q.msec_begin, q.life_ms));
                 vel = [0.0; 3];
                 break;
             }
+        } else {
+            supported_since = None;
         }
     }
     let stored = orientation_pos_from_world(q.orient.origin, q.orient.axis, pos);
@@ -330,6 +370,7 @@ pub fn evaluate_elem_physics_motion(
     ];
     result.base_vel = vel;
     result.at_rest_fraction = landed;
+    result.supported_since_ms = supported_since;
     result
 }
 
@@ -345,7 +386,7 @@ fn lift_out_of_solid(
     while dz <= cap {
         let lifted = [pos[0], pos[1], pos[2] + dz];
         let probe = trace(lifted, lifted, mins, maxs, mask);
-        if !probe.startsolid && !probe.allsolid {
+        if probe.complete && !probe.startsolid && !probe.allsolid {
             return Some(lifted);
         }
         dz *= 2.0;
@@ -422,6 +463,7 @@ fn integrate_free_flight(
         base_vel,
         remove: false,
         at_rest_fraction: None,
+        supported_since_ms: None,
         spawn_impact: None,
     }
 }

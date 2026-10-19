@@ -353,6 +353,7 @@ pub fn corpse_slot_to_entity_state(slot: &PlayerCorpseSlot) -> EntityState {
     es.client_num = i32::try_from(slot.victim.0).unwrap_or(0);
     es.time2 = slot.spawn_time_ms;
     es.e_flags = slot.e_flags;
+    es.weapon_model = slot.weapon_model;
     es.tr_type = slot.tr_type;
     es.tr_time = slot.tr_time;
     es.tr_duration = slot.tr_duration;

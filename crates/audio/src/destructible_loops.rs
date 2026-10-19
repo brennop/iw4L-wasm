@@ -9,7 +9,6 @@ use crate::backend::AudioScope;
 use crate::playback::SoundBank;
 use crate::runtime::AudioRuntime;
 use crate::sources::{DesiredSource, SourceKey};
-use frame::{MatchScope, ScopeEpoch};
 
 struct PresentedLoop {
     alias: String,
@@ -30,12 +29,12 @@ pub(crate) fn update(
     presented: Res<PresentedSnapshot>,
     bank: Option<Res<SoundBank>>,
     namespace: Option<Res<SoundBankNamespace>>,
-    epoch: Res<ScopeEpoch<MatchScope>>,
+    epoch: Option<Res<net::EntityEventCursor>>,
     runtime: Res<AudioRuntime>,
     mut sources: ResMut<DestructibleSources>,
 ) {
-    if sources.epoch != epoch.0 {
-        sources.epoch = epoch.0;
+    if sources.epoch != crate::backend::presentation_epoch(epoch.as_deref()) {
+        sources.epoch = crate::backend::presentation_epoch(epoch.as_deref());
         sources.live.clear();
         sources.desired.clear();
     }
@@ -86,7 +85,7 @@ pub(crate) fn update(
                 alias: alias.into(),
                 emitter: row.snd_ent,
                 scope: AudioScope::Match,
-                epoch: epoch.0,
+                epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                 group: None,
             }) else {
                 continue;
@@ -105,7 +104,7 @@ pub(crate) fn update(
                     source: DesiredSource {
                         key: SourceKey {
                             scope: AudioScope::Match,
-                            epoch: epoch.0,
+                            epoch: crate::backend::presentation_epoch(epoch.as_deref()),
                             object: u64::from(owner),
                             slot: 1,
                         },

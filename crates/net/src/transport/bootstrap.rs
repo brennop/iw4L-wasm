@@ -225,8 +225,15 @@ pub struct BootstrapAck {
 
 pub struct BootstrapLane {
     pub(super) host_map_ready: Mutex<HashSet<master_protocol::MemberId>>,
-    to_worker: Mutex<VecDeque<(Option<master_protocol::MemberId>, Vec<u8>)>>,
-    from_worker: Mutex<VecDeque<BootstrapIngress>>,
+    to_worker: Mutex<
+        VecDeque<(
+            Option<master_protocol::MemberId>,
+            Vec<u8>,
+            web_time::Instant,
+        )>,
+    >,
+    from_worker: Mutex<VecDeque<(BootstrapIngress, web_time::Instant)>>,
+    fault: Mutex<Option<&'static str>>,
     acks: Mutex<VecDeque<BootstrapAck>>,
     epoch: AtomicU32,
     entered_bootstrap: AtomicU32,
@@ -240,6 +247,7 @@ impl BootstrapLane {
             to_worker: Mutex::new(VecDeque::new()),
             from_worker: Mutex::new(VecDeque::new()),
             acks: Mutex::new(VecDeque::new()),
+            fault: Mutex::new(None),
             epoch: AtomicU32::new(0),
             entered_bootstrap: AtomicU32::new(0),
             entered_client: AtomicU32::new(0),
@@ -249,6 +257,7 @@ impl BootstrapLane {
     pub fn set_epoch(&self, epoch: u32) {
         let prev = self.epoch.swap(epoch, Ordering::AcqRel);
         if prev != epoch {
+            *self.fault.lock().expect("bootstrap fault poisoned") = None;
             self.host_map_ready
                 .lock()
                 .expect("bootstrap readiness poisoned")
@@ -291,16 +300,36 @@ impl BootstrapLane {
         bytes: Vec<u8>,
     ) -> Result<(), &'static str> {
         let mut queue = self.to_worker.lock().expect("bootstrap lane poisoned");
-        if queue.len() >= MAX_BOOTSTRAP_PENDING {
+        if queue.len() >= MAX_BOOTSTRAP_PENDING.min(super::master::limits::values().queue_items)
+            || bytes.len() > master_protocol::MAX_BOOTSTRAP_STREAM_BYTES
+            || queue.iter().map(|(_, bytes, _)| bytes.len()).sum::<usize>() + bytes.len()
+                > super::master::limits::values().queue_bytes
+        {
             return Err("bootstrap to-worker queue is full");
         }
-        queue.push_back((peer, bytes));
+        queue.push_back((
+            peer,
+            bytes,
+            web_time::Instant::now() + super::master::limits::values().queue_age,
+        ));
         Ok(())
     }
 
     pub fn take_to_worker(&self) -> Vec<(Option<master_protocol::MemberId>, Vec<u8>)> {
         let mut queue = self.to_worker.lock().expect("bootstrap lane poisoned");
-        queue.drain(..).collect()
+        let entries: Vec<_> = queue.drain(..).collect();
+        if entries
+            .iter()
+            .any(|(_, _, deadline)| *deadline <= web_time::Instant::now())
+        {
+            *self.fault.lock().expect("bootstrap fault poisoned") =
+                Some("bootstrap queue deadline");
+            return Vec::new();
+        }
+        entries
+            .into_iter()
+            .map(|(peer, bytes, _)| (peer, bytes))
+            .collect()
     }
 
     pub fn push_from_worker(
@@ -309,16 +338,60 @@ impl BootstrapLane {
         bytes: Vec<u8>,
     ) -> Result<(), &'static str> {
         let mut queue = self.from_worker.lock().expect("bootstrap lane poisoned");
-        if queue.len() >= MAX_BOOTSTRAP_PENDING {
+        if queue.len() >= MAX_BOOTSTRAP_PENDING.min(super::master::limits::values().queue_items)
+            || bytes.len() > master_protocol::MAX_BOOTSTRAP_STREAM_BYTES
+            || queue
+                .iter()
+                .map(|(entry, _)| entry.bytes.len())
+                .sum::<usize>()
+                + bytes.len()
+                > super::master::limits::values().queue_bytes
+        {
             return Err("bootstrap from-worker queue is full");
         }
-        queue.push_back(BootstrapIngress { member_id, bytes });
+        queue.push_back((
+            BootstrapIngress { member_id, bytes },
+            web_time::Instant::now() + super::master::limits::values().queue_age,
+        ));
         Ok(())
     }
 
     pub fn take_from_worker(&self) -> Vec<BootstrapIngress> {
         let mut queue = self.from_worker.lock().expect("bootstrap lane poisoned");
-        queue.drain(..).collect()
+        let entries: Vec<_> = queue.drain(..).collect();
+        if entries
+            .iter()
+            .any(|(_, deadline)| *deadline <= web_time::Instant::now())
+        {
+            *self.fault.lock().expect("bootstrap fault poisoned") =
+                Some("bootstrap ingress queue deadline");
+            return Vec::new();
+        }
+        entries.into_iter().map(|(entry, _)| entry).collect()
+    }
+
+    pub fn check_deadline(&self) -> Result<(), &'static str> {
+        let now = web_time::Instant::now();
+        if self
+            .to_worker
+            .lock()
+            .expect("bootstrap lane poisoned")
+            .iter()
+            .any(|(_, _, deadline)| *deadline <= now)
+            || self
+                .from_worker
+                .lock()
+                .expect("bootstrap lane poisoned")
+                .iter()
+                .any(|(_, deadline)| *deadline <= now)
+        {
+            *self.fault.lock().expect("bootstrap fault poisoned") =
+                Some("bootstrap queue deadline");
+        }
+        match *self.fault.lock().expect("bootstrap fault poisoned") {
+            Some(fault) => Err(fault),
+            None => Ok(()),
+        }
     }
 
     pub fn push_ack(&self, ack: BootstrapAck) -> Result<(), &'static str> {
